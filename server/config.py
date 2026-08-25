@@ -1,0 +1,12 @@
+from pathlib import Path
+
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+DATABASE_PATH = BASE_DIR / "server_data.sqlite3"
+HOST = "127.0.0.1"
+PORT = 8765
+TOKEN_TTL_SECONDS = 60 * 60 * 24 * 7
+CHAT_MAX_LENGTH = 300
+CHAT_RATE_LIMIT_COUNT = 5
+CHAT_RATE_LIMIT_WINDOW = 10
+PASSIVE_REGEN_FULL_SECONDS = 300

@@ -44,7 +44,7 @@
 Максимальное здоровье рассчитывается по формуле:
 
 ext
-max_hp = 100 + 20 × (level - 1) + endurance × 15
+max_hp = 100 + 20 × (level - 1) + endurance × 14
 
 
  Copy code
@@ -172,7 +172,7 @@ stat_points == 0
 Шанс уклонения рассчитывается так:
 
 ext
-chance = defender.agility × 5
+chance = defender.agility × 4
        - attacker.agility × 3
        - attacker.endurance
 
@@ -194,9 +194,9 @@ ext
 base_damage = max(
     1,
     attacker.attack
-    + attacker.strength × 2
+    + attacker.strength × 0.5
     - defender.defense
-    - defender.strength
+    - defender.strength × 0.5
     + сумма 2d6
 )
 
@@ -242,7 +242,7 @@ damage = ceil(damage / 2)
 Шанс критического удара рассчитывается по формуле:
 
 ext
-chance = attacker.intuition × 5
+chance = attacker.intuition × 10
        - defender.intuition × 3
        - defender.endurance
 
@@ -340,12 +340,11 @@ hp <= 0
 
 Для каждого бойца сохраняются:
 
-- `attacks` — количество атак;
 - `hits` — количество результативных попаданий;
 - `damage` — общий нанесённый урон;
 - `critical` — количество критических ударов;
-- `dodges` — количество успешных уклонений;
-- `blocks` — количество обычных заблокированных атак;
+- `dodges` — количество успешных уклонений бойца от атак;
+- `blocks` — количество атак, заблокированных бойцом;
 - `combo_sessions` — количество начатых серий;
 - `current_combo` — текущий уровень серии;
 - `max_combo` — максимальный достигнутый уровень серии.

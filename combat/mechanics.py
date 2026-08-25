@@ -11,10 +11,10 @@ def clamp_chance(value):
 
 def get_dodge_chance(attacker, defender):
     return clamp_chance(
-        defender.agility * 5 - attacker.agility * 3 - attacker.endurance
+        defender.agility * 4 - attacker.agility * 3 - attacker.endurance
     )
 
 def get_critical_chance(attacker, defender):
     return clamp_chance(
-        attacker.intuition * 5 - defender.intuition * 3 - defender.endurance
+        attacker.intuition * 10 - defender.intuition * 3 - defender.endurance
     )

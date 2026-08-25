@@ -58,19 +58,10 @@ class DuelLayout:
         self.enemy_floating_text_x = settings.ENEMY_FLOATING_TEXT_X
         self.floating_text_y = settings.FLOATING_TEXT_Y
 
-        # --- Фаза распределения характеристик (setup) ---
-        self.stat_setup_title_x = settings.STAT_SETUP_TITLE_X
-        self.stat_setup_title_y = settings.STAT_SETUP_TITLE_Y
-
-        self.stat_points_x = settings.STAT_POINTS_X
-        self.stat_points_y = settings.STAT_POINTS_Y
-
-        self.stat_label_x = settings.STAT_LABEL_X
-        self.stat_value_x = settings.STAT_VALUE_X
-
-        self.stat_plus_buttons = {}
-        self.stat_minus_buttons = {}
+        # --- Панели характеристик внутри боевых карточек ---
         self.stat_row_y = {}
+        self.stat_plus_buttons = {"player": {}, "enemy": {}}
+        self.stat_minus_buttons = {"player": {}, "enemy": {}}
 
         stat_order = [
             "strength",
@@ -79,22 +70,45 @@ class DuelLayout:
             "endurance",
         ]
 
+        # Якоря блока характеристик: сдвиг только по X.
+        # Игрок: 10px от левого края экрана.
+        # Противник: 10px правее рамки списка персонажей в чате.
+        chat_people_right = settings.CHAT_PANEL_X + settings.CHAT_PANEL_WIDTH - 15
+        stat_x_positions = {
+            "player": 10,
+            "enemy": chat_people_right + 30,
+        }
+
         for index, stat_name in enumerate(stat_order):
-            y = settings.STAT_ROW_Y_START + index * settings.STAT_ROW_HEIGHT
+            y = settings.STAT_PANEL_Y + index * settings.STAT_ROW_HEIGHT
             self.stat_row_y[stat_name] = y
 
-            self.stat_minus_buttons[stat_name] = pygame.Rect(
-                settings.STAT_MINUS_X,
-                y,
-                settings.STAT_BTN_W,
-                settings.STAT_BTN_H,
-            )
+            for side, base_x in stat_x_positions.items():
+                self.stat_minus_buttons[side][stat_name] = pygame.Rect(
+                    base_x + 130,
+                    y + 4,
+                    settings.STAT_BTN_W,
+                    settings.STAT_BTN_H,
+                )
+                self.stat_plus_buttons[side][stat_name] = pygame.Rect(
+                    base_x + 150,
+                    y + 4,
+                    settings.STAT_BTN_W,
+                    settings.STAT_BTN_H,
+                )
 
-            self.stat_plus_buttons[stat_name] = pygame.Rect(
-                settings.STAT_PLUS_X,
-                y,
-                settings.STAT_BTN_W,
-                settings.STAT_BTN_H,
-            )
+        self.stat_label_x = {
+            "player": stat_x_positions["player"],
+            "enemy": stat_x_positions["enemy"],
+        }
+        self.stat_value_x = {
+            "player": stat_x_positions["player"] + settings.STAT_VALUE_OFFSET_X,
+            "enemy": stat_x_positions["enemy"] + settings.STAT_VALUE_OFFSET_X,
+        }
+        self.stat_points_x = {
+            "player": stat_x_positions["player"],
+            "enemy": stat_x_positions["enemy"],
+        }
+        self.stat_points_y = settings.STAT_PANEL_Y + settings.STAT_POINTS_OFFSET_Y
 
         self.stat_confirm_button = pygame.Rect(settings.STAT_CONFIRM_RECT)

@@ -43,7 +43,6 @@ class Battle:
     @staticmethod
     def _new_fighter_stats():
         return {
-            "attacks": 0,
             "hits": 0,
             "damage": 0,
             "critical": 0,
@@ -85,37 +84,26 @@ class Battle:
 
     def _record_attack(self, side, result):
         stats = self.stats[side]
-        stats["attacks"] += 1
+        damage = result["damage"]
 
-        # Уворот сбрасывает серию
-        if result["dodged"]:
-            stats["dodges"] += 1
-            stats["current_combo"] = 0
-            
-        # Обычный заблокированный удар сбрасывает серию
-        elif result["blocked"] and not result["critical"]:
-            stats["blocks"] += 1
-            stats["current_combo"] = 0
-
-        # Результативное попадание
-        if result["damage"] > 0:
+        if damage > 0:
             stats["hits"] += 1
-            stats["damage"] += result["damage"]
-            
-            # Записываем максимальное комбо для статистики (до сброса)
+            stats["damage"] += damage
+
             stats["max_combo"] = max(stats["max_combo"], result["combo_level"])
-            
+
             if result["combo_level"] == 2:
                 stats["combo_sessions"] += 1
 
-            # Если достигнут 5-й удар (максимум), сбрасываем серию для следующего хода
-            if result["combo_level"] >= 5:
-                stats["current_combo"] = 0
-            else:
-                stats["current_combo"] = result["combo_level"]
-
         if result["critical"]:
             stats["critical"] += 1
+
+        if damage <= 0 or result["dodged"] or result["blocked"]:
+            stats["current_combo"] = 0
+        elif result["combo_level"] >= 5:
+            stats["current_combo"] = 0
+        else:
+            stats["current_combo"] = result["combo_level"]
 
     def resolve_turn(self):
         if self.is_over() or self.player_attack_zone is None:
@@ -138,6 +126,16 @@ class Battle:
         self._record_attack("player", player_result)
         self._record_attack("enemy", enemy_result)
 
+        if player_result["dodged"]:
+            self.stats["enemy"]["dodges"] += 1
+        elif player_result["blocked"]:
+            self.stats["enemy"]["blocks"] += 1
+
+        if enemy_result["dodged"]:
+            self.stats["player"]["dodges"] += 1
+        elif enemy_result["blocked"]:
+            self.stats["player"]["blocks"] += 1
+
         # Данные атаки игрока для интерфейса
         self.last_player_attack = self.player_attack_zone
         self.last_player_hit = player_result["damage"] > 0
@@ -147,7 +145,11 @@ class Battle:
         self.last_player_critical_dice = player_result["critical_dice"]
         self.last_player_critical_multiplier = player_result["critical_multiplier"]
         self.last_player_dodged = player_result["dodged"]
-        self.last_player_combo = player_result["combo_level"]
+        self.last_player_combo = (
+            player_result["combo_level"]
+            if self.last_player_hit
+            else 0
+        )
 
         # Данные атаки противника для интерфейса
         self.last_enemy_attack = enemy_attack
@@ -158,7 +160,11 @@ class Battle:
         self.last_enemy_critical_dice = enemy_result["critical_dice"]
         self.last_enemy_critical_multiplier = enemy_result["critical_multiplier"]
         self.last_enemy_dodged = enemy_result["dodged"]
-        self.last_enemy_combo = enemy_result["combo_level"]
+        self.last_enemy_combo = (
+            enemy_result["combo_level"]
+            if self.last_enemy_hit
+            else 0
+        )
 
         # Нанесение урона
         self.enemy.take_damage(self.last_player_damage)

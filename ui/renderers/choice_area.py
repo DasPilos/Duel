@@ -19,7 +19,7 @@ class ChoiceAreaRenderer:
         draw_text(
             screen,
             self.scene.font,
-            "ЗАЩИТА — выберите 2",
+            "ЗАЩИТА",
             self.layout.defense_title_x,
             self.layout.choice_title_y,
             (110, 180, 255),

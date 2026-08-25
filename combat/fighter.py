@@ -56,7 +56,7 @@ class Fighter:
         self.max_hp = (
             100
             + 20 * (self.level - 1)
-            + self.endurance * 15
+            + self.endurance * 14
         )
 
         self.attack = 18 + 3 * (self.level - 1)
@@ -135,6 +135,7 @@ class Fighter:
         leveled_up = False
 
         while self.xp >= 60:
+            current_hp = self.hp
             self.xp -= 60
             self.level += 1
             self.stat_points += 6
@@ -142,7 +143,7 @@ class Fighter:
             self.recalculate_parameters()
 
             # После повышения уровня здоровье полностью восстанавливается
-            self.hp = self.max_hp
+            self.hp = min(current_hp, self.max_hp)
             leveled_up = True
 
         return leveled_up

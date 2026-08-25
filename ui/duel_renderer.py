@@ -1,3 +1,7 @@
+from pathlib import Path
+
+import pygame
+
 from ui.hud import (
     draw_text,
     draw_button,
@@ -7,7 +11,6 @@ from ui.hud import (
 from ui.renderers.fighter_panel import FighterPanelRenderer
 from ui.renderers.setup_area import SetupAreaRenderer
 from ui.renderers.choice_area import ChoiceAreaRenderer
-from ui.renderers.log_area import LogRenderer
 
 
 class DuelRenderer:
@@ -29,11 +32,12 @@ class DuelRenderer:
             scene,
             self.layout,
         )
-
-        self.log_renderer = LogRenderer(
-            scene,
-            self.layout,
-        )
+        self.hit_placeholder = None
+        placeholder_path = Path(__file__).resolve().parent.parent / "assets" / "combat" / "hit_placeholder.png"
+        try:
+            self.hit_placeholder = pygame.image.load(str(placeholder_path)).convert_alpha()
+        except (pygame.error, OSError):
+            self.hit_placeholder = None
 
     def draw(self, screen):
         screen.fill((16, 18, 28))
@@ -68,10 +72,8 @@ class DuelRenderer:
         elif self.scene.phase == "result":
             self.draw_result_screen(screen)
 
-        # Лог теперь отображается на всех фазах (кроме "setup",
-        # это уже проверяется внутри самого LogRenderer),
-        # включая экран результата боя.
-        self.log_renderer.draw(screen)
+        if self.scene.chat is not None:
+            self.scene.chat.draw(screen)
 
         update_and_draw_floating_texts(
             screen,
@@ -89,32 +91,11 @@ class DuelRenderer:
         )
 
     def draw_resolve_overlay(self, screen):
-        titles = {
-            "CALC": "РАСЧЁТ ХОДА...",
-            "COMMENTS": "ОБНОВЛЯЕМ ЛОГ...",
-            "END": "ПРОДОЛЖЕНИЕ...",
-        }
-
-        draw_text(
-            screen,
-            self.scene.big,
-            titles.get(
-                self.scene.resolve_state,
-                "ХОД",
-            ),
-            self.layout.overlay_x,
-            self.layout.overlay_title_y,
-            (255, 220, 120),
-        )
-
-        draw_text(
-            screen,
-            self.scene.font,
-            "Клики по зонам заблокированы",
-            self.layout.overlay_description_x,
-            self.layout.overlay_description_y,
-            (170, 170, 170),
-        )
+        if self.hit_placeholder is None:
+            return
+        image = pygame.transform.smoothscale(self.hit_placeholder, (128, 128))
+        image_rect = image.get_rect(center=(960, 520))
+        screen.blit(image, image_rect)
 
     def draw_result_screen(self, screen):
         battle = self.scene.battle
@@ -168,7 +149,9 @@ class DuelRenderer:
         draw_button(
             screen,
             self.layout.new_button,
-            "НОВЫЙ БОЙ (R)",
+            "ВЕРНУТЬСЯ В ТРАКТИР (R)"
+            if self.scene.online_session is not None
+            else "НОВЫЙ БОЙ (R)",
             self.scene.font,
             color=(70, 140, 220),
         )
@@ -194,7 +177,6 @@ class DuelRenderer:
         y += 22
 
         values = [
-            f"Атак: {stats['attacks']}",
             f"Попаданий: {stats['hits']}",
             f"Урон: {stats['damage']}",
             f"Критов: {stats['critical']}",

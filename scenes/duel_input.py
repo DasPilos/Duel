@@ -11,7 +11,10 @@ class DuelInputHandler:
                 event.key == pygame.K_r
                 and self.scene.phase == "result"
             ):
-                self.scene.restart()
+                if self.scene.online_session is None:
+                    self.scene.restart()
+                else:
+                    self.scene.return_to_tavern = True
                 return
 
         if event.type == pygame.MOUSEWHEEL:
@@ -29,7 +32,10 @@ class DuelInputHandler:
 
         if self.scene.phase == "result":
             if self.scene.layout.new_button.collidepoint(event.pos):
-                self.scene.restart()
+                if self.scene.online_session is None:
+                    self.scene.restart()
+                else:
+                    self.scene.return_to_tavern = True
             return
 
         if self.scene.phase == "setup":
@@ -44,28 +50,6 @@ class DuelInputHandler:
         if self.scene.phase == "setup":
             return
 
-        renderer = getattr(self.scene, "renderer", None)
-
-        if renderer is not None:
-            if hasattr(renderer, "handle_scroll"):
-                renderer.handle_scroll(direction)
-                return
-
-            for name in (
-                "log_renderer",
-                "log_area",
-                "comment_renderer",
-            ):
-                log_renderer = getattr(renderer, name, None)
-
-                if (
-                    log_renderer is not None
-                    and hasattr(log_renderer, "handle_scroll")
-                ):
-                    log_renderer.handle_scroll(direction)
-                    return
-
-        # Запасной вариант: изменяем позицию напрямую.
         current_offset = getattr(
             self.scene,
             "log_scroll_offset",
@@ -78,19 +62,21 @@ class DuelInputHandler:
         )
 
     def _handle_setup_phase(self, pos):
-        for stat_name, rect in (
-            self.scene.layout.stat_plus_buttons.items()
+        for side, fighter in (
+            ("player", self.scene.player),
+            ("enemy", self.scene.enemy),
         ):
-            if rect.collidepoint(pos):
-                self.scene.player.add_stat(stat_name)
-                return
+            for stat_name, rect in self.scene.layout.stat_plus_buttons[side].items():
+                if rect.collidepoint(pos):
+                    if fighter.add_stat(stat_name):
+                        self.scene.save_online_character()
+                    return
 
-        for stat_name, rect in (
-            self.scene.layout.stat_minus_buttons.items()
-        ):
-            if rect.collidepoint(pos):
-                self.scene.player.remove_stat(stat_name)
-                return
+            for stat_name, rect in self.scene.layout.stat_minus_buttons[side].items():
+                if rect.collidepoint(pos):
+                    if fighter.remove_stat(stat_name):
+                        self.scene.save_online_character()
+                    return
 
         if (
             self.scene.layout.stat_confirm_button.collidepoint(pos)
@@ -98,6 +84,7 @@ class DuelInputHandler:
         ):
             self.scene.phase = "choose"
             self.scene.comments = []
+            self.scene.save_online_character()
 
     def _handle_choose_phase(self, pos):
         for zone, rect in (

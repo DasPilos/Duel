@@ -1,0 +1,1 @@
+"""Local authoritative game server."""

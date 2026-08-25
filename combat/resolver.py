@@ -14,7 +14,7 @@ def resolve_attack(attacker, defender, blocked, current_combo):
     # Бросок костей и базовый урон
     dice = roll_2d6()
     base_damage = max(
-        1, attacker.attack + attacker.strength * 2 - defender.defense - defender.strength + sum(dice)
+        1, attacker.attack + attacker.strength * 0.5 - defender.defense - defender.strength * 0.5 + sum(dice)
     )
 
     # Определение уровня серии
