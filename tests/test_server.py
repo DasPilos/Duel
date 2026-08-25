@@ -10,6 +10,8 @@ from server.database import Database
 from server.main import GameRequestHandler
 from server import social, world
 from client.state import ChatState
+from ui.chat.widgets import MessageList
+import pygame
 
 
 class ServerPersistenceTests(unittest.TestCase):
@@ -37,6 +39,25 @@ class ServerPersistenceTests(unittest.TestCase):
         self.assertEqual(saved["hp"], loaded["hp"])
         self.assertEqual(loaded["xp"], 30)
         self.assertEqual(loaded["name"], "Воин")
+
+    def test_login_applies_offline_regen_before_session_starts(self):
+        user = self.database.register("offline_login", "password")
+        character = self.database.create_character(user["id"], "Вернувшийся")
+        self.database.save_character(
+            user["id"],
+            character["id"],
+            {**character, "hp": 1},
+        )
+        with self.database.connection() as connection:
+            connection.execute(
+                "UPDATE characters SET updated_at = ? WHERE id = ?",
+                (time.time() - 600, character["id"]),
+            )
+
+        self.database.login("offline_login", "password")
+        loaded = self.database.get_character(user["id"], character["id"])
+
+        self.assertEqual(loaded["hp"], loaded["max_hp"])
 
     def test_account_can_have_multiple_characters(self):
         user = self.database.register("tester", "password")
@@ -136,6 +157,31 @@ class ServerPersistenceTests(unittest.TestCase):
         state.replace_messages("tavern", [message, message])
         state.add_message("tavern", message)
         self.assertEqual(len(state.messages_by_channel["tavern"]), 1)
+
+    def test_chat_history_discards_messages_older_than_48_hours(self):
+        user = self.database.register("history_ttl", "password")
+        character = self.database.create_character(user["id"], "История")
+        old_message = self.database.add_chat_message(character["id"], "tavern", "старое")
+        with self.database.connection() as connection:
+            connection.execute(
+                "UPDATE chat_messages SET created_at = ? WHERE id = ?",
+                (time.time() - 48 * 60 * 60 - 1, old_message["id"]),
+            )
+        new_message = self.database.add_chat_message(character["id"], "tavern", "новое")
+
+        history = self.database.get_chat_history(character["id"], "tavern")
+
+        self.assertEqual([message["id"] for message in history], [new_message["id"]])
+
+    def test_message_list_scroll_preserves_manual_position(self):
+        message_list = MessageList(pygame.Rect(0, 0, 200, 50), None)
+        message_list.set_messages([{"id": index, "text": str(index)} for index in range(10)])
+        message_list.wheel(-1)
+        scroll_position = message_list.scroll
+
+        message_list.set_messages(message_list.messages)
+
+        self.assertEqual(message_list.scroll, scroll_position)
 
     def test_duel_application_is_public_and_expires(self):
         user = self.database.register("tester", "password")

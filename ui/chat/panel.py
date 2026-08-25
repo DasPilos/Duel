@@ -49,8 +49,8 @@ class ChatPanel:
         content_y = self.panel_rect.y + 58
         content_height = self.panel_rect.height - 110
         message_x = self.panel_rect.x + 12
-        message_width = self.panel_rect.width - channel_width - people_width - gap * 3
         people_x = self.panel_rect.right - people_width - gap
+        message_width = people_x - message_x - gap
         font_header = pygame.font.SysFont("arial", 12)
         font_channel = pygame.font.SysFont("arial", 14)
         font_message = pygame.font.SysFont("arial", 15)
@@ -99,6 +99,7 @@ class ChatPanel:
             self.error = str(error)
 
     def update(self, dt):
+        self.message_input.update(dt)
         self.elapsed += dt
         if self.elapsed >= 2:
             self.elapsed = 0
@@ -125,7 +126,7 @@ class ChatPanel:
         if event.type != pygame.MOUSEBUTTONDOWN:
             return False
         if self.profile_open and self.selected is not None:
-            profile_close = pygame.Rect(1155, 480, 35, 30)
+            profile_close = self._profile_close_rect()
             if profile_close.collidepoint(event.pos):
                 self.profile_open = False
                 self.selected = None
@@ -161,6 +162,10 @@ class ChatPanel:
                 return True
         if self.message_input.send_rect.collidepoint(event.pos):
             self.send_message()
+            self.message_input.focused = False
+            return True
+        if self.message_input.rect.collidepoint(event.pos):
+            self.message_input.focused = True
             return True
         return False
 
@@ -211,16 +216,16 @@ class ChatPanel:
         if self.channel == "Лог боя" and self.battle_source is not None:
             result = []
             for index, comment in enumerate(self.battle_source.comments):
-                text = "".join(
-                    str(segment.get("text", ""))
-                    for segment in comment.get("segments", [])
-                )
-                if text:
+                segments = comment.get("segments", [])
+                if segments:
                     result.append({
                         "id": f"battle-{index}",
                         "sender_id": "commentator",
                         "sender": "Комментатор",
-                        "text": text,
+                        "segments": [
+                            {"text": "Комментатор: ", "color": (170, 170, 170)},
+                            *segments,
+                        ],
                         "created_at": index,
                     })
             return result
@@ -236,8 +241,6 @@ class ChatPanel:
         pygame.draw.line(screen, (60, 65, 80), (self.people_rect.x - 8, self.panel_rect.y), (self.people_rect.x - 8, self.panel_rect.bottom), 2)
         self.channels.draw(screen, self.channel, {"Общий": 0, "Личные": 0})
         own_id = self.session.character["id"] if self.session.character else None
-        if self.channel == "Лог боя":
-            self.message_list.set_messages(self._visible_messages())
         self.message_list.draw(screen, own_id)
         self.message_input.draw(screen)
         people_x = self.people_rect.x
@@ -250,7 +253,7 @@ class ChatPanel:
             self.draw_profile(screen)
 
     def draw_profile(self, screen):
-        rect = pygame.Rect(610, 450, 600, 310)
+        rect = self._profile_rect(screen)
         pygame.draw.rect(screen, (30, 32, 45), rect, border_radius=8)
         pygame.draw.rect(screen, (100, 105, 125), rect, width=2, border_radius=8)
         target = self.selected
@@ -271,4 +274,14 @@ class ChatPanel:
         stats = target.get("stats", {})
         for index, (key, label) in enumerate((("strength", "Сила"), ("agility", "Ловкость"), ("intuition", "Интуиция"), ("endurance", "Выносливость"))):
             draw_text(screen, info_font, f"{label}: {stats.get(key, 0)}", rect.x + 350, rect.y + 114 + index * 28, (215, 220, 225))
-        draw_button(screen, pygame.Rect(rect.right - 55, rect.y + 10, 35, 30), "X", info_font, color=(130, 70, 65))
+        draw_button(screen, self._profile_close_rect(screen), "X", info_font, color=(130, 70, 65))
+
+    @staticmethod
+    def _profile_rect(screen=None):
+        screen_width = screen.get_width() if screen is not None else settings.WIDTH
+        return pygame.Rect(screen_width - 620, 450, 600, 310)
+
+    @classmethod
+    def _profile_close_rect(cls, screen=None):
+        rect = cls._profile_rect(screen)
+        return pygame.Rect(rect.right - 55, rect.y + 10, 35, 30)

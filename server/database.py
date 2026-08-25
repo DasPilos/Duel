@@ -207,6 +207,11 @@ class Database:
             ).fetchone()
             if row is None or not self._check_password(password, row["password_hash"]):
                 raise ValueError("Неверное имя пользователя или пароль")
+            for character in connection.execute(
+                "SELECT * FROM characters WHERE user_id = ?",
+                (row["id"],),
+            ).fetchall():
+                self._apply_passive_regen(connection, character, now)
             token = secrets.token_urlsafe(32)
             connection.execute(
                 "UPDATE users SET last_login_at = ? WHERE id = ?",
@@ -292,6 +297,7 @@ class Database:
     def add_chat_message(self, character_id, location, text, recipient_id=None):
         now = time.time()
         with self.connection() as connection:
+            self._purge_old_chat_messages(connection, now)
             cursor = connection.execute(
                 """
                 INSERT INTO chat_messages
@@ -313,17 +319,20 @@ class Database:
 
     def get_chat_history(self, character_id, location, before_id=None, limit=50):
         limit = max(1, min(100, int(limit)))
+        cutoff = time.time() - config.CHAT_HISTORY_TTL_SECONDS
         with self.connection() as connection:
+            self._purge_old_chat_messages(connection, time.time())
             query = """
                 SELECT chat_messages.*, characters.name AS sender_name
                 FROM chat_messages
                 JOIN characters ON characters.id = chat_messages.sender_character_id
                 WHERE chat_messages.location = ?
+                                    AND chat_messages.created_at >= ?
                   AND chat_messages.deleted_at IS NULL
                   AND (chat_messages.recipient_character_id IS NULL
                        OR chat_messages.recipient_character_id = ?)
             """
-            params = [location, str(character_id)]
+            params = [location, cutoff, str(character_id)]
             if before_id is not None:
                 query += " AND chat_messages.id < ?"
                 params.append(int(before_id))
@@ -331,6 +340,13 @@ class Database:
             params.append(limit)
             rows = connection.execute(query, params).fetchall()
         return [self._chat_message_payload(row) for row in reversed(rows)]
+
+    @staticmethod
+    def _purge_old_chat_messages(connection, now):
+        connection.execute(
+            "DELETE FROM chat_messages WHERE created_at < ?",
+            (now - config.CHAT_HISTORY_TTL_SECONDS,),
+        )
 
     def mark_chat_read(self, character_id, location, message_id):
         now = time.time()

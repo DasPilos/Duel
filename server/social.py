@@ -47,17 +47,6 @@ def occupants(user_id, location):
     for item in PRESENCE.values():
         if item["location"] == location:
             result.append({key: value for key, value in item.items() if key != "token"})
-    if location == "tavern":
-        result.append({
-            "character_id": "npc_barkeeper",
-            "name": "Бармен Картинка",
-            "level": 1,
-            "hp": 300,
-            "max_hp": 300,
-            "stats": {"strength": 12, "agility": 8, "intuition": 10, "endurance": 14},
-            "kind": "npc",
-            "location": location,
-        })
     if location == "backyard":
         for bot in get_bot_opponents():
             result.append({

@@ -1,4 +1,5 @@
 import pygame
+from pathlib import Path
 
 from core import settings
 from ui.hud import draw_button, draw_text
@@ -13,29 +14,39 @@ class TavernScene:
         self.font = pygame.font.SysFont(settings.FONT_NAME, 22)
         self.small_font = pygame.font.SysFont(settings.FONT_NAME, 18)
         self.title_font = pygame.font.SysFont(settings.FONT_NAME, 36)
-        self.battle_button = pygame.Rect(780, 850, 360, 55)
         self.regen_elapsed = 0.0
         self.chat = ChatPanel(session, "tavern")
         self.navigate = None
-        self.backyard_button = pygame.Rect(1640, 35, 220, 45)
+        self.background = None
+        self.tavern_hotspots = (
+            ("Выход на улицу", -400, -390, 130, 300, None),
+            ("Главный зал", 384, -417, 126, 141, None),
+            ("комната отдыха", 600, -347, 69, 85, None),
+            ("Задний двор", 1000, -400, 55, 153, "backyard"),
+            ("Хозяин трактира", 1000, -200, 85, 108, None),
+            ("Искатели приключений", -300, -11, 167, 121, None),
+        )
+        background_path = Path(__file__).resolve().parent.parent / "assets" / "tavern" / "background_original.png"
+        try:
+            self.background = pygame.image.load(str(background_path)).convert()
+        except (pygame.error, OSError):
+            self.background = None
 
     def handle_event(self, event):
         if self.chat.handle_event(event):
             return
-        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 and self.backyard_button.collidepoint(event.pos):
-            self.navigate = "backyard"
-            self.finished = True
-            return
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            for _, hotspot, action in self._get_tavern_hotspots():
+                if hotspot.collidepoint(event.pos) and action == "backyard":
+                    self.navigate = "backyard"
+                    self.finished = True
+                    return
         if event.type == pygame.KEYDOWN:
             if event.key in (pygame.K_RETURN, pygame.K_b):
                 self.finished = True
             elif event.key == pygame.K_ESCAPE:
                 self.cancelled = True
                 self.finished = True
-        elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-            if self.battle_button.collidepoint(event.pos):
-                self.finished = True
-
     def update(self, dt):
         self.regen_elapsed += dt
         if self.regen_elapsed >= 1.0:
@@ -45,36 +56,40 @@ class TavernScene:
         self.chat.update(dt)
 
     def draw(self, screen):
-        screen.fill((38, 27, 24))
-        title = self.title_font.render("ТРАКТИР", True, (255, 220, 150))
-        screen.blit(title, title.get_rect(center=(960, 100)))
-        draw_text(screen, self.font, "Локация: Трактир", 120, 100, (220, 210, 190))
-        draw_button(screen, self.backyard_button, "ЗАДНИЙ ДВОР", self.small_font, color=(110, 75, 50))
-
-        self._draw_barkeeper(screen)
-        draw_text(screen, self.font, "Бармен Картинка", 805, 535, (255, 220, 150))
-        draw_text(screen, self.small_font, "NPC · хозяин трактира", 840, 565, (190, 175, 160))
-        draw_text(screen, self.small_font, "Характеристики NPC", 1200, 300, (255, 220, 150))
-        npc_stats = (
-            "Сила: 12",
-            "Ловкость: 8",
-            "Интуиция: 10",
-            "Выносливость: 14",
-            "Роль: наставник",
-        )
-        for index, stat in enumerate(npc_stats):
-            draw_text(screen, self.small_font, stat, 1200, 340 + index * 28, (215, 205, 190))
-
+        if self.background is None:
+            screen.fill((38, 27, 24))
+        else:
+            screen_width, screen_height = screen.get_size()
+            background = pygame.transform.smoothscale(
+                self.background,
+                (screen_width, screen_height),
+            )
+            screen.blit(background, (0, 0))
+        self._draw_hotspot_highlights(screen)
         self.chat.draw(screen)
 
-    def _draw_barkeeper(self, screen):
-        center_x = 960
-        pygame.draw.circle(screen, (180, 125, 90), (center_x, 300), 58)
-        pygame.draw.rect(screen, (110, 65, 38), (center_x - 78, 355, 156, 180), border_radius=24)
-        pygame.draw.rect(screen, (210, 175, 120), (center_x - 78, 355, 156, 180), width=4, border_radius=24)
-        pygame.draw.line(screen, (210, 175, 120), (center_x - 60, 400), (center_x - 140, 500), 18)
-        pygame.draw.line(screen, (210, 175, 120), (center_x + 60, 400), (center_x + 140, 500), 18)
-        pygame.draw.rect(screen, (95, 50, 30), (center_x - 120, 500, 240, 35), border_radius=5)
+    def _get_tavern_hotspots(self):
+        chat_rect = self.chat.panel_rect
+        return [
+            (name, pygame.Rect(chat_rect.x + x, chat_rect.y + y, width, height), action)
+            for name, x, y, width, height, action in self.tavern_hotspots
+        ]
+
+    def _draw_hotspot_highlights(self, screen):
+        if self.background is None:
+            return
+
+        mouse_x, mouse_y = pygame.mouse.get_pos()
+        for name, rect, _ in self._get_tavern_hotspots():
+            if not rect.collidepoint(mouse_x, mouse_y):
+                continue
+            highlight = pygame.Surface(rect.size, pygame.SRCALPHA)
+            highlight.fill((255, 205, 100, 24))
+            screen.blit(highlight, rect.topleft)
+            pygame.draw.rect(screen, (255, 215, 120, 180), rect, width=3, border_radius=8)
+            label = self.small_font.render(name, True, (255, 230, 160))
+            label_rect = label.get_rect(midbottom=(rect.centerx, rect.top - 6))
+            screen.blit(label, label_rect)
 
     def close(self):
         pass
