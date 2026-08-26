@@ -49,8 +49,7 @@ class ChoiceAreaRenderer:
             )
 
         ready = (
-            self.scene.player.is_ready()
-            and self.scene.attack_zone is not None
+            self.scene.attack_zone is not None
             and len(self.scene.defense_zones) == 2
         )
 

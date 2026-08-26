@@ -29,12 +29,14 @@ class CharacterComparison:
             self.player_frame,
             border_color=(80, 180, 120),
             editable=editable_player,
+            opponent=opponent_profile,
         )
         self.opponent_card.sync(opponent_profile, title="ПРОТИВНИК", kind="enemy")
         self.opponent_card.draw(
             screen,
             self.opponent_frame,
             border_color=(210, 100, 90),
+            opponent=player_profile,
         )
         draw_button(screen, self.challenge_button, "БРОСИТЬ ВЫЗОВ", self.action_font, color=(150, 75, 65))
         draw_button(screen, self.close_button, "ЗАКРЫТЬ", self.action_font, color=(70, 75, 90))

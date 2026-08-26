@@ -30,9 +30,6 @@ class DuelInputHandler:
         ):
             return
 
-        if self.scene.phase == "resolve":
-            return
-
         if self.scene.phase == "result":
             if self.scene.layout.new_button.collidepoint(event.pos):
                 if self.scene.online_session is None:
@@ -41,8 +38,20 @@ class DuelInputHandler:
                     self.scene.return_to_tavern = True
             return
 
-        if self.scene.phase == "setup":
-            self._handle_setup_phase(event.pos)
+        from ui.character_card import CharacterCard
+        control = CharacterCard.stat_control_at(self.scene.layout.battle_player_card, event.pos)
+        if control is not None:
+            stat_name, delta = control
+            changed = (
+                self.scene.player.add_stat(stat_name)
+                if delta > 0
+                else self.scene.player.remove_stat(stat_name)
+            )
+            if changed:
+                self.scene.save_online_character()
+            return
+
+        if self.scene.phase == "resolve":
             return
 
         if self.scene.phase == "choose":
@@ -64,30 +73,6 @@ class DuelInputHandler:
             current_offset + (3 if direction > 0 else -3),
         )
 
-    def _handle_setup_phase(self, pos):
-        from ui.character_card import CharacterCard
-
-        control = CharacterCard.stat_control_at(self.scene.layout.battle_player_card, pos)
-        if control is not None:
-            stat_name, delta = control
-            changed = (
-                self.scene.player.add_stat(stat_name)
-                if delta > 0
-                else self.scene.player.remove_stat(stat_name)
-            )
-            if changed:
-                self.scene.save_online_character()
-            return
-
-        if (
-            self.scene.layout.stat_confirm_button.collidepoint(pos)
-            and self.scene.player.is_ready()
-        ):
-            self.scene.phase = "choose"
-            self.scene.turn_deadline = time.monotonic() + settings.TURN_DECISION_SECONDS
-            self.scene.comments = []
-            self.scene.save_online_character()
-
     def _handle_choose_phase(self, pos):
         for zone, rect in (
             self.scene.layout.attack_buttons.items()
@@ -107,8 +92,7 @@ class DuelInputHandler:
                 return
 
         ready = (
-            self.scene.player.is_ready()
-            and self.scene.attack_zone is not None
+            self.scene.attack_zone is not None
             and len(self.scene.defense_zones) == 2
         )
 

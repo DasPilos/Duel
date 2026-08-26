@@ -21,7 +21,7 @@ class BackyardRenderer:
         if scene.error:
             draw_text(screen, scene.small_font, scene.error, 600, 690, (255, 100, 100))
         scene.chat.draw(screen)
-        scene.profile_overlay.draw(screen)
+        scene.profile_overlay.draw(screen, opponent=scene.session.character)
 
     def _draw_application_menu(self, screen):
         scene = self.scene

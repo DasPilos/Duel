@@ -278,6 +278,10 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                 target = next((item for item in social.occupants(user_id, location) if str(item["character_id"]) == str(target_id)), None)
                 if target is None:
                     raise ValueError("Персонаж не найден в локации")
+                if character["hp"] < character["max_hp"]:
+                    raise ValueError("Нельзя вступить в бой: здоровье должно быть полностью восстановлено")
+                if target.get("hp", target.get("max_hp")) < target.get("max_hp", 0):
+                    raise ValueError("Нельзя вступить в бой: здоровье соперника должно быть полностью восстановлено")
                 if target.get("kind") == "bot":
                     error = social.backyard_duel_error(character, target)
                     if error:
@@ -373,6 +377,8 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                 character = self.database.get_character(user_id, int(body["character_id"]))
                 if character is None:
                     raise ValueError("Персонаж не найден")
+                if body.get("accepted") and character["hp"] < character["max_hp"]:
+                    raise ValueError("Нельзя вступить в бой: здоровье должно быть полностью восстановлено")
                 if body.get("accepted") and social.has_active_application(character["id"]):
                     raise ValueError("Сначала отмените свою заявку, чтобы вступить в бой")
                 offer = social.respond_duel_offer(character["id"], body["offer_id"], bool(body.get("accepted")))

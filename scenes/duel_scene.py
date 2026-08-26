@@ -115,9 +115,10 @@ class DuelScene:
             self._apply_fighter_profile(self.enemy, self.opponent_profile)
         self.battle = Battle(self.player, self.enemy)
 
-        self.phase = "setup"
+        self.phase = "choose"
         self.attack_zone = None
         self.defense_zones = []
+        self.turn_deadline = time.monotonic() + settings.TURN_DECISION_SECONDS
 
         self.comments = []
         self.last_used_comments = {}
@@ -130,7 +131,6 @@ class DuelScene:
 
         self.turn_calculated = False
         self.comments_added = False
-        self.turn_deadline = None
         self.timeout_count = 0
         self.afk_turns = 0
         self.timeout_surrender = False

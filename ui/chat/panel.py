@@ -136,7 +136,7 @@ class ChatPanel:
             rect = pygame.Rect(self.people_rect.x, self.people_rect.y + visible_index * row_height, self.people_rect.width, 25)
             if rect.collidepoint(event.pos):
                 if event.button == 3 and self.profile_overlay is not None:
-                    self.profile_overlay.open(occupant)
+                    self.profile_overlay.open(occupant, counterpart=self.session.character)
                 elif event.button == 1 and self._is_double_character_click(event.pos):
                     self.private_target = occupant
                     self.channel = "Личные"

@@ -88,7 +88,7 @@ class TavernScene:
             screen.blit(label_surface, label_rect)
 
         self.chat.draw(screen)
-        self.profile_overlay.draw(screen)
+        self.profile_overlay.draw(screen, opponent=self.session.character)
 
     def close(self):
         pass

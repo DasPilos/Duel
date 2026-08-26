@@ -51,7 +51,8 @@ class DuelRenderer:
             screen,
             self.layout.battle_player_card,
             border_color=(80, 180, 120),
-            editable=self.scene.phase == "setup",
+            editable=self.scene.phase != "result",
+            opponent=self.scene.enemy,
         )
 
         self.enemy_card.update_from_fighter(self.scene.enemy, title="ПРОТИВНИК", kind="enemy")
@@ -59,6 +60,7 @@ class DuelRenderer:
             screen,
             self.layout.battle_enemy_card,
             border_color=(210, 80, 80),
+            opponent=self.scene.player,
         )
 
         if self.scene.phase == "setup":
@@ -76,7 +78,11 @@ class DuelRenderer:
 
         if self.scene.chat is not None:
             self.scene.chat.draw(screen)
-            self.scene.profile_overlay.draw(screen)
+            self.scene.profile_overlay.draw(
+                screen,
+                opponent=self.scene.player,
+                show_counterpart=False,
+            )
 
         update_and_draw_floating_texts(
             screen,

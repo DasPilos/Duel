@@ -1,6 +1,8 @@
 import pygame
+from types import SimpleNamespace
 
 from combat.progression import xp_to_next
+from combat.mechanics import get_critical_chance, get_dodge_chance
 from core import settings
 from ui.hud import draw_bar, draw_button, draw_text
 from ui.sprite_loader import FighterSprite
@@ -92,7 +94,7 @@ class CharacterCard:
     @staticmethod
     def stat_control_at(frame, position):
         """Return the requested stat change for a click inside this card."""
-        for index, (stat_name, _) in enumerate(CharacterCard._STAT_NAMES):
+        for index, (stat_name, _, _) in enumerate(CharacterCard._STAT_NAMES):
             row_y = frame.bottom - 92 + index * 20
             minus, plus = CharacterCard._stat_control_rects(frame, row_y)
             if plus.collidepoint(position):
@@ -136,7 +138,16 @@ class CharacterCard:
         }, title=title, kind=kind)
         return self.state
 
-    def draw(self, screen, frame, profile=None, border_color=(80, 180, 120), title=None, editable=False):
+    def draw(
+        self,
+        screen,
+        frame,
+        profile=None,
+        border_color=(80, 180, 120),
+        title=None,
+        editable=False,
+        opponent=None,
+    ):
         if profile is not None:
             self.sync(profile, title=title, kind="player")
         normalized = self.state
@@ -179,25 +190,73 @@ class CharacterCard:
         draw_text(screen, self.small_font, "ХАРАКТЕРИСТИКИ", x, stats_header_y, border_color)
         stats = normalized.get("stats", {})
         draw_text(screen, self.small_font, f"Свободные очки: {normalized['stat_points']}", x, stats_header_y - 22, (255, 220, 120))
-        for index, (key, label) in enumerate(self._STAT_NAMES):
+        derived = self._derived_values(normalized, opponent)
+        derived_x = self._stat_text_right(frame) + settings.STAT_DERIVED_GAP
+        for index, (key, label, derived_key) in enumerate(self._STAT_NAMES):
             row_y = frame.bottom - 92 + index * 20
             draw_text(screen, self.small_font, f"{label}: {stats.get(key, 0)}", x, row_y, (215, 220, 225))
+            draw_text(screen, self.small_font, f"{derived_key}: {derived[derived_key]}", derived_x, row_y, (220, 70, 70))
             if editable:
                 minus, plus = self._stat_control_rects(frame, row_y)
                 draw_button(screen, minus, "-", self.small_font, color=(200, 90, 90))
                 draw_button(screen, plus, "+", self.small_font, color=(80, 200, 120))
 
-    _STAT_NAMES = (("strength", "Сила"), ("agility", "Ловкость"), ("intuition", "Интуиция"), ("endurance", "Выносливость"))
+    _STAT_NAMES = (
+        ("strength", "Сила", "Урон"),
+        ("agility", "Ловкость", "Уворот"),
+        ("intuition", "Интуиция", "Крит"),
+        ("endurance", "Выносливость", "HP"),
+    )
+
+    @staticmethod
+    def _stat_text_right(frame):
+        return frame.x + 20 + pygame.font.SysFont(
+            settings.FONT_NAME,
+            settings.CHARACTER_CARD_SMALL_FONT_SIZE,
+        ).size("Выносливость: 30")[0]
+
+    @staticmethod
+    def _derived_values(profile, opponent):
+        if opponent is None:
+            return {"Урон": "--", "Уворот": "--", "Крит": "--", "HP": profile["max_hp"]}
+
+        opponent = normalize_character_profile(opponent)
+
+        fighter = SimpleNamespace(
+            strength=profile["stats"]["strength"],
+            agility=profile["stats"]["agility"],
+            intuition=profile["stats"]["intuition"],
+            endurance=profile["stats"]["endurance"],
+        )
+        enemy = SimpleNamespace(
+            strength=opponent["stats"]["strength"],
+            agility=opponent["stats"]["agility"],
+            intuition=opponent["stats"]["intuition"],
+            endurance=opponent["stats"]["endurance"],
+        )
+        return {
+            "Урон": max(1, int(fighter.strength * 3 - enemy.endurance * 0.5)),
+            "Уворот": f"{int(get_dodge_chance(enemy, fighter))}%",
+            "Крит": f"{int(get_critical_chance(fighter, enemy))}%",
+            "HP": profile["max_hp"],
+        }
 
     @staticmethod
     def _stat_control_rects(frame, row_y):
-        # The widest line is "Выносливость: <value>"; controls begin 30 px after it.
-        text_right = frame.x + 20 + pygame.font.SysFont(
-            settings.FONT_NAME,
-            settings.CHARACTER_CARD_SMALL_FONT_SIZE,
-        ).size("Выносливость: 0")[0]
-        minus = pygame.Rect(text_right + 30, row_y + 1, settings.STAT_BTN_W, settings.STAT_BTN_H)
-        plus = pygame.Rect(text_right + 60, row_y + 1, settings.STAT_BTN_W, settings.STAT_BTN_H)
+        # Keep the controls close to the labels with a 6 px gap between buttons.
+        text_right = CharacterCard._stat_text_right(frame)
+        minus = pygame.Rect(
+            text_right + settings.STAT_CONTROL_GAP,
+            row_y + 1,
+            settings.STAT_BTN_W,
+            settings.STAT_BTN_H,
+        )
+        plus = pygame.Rect(
+            minus.right + settings.STAT_BUTTON_GAP,
+            row_y + 1,
+            settings.STAT_BTN_W,
+            settings.STAT_BTN_H,
+        )
         return minus, plus
 
     @staticmethod

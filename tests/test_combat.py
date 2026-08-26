@@ -7,6 +7,7 @@ from combat.fighter import Fighter
 from combat.progression import apply_xp, battle_xp, xp_to_next
 from combat.group_battle import is_afk_draw, split_balanced_teams, visible_group_targets
 from combat.resolver import resolve_attack
+from combat.mechanics import get_critical_chance
 from scenes.duel_commentator import DuelCommentator
 
 
@@ -60,6 +61,20 @@ class TestFighter(unittest.TestCase):
         self.assertEqual(apply_xp(fighter, 0), 1)
         self.assertEqual(fighter.hp, 15)
         self.assertEqual(fighter.level, 2)
+
+    def test_intuition_gives_five_crit_and_three_anti_crit(self):
+        attacker = Fighter("Атакующий")
+        defender = Fighter("Защитник")
+        attacker.stats["intuition"] = 6
+        defender.stats["intuition"] = 5
+
+        self.assertEqual(get_critical_chance(attacker, defender), 15)
+
+        attacker.stats["intuition"] += 1
+        self.assertEqual(get_critical_chance(attacker, defender), 20)
+
+        defender.stats["intuition"] += 1
+        self.assertEqual(get_critical_chance(attacker, defender), 17)
 
     def test_group_battle_splits_participants_into_balanced_teams(self):
         participants = [

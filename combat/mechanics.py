@@ -21,6 +21,7 @@ def get_dodge_chance(attacker, defender):
 
 
 def get_critical_chance(attacker, defender):
+    """Return critical chance after the defender's anti-critical reduction."""
     return clamp_chance(
-        attacker.intuition * 10 - defender.intuition * 3 - defender.endurance
+        attacker.intuition * 5 - defender.intuition * 3
     )
