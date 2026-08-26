@@ -13,10 +13,15 @@ from scenes.title_scene import TitleScene
 
 def apply_passive_regen(scene, dt):
     if isinstance(scene, DuelScene):
+        # Восстановление разрешено и на экране итогов боя, но не во время самого боя.
+        if scene.phase != "result":
+            return
+        if scene.online_session is not None:
+            scene.online_session.passive_regenerate(dt, in_tavern=False)
         return
     session = getattr(scene, "session", None)
     if session is not None:
-        session.passive_regenerate(dt)
+        session.passive_regenerate(dt, in_tavern=isinstance(scene, TavernScene))
 
 
 def parse_args():

@@ -1,11 +1,14 @@
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import threading
 from urllib.parse import parse_qs, urlparse
 import time
 
 from server import config
 from server.database import Database
 from server import social
+from server.world import run_bot_battle_tick
+from combat.anticheat import score_match
 
 
 class GameRequestHandler(BaseHTTPRequestHandler):
@@ -119,6 +122,19 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                     "my_application": social.pending_public_offer(character["id"], location),
                 })
                 return
+            if path == "/api/social/group-battles":
+                self._token()
+                self._send(200, {"offers": social.group_battle_offers()})
+                return
+            if path.startswith("/api/social/group-battles/"):
+                self._token()
+                offer_id = path.rsplit("/", 1)[1]
+                offer = social.group_battle_offer(offer_id)
+                if offer is None:
+                    self._send(404, {"error": "Заявка группового боя не найдена"})
+                else:
+                    self._send(200, {"offer": offer})
+                return
             if path.startswith("/api/characters/"):
                 character_id = int(path.rsplit("/", 1)[1])
                 user_id = self.database.user_id_by_token(self._token())
@@ -228,6 +244,27 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                 )
                 self._send(200, {"ok": True})
                 return
+            if path == "/api/matches/audit":
+                self._token()
+                audit = dict(body)
+                audit.pop("xp", None)
+                audit.pop("xp_awarded_a", None)
+                audit.pop("xp_awarded_b", None)
+                audit.update(score_match(
+                    pair_matches_24h=int(audit.get("pair_matches_24h", 0)),
+                    pair_wins_24h=int(audit.get("pair_wins_24h", 0)),
+                    turns=int(audit.get("turns", 0)),
+                    median_turns=int(audit.get("median_turns", 0)),
+                    surrender=bool(audit.get("surrender", False)),
+                    afk_turns=int(audit.get("afk_turns", 0)),
+                    level_difference=int(audit.get("level_b", 1)) - int(audit.get("level_a", 1)),
+                    same_device=bool(audit.get("same_device", False)),
+                    new_account_farming=bool(audit.get("new_account_farming", False)),
+                    client_xp_submitted=bool(body.get("xp") is not None),
+                ))
+                result = self.database.record_match_audit(audit)
+                self._send(201, {**result, "xp": 0, "flags": audit["signals"], "denied": audit["action"] == "xp_denied"})
+                return
             if path == "/api/social/duel-offers":
                 token = self._token()
                 user_id = self.database.user_id_by_token(token)
@@ -261,6 +298,47 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                 )
                 self._send(201, {"accepted": False, "offer": offer})
                 return
+            if path == "/api/social/group-battles":
+                token = self._token()
+                user_id = self.database.user_id_by_token(token)
+                character = self.database.get_character(user_id, int(body["character_id"]))
+                if character is None or body.get("location") != "backyard":
+                    raise ValueError("Заявка группового боя недоступна")
+                if character["hp"] < character["max_hp"]:
+                    raise ValueError("Для группового боя здоровье должно быть полностью восстановлено")
+                if social.has_active_application(character["id"]):
+                    raise ValueError("Нельзя одновременно участвовать в нескольких заявках")
+                ttl = max(120, min(int(body.get("ttl", 120)), 1800))
+                max_participants = int(body.get("max_participants", 10))
+                if max_participants not in (6, 8, 10):
+                    raise ValueError("Размер команды может быть только 6, 8 или 10")
+                offer = social.create_group_battle_offer(character, ttl, max_participants)
+                self._send(201, {"offer": offer})
+                return
+            if path.startswith("/api/social/group-battles/") and path.endswith("/join"):
+                token = self._token()
+                user_id = self.database.user_id_by_token(token)
+                character = self.database.get_character(user_id, int(body["character_id"]))
+                if character is None or body.get("location") != "backyard":
+                    raise ValueError("Присоединение к групповому бою недоступно")
+                if character["hp"] < character["max_hp"]:
+                    raise ValueError("Для группового боя здоровье должно быть полностью восстановлено")
+                if social.has_active_application(character["id"]):
+                    raise ValueError("Нельзя одновременно участвовать в нескольких заявках")
+                offer_id = path.split("/api/social/group-battles/", 1)[1].rsplit("/join", 1)[0]
+                offer = social.join_group_battle_offer(offer_id, character)
+                self._send(200, {"offer": offer})
+                return
+            if path.startswith("/api/social/group-battles/") and path.endswith("/leave"):
+                token = self._token()
+                user_id = self.database.user_id_by_token(token)
+                character = self.database.get_character(user_id, int(body["character_id"]))
+                if character is None:
+                    raise ValueError("Персонаж не найден")
+                offer_id = path.split("/api/social/group-battles/", 1)[1].rsplit("/leave", 1)[0]
+                offer = social.leave_group_battle_offer(offer_id, character["id"])
+                self._send(200, {"offer": offer})
+                return
             if path == "/api/social/duel-applications":
                 token = self._token()
                 user_id = self.database.user_id_by_token(token)
@@ -269,12 +347,15 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                     raise ValueError("Заявка недоступна")
                 if character["hp"] < character["max_hp"]:
                     raise ValueError("Нельзя подать заявку: здоровье должно быть полностью восстановлено")
+                if social.has_active_application(character["id"]):
+                    raise ValueError("Нельзя одновременно участвовать в нескольких заявках")
                 offer = social.add_public_duel_offer(
                     {
                         "character_id": character["id"],
                         "name": character["name"],
                     },
                     "backyard",
+                    max(120, min(int(body.get("ttl", 120)), 1800)),
                 )
                 self._send(201, {"application": offer})
                 return
@@ -290,6 +371,10 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                 token = self._token()
                 user_id = self.database.user_id_by_token(token)
                 character = self.database.get_character(user_id, int(body["character_id"]))
+                if character is None:
+                    raise ValueError("Персонаж не найден")
+                if body.get("accepted") and social.has_active_application(character["id"]):
+                    raise ValueError("Сначала отмените свою заявку, чтобы вступить в бой")
                 offer = social.respond_duel_offer(character["id"], body["offer_id"], bool(body.get("accepted")))
                 self._send(200, {"offer": offer})
                 return
@@ -322,13 +407,28 @@ class GameRequestHandler(BaseHTTPRequestHandler):
 
 def run():
     server = ThreadingHTTPServer((config.HOST, config.PORT), GameRequestHandler)
+    stop_bot_battles = threading.Event()
+    bot_battle_thread = threading.Thread(
+        target=_run_bot_battles,
+        args=(stop_bot_battles,),
+        name="bot-battle-scheduler",
+        daemon=True,
+    )
+    bot_battle_thread.start()
     print(f"Game server: http://{config.HOST}:{config.PORT}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         print("\nGame server stopped")
     finally:
+        stop_bot_battles.set()
+        bot_battle_thread.join(timeout=2)
         server.server_close()
+
+
+def _run_bot_battles(stop_event):
+    while not stop_event.wait(1):
+        run_bot_battle_tick()
 
 
 if __name__ == "__main__":

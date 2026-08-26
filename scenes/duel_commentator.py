@@ -181,6 +181,16 @@ class DuelCommentator:
             "color": color,
         }
 
+    def _damage_segments(self, text, damage_color):
+        marker = " (-"
+        damage_start = text.find(marker)
+        if damage_start < 0:
+            return [self._make_segment(text, DEFAULT_COLOR)]
+        return [
+            self._make_segment(text[:damage_start], DEFAULT_COLOR),
+            self._make_segment(text[damage_start:], damage_color),
+        ]
+
     @staticmethod
     def _pick_phrase(phrases, **values):
         return random.choice(phrases).format(**values)
@@ -191,129 +201,30 @@ class DuelCommentator:
         if getattr(battle, "last_player_attack", None) is None:
             return
 
+        player = self.scene.player
+        enemy = self.scene.enemy
         player_hit = getattr(battle, "last_player_hit", False)
-        player_damage = getattr(battle, "last_player_damage", 0)
-        player_dodged = getattr(battle, "last_player_dodged", False)
-        player_critical = getattr(
-            battle,
-            "last_player_critical",
-            False,
-        )
-        player_combo = getattr(
-            battle,
-            "last_player_combo",
-            1,
-        )
-        if not player_hit:
-            player_combo = 0
-
         enemy_hit = getattr(battle, "last_enemy_hit", False)
+        player_damage = getattr(battle, "last_player_damage", 0)
         enemy_damage = getattr(battle, "last_enemy_damage", 0)
-        enemy_dodged = getattr(battle, "last_enemy_dodged", False)
-        enemy_critical = getattr(
-            battle,
-            "last_enemy_critical",
-            False,
+        player_zone = ZONES_ACCUSATIVE.get(battle.last_player_attack, "цель")
+        enemy_zone = ZONES_ACCUSATIVE.get(battle.last_enemy_attack, "цель")
+
+        player_action = "попал" if player_hit else "ударил, но удар был заблокирован"
+        enemy_action = "попал" if enemy_hit else "ударил, но удар был заблокирован"
+        player_text = f"{player.name} {player_action} в {player_zone} {enemy.name} (-{player_damage} хп)"
+        enemy_text = f"{enemy.name} {enemy_action} в {enemy_zone} {player.name} (-{enemy_damage} хп)"
+
+        player_color = DODGE_COLOR if getattr(battle, "last_player_dodged", False) else self._get_action_color(
+            getattr(battle, "last_player_combo", 0), getattr(battle, "last_player_critical", False)
         )
-        enemy_combo = getattr(
-            battle,
-            "last_enemy_combo",
-            1,
+        enemy_color = DODGE_COLOR if getattr(battle, "last_enemy_dodged", False) else self._get_action_color(
+            getattr(battle, "last_enemy_combo", 0), getattr(battle, "last_enemy_critical", False)
         )
-        if not enemy_hit:
-            enemy_combo = 0
-
-        player_zone = ZONES_ACCUSATIVE.get(
-            battle.last_player_attack,
-            "цель",
-        )
-
-        enemy_zone = ZONES_ACCUSATIVE.get(
-            getattr(battle, "last_enemy_attack", None),
-            "цель",
-        )
-
-        enemy_color = self._get_action_color(
-            enemy_combo,
-            enemy_critical,
-        )
-
-        player_color = self._get_action_color(
-            player_combo,
-            player_critical,
-        )
-
-        if player_dodged:
-            player_color = DODGE_COLOR
-
-        if enemy_dodged:
-            enemy_color = DODGE_COLOR
-
-        if player_dodged:
-            first_text = self._pick_phrase(
-                self.PLAYER_ACTION_DODGE_PHRASES,
-                zone=player_zone,
-            )
-        elif not player_hit:
-            first_text = self._pick_phrase(
-                self.PLAYER_ACTION_BLOCK_PHRASES,
-                zone=player_zone,
-            )
-        elif player_critical:
-            first_text = self._pick_phrase(
-                self.PLAYER_ACTION_CRITICAL_PHRASES,
-                damage=player_damage,
-            )
-        else:
-            first_text = self._pick_phrase(
-                self.PLAYER_ACTION_PHRASES,
-                zone=player_zone,
-                damage=player_damage,
-            )
-
-        if enemy_dodged:
-            enemy_text = self._pick_phrase(
-                self.ENEMY_DODGE_PHRASES,
-            )
-        elif not enemy_hit:
-            enemy_text = self._pick_phrase(
-                self.ENEMY_BLOCK_PHRASES,
-                zone=enemy_zone,
-            )
-        elif enemy_critical:
-            enemy_text = self._pick_phrase(
-                self.ENEMY_CRITICAL_PHRASES,
-                zone=enemy_zone,
-                damage=enemy_damage,
-            )
-        else:
-            combo_text = self._get_enemy_combo_text(enemy_combo)
-            enemy_text = self._pick_phrase(
-                self.ENEMY_HIT_PHRASES,
-                combo=combo_text,
-                zone=enemy_zone,
-                damage=enemy_damage,
-            )
-
-        response_prefix = "В то же время "
-        if not player_hit:
-            response_prefix = "И "
-
-        response_text = response_prefix + enemy_text[0].lower() + enemy_text[1:]
-
-        self.scene.comments.append({
-            "segments": [
-                self._make_segment(
-                    first_text + " ",
-                    player_color,
-                ),
-                self._make_segment(
-                    response_text,
-                    enemy_color,
-                ),
-            ],
-            "large": False,
-        })
+        segments = self._damage_segments(player_text, player_color)
+        segments.append(self._make_segment("; а ответный удар ", DEFAULT_COLOR))
+        segments.extend(self._damage_segments(enemy_text, enemy_color))
+        self.scene.comments.append({"segments": segments, "large": False})
 
         enemy = getattr(self.scene, "enemy", None)
         player = getattr(self.scene, "player", None)

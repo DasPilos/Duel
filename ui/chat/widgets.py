@@ -1,6 +1,34 @@
+import re
+
 import pygame
 
 from ui.hud import draw_button, draw_text
+
+
+def _split_damage_segments(text, color):
+    damage_start = text.find(" (Урон:")
+    if damage_start < 0:
+        return [(text, color)]
+    return [(text[:damage_start], (215, 215, 225)), (text[damage_start:], color)]
+
+
+def _wrap_segments(segments, font, max_width):
+    """Split colored text segments into lines that fit max_width, word by word."""
+    lines = []
+    current_line = []
+    current_width = 0
+    for text, color in segments:
+        for chunk in re.findall(r"\S+\s*", text):
+            chunk_width = font.size(chunk)[0]
+            if current_line and current_width + chunk_width > max_width:
+                lines.append(current_line)
+                current_line = []
+                current_width = 0
+            current_line.append((chunk, color))
+            current_width += chunk_width
+    lines.append(current_line)
+    return lines
+
 
 
 class ChatHeader:
@@ -38,7 +66,9 @@ class UnreadBadge:
 
 
 class MessageItem:
-    def draw(self, screen, message, rect, own, font):
+    LINE_HEIGHT = 20
+
+    def wrapped_lines(self, message, own, font, max_width):
         sender = "Вы" if own else message.get("sender", "Персонаж")
         segments = message.get("segments")
         if not segments:
@@ -46,19 +76,25 @@ class MessageItem:
                 "text": f"{sender}: {message.get('text', '')}",
                 "color": (150, 210, 255) if own else (215, 215, 225),
             }]
-        x = rect.x
+        flat_segments = []
         for segment in segments:
             text = str(segment.get("text", ""))
             color = segment.get("color", (215, 215, 225))
-            damage_start = text.find(" (Урон:")
-            parts = ((text, color),) if damage_start < 0 else (
-                (text[:damage_start], (215, 215, 225)),
-                (text[damage_start:], color),
-            )
-            for part_text, part_color in parts:
+            flat_segments.extend(_split_damage_segments(text, color))
+        return _wrap_segments(flat_segments, font, max_width)
+
+    def draw(self, screen, lines, rect, font):
+        y = rect.y
+        for line in lines:
+            x = rect.x
+            for part_text, part_color in line:
+                if not part_text:
+                    continue
                 surface = font.render(part_text, True, part_color)
-                screen.blit(surface, (x, rect.y))
+                screen.blit(surface, (x, y))
                 x += surface.get_width()
+            y += self.LINE_HEIGHT
+        return y - rect.y
 
 
 class MessageList:
@@ -68,25 +104,48 @@ class MessageList:
         self.item = MessageItem()
         self.scroll = 0
         self.follow_latest = True
+        self.messages = []
+        self._layout = []
+        self._layout_own_id = None
 
     def set_messages(self, messages):
         self.messages = list(messages)
-        if self.follow_latest:
-            self.scroll = max(0, len(self.messages) * 26 - self.rect.height + 12)
+        self._layout_own_id = None
+
+    def _layout_messages(self, own_id):
+        max_width = max(40, self.rect.width - 4)
+        self._layout = []
+        y = 0
+        for message in self.messages:
+            is_own = message.get("sender_id") == own_id
+            lines = self.item.wrapped_lines(message, is_own, self.font, max_width)
+            height = max(1, len(lines)) * self.item.LINE_HEIGHT
+            self._layout.append((lines, y, height))
+            y += height + 4
+        self._layout_own_id = own_id
+
+    def _max_scroll(self):
+        total_height = self._layout[-1][1] + self._layout[-1][2] if self._layout else 0
+        return max(0, total_height - self.rect.height + 8)
 
     def draw(self, screen, own_id):
+        if self._layout_own_id != own_id:
+            self._layout_messages(own_id)
+            if self.follow_latest:
+                self.scroll = self._max_scroll()
         previous_clip = screen.get_clip()
         screen.set_clip(self.rect)
-        y = self.rect.y + 4 - self.scroll
-        for message in self.messages:
-            self.item.draw(screen, message, pygame.Rect(self.rect.x, y, self.rect.width, 24), message.get("sender_id") == own_id, self.font)
-            y += 26
+        for lines, y, height in self._layout:
+            item_top = self.rect.y + 4 + y - self.scroll
+            if item_top + height < self.rect.y or item_top > self.rect.bottom:
+                continue
+            self.item.draw(screen, lines, pygame.Rect(self.rect.x, item_top, self.rect.width, height), self.font)
         screen.set_clip(previous_clip)
 
     def wheel(self, direction):
         self.follow_latest = False
-        max_scroll = max(0, len(self.messages) * 26 - self.rect.height + 12)
-        self.scroll = max(0, min(max_scroll, self.scroll - direction * 52))
+        self.scroll = max(0, min(self._max_scroll(), self.scroll - direction * 52))
+
 
 
 class MessageInput:

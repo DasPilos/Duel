@@ -317,6 +317,41 @@ class Database:
             ).fetchone()
         return self._chat_message_payload(row)
 
+    def ensure_bot_character(self, bot_id, bot_name):
+        if bot_id is None:
+            raise ValueError("Требуется идентификатор бота")
+        synthetic_id = -abs(int(hashlib.md5(str(bot_id).encode("utf-8")).hexdigest()[:8], 16))
+        with self.connection() as connection:
+            row = connection.execute(
+                "SELECT id, name FROM characters WHERE id = ?",
+                (synthetic_id,),
+            ).fetchone()
+            if row is None:
+                connection.execute(
+                    """
+                    INSERT INTO characters
+                    (id, user_id, name, level, xp, hp, max_hp, mp, max_mp,
+                     stats_json, stat_points, zone, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        synthetic_id,
+                        0,
+                        str(bot_name),
+                        1,
+                        0,
+                        200,
+                        200,
+                        50,
+                        50,
+                        json.dumps({"strength": 5, "agility": 5, "intuition": 5, "endurance": 5}),
+                        0,
+                        "tavern",
+                        time.time(),
+                    ),
+                )
+        return synthetic_id
+
     def get_chat_history(self, character_id, location, before_id=None, limit=50):
         limit = max(1, min(100, int(limit)))
         cutoff = time.time() - config.CHAT_HISTORY_TTL_SECONDS
@@ -339,7 +374,7 @@ class Database:
             query += " ORDER BY chat_messages.id DESC LIMIT ?"
             params.append(limit)
             rows = connection.execute(query, params).fetchall()
-        return [self._chat_message_payload(row) for row in reversed(rows)]
+            return [self._chat_message_payload(row) for row in reversed(rows)]
 
     @staticmethod
     def _purge_old_chat_messages(connection, now):

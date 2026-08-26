@@ -1,6 +1,7 @@
 import random
 from combat.zones import ZONES
 from combat.resolver import resolve_attack
+from combat.progression import apply_xp, battle_xp
 
 
 class Battle:
@@ -34,6 +35,9 @@ class Battle:
         self.last_enemy_critical_multiplier = 1
         self.last_enemy_dodged = False
         self.last_enemy_combo = 0
+        self.xp_awarded = 0
+        self.enemy_xp_awarded = 0
+        self._xp_awarded_applied = False
 
         self.stats = {
             "player": self._new_fighter_stats(),
@@ -56,12 +60,32 @@ class Battle:
     def is_over(self):
         return self.player.is_dead() or self.enemy.is_dead()
 
-    def winner_name(self):
+    def outcome(self):
+        outcome = None
         if self.player.is_dead() and self.enemy.is_dead():
+            outcome = "draw"
+        elif self.enemy.is_dead():
+            outcome = "win"
+        elif self.player.is_dead():
+            outcome = "loss"
+
+        if outcome is not None and not self._xp_awarded_applied:
+            self.xp_awarded = battle_xp(self.player.level, self.enemy.level, outcome)
+            apply_xp(self.player, self.xp_awarded, restore_hp=False)
+            enemy_outcome = {"win": "loss", "loss": "win", "draw": "draw"}[outcome]
+            self.enemy_xp_awarded = battle_xp(self.enemy.level, self.player.level, enemy_outcome)
+            apply_xp(self.enemy, self.enemy_xp_awarded, restore_hp=False)
+            self._xp_awarded_applied = True
+
+        return outcome
+
+    def winner_name(self):
+        outcome = self.outcome()
+        if outcome == "draw":
             return "Ничья"
-        if self.enemy.is_dead():
+        if outcome == "win":
             return self.player.name
-        if self.player.is_dead():
+        if outcome == "loss":
             return self.enemy.name
         return None
 
@@ -166,14 +190,12 @@ class Battle:
             else 0
         )
 
-        # Нанесение урона
+        # Урон наносится одновременно: оба удара рассчитаны по состоянию до
+        # хода, поэтому смерть одного бойца не отменяет ответный удар другого.
         self.enemy.take_damage(self.last_player_damage)
+        self.player.take_damage(self.last_enemy_damage)
 
-        if not self.enemy.is_dead():
-            self.player.take_damage(self.last_enemy_damage)
-        else:
-            self.player.gain_xp(30)
-            self.player.try_level_up()
+        self.outcome()
 
         # История боя
         self.history.append({

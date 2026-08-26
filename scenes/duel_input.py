@@ -1,4 +1,7 @@
 import pygame
+import time
+
+from core import settings
 
 
 class DuelInputHandler:
@@ -62,27 +65,26 @@ class DuelInputHandler:
         )
 
     def _handle_setup_phase(self, pos):
-        for side, fighter in (
-            ("player", self.scene.player),
-            ("enemy", self.scene.enemy),
-        ):
-            for stat_name, rect in self.scene.layout.stat_plus_buttons[side].items():
-                if rect.collidepoint(pos):
-                    if fighter.add_stat(stat_name):
-                        self.scene.save_online_character()
-                    return
+        from ui.character_card import CharacterCard
 
-            for stat_name, rect in self.scene.layout.stat_minus_buttons[side].items():
-                if rect.collidepoint(pos):
-                    if fighter.remove_stat(stat_name):
-                        self.scene.save_online_character()
-                    return
+        control = CharacterCard.stat_control_at(self.scene.layout.battle_player_card, pos)
+        if control is not None:
+            stat_name, delta = control
+            changed = (
+                self.scene.player.add_stat(stat_name)
+                if delta > 0
+                else self.scene.player.remove_stat(stat_name)
+            )
+            if changed:
+                self.scene.save_online_character()
+            return
 
         if (
             self.scene.layout.stat_confirm_button.collidepoint(pos)
             and self.scene.player.is_ready()
         ):
             self.scene.phase = "choose"
+            self.scene.turn_deadline = time.monotonic() + settings.TURN_DECISION_SECONDS
             self.scene.comments = []
             self.scene.save_online_character()
 

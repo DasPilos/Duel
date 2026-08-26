@@ -1,16 +1,19 @@
 from pathlib import Path
+import time
 
 import pygame
 
+from core import settings
 from ui.hud import (
     draw_text,
     draw_button,
     update_and_draw_floating_texts,
 )
 
-from ui.renderers.fighter_panel import FighterPanelRenderer
+from ui.character_card import CharacterCard
 from ui.renderers.setup_area import SetupAreaRenderer
 from ui.renderers.choice_area import ChoiceAreaRenderer
+from ui.renderers.duel_result import DuelResultRenderer
 
 
 class DuelRenderer:
@@ -18,10 +21,8 @@ class DuelRenderer:
         self.scene = scene
         self.layout = scene.layout
 
-        self.fighter_renderer = FighterPanelRenderer(
-            scene,
-            self.layout,
-        )
+        self.player_card = CharacterCard()
+        self.enemy_card = CharacterCard()
 
         self.setup_renderer = SetupAreaRenderer(
             scene,
@@ -32,6 +33,7 @@ class DuelRenderer:
             scene,
             self.layout,
         )
+        self.result_renderer = DuelResultRenderer(scene, self.layout)
         self.hit_placeholder = None
         placeholder_path = Path(__file__).resolve().parent.parent / "assets" / "combat" / "hit_placeholder.png"
         try:
@@ -44,20 +46,19 @@ class DuelRenderer:
 
         self.draw_header(screen)
 
-        self.fighter_renderer.draw(
+        self.player_card.update_from_fighter(self.scene.player, title="ИГРОК", kind="player")
+        self.player_card.draw(
             screen,
-            self.layout.player_panel_x,
-            self.scene.player,
-            (80, 180, 120),
-            "ИГРОК",
+            self.layout.battle_player_card,
+            border_color=(80, 180, 120),
+            editable=self.scene.phase == "setup",
         )
 
-        self.fighter_renderer.draw(
+        self.enemy_card.update_from_fighter(self.scene.enemy, title="ПРОТИВНИК", kind="enemy")
+        self.enemy_card.draw(
             screen,
-            self.layout.enemy_panel_x,
-            self.scene.enemy,
-            (210, 80, 80),
-            "ПРОТИВНИК",
+            self.layout.battle_enemy_card,
+            border_color=(210, 80, 80),
         )
 
         if self.scene.phase == "setup":
@@ -65,15 +66,17 @@ class DuelRenderer:
 
         elif self.scene.phase == "choose":
             self.choice_renderer.draw(screen)
+            self.draw_turn_timer(screen)
 
         elif self.scene.phase == "resolve":
             self.draw_resolve_overlay(screen)
 
         elif self.scene.phase == "result":
-            self.draw_result_screen(screen)
+            self.result_renderer.draw(screen)
 
         if self.scene.chat is not None:
             self.scene.chat.draw(screen)
+            self.scene.profile_overlay.draw(screen)
 
         update_and_draw_floating_texts(
             screen,
@@ -97,103 +100,21 @@ class DuelRenderer:
         image_rect = image.get_rect(center=(960, 520))
         screen.blit(image, image_rect)
 
-    def draw_result_screen(self, screen):
-        battle = self.scene.battle
+    def draw_turn_timer(self, screen):
+        if self.scene.turn_deadline is None:
+            return
+        remaining = max(0, int(self.scene.turn_deadline - time.monotonic()))
+        if remaining <= settings.TURN_WARNING_RED_SECONDS:
+            color = (220, 70, 70)
+        elif remaining <= settings.TURN_WARNING_YELLOW_SECONDS:
+            color = (230, 190, 70)
+        else:
+            color = (80, 200, 120)
+        bar = pygame.Rect(760, 500, 390, 12)
+        pygame.draw.rect(screen, (55, 58, 68), bar, border_radius=5)
+        fill = bar.copy()
+        fill.width = int(bar.width * remaining / settings.TURN_DECISION_SECONDS)
+        pygame.draw.rect(screen, color, fill, border_radius=5)
+        label = self.scene.small_font.render(f"Время на ход: {remaining // 60}:{remaining % 60:02d}", True, color)
+        screen.blit(label, label.get_rect(midtop=(bar.centerx, bar.bottom + 8)))
 
-        player_stats_x = (
-            self.layout.player_panel_x + 180
-        )
-
-        enemy_stats_x = (
-            self.layout.enemy_panel_x - 400
-        )
-
-        stats_y = 360
-
-        self.draw_result_stats(
-            screen,
-            player_stats_x,
-            stats_y,
-            "СТАТИСТИКА ИГРОКА",
-            battle.stats["player"],
-            (120, 240, 170),
-        )
-
-        self.draw_result_stats(
-            screen,
-            enemy_stats_x,
-            stats_y,
-            "СТАТИСТИКА ВРАГА",
-            battle.stats["enemy"],
-            (240, 130, 130),
-        )
-
-        draw_text(
-            screen,
-            self.scene.font,
-            "БОЙ ЗАВЕРШЁН",
-            820,
-            325,
-            (255, 220, 120),
-        )
-
-        draw_text(
-            screen,
-            self.scene.small_font,
-            f"ПОБЕДИТЕЛЬ: {battle.winner_name()}",
-            800,
-            350,
-            (120, 240, 150),
-        )
-
-        draw_button(
-            screen,
-            self.layout.new_button,
-            "ВЕРНУТЬСЯ В ТРАКТИР (R)"
-            if self.scene.online_session is not None
-            else "НОВЫЙ БОЙ (R)",
-            self.scene.font,
-            color=(70, 140, 220),
-        )
-
-    def draw_result_stats(
-        self,
-        screen,
-        x,
-        y,
-        title,
-        stats,
-        title_color,
-    ):
-        draw_text(
-            screen,
-            self.scene.small_font,
-            title,
-            x,
-            y,
-            title_color,
-        )
-
-        y += 22
-
-        values = [
-            f"Попаданий: {stats['hits']}",
-            f"Урон: {stats['damage']}",
-            f"Критов: {stats['critical']}",
-            f"Уворотов: {stats['dodges']}",
-            f"Блоков: {stats['blocks']}",
-            f"Комбо: {stats['combo_sessions']}",
-            f"Макс. комбо: {stats['max_combo']}",
-        ]
-
-        for value in values:
-            draw_text(
-                screen,
-                self.scene.small_font,
-                value,
-                x,
-                y,
-                (205, 205, 215),
-            )
-
-            y += 18

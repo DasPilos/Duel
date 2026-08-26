@@ -53,12 +53,13 @@ class OnlineSession:
         )
         return self.client.save_character(self.character)
 
-    def passive_regenerate(self, dt):
+    def passive_regenerate(self, dt, in_tavern=False):
         character = self.character
         if character is None or character["hp"] >= character["max_hp"]:
             self.regen_accumulator = 0.0
             return character
-        self.regen_accumulator += character["max_hp"] / settings.TAVERN_FULL_REGEN_SECONDS * max(0.0, float(dt))
+        full_regen_seconds = settings.TAVERN_FULL_REGEN_SECONDS if in_tavern else settings.FULL_REGEN_SECONDS
+        self.regen_accumulator += character["max_hp"] / full_regen_seconds * max(0.0, float(dt))
         amount = int(self.regen_accumulator)
         if amount <= 0:
             return character
@@ -95,8 +96,8 @@ class OnlineSession:
     def offer_duel(self, location, target_id):
         return self.client.offer_duel(self.character["id"], location, target_id)
 
-    def create_duel_application(self, location):
-        return self.client.create_duel_application(self.character["id"], location)
+    def create_duel_application(self, location, ttl=120):
+        return self.client.create_duel_application(self.character["id"], location, ttl)
 
     def cancel_duel_application(self, location):
         return self.client.cancel_duel_application(self.character["id"], location)
@@ -109,6 +110,18 @@ class OnlineSession:
 
     def respond_duel_offer(self, offer_id, accepted):
         return self.client.respond_duel_offer(self.character["id"], offer_id, accepted)
+
+    def list_group_battles(self):
+        return self.client.list_group_battles()
+
+    def create_group_battle(self, location="backyard", ttl=120, max_participants=10):
+        return self.client.create_group_battle(self.character["id"], location, ttl, max_participants)
+
+    def join_group_battle(self, offer_id, location="backyard"):
+        return self.client.join_group_battle(offer_id, self.character["id"], location)
+
+    def leave_group_battle(self, offer_id):
+        return self.client.leave_group_battle(offer_id, self.character["id"])
 
     def save_fighter(self, fighter):
         if self.character is None:
@@ -124,6 +137,17 @@ class OnlineSession:
             "max_mp": fighter.max_mp,
             "stats": dict(fighter.stats),
             "stat_points": fighter.stat_points,
+        }
+        self.character = self.client.save_character(payload)
+        return self.character
+
+    def save_character_profile(self, profile):
+        if self.character is None:
+            return None
+        payload = {
+            **self.character,
+            **profile,
+            "stats": dict(profile["stats"]),
         }
         self.character = self.client.save_character(payload)
         return self.character

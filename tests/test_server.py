@@ -96,10 +96,9 @@ class ServerPersistenceTests(unittest.TestCase):
         opponents = self.database.get_opponents(user["id"])
         bots = {item["name"]: item for item in opponents if item["kind"] == "bot"}
 
-        self.assertEqual(
-            set(bots),
-            {"Забияка", "Безпроводной Душ", "Комфу Падла", "Пахарь"},
-        )
+        expected_names = {item["name"] for item in world.BOT_OPPONENTS}
+        self.assertEqual(set(bots), expected_names)
+
         self.assertEqual(bots["Безпроводной Душ"]["stats"], {
             "strength": 6,
             "agility": 4,
@@ -134,6 +133,33 @@ class ServerPersistenceTests(unittest.TestCase):
 
         self.assertEqual([item["id"] for item in history], [first["id"], second["id"]])
         self.assertEqual(history[0]["text"], "<b>текст</b>")
+
+    def test_bot_tavern_reply_is_persisted_in_database(self):
+        user = self.database.register("botchat", "password")
+        character = self.database.create_character(user["id"], "Зритель")
+
+        social.record_bot_tavern_reply("bot_test", "Тестовый бот", "win", location="tavern", db=self.database)
+
+        history = self.database.get_chat_history(character["id"], "tavern")
+
+        self.assertTrue(any(item["sender"] == "Тестовый бот" for item in history))
+
+    def test_bot_tavern_reply_is_persisted_in_database(self):
+        self.database.register("botchat", "password")
+        character = self.database.create_character(1, "Зритель")
+
+        social.record_bot_tavern_reply("bot_test", "Тестовый бот", "win", location="tavern")
+
+        with self.database.connection() as connection:
+            stored = connection.execute(
+                "SELECT COUNT(*) AS amount FROM chat_messages WHERE location = ?",
+                ("tavern",),
+            ).fetchone()
+        self.assertGreater(stored["amount"], 0)
+        self.assertTrue(any(
+            message["sender"] == "Тестовый бот"
+            for message in self.database.get_chat_history(character["id"], "tavern")
+        ))
 
     def test_chat_unread_and_read_marker(self):
         user = self.database.register("tester", "password")

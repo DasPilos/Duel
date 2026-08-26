@@ -1,3 +1,5 @@
+import time
+
 from ui.hud import FloatingText
 from core import settings
 
@@ -37,6 +39,7 @@ class DuelResolver:
                     scene.phase = "result"
                 else:
                     scene.phase = "choose"
+                    scene.turn_deadline = time.monotonic() + settings.TURN_DECISION_SECONDS
                     scene.attack_zone = None
                     scene.defense_zones = []
                     scene.resolve_state = None

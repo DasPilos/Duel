@@ -1,3 +1,6 @@
+from combat.progression import apply_xp
+
+
 class Fighter:
     STAT_NAMES = {
         "strength": "Сила",
@@ -58,9 +61,6 @@ class Fighter:
             + 20 * (self.level - 1)
             + self.endurance * 14
         )
-
-        self.attack = 18 + 3 * (self.level - 1)
-        self.defense = 8 + 2 * (self.level - 1)
 
     def add_stat(self, stat_name):
         """Добавляет одно очко характеристики."""
@@ -132,18 +132,4 @@ class Fighter:
 
     def try_level_up(self):
         """Повышает уровень при достаточном количестве опыта."""
-        leveled_up = False
-
-        while self.xp >= 60:
-            current_hp = self.hp
-            self.xp -= 60
-            self.level += 1
-            self.stat_points += 6
-
-            self.recalculate_parameters()
-
-            # После повышения уровня здоровье полностью восстанавливается
-            self.hp = min(current_hp, self.max_hp)
-            leveled_up = True
-
-        return leveled_up
+        return apply_xp(self, 0) > 0

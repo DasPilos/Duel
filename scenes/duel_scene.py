@@ -1,4 +1,5 @@
 import pygame
+import time
 
 from combat.fighter import Fighter
 from combat.battle import Battle
@@ -11,6 +12,8 @@ from scenes.duel_input import DuelInputHandler
 from scenes.duel_resolver import DuelResolver
 from scenes.duel_commentator import DuelCommentator
 from ui.chat import ChatPanel
+from ui.character_profile_overlay import CharacterProfileOverlay
+from combat.battle_archive import record_battle
 
 
 class DuelScene:
@@ -42,8 +45,9 @@ class DuelScene:
 
         self.restart(initial=True)
 
+        self.profile_overlay = CharacterProfileOverlay(self.small_font)
         if online_session is not None:
-            self.chat = ChatPanel(online_session, "backyard", self)
+            self.chat = ChatPanel(online_session, "backyard", self, profile_overlay=self.profile_overlay)
 
         self.input_handler = DuelInputHandler(self)
         self.resolver = DuelResolver(self)
@@ -78,10 +82,20 @@ class DuelScene:
 
     def finish_battle(self):
         if self.online_session is not None and self.opponent_profile is not None:
-            self.opponent_profile["hp"] = self.enemy.hp
+            self.opponent_profile.update({
+                "level": self.enemy.level,
+                "xp": self.enemy.xp,
+                "hp": self.enemy.hp,
+                "max_hp": self.enemy.max_hp,
+                "mp": self.enemy.mp,
+                "max_mp": self.enemy.max_mp,
+                "stats": dict(self.enemy.stats),
+                "stat_points": self.enemy.stat_points,
+            })
             opponent_id = str(self.opponent_profile.get("id", ""))
             if self.opponent_profile.get("kind") == "bot" or opponent_id.startswith("bot_"):
                 self.online_session.save_opponent(self.opponent_profile)
+        record_battle(self.battle, source="duel_scene")
         self.save_online_character()
 
     def restart(self, initial=False):
@@ -116,6 +130,10 @@ class DuelScene:
 
         self.turn_calculated = False
         self.comments_added = False
+        self.turn_deadline = None
+        self.timeout_count = 0
+        self.afk_turns = 0
+        self.timeout_surrender = False
 
         if initial:
             self.active_floating_texts = []
@@ -144,9 +162,32 @@ class DuelScene:
         self.input_handler.handle_event(event)
 
     def update(self, dt):
+        if self.phase == "choose" and self.turn_deadline is not None:
+            if time.monotonic() >= self.turn_deadline:
+                self._handle_turn_timeout()
         self.resolver.update(dt)
         if self.chat is not None:
             self.chat.update(dt)
 
     def draw(self, screen):
         self.renderer.draw(screen)
+
+    def _handle_turn_timeout(self):
+        self.timeout_count += 1
+        self.afk_turns += 1
+        self.turn_deadline = None
+        if self.timeout_count >= settings.TURN_TIMEOUTS_BEFORE_SURRENDER:
+            self.timeout_surrender = True
+            self.player.hp = 0
+            self.phase = "result"
+            return
+
+        self.attack_zone = "body"
+        self.defense_zones = ["body", "waist"]
+        self.battle.choose_player_zones(self.attack_zone, self.defense_zones)
+        self.phase = "resolve"
+        self.resolve_state = "CALC"
+        self.resolve_elapsed = 0.0
+        self.turn_calculated = False
+        self.comments_added = False
+        self.start_battle_comments()

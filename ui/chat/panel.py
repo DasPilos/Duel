@@ -4,8 +4,7 @@ import time
 from client.network import ServerError
 from core import settings
 from ui.chat.widgets import ChannelList, ChatHeader, MessageInput, MessageList, UnreadBadge
-from ui.hud import draw_bar, draw_button, draw_text
-from ui.sprite_loader import FighterSprite
+from ui.hud import draw_text
 
 
 class ChatPanel:
@@ -14,25 +13,25 @@ class ChatPanel:
         "backyard": "ЗАДНИЙ ДВОР",
     }
 
-    def __init__(self, session, location, battle_source=None):
+    def __init__(self, session, location, battle_source=None, profile_overlay=None):
         self.session = session
         self.location = location
         self.battle_source = battle_source
+        # Единственная карточка профиля: чат не владеет собственным отдельным попапом.
+        self.profile_overlay = profile_overlay
         self.collapsed = False
         self.channel = "Общий"
         self.occupants = []
         self.messages = []
         self.offers = []
         self.my_application = None
-        self.selected = None
         self.private_target = None
-        self.profile_open = False
         self.duel_accepted = None
         self.last_character_click = 0
         self.last_character_position = None
+        self.people_scroll = 0
         self.error = ""
         self.elapsed = 0.0
-        self.fighter_sprite = FighterSprite()
         self.panel_rect = pygame.Rect(settings.CHAT_PANEL_X, settings.CHAT_PANEL_Y, settings.CHAT_PANEL_WIDTH, settings.CHAT_PANEL_HEIGHT)
         self._layout_widgets()
         self.unread_badge = UnreadBadge()
@@ -110,6 +109,12 @@ class ChatPanel:
             if self.message_list.rect.collidepoint(pygame.mouse.get_pos()):
                 self.message_list.wheel(event.y)
                 return True
+            if self.people_rect.collidepoint(pygame.mouse.get_pos()):
+                row_height = 28
+                visible_rows = max(1, self.people_rect.height // row_height)
+                max_scroll = max(0, len(self.occupants) - visible_rows)
+                self.people_scroll = max(0, min(max_scroll, self.people_scroll - event.y))
+                return True
         if event.type == pygame.KEYDOWN and not self.collapsed:
             result = self.message_input.handle_event(event)
             if result == "send":
@@ -117,30 +122,21 @@ class ChatPanel:
                 return True
             if result:
                 return True
-            if event.key == pygame.K_ESCAPE and self.profile_open:
-                self.profile_open = False
-                self.selected = None
-                return True
         if event.type == pygame.TEXTINPUT and not self.collapsed:
             return self.message_input.handle_event(event)
         if event.type != pygame.MOUSEBUTTONDOWN:
             return False
-        if self.profile_open and self.selected is not None:
-            profile_close = self._profile_close_rect()
-            if profile_close.collidepoint(event.pos):
-                self.profile_open = False
-                self.selected = None
-                return True
+        if self.profile_overlay is not None and self.profile_overlay.handle_click(event.pos):
+            return True
         if self.collapsed:
             return False
-        for index, occupant in enumerate(self.occupants):
-            rect = pygame.Rect(self.people_rect.x, self.people_rect.y + index * 28, self.people_rect.width, 25)
+        row_height = 28
+        visible_rows = max(1, self.people_rect.height // row_height)
+        for visible_index, occupant in enumerate(self.occupants[self.people_scroll:self.people_scroll + visible_rows]):
+            rect = pygame.Rect(self.people_rect.x, self.people_rect.y + visible_index * row_height, self.people_rect.width, 25)
             if rect.collidepoint(event.pos):
-                self.selected = occupant
-                if event.button == 3:
-                    self.profile_open = True
-                elif event.button == 1 and occupant.get("kind") == "bot" and self.location == "backyard":
-                    self._challenge_bot(occupant)
+                if event.button == 3 and self.profile_overlay is not None:
+                    self.profile_overlay.open(occupant)
                 elif event.button == 1 and self._is_double_character_click(event.pos):
                     self.private_target = occupant
                     self.channel = "Личные"
@@ -245,43 +241,14 @@ class ChatPanel:
         self.message_input.draw(screen)
         people_x = self.people_rect.x
         draw_text(screen, pygame.font.SysFont("arial", 17), self.room_name, people_x, self.panel_rect.y + 14, (255, 220, 120))
-        for index, occupant in enumerate(self.occupants):
-            draw_text(screen, pygame.font.SysFont("arial", 16), occupant.get("name", ""), people_x, self.people_rect.y + index * 28, (215, 215, 225))
+        previous_clip = screen.get_clip()
+        screen.set_clip(self.people_rect)
+        row_height = 28
+        visible_rows = max(1, self.people_rect.height // row_height)
+        max_scroll = max(0, len(self.occupants) - visible_rows)
+        self.people_scroll = max(0, min(max_scroll, self.people_scroll))
+        for visible_index, occupant in enumerate(self.occupants[self.people_scroll:self.people_scroll + visible_rows]):
+            draw_text(screen, pygame.font.SysFont("arial", 16), occupant.get("name", ""), people_x, self.people_rect.y + visible_index * row_height, (215, 215, 225))
+        screen.set_clip(previous_clip)
         if self.error:
             draw_text(screen, pygame.font.SysFont("arial", 14), self.error, self.panel_rect.x + 12, self.panel_rect.bottom - 20, (255, 120, 100))
-        if self.profile_open and self.selected is not None:
-            self.draw_profile(screen)
-
-    def draw_profile(self, screen):
-        rect = self._profile_rect(screen)
-        pygame.draw.rect(screen, (30, 32, 45), rect, border_radius=8)
-        pygame.draw.rect(screen, (100, 105, 125), rect, width=2, border_radius=8)
-        target = self.selected
-        name_font = pygame.font.SysFont("arial", 24)
-        info_font = pygame.font.SysFont("arial", 16)
-        draw_text(screen, name_font, target.get("name", ""), rect.x + 20, rect.y + 18, (240, 240, 245))
-        draw_text(screen, info_font, f"Уровень {target.get('level', 1)}", rect.x + 20, rect.y + 55, (210, 215, 225))
-        hp = target.get("hp", 0)
-        max_hp = target.get("max_hp", 0)
-        mp = target.get("mp", 0)
-        max_mp = target.get("max_mp", 0)
-        draw_text(screen, info_font, f"HP: {hp}/{max_hp}", rect.x + 20, rect.y + 82, (220, 225, 235))
-        draw_bar(screen, rect.x + 20, rect.y + 106, 280, 12, hp, max_hp, fg=(210, 80, 80))
-        draw_text(screen, info_font, f"MP: {mp}/{max_mp}", rect.x + 20, rect.y + 130, (220, 225, 235))
-        draw_bar(screen, rect.x + 20, rect.y + 154, 280, 12, mp, max_mp, fg=(60, 140, 220))
-        self.fighter_sprite.draw(screen, rect.x + 160, rect.y + 282, scale=settings.FIGHTER_SPRITE_SCALE)
-        draw_text(screen, info_font, "ХАРАКТЕРИСТИКИ", rect.x + 350, rect.y + 82, (210, 100, 90))
-        stats = target.get("stats", {})
-        for index, (key, label) in enumerate((("strength", "Сила"), ("agility", "Ловкость"), ("intuition", "Интуиция"), ("endurance", "Выносливость"))):
-            draw_text(screen, info_font, f"{label}: {stats.get(key, 0)}", rect.x + 350, rect.y + 114 + index * 28, (215, 220, 225))
-        draw_button(screen, self._profile_close_rect(screen), "X", info_font, color=(130, 70, 65))
-
-    @staticmethod
-    def _profile_rect(screen=None):
-        screen_width = screen.get_width() if screen is not None else settings.WIDTH
-        return pygame.Rect(screen_width - 620, 450, 600, 310)
-
-    @classmethod
-    def _profile_close_rect(cls, screen=None):
-        rect = cls._profile_rect(screen)
-        return pygame.Rect(rect.right - 55, rect.y + 10, 35, 30)

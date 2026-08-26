@@ -61,7 +61,7 @@ class GameClient:
         return self._request(
             "PUT",
             f"/api/opponents/{opponent['id']}",
-            {"hp": opponent["hp"]},
+            opponent,
             authenticated=True,
         )["opponent"]
 
@@ -98,8 +98,8 @@ class GameClient:
     def offer_duel(self, character_id, location, target_id):
         return self._request("POST", "/api/social/duel-offers", {"character_id": character_id, "location": location, "target_id": target_id}, authenticated=True)
 
-    def create_duel_application(self, character_id, location):
-        return self._request("POST", "/api/social/duel-applications", {"character_id": character_id, "location": location}, authenticated=True)
+    def create_duel_application(self, character_id, location, ttl=120):
+        return self._request("POST", "/api/social/duel-applications", {"character_id": character_id, "location": location, "ttl": ttl}, authenticated=True)
 
     def cancel_duel_application(self, character_id, location):
         return self._request("POST", "/api/social/duel-applications/cancel", {"character_id": character_id, "location": location}, authenticated=True)
@@ -119,6 +119,26 @@ class GameClient:
 
     def save_character(self, character):
         return self._request("PUT", f"/api/characters/{character['id']}", character, authenticated=True)["character"]
+
+    def audit_match(self, audit):
+        return self._request("POST", "/api/matches/audit", audit, authenticated=True)
+
+    def list_group_battles(self):
+        return self._request("GET", "/api/social/group-battles", authenticated=True)["offers"]
+
+    def create_group_battle(self, character_id, location="backyard", ttl=120, max_participants=10):
+        return self._request("POST", "/api/social/group-battles", {"character_id": character_id, "location": location, "ttl": ttl, "max_participants": max_participants}, authenticated=True)
+
+    def join_group_battle(self, offer_id, character_id, location="backyard"):
+        return self._request(
+            "POST",
+            f"/api/social/group-battles/{offer_id}/join",
+            {"character_id": character_id, "location": location},
+            authenticated=True,
+        )
+
+    def leave_group_battle(self, offer_id, character_id):
+        return self._request("POST", f"/api/social/group-battles/{offer_id}/leave", {"character_id": character_id}, authenticated=True)
 
     def disconnect(self, character=None):
         payload = None
