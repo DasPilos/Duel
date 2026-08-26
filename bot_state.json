@@ -17,7 +17,7 @@
     "stat_points": 0,
     "zone": "backyard",
     "kind": "bot",
-    "updated_at": 1787781729.360943,
+    "updated_at": 1787781753.569372,
     "last_battle_at": 1787781258.7509625,
     "last_attack_at": 1787781198.2903082
   },
@@ -39,7 +39,7 @@
     "stat_points": 0,
     "zone": "backyard",
     "kind": "bot",
-    "updated_at": 1787781729.360943,
+    "updated_at": 1787781753.569372,
     "last_battle_at": 1787781198.2903082,
     "last_attack_at": 1787781198.2903082
   },
@@ -61,7 +61,7 @@
     "stat_points": 0,
     "zone": "backyard",
     "kind": "bot",
-    "updated_at": 1787781729.360943,
+    "updated_at": 1787781753.569372,
     "last_battle_at": 1787781440.1810467,
     "last_attack_at": 1787781440.1810467
   },
@@ -83,7 +83,7 @@
     "stat_points": 0,
     "zone": "backyard",
     "kind": "bot",
-    "updated_at": 1787781729.360943,
+    "updated_at": 1787781753.569372,
     "last_battle_at": 1787775616.9752843,
     "last_attack_at": 1787775616.9752843
   },
@@ -92,7 +92,7 @@
     "name": "Молния Пустоты",
     "level": 1,
     "xp": 78,
-    "hp": 113,
+    "hp": 125,
     "max_hp": 156,
     "mp": 50,
     "max_mp": 50,
@@ -106,7 +106,7 @@
     "zone": "tavern",
     "kind": "bot",
     "role": "critical",
-    "updated_at": 1787781729.360943,
+    "updated_at": 1787781753.569372,
     "last_battle_at": 1787781500.6427603,
     "last_attack_at": 1787781440.1810467
   },
@@ -129,7 +129,7 @@
     "zone": "backyard",
     "kind": "bot",
     "role": "critical",
-    "updated_at": 1787781729.360943,
+    "updated_at": 1787781753.569372,
     "last_battle_at": 1787781379.6799462,
     "last_attack_at": 1787781379.6799462
   },
@@ -138,7 +138,7 @@
     "name": "Ярость Пустошей",
     "level": 1,
     "xp": 91,
-    "hp": 46,
+    "hp": 58,
     "max_hp": 170,
     "mp": 50,
     "max_mp": 50,
@@ -152,7 +152,7 @@
     "zone": "tavern",
     "kind": "bot",
     "role": "critical",
-    "updated_at": 1787781728.3538272,
+    "updated_at": 1787781752.560965,
     "last_battle_at": 1787781635.5563047,
     "last_attack_at": 1787781635.5563047
   },
@@ -175,7 +175,7 @@
     "zone": "backyard",
     "kind": "bot",
     "role": "critical",
-    "updated_at": 1787781729.360943,
+    "updated_at": 1787781753.569372,
     "last_battle_at": 1787774077.3445396,
     "last_attack_at": 1787781500.6427603
   },
@@ -198,7 +198,7 @@
     "zone": "backyard",
     "kind": "bot",
     "role": "critical",
-    "updated_at": 1787781729.360943,
+    "updated_at": 1787781753.569372,
     "last_battle_at": 1787774016.8980713,
     "last_attack_at": 1787774016.8980713
   },
@@ -207,7 +207,7 @@
     "name": "Разрушитель Клятв",
     "level": 1,
     "xp": 40,
-    "hp": 79,
+    "hp": 91,
     "max_hp": 170,
     "mp": 50,
     "max_mp": 50,
@@ -221,7 +221,7 @@
     "zone": "tavern",
     "kind": "bot",
     "role": "critical",
-    "updated_at": 1787781728.3538272,
+    "updated_at": 1787781752.560965,
     "last_battle_at": 1787781696.059648,
     "last_attack_at": 1787781635.5563047
   },
@@ -244,7 +244,7 @@
     "zone": "backyard",
     "kind": "bot",
     "role": "agile",
-    "updated_at": 1787781729.360943,
+    "updated_at": 1787781753.569372,
     "last_battle_at": 1787781379.6799462,
     "last_attack_at": 1787781319.2040915
   },
@@ -267,7 +267,7 @@
     "zone": "backyard",
     "kind": "bot",
     "role": "agile",
-    "updated_at": 1787781729.360943,
+    "updated_at": 1787781753.569372,
     "last_battle_at": 1787781137.8534503,
     "last_attack_at": 1787781137.8534503
   },
@@ -290,7 +290,7 @@
     "zone": "backyard",
     "kind": "bot",
     "role": "agile",
-    "updated_at": 1787781729.360943,
+    "updated_at": 1787781753.569372,
     "last_battle_at": 1787781137.8534503,
     "last_attack_at": 1787781077.324689
   },
@@ -313,7 +313,7 @@
     "zone": "backyard",
     "kind": "bot",
     "role": "agile",
-    "updated_at": 1787781729.360943,
+    "updated_at": 1787781753.569372,
     "last_battle_at": 1787781077.324689,
     "last_attack_at": 1787781047.1077545
   },
@@ -336,7 +336,7 @@
     "zone": "backyard",
     "kind": "bot",
     "role": "agile",
-    "updated_at": 1787781729.360943,
+    "updated_at": 1787781753.569372,
     "last_battle_at": 1787781198.2903082,
     "last_attack_at": 1787781137.8534503
   },
@@ -359,7 +359,7 @@
     "zone": "backyard",
     "kind": "bot",
     "role": "agile",
-    "updated_at": 1787781729.360943,
+    "updated_at": 1787781753.569372,
     "last_battle_at": 1787781319.2040915,
     "last_attack_at": 1787781258.7509625
   },
@@ -368,7 +368,7 @@
     "name": "Гром Железнорук",
     "level": 1,
     "xp": 98,
-    "hp": 16,
+    "hp": 28,
     "max_hp": 254,
     "mp": 50,
     "max_mp": 50,
@@ -382,7 +382,7 @@
     "zone": "tavern",
     "kind": "bot",
     "role": "tank",
-    "updated_at": 1787781728.3538272,
+    "updated_at": 1787781752.560965,
     "last_battle_at": 1787781696.059648,
     "last_attack_at": 1787781696.059648
   },
@@ -405,7 +405,7 @@
     "zone": "backyard",
     "kind": "bot",
     "role": "tank",
-    "updated_at": 1787781729.360943,
+    "updated_at": 1787781753.569372,
     "last_battle_at": 1787781319.2040915,
     "last_attack_at": 1787781319.2040915
   },
@@ -414,7 +414,7 @@
     "name": "Живая Гора",
     "level": 1,
     "xp": 106,
-    "hp": 46,
+    "hp": 58,
     "max_hp": 268,
     "mp": 50,
     "max_mp": 50,
@@ -428,7 +428,7 @@
     "zone": "tavern",
     "kind": "bot",
     "role": "tank",
-    "updated_at": 1787781728.3538272,
+    "updated_at": 1787781752.560965,
     "last_battle_at": 1787781635.5563047,
     "last_attack_at": 1787781605.330934
   },
@@ -451,7 +451,7 @@
     "zone": "backyard",
     "kind": "bot",
     "role": "tank",
-    "updated_at": 1787781729.360943,
+    "updated_at": 1787781753.569372,
     "last_battle_at": 1787781258.7509625,
     "last_attack_at": 1787781258.7509625
   },
@@ -460,7 +460,7 @@
     "name": "Дробитель Черепов",
     "level": 1,
     "xp": 128,
-    "hp": 163,
+    "hp": 175,
     "max_hp": 212,
     "mp": 50,
     "max_mp": 50,
@@ -474,7 +474,7 @@
     "zone": "tavern",
     "kind": "bot",
     "role": "tank",
-    "updated_at": 1787781729.360943,
+    "updated_at": 1787781753.569372,
     "last_battle_at": 1787781500.6427603,
     "last_attack_at": 1787781500.6427603
   },
@@ -497,7 +497,7 @@
     "zone": "backyard",
     "kind": "bot",
     "role": "tank",
-    "updated_at": 1787781729.360943,
+    "updated_at": 1787781753.569372,
     "last_battle_at": 1787774137.8431695,
     "last_attack_at": 1787781696.059648
   },
@@ -506,7 +506,7 @@
     "name": "Король Кровавого Песка",
     "level": 1,
     "xp": 20,
-    "hp": 145,
+    "hp": 157,
     "max_hp": 198,
     "mp": 50,
     "max_mp": 50,
@@ -520,7 +520,7 @@
     "zone": "tavern",
     "kind": "bot",
     "role": "boss",
-    "updated_at": 1787781729.360943,
+    "updated_at": 1787781753.569372,
     "last_battle_at": 1787781440.1810467,
     "last_attack_at": 1787781379.6799462
   },
@@ -542,7 +542,7 @@
     "stat_points": 0,
     "zone": "backyard",
     "kind": "bot",
-    "updated_at": 1787781729.360943,
+    "updated_at": 1787781753.569372,
     "last_battle_at": 1787775616.9752843,
     "last_attack_at": 1787775556.5863736
   }
