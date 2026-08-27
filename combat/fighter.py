@@ -1,3 +1,9 @@
+from combat.character_stats import (
+    BASE_STAT_VALUE,
+    STARTING_STAT_POINTS,
+    adjust_stats,
+    calculate_max_hp,
+)
 from combat.progression import apply_xp
 
 
@@ -15,14 +21,14 @@ class Fighter:
 
         # Базовые характеристики
         self.stats = {
-            "strength": 5,
-            "agility": 5,
-            "intuition": 5,
-            "endurance": 5,
+            "strength": BASE_STAT_VALUE,
+            "agility": BASE_STAT_VALUE,
+            "intuition": BASE_STAT_VALUE,
+            "endurance": BASE_STAT_VALUE,
         }
 
         # Очки для распределения
-        self.stat_points = 6
+        self.stat_points = STARTING_STAT_POINTS
 
         if auto_allocate:
             self.random_allocate_points()
@@ -56,52 +62,47 @@ class Fighter:
 
     def recalculate_parameters(self):
         """Пересчитывает производные параметры бойца."""
-        self.max_hp = (
-            100
-            + 20 * (self.level - 1)
-            + self.endurance * 14
-        )
+        self.max_hp = calculate_max_hp(self.level, self.endurance)
 
     def add_stat(self, stat_name):
         """Добавляет одно очко характеристики."""
-        if stat_name not in self.stats:
+        updated_state = adjust_stats(
+            self.stats,
+            self.stat_points,
+            self.hp,
+            self.max_hp,
+            self.level,
+            stat_name,
+            1,
+        )
+        if updated_state is None:
             return False
 
-        if self.stat_points <= 0:
-            return False
-
-        self.stats[stat_name] += 1
-        self.stat_points -= 1
-
-        old_max_hp = self.max_hp
-        self.recalculate_parameters()
-
-        # При распределении характеристик здоровье должно быть полным.
-        # Особенно важно при увеличении выносливости.
-        if stat_name == "endurance":
-            self.hp += self.max_hp - old_max_hp
-        else:
-            self.hp = min(self.hp, self.max_hp)
+        self.stats.update(updated_state["stats"])
+        self.stat_points = updated_state["stat_points"]
+        self.hp = updated_state["hp"]
+        self.max_hp = updated_state["max_hp"]
 
         return True
 
     def remove_stat(self, stat_name):
         """Убирает одно очко характеристики."""
-        if stat_name not in self.stats:
+        updated_state = adjust_stats(
+            self.stats,
+            self.stat_points,
+            self.hp,
+            self.max_hp,
+            self.level,
+            stat_name,
+            -1,
+        )
+        if updated_state is None:
             return False
 
-        # Нельзя уменьшить характеристику ниже 4
-        if self.stats[stat_name] <= 4:
-            return False
-
-        self.stats[stat_name] -= 1
-        self.stat_points += 1
-
-        self.recalculate_parameters()
-
-        # Если максимум уменьшился, текущее здоровье
-        # не должно превышать новый максимум.
-        self.hp = min(self.hp, self.max_hp)
+        self.stats.update(updated_state["stats"])
+        self.stat_points = updated_state["stat_points"]
+        self.hp = updated_state["hp"]
+        self.max_hp = updated_state["max_hp"]
 
         return True
 

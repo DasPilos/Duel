@@ -123,11 +123,9 @@ class OnlineSession:
     def leave_group_battle(self, offer_id):
         return self.client.leave_group_battle(offer_id, self.character["id"])
 
-    def save_fighter(self, fighter):
-        if self.character is None:
-            return None
-        payload = {
-            **self.character,
+    @staticmethod
+    def _fighter_payload(fighter):
+        return {
             "name": fighter.name,
             "level": fighter.level,
             "xp": fighter.xp,
@@ -137,6 +135,14 @@ class OnlineSession:
             "max_mp": fighter.max_mp,
             "stats": dict(fighter.stats),
             "stat_points": fighter.stat_points,
+        }
+
+    def save_fighter(self, fighter):
+        if self.character is None:
+            return None
+        payload = {
+            **self.character,
+            **self._fighter_payload(fighter),
         }
         self.character = self.client.save_character(payload)
         return self.character

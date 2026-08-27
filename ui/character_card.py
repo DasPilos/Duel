@@ -1,6 +1,7 @@
 import pygame
 from types import SimpleNamespace
 
+from combat.character_stats import adjust_stats
 from combat.progression import xp_to_next
 from combat.mechanics import get_critical_chance, get_dodge_chance
 from core import settings
@@ -105,21 +106,20 @@ class CharacterCard:
 
     def adjust_stat(self, stat_name, delta):
         """Apply a stat change to the canonical card state."""
-        stats = self.state["stats"]
-        if stat_name not in stats or delta not in (-1, 1):
-            return False
-        if delta > 0 and self.state["stat_points"] <= 0:
-            return False
-        if delta < 0 and stats[stat_name] <= 4:
+        updated_state = adjust_stats(
+            self.state["stats"],
+            self.state["stat_points"],
+            self.state["hp"],
+            self.state["max_hp"],
+            self.state["level"],
+            stat_name,
+            delta,
+        )
+        if updated_state is None:
             return False
 
-        previous_max_hp = self.state["max_hp"]
-        stats[stat_name] += delta
-        self.state["stat_points"] -= delta
-        self.state["max_hp"] = 100 + 20 * (self.state["level"] - 1) + stats["endurance"] * 14
-        if stat_name == "endurance" and delta > 0:
-            self.state["hp"] += self.state["max_hp"] - previous_max_hp
-        self.state["hp"] = min(self.state["hp"], self.state["max_hp"])
+        self.state["stats"].update(updated_state.pop("stats"))
+        self.state.update(updated_state)
         return True
 
     def update_from_fighter(self, fighter, *, title=None, kind="player"):
