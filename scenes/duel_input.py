@@ -59,9 +59,6 @@ class DuelInputHandler:
             return
 
     def _handle_log_scroll(self, direction):
-        if self.scene.phase == "setup":
-            return
-
         current_offset = getattr(
             self.scene,
             "log_scroll_offset",

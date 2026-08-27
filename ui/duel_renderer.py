@@ -11,7 +11,6 @@ from ui.hud import (
 )
 
 from ui.character_card import CharacterCard
-from ui.renderers.setup_area import SetupAreaRenderer
 from ui.renderers.choice_area import ChoiceAreaRenderer
 from ui.renderers.duel_result import DuelResultRenderer
 
@@ -23,11 +22,6 @@ class DuelRenderer:
 
         self.player_card = CharacterCard()
         self.enemy_card = CharacterCard()
-
-        self.setup_renderer = SetupAreaRenderer(
-            scene,
-            self.layout,
-        )
 
         self.choice_renderer = ChoiceAreaRenderer(
             scene,
@@ -63,10 +57,7 @@ class DuelRenderer:
             opponent=self.scene.player,
         )
 
-        if self.scene.phase == "setup":
-            self.setup_renderer.draw(screen)
-
-        elif self.scene.phase == "choose":
+        if self.scene.phase == "choose":
             self.choice_renderer.draw(screen)
             self.draw_turn_timer(screen)
 

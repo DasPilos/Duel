@@ -178,12 +178,6 @@ class CharacterCard:
         )
         return minus, plus
 
-    @staticmethod
-    def _value(profile, key, default):
-        if isinstance(profile, dict):
-            return profile.get(key, default)
-        return getattr(profile, key, default)
-
     def _draw_resource(self, screen, x, y, width, height, name, value, maximum, color):
         draw_text(screen, self.small_font, f"{name}: {value}/{maximum}", x, y - 24, (220, 225, 235))
         draw_bar(screen, x, y, width, height, value, maximum, fg=color)
