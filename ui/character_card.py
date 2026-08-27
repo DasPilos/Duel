@@ -1,77 +1,15 @@
 import pygame
-from types import SimpleNamespace
 
-from combat.character_stats import adjust_stats
 from combat.progression import xp_to_next
-from combat.mechanics import get_critical_chance, get_dodge_chance
 from core import settings
+from ui.character_profile import (
+    adjust_profile_stat,
+    derived_values,
+    normalize_character_profile,
+    profile_from_fighter,
+)
 from ui.hud import draw_bar, draw_button, draw_text
 from ui.sprite_loader import FighterSprite
-
-
-def normalize_character_profile(profile, *, title=None, kind="player"):
-    """Return one canonical card model regardless of scene-specific raw source."""
-    data = profile or {}
-    if hasattr(data, "stats") and not isinstance(data, dict):
-        profile_dict = {
-            "id": getattr(data, "id", getattr(data, "character_id", None)),
-            "character_id": getattr(data, "character_id", getattr(data, "id", None)),
-            "name": getattr(data, "name", "Персонаж"),
-            "level": getattr(data, "level", 1),
-            "xp": getattr(data, "xp", 0),
-            "hp": getattr(data, "hp", 0),
-            "max_hp": getattr(data, "max_hp", 0),
-            "mp": getattr(data, "mp", 0),
-            "max_mp": getattr(data, "max_mp", 0),
-            "stats": dict(getattr(data, "stats", {})),
-            "stat_points": getattr(data, "stat_points", 0),
-            "kind": kind,
-        }
-    elif isinstance(data, dict):
-        profile_dict = {
-            "id": data.get("id", data.get("character_id", None)),
-            "character_id": data.get("character_id", data.get("id", None)),
-            "name": data.get("name", "Персонаж"),
-            "level": int(data.get("level", 1)),
-            "xp": data.get("xp", 0),
-            "hp": data.get("hp", data.get("current_hp", 0)),
-            "max_hp": data.get("max_hp", data.get("hp_max", data.get("max_hp", 0))),
-            "mp": data.get("mp", data.get("current_mp", 0)),
-            "max_mp": data.get("max_mp", data.get("mp_max", data.get("max_mp", 0))),
-            "stats": dict(data.get("stats", {})),
-            "stat_points": data.get("stat_points", 0),
-            "kind": kind,
-        }
-    else:
-        profile_dict = {
-            "id": None,
-            "character_id": None,
-            "name": "Персонаж",
-            "level": 1,
-            "xp": 0,
-            "hp": 0,
-            "max_hp": 0,
-            "mp": 0,
-            "max_mp": 0,
-            "stats": {},
-            "stat_points": 0,
-            "kind": kind,
-        }
-
-    profile_dict["max_hp"] = max(int(profile_dict["max_hp"]), 1)
-    profile_dict["max_mp"] = max(int(profile_dict["max_mp"]), 1)
-    profile_dict["hp"] = min(int(profile_dict["hp"]), profile_dict["max_hp"])
-    profile_dict["mp"] = min(int(profile_dict["mp"]), profile_dict["max_mp"])
-    profile_dict["title"] = title
-    if not profile_dict["stats"]:
-        profile_dict["stats"] = {
-            "strength": 5,
-            "agility": 5,
-            "intuition": 5,
-            "endurance": 5,
-        }
-
-    return profile_dict
 
 
 class CharacterCard:
@@ -106,36 +44,10 @@ class CharacterCard:
 
     def adjust_stat(self, stat_name, delta):
         """Apply a stat change to the canonical card state."""
-        updated_state = adjust_stats(
-            self.state["stats"],
-            self.state["stat_points"],
-            self.state["hp"],
-            self.state["max_hp"],
-            self.state["level"],
-            stat_name,
-            delta,
-        )
-        if updated_state is None:
-            return False
-
-        self.state["stats"].update(updated_state.pop("stats"))
-        self.state.update(updated_state)
-        return True
+        return adjust_profile_stat(self.state, stat_name, delta)
 
     def update_from_fighter(self, fighter, *, title=None, kind="player"):
-        self.sync({
-            "id": getattr(fighter, "id", None),
-            "character_id": getattr(fighter, "character_id", getattr(fighter, "id", None)),
-            "name": getattr(fighter, "name", "Персонаж"),
-            "level": getattr(fighter, "level", 1),
-            "xp": getattr(fighter, "xp", 0),
-            "hp": getattr(fighter, "hp", 0),
-            "max_hp": getattr(fighter, "max_hp", 0),
-            "mp": getattr(fighter, "mp", 0),
-            "max_mp": getattr(fighter, "max_mp", 0),
-            "stats": getattr(fighter, "stats", {}),
-            "stat_points": getattr(fighter, "stat_points", 0),
-        }, title=title, kind=kind)
+        self.sync(profile_from_fighter(fighter), title=title, kind=kind)
         return self.state
 
     def draw(
@@ -246,29 +158,7 @@ class CharacterCard:
 
     @staticmethod
     def _derived_values(profile, opponent):
-        if opponent is None:
-            return {"Урон": "--", "Уворот": "--", "Крит": "--", "HP": profile["max_hp"]}
-
-        opponent = normalize_character_profile(opponent)
-
-        fighter = SimpleNamespace(
-            strength=profile["stats"]["strength"],
-            agility=profile["stats"]["agility"],
-            intuition=profile["stats"]["intuition"],
-            endurance=profile["stats"]["endurance"],
-        )
-        enemy = SimpleNamespace(
-            strength=opponent["stats"]["strength"],
-            agility=opponent["stats"]["agility"],
-            intuition=opponent["stats"]["intuition"],
-            endurance=opponent["stats"]["endurance"],
-        )
-        return {
-            "Урон": max(1, int(fighter.strength * 3 - enemy.endurance * 0.5)),
-            "Уворот": f"{int(get_dodge_chance(enemy, fighter))}%",
-            "Крит": f"{int(get_critical_chance(fighter, enemy))}%",
-            "HP": profile["max_hp"],
-        }
+        return derived_values(profile, opponent)
 
     @staticmethod
     def _stat_control_rects(frame, row_y):

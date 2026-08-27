@@ -7,6 +7,7 @@ from combat.fighter import Fighter
 from scenes.tavern_scene import TavernScene
 from ui.chat.panel import ChatPanel
 from ui.character_card import CharacterCard
+from ui.character_profile import derived_values, normalize_character_profile, profile_from_fighter
 from ui.character_profile_overlay import CharacterProfileOverlay
 
 
@@ -14,6 +15,18 @@ class CharacterStatTests(unittest.TestCase):
     def test_max_hp_formula_matches_level_and_endurance(self):
         self.assertEqual(calculate_max_hp(1, 5), 170)
         self.assertEqual(calculate_max_hp(3, 7), 238)
+
+    def test_profile_model_normalizes_fighter_and_derived_values(self):
+        fighter = Fighter("Тест")
+        profile = normalize_character_profile(profile_from_fighter(fighter))
+
+        self.assertEqual(profile["stats"], fighter.stats)
+        self.assertEqual(derived_values(profile, fighter), {
+            "Урон": 12,
+            "Уворот": "5%",
+            "Крит": "10%",
+            "HP": 170,
+        })
 
     def test_endurance_increase_preserves_gained_health(self):
         state = adjust_stats(
