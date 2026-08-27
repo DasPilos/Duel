@@ -276,7 +276,14 @@ class ChatPanel:
             pygame.draw.rect(screen, (170, 180, 210), thumb, border_radius=3)
         screen.set_clip(self.people_rect.inflate(-12, 0))
         for visible_index, occupant in enumerate(self.occupants[self.people_scroll:self.people_scroll + visible_rows]):
-            draw_text(screen, pygame.font.SysFont("arial", 16), occupant.get("name", ""), people_x + 4, self.people_rect.y + visible_index * row_height + 4, (215, 215, 225))
+            draw_text(
+                screen,
+                pygame.font.SysFont("arial", 16),
+                occupant.get("name", ""),
+                people_x + settings.CHAT_PEOPLE_TEXT_LEFT_PADDING,
+                self.people_rect.y + visible_index * row_height + 4,
+                (215, 215, 225),
+            )
         screen.set_clip(previous_clip)
         if self.error:
             draw_text(screen, pygame.font.SysFont("arial", 14), self.error, self.panel_rect.x + 12, self.panel_rect.bottom - 20, (255, 120, 100))

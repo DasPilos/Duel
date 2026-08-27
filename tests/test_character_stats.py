@@ -187,6 +187,40 @@ class CharacterStatTests(unittest.TestCase):
         finally:
             pygame.quit()
 
+    def test_chat_rewraps_messages_after_divider_moves(self):
+        pygame.init()
+        try:
+            class Session:
+                character = {"id": 1, "name": "Игрок"}
+
+                def update_presence(self, location):
+                    return None
+
+                def list_occupants(self, location):
+                    return []
+
+                def list_messages(self, location):
+                    return []
+
+                def duel_board(self, location):
+                    return {"offers": []}
+
+            panel = ChatPanel(Session(), "tavern")
+            panel.messages = [{"id": 1, "sender_id": 2, "sender": "Игрок", "text": "длинное сообщение " * 20}]
+            panel.message_list.set_messages(panel.messages)
+            screen = pygame.Surface((1920, 1080))
+            panel.draw(screen)
+            wide_line_count = len(panel.message_list._layout[0][0])
+
+            panel._move_divider(panel.divider_rect.centerx - 120)
+            panel.draw(screen)
+            narrow_line_count = len(panel.message_list._layout[0][0])
+
+            self.assertGreater(narrow_line_count, wide_line_count)
+            self.assertEqual(panel.message_list._layout_width, panel.message_list.rect.width)
+        finally:
+            pygame.quit()
+
     def test_tavern_backyard_hotspot_remains_clickable(self):
         pygame.init()
         try:

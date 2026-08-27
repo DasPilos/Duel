@@ -107,14 +107,17 @@ class MessageList:
         self.messages = []
         self._layout = []
         self._layout_own_id = None
+        self._layout_width = None
 
     def set_messages(self, messages):
         self.messages = list(messages)
         self._layout_own_id = None
+        self._layout_width = None
 
     def set_rect(self, rect):
         self.rect = pygame.Rect(rect)
         self._layout_own_id = None
+        self._layout_width = None
 
     def _layout_messages(self, own_id):
         max_width = max(40, self.rect.width - 4)
@@ -127,13 +130,14 @@ class MessageList:
             self._layout.append((lines, y, height))
             y += height + 4
         self._layout_own_id = own_id
+        self._layout_width = self.rect.width
 
     def _max_scroll(self):
         total_height = self._layout[-1][1] + self._layout[-1][2] if self._layout else 0
         return max(0, total_height - self.rect.height + 8)
 
     def draw(self, screen, own_id):
-        if self._layout_own_id != own_id:
+        if self._layout_own_id != own_id or self._layout_width != self.rect.width:
             self._layout_messages(own_id)
             if self.follow_latest:
                 self.scroll = self._max_scroll()
