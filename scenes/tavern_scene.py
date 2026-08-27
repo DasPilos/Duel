@@ -42,6 +42,12 @@ class TavernScene:
         if self.chat.handle_event(event):
             return
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            action, profile = self.profile_overlay.handle_click(event.pos)
+            if action == "stat_change":
+                self._save_profile_card(profile)
+                return
+            if action in ("handled", "close"):
+                return
             for _, x, y, width, height, action in self.tavern_hotspots:
                 if action is not None and self._hotspot_rect(x, y, width, height).collidepoint(event.pos):
                     self.navigate = action
@@ -89,6 +95,9 @@ class TavernScene:
 
         self.chat.draw(screen)
         self.profile_overlay.draw(screen, opponent=self.session.character)
+
+    def _save_profile_card(self, profile):
+        self.session.save_character_profile(profile)
 
     def close(self):
         pass

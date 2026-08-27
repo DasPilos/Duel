@@ -38,8 +38,17 @@ class CharacterProfileOverlay:
     def handle_click(self, position):
         if self.is_open and self.close_button.collidepoint(position):
             self.close()
-            return True
-        return False
+            return "close", None
+        if not self.is_open:
+            return None, None
+
+        change = self.player_card.stat_control_at(self.player_frame, position)
+        if change is None:
+            return None, None
+        stat_name, delta = change
+        if self.player_card.adjust_stat(stat_name, delta):
+            return "stat_change", self.player_card.data
+        return "handled", None
 
     def draw(self, screen, opponent=None, show_counterpart=True):
         if not self.is_open:

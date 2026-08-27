@@ -5,6 +5,7 @@ import pygame
 from combat.character_stats import adjust_stats, calculate_max_hp
 from combat.fighter import Fighter
 from ui.character_card import CharacterCard
+from ui.character_profile_overlay import CharacterProfileOverlay
 
 
 class CharacterStatTests(unittest.TestCase):
@@ -60,6 +61,32 @@ class CharacterStatTests(unittest.TestCase):
             self.assertEqual(card.data["stat_points"], fighter.stat_points)
             self.assertEqual(card.data["hp"], fighter.hp)
             self.assertEqual(card.data["max_hp"], fighter.max_hp)
+        finally:
+            pygame.quit()
+
+    def test_profile_overlay_applies_player_card_stat_click(self):
+        pygame.init()
+        try:
+            overlay = CharacterProfileOverlay(pygame.font.Font(None, 18))
+            overlay.open({"name": "Соперник", "stats": {}})
+            overlay.player_card.sync({
+                "name": "Игрок",
+                "level": 1,
+                "hp": 170,
+                "max_hp": 170,
+                "stats": {"strength": 5, "agility": 5, "intuition": 5, "endurance": 5},
+                "stat_points": 6,
+            })
+            _, plus = overlay.player_card._stat_control_rects(
+                overlay.player_frame,
+                overlay.player_frame.bottom - 92,
+            )
+
+            action, profile = overlay.handle_click(plus.center)
+
+            self.assertEqual(action, "stat_change")
+            self.assertEqual(profile["stats"]["strength"], 6)
+            self.assertEqual(profile["stat_points"], 5)
         finally:
             pygame.quit()
 

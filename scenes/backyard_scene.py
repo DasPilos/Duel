@@ -46,6 +46,12 @@ class BackyardScene:
                 self.application_popup = None
             return
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            action, profile = self.profile_overlay.handle_click(event.pos)
+            if action == "stat_change":
+                self._save_profile_card(profile)
+                return
+            if action in ("handled", "close"):
+                return
             for button in self.navigation_buttons:
                 if button["rect"].collidepoint(event.pos):
                     self.navigate = button["target"]
