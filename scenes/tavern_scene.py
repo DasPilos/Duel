@@ -18,14 +18,14 @@ class TavernScene:
         self.profile_overlay = CharacterProfileOverlay(self.small_font)
         self.chat = ChatPanel(session, "tavern", profile_overlay=self.profile_overlay)
         self.navigate = None
-        # Эталонная ручная разметка (см память проекта): координаты заданы относительно chat.panel_rect и не пересчитываются автоматически.
+        # Горячие зоны привязаны к фону таверны, а не к размерам чата.
         self.tavern_hotspots = (
-            ("Выход на улицу", -400, -390, 130, 300, None),
-            ("Главный зал", 384, -417, 126, 141, None),
-            ("Комната отдыха", 600, -347, 69, 85, None),
-            ("Задний двор", 1000, -400, 55, 153, "backyard"),
-            ("Хозяин трактира", 1000, -200, 85, 108, None),
-            ("Искатели приключений", -300, -11, 167, 121, None),
+            ("Выход на улицу", 160, 400, 130, 300, None),
+            ("Главный зал", 944, 373, 126, 141, None),
+            ("Комната отдыха", 1160, 443, 69, 85, None),
+            ("Задний двор", 1560, 390, 55, 153, "backyard"),
+            ("Хозяин трактира", 1560, 590, 85, 108, None),
+            ("Искатели приключений", 260, 779, 167, 121, None),
         )
         self.background = None
         background_path = Path(__file__).resolve().parent.parent / "assets" / "tavern" / "background_original.png"
@@ -35,8 +35,7 @@ class TavernScene:
             self.background = None
 
     def _hotspot_rect(self, x, y, width, height):
-        chat_rect = self.chat.panel_rect
-        return pygame.Rect(chat_rect.x + x, chat_rect.y + y, width, height)
+        return pygame.Rect(x, y, width, height)
 
     def handle_event(self, event):
         if self.chat.handle_event(event):

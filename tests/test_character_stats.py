@@ -244,6 +244,9 @@ class CharacterStatTests(unittest.TestCase):
                 hotspot for hotspot in scene.tavern_hotspots if hotspot[0] == "Задний двор"
             )
             rect = scene._hotspot_rect(x, y, width, height)
+            self.assertEqual(rect, pygame.Rect(1560, 390, 55, 153))
+            scene.chat.panel_rect.x += 100
+            self.assertEqual(scene._hotspot_rect(x, y, width, height), rect)
             event = pygame.event.Event(
                 pygame.MOUSEBUTTONDOWN,
                 {"button": 1, "pos": rect.center},
