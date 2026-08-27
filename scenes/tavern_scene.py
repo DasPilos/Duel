@@ -97,7 +97,9 @@ class TavernScene:
         self.profile_overlay.draw(screen, opponent=self.session.character)
 
     def _save_profile_card(self, profile):
-        self.session.save_character_profile(profile)
+        saved_profile = self.session.save_character_profile(profile)
+        if saved_profile is not None:
+            self.profile_overlay.update_counterpart(saved_profile)
 
     def close(self):
         pass

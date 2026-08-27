@@ -35,6 +35,9 @@ class CharacterProfileOverlay:
         self.profile = None
         self.counterpart = None
 
+    def update_counterpart(self, profile):
+        self.counterpart = dict(profile)
+
     def handle_click(self, position):
         if self.is_open and self.close_button.collidepoint(position):
             self.close()

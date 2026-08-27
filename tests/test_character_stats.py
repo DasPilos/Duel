@@ -220,9 +220,12 @@ class CharacterStatTests(unittest.TestCase):
             )
 
             scene.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, {"button": 1, "pos": plus.center}))
+            scene.draw(pygame.Surface((1920, 1080)))
+            scene.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, {"button": 1, "pos": plus.center}))
 
-            self.assertEqual(len(session.saved_profiles), 1)
+            self.assertEqual(len(session.saved_profiles), 2)
             self.assertEqual(session.saved_profiles[0]["stats"]["strength"], 6)
+            self.assertEqual(session.saved_profiles[1]["stats"]["strength"], 7)
         finally:
             pygame.quit()
 
