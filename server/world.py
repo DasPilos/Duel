@@ -159,7 +159,7 @@ def _load_bot_state():
     if not isinstance(payload, dict):
         return
     for opponent_id, opponent in payload.items():
-        if not isinstance(opponent, dict) or "id" not in opponent:
+        if opponent_id not in BOT_STATE or not isinstance(opponent, dict) or "id" not in opponent:
             continue
         BOT_STATE[opponent_id] = copy.deepcopy(opponent)
         BOT_UPDATED_AT[opponent_id] = float(opponent.get("updated_at", time.time()))
