@@ -51,7 +51,7 @@ class DuelRenderer:
             screen,
             self.layout.battle_player_card,
             border_color=(80, 180, 120),
-            editable=self.scene.phase != "result",
+            editable=False,
             opponent=self.scene.enemy,
         )
 

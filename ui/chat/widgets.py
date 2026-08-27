@@ -141,6 +141,15 @@ class MessageList:
                 continue
             self.item.draw(screen, lines, pygame.Rect(self.rect.x, item_top, self.rect.width, height), self.font)
         screen.set_clip(previous_clip)
+        max_scroll = self._max_scroll()
+        if max_scroll <= 0:
+            return
+        track_rect = pygame.Rect(self.rect.right - 8, self.rect.y + 4, 4, self.rect.height - 8)
+        pygame.draw.rect(screen, (50, 55, 66), track_rect, border_radius=3)
+        thumb_height = max(18, int((self.rect.height / max(1, self.rect.height + max_scroll)) * (self.rect.height - 10)))
+        thumb_y = self.rect.y + 7 + int(self.scroll / max_scroll * (self.rect.height - 14 - thumb_height))
+        thumb = pygame.Rect(self.rect.right - 8, thumb_y, 4, thumb_height)
+        pygame.draw.rect(screen, (170, 180, 210), thumb, border_radius=3)
 
     def wheel(self, direction):
         self.follow_latest = False

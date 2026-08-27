@@ -155,6 +155,9 @@ class DuelScene:
                     "large": False,
                 }
             ]
+        if self.chat is not None:
+            self.chat.channel = "Лог боя"
+            self.chat.message_list.set_messages(self.chat._visible_messages())
 
     def handle_event(self, event):
         if self.chat is not None and self.chat.handle_event(event):

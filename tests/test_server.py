@@ -11,6 +11,7 @@ from server.main import GameRequestHandler
 from server import social, world
 from client.state import ChatState
 from ui.chat.widgets import MessageList
+from scenes.duel_scene import DuelScene
 import pygame
 
 
@@ -191,6 +192,24 @@ class ServerPersistenceTests(unittest.TestCase):
         message_list.set_messages(message_list.messages)
 
         self.assertEqual(message_list.scroll, scroll_position)
+
+    def test_duel_scene_switches_chat_to_battle_log_when_fight_starts(self):
+        pygame.init()
+        scene = DuelScene()
+
+        class DummyChat:
+            def __init__(self):
+                self.channel = "Общий"
+                self.message_list = type("List", (), {"set_messages": lambda self, messages: None})()
+
+            def _visible_messages(self):
+                return []
+
+        scene.chat = DummyChat()
+        scene.start_battle_comments()
+
+        self.assertEqual(scene.chat.channel, "Лог боя")
+        pygame.quit()
 
     def test_duel_application_is_public_and_expires(self):
         user = self.database.register("tester", "password")

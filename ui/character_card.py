@@ -191,11 +191,24 @@ class CharacterCard:
         stats = normalized.get("stats", {})
         draw_text(screen, self.small_font, f"Свободные очки: {normalized['stat_points']}", x, stats_header_y - 22, (255, 220, 120))
         derived = self._derived_values(normalized, opponent)
-        derived_x = self._stat_text_right(frame) + settings.STAT_DERIVED_GAP
+        derived_x = self._stat_text_right(frame) + settings.STAT_DERIVED_GAP + 50
+        stat_value_colors = {
+            "Урон": (255, 255, 255),
+            "Уворот": (150, 220, 255),
+            "Крит": (255, 90, 90),
+            "HP": (110, 235, 120),
+        }
         for index, (key, label, derived_key) in enumerate(self._STAT_NAMES):
             row_y = frame.bottom - 92 + index * 20
             draw_text(screen, self.small_font, f"{label}: {stats.get(key, 0)}", x, row_y, (215, 220, 225))
-            draw_text(screen, self.small_font, f"{derived_key}: {derived[derived_key]}", derived_x, row_y, (220, 70, 70))
+            draw_text(
+                screen,
+                self.small_font,
+                f"{derived_key}: {derived[derived_key]}",
+                derived_x,
+                row_y,
+                stat_value_colors.get(derived_key, (220, 70, 70)),
+            )
             if editable:
                 minus, plus = self._stat_control_rects(frame, row_y)
                 draw_button(screen, minus, "-", self.small_font, color=(200, 90, 90))
@@ -243,17 +256,17 @@ class CharacterCard:
 
     @staticmethod
     def _stat_control_rects(frame, row_y):
-        # Keep the controls close to the labels with a 6 px gap between buttons.
-        text_right = CharacterCard._stat_text_right(frame)
+        text_right = CharacterCard._stat_text_right(frame) + settings.STAT_DERIVED_GAP + 7
+        control_top = row_y + 5
         minus = pygame.Rect(
             text_right + settings.STAT_CONTROL_GAP,
-            row_y + 1,
+            control_top,
             settings.STAT_BTN_W,
             settings.STAT_BTN_H,
         )
         plus = pygame.Rect(
             minus.right + settings.STAT_BUTTON_GAP,
-            row_y + 1,
+            control_top,
             settings.STAT_BTN_W,
             settings.STAT_BTN_H,
         )

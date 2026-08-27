@@ -46,7 +46,8 @@ class ChatPanel:
         people_width = 150
         gap = 15
         content_y = self.panel_rect.y + 58
-        content_height = self.panel_rect.height - 110
+        input_y = self.panel_rect.bottom - 35
+        content_height = max(80, input_y - content_y - 10)
         message_x = self.panel_rect.x + 12
         people_x = self.panel_rect.right - people_width - gap
         message_width = people_x - message_x - gap
@@ -58,18 +59,18 @@ class ChatPanel:
             pygame.Rect(self.panel_rect.x + 12, self.panel_rect.y + 10, 220, 25),
             font_channel,
         )
-        self.message_list = MessageList(
-            pygame.Rect(message_x, content_y, max(240, message_width), content_height),
-            font_message,
-        )
         self.message_input = MessageInput(
             pygame.Rect(
                 self.panel_rect.x + 5,
-                self.panel_rect.bottom - 30,
+                input_y,
                 max(240, people_x - self.panel_rect.x - 10),
                 25,
             ),
             pygame.font.SysFont("arial", 15),
+        )
+        self.message_list = MessageList(
+            pygame.Rect(message_x, content_y, max(240, message_width), content_height),
+            font_message,
         )
         self.people_rect = pygame.Rect(
             people_x,
@@ -242,13 +243,20 @@ class ChatPanel:
         people_x = self.people_rect.x
         draw_text(screen, pygame.font.SysFont("arial", 17), self.room_name, people_x, self.panel_rect.y + 14, (255, 220, 120))
         previous_clip = screen.get_clip()
-        screen.set_clip(self.people_rect)
+        track_rect = pygame.Rect(self.people_rect.right - 8, self.people_rect.y + 4, 4, self.people_rect.height - 8)
+        pygame.draw.rect(screen, (50, 55, 66), track_rect, border_radius=3)
         row_height = 28
         visible_rows = max(1, self.people_rect.height // row_height)
         max_scroll = max(0, len(self.occupants) - visible_rows)
         self.people_scroll = max(0, min(max_scroll, self.people_scroll))
+        if max_scroll:
+            thumb_height = max(18, int((visible_rows / max(1, len(self.occupants))) * (self.people_rect.height - 14)))
+            thumb_y = self.people_rect.y + 7 + int(self.people_scroll / max_scroll * (self.people_rect.height - 14 - thumb_height))
+            thumb = pygame.Rect(self.people_rect.right - 8, thumb_y, 4, thumb_height)
+            pygame.draw.rect(screen, (170, 180, 210), thumb, border_radius=3)
+        screen.set_clip(self.people_rect.inflate(-12, 0))
         for visible_index, occupant in enumerate(self.occupants[self.people_scroll:self.people_scroll + visible_rows]):
-            draw_text(screen, pygame.font.SysFont("arial", 16), occupant.get("name", ""), people_x, self.people_rect.y + visible_index * row_height, (215, 215, 225))
+            draw_text(screen, pygame.font.SysFont("arial", 16), occupant.get("name", ""), people_x + 4, self.people_rect.y + visible_index * row_height + 4, (215, 215, 225))
         screen.set_clip(previous_clip)
         if self.error:
             draw_text(screen, pygame.font.SysFont("arial", 14), self.error, self.panel_rect.x + 12, self.panel_rect.bottom - 20, (255, 120, 100))

@@ -51,8 +51,15 @@ class CharacterProfileOverlay:
                 screen,
                 self.player_frame,
                 border_color=(80, 180, 120),
+                editable=True,
                 opponent=self.profile,
             )
         self.card.sync(self.profile, title="ПРОФИЛЬ ПЕРСОНАЖА", kind=self.profile.get("kind", "player"))
-        self.card.draw(screen, self.frame, border_color=(210, 100, 90), opponent=opponent)
+        self.card.draw(
+            screen,
+            self.frame,
+            border_color=(210, 100, 90),
+            editable=False,
+            opponent=opponent,
+        )
         draw_button(screen, self.close_button, "ЗАКРЫТЬ", self.action_font, color=(70, 75, 90))
