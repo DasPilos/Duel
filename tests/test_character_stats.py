@@ -173,6 +173,59 @@ class CharacterStatTests(unittest.TestCase):
         finally:
             pygame.quit()
 
+    def test_tavern_stat_click_saves_updated_profile(self):
+        pygame.init()
+        try:
+            class Session:
+                character = {
+                    "id": 1,
+                    "name": "Игрок",
+                    "level": 1,
+                    "xp": 0,
+                    "hp": 170,
+                    "max_hp": 170,
+                    "mp": 50,
+                    "max_mp": 50,
+                    "stats": {"strength": 5, "agility": 5, "intuition": 5, "endurance": 5},
+                    "stat_points": 6,
+                }
+
+                def __init__(self):
+                    self.saved_profiles = []
+
+                def update_presence(self, location):
+                    return None
+
+                def list_occupants(self, location):
+                    return []
+
+                def list_messages(self, location):
+                    return []
+
+                def duel_board(self, location):
+                    return {"offers": []}
+
+                def save_character_profile(self, profile):
+                    self.saved_profiles.append(profile)
+                    self.character = dict(profile)
+                    return self.character
+
+            session = Session()
+            scene = TavernScene(session)
+            scene.profile_overlay.open({"id": 2, "name": "Соперник", "stats": {}}, counterpart=session.character)
+            scene.draw(pygame.Surface((1920, 1080)))
+            _, plus = scene.profile_overlay.player_card._stat_control_rects(
+                scene.profile_overlay.player_frame,
+                scene.profile_overlay.player_frame.bottom - 92,
+            )
+
+            scene.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, {"button": 1, "pos": plus.center}))
+
+            self.assertEqual(len(session.saved_profiles), 1)
+            self.assertEqual(session.saved_profiles[0]["stats"]["strength"], 6)
+        finally:
+            pygame.quit()
+
 
 if __name__ == "__main__":
     unittest.main()

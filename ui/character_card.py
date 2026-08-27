@@ -211,8 +211,24 @@ class CharacterCard:
             )
             if editable:
                 minus, plus = self._stat_control_rects(frame, row_y)
-                draw_button(screen, minus, "-", self.small_font, color=(200, 90, 90))
-                draw_button(screen, plus, "+", self.small_font, color=(80, 200, 120))
+                draw_button(
+                    screen,
+                    minus,
+                    "-",
+                    self.small_font,
+                    color=(235, 235, 235),
+                    hover_color=(210, 80, 80),
+                    text_color=(30, 32, 45),
+                )
+                draw_button(
+                    screen,
+                    plus,
+                    "+",
+                    self.small_font,
+                    color=(235, 235, 235),
+                    hover_color=(80, 200, 120),
+                    text_color=(30, 32, 45),
+                )
 
     _STAT_NAMES = (
         ("strength", "Сила", "Урон"),
