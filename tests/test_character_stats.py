@@ -92,6 +92,19 @@ class CharacterStatTests(unittest.TestCase):
         finally:
             pygame.quit()
 
+    def test_stat_buttons_grow_without_moving(self):
+        pygame.init()
+        try:
+            frame = pygame.Rect(20, 120, 500, 955)
+            minus, plus = CharacterCard._stat_control_rects(frame, frame.bottom - 92)
+
+            self.assertEqual(minus.topleft, (176, 988))
+            self.assertEqual(plus.topleft, (195, 988))
+            self.assertEqual(minus.size, (13, 13))
+            self.assertEqual(plus.size, (13, 13))
+        finally:
+            pygame.quit()
+
     def test_chat_right_click_opens_profile_overlay(self):
         pygame.init()
         try:
