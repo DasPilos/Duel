@@ -4,6 +4,8 @@ import pygame
 
 from combat.character_stats import adjust_stats, calculate_max_hp
 from combat.fighter import Fighter
+from scenes.tavern_scene import TavernScene
+from ui.chat.panel import ChatPanel
 from ui.character_card import CharacterCard
 from ui.character_profile_overlay import CharacterProfileOverlay
 
@@ -87,6 +89,74 @@ class CharacterStatTests(unittest.TestCase):
             self.assertEqual(action, "stat_change")
             self.assertEqual(profile["stats"]["strength"], 6)
             self.assertEqual(profile["stat_points"], 5)
+        finally:
+            pygame.quit()
+
+    def test_chat_right_click_opens_profile_overlay(self):
+        pygame.init()
+        try:
+            class Session:
+                character = {"id": 1, "name": "Игрок"}
+
+                def update_presence(self, location):
+                    return None
+
+                def list_occupants(self, location):
+                    return []
+
+                def list_messages(self, location):
+                    return []
+
+                def duel_board(self, location):
+                    return {"offers": []}
+
+            overlay = CharacterProfileOverlay(pygame.font.Font(None, 18))
+            panel = ChatPanel(Session(), "tavern", profile_overlay=overlay)
+            panel.occupants = [{"character_id": 2, "name": "Соперник"}]
+            occupant_position = (panel.people_rect.x + 10, panel.people_rect.y + 10)
+            event = pygame.event.Event(
+                pygame.MOUSEBUTTONDOWN,
+                {"button": 3, "pos": occupant_position},
+            )
+
+            self.assertTrue(panel.handle_event(event))
+            self.assertTrue(overlay.is_open)
+            self.assertEqual(overlay.profile["name"], "Соперник")
+        finally:
+            pygame.quit()
+
+    def test_tavern_backyard_hotspot_remains_clickable(self):
+        pygame.init()
+        try:
+            class Session:
+                character = {"id": 1, "name": "Игрок"}
+
+                def update_presence(self, location):
+                    return None
+
+                def list_occupants(self, location):
+                    return []
+
+                def list_messages(self, location):
+                    return []
+
+                def duel_board(self, location):
+                    return {"offers": []}
+
+            scene = TavernScene(Session())
+            _, x, y, width, height, _ = next(
+                hotspot for hotspot in scene.tavern_hotspots if hotspot[0] == "Задний двор"
+            )
+            rect = scene._hotspot_rect(x, y, width, height)
+            event = pygame.event.Event(
+                pygame.MOUSEBUTTONDOWN,
+                {"button": 1, "pos": rect.center},
+            )
+
+            scene.handle_event(event)
+
+            self.assertTrue(scene.finished)
+            self.assertEqual(scene.navigate, "backyard")
         finally:
             pygame.quit()
 

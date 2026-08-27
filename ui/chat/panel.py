@@ -127,8 +127,6 @@ class ChatPanel:
             return self.message_input.handle_event(event)
         if event.type != pygame.MOUSEBUTTONDOWN:
             return False
-        if self.profile_overlay is not None and self.profile_overlay.handle_click(event.pos):
-            return True
         if self.collapsed:
             return False
         row_height = 28

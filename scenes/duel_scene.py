@@ -160,6 +160,10 @@ class DuelScene:
             self.chat.message_list.set_messages(self.chat._visible_messages())
 
     def handle_event(self, event):
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            action, _ = self.profile_overlay.handle_click(event.pos)
+            if action is not None:
+                return
         if self.chat is not None and self.chat.handle_event(event):
             return
         self.input_handler.handle_event(event)
