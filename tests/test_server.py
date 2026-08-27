@@ -135,6 +135,49 @@ class ServerPersistenceTests(unittest.TestCase):
         self.assertEqual([item["id"] for item in history], [first["id"], second["id"]])
         self.assertEqual(history[0]["text"], "<b>текст</b>")
 
+    def test_client_can_send_and_read_chat_message(self):
+        GameRequestHandler.database = self.database
+        http_server = ThreadingHTTPServer(("127.0.0.1", 0), GameRequestHandler)
+        thread = threading.Thread(target=http_server.serve_forever, daemon=True)
+        thread.start()
+        client = GameClient(f"http://127.0.0.1:{http_server.server_port}")
+
+        try:
+            client.register("chatuser", "password")
+            client.login("chatuser", "password")
+            character = client.create_character("Собеседник")
+            message = client.send_message(character["id"], "tavern", "Привет")
+            history = client.list_messages("tavern", character["id"])
+        finally:
+            http_server.shutdown()
+            http_server.server_close()
+
+        self.assertEqual(message["message"]["text"], "Привет")
+        self.assertEqual(history[-1]["text"], "Привет")
+
+    def test_legacy_social_message_route_remains_compatible(self):
+        GameRequestHandler.database = self.database
+        http_server = ThreadingHTTPServer(("127.0.0.1", 0), GameRequestHandler)
+        thread = threading.Thread(target=http_server.serve_forever, daemon=True)
+        thread.start()
+        client = GameClient(f"http://127.0.0.1:{http_server.server_port}")
+
+        try:
+            client.register("legacychat", "password")
+            client.login("legacychat", "password")
+            character = client.create_character("Старый чат")
+            result = client._request(
+                "POST",
+                "/api/social/messages",
+                {"character_id": character["id"], "location": "tavern", "text": "Совместимо"},
+                authenticated=True,
+            )
+        finally:
+            http_server.shutdown()
+            http_server.server_close()
+
+        self.assertEqual(result["message"]["text"], "Совместимо")
+
     def test_bot_tavern_reply_is_persisted_in_database(self):
         user = self.database.register("botchat", "password")
         character = self.database.create_character(user["id"], "Зритель")
@@ -210,6 +253,23 @@ class ServerPersistenceTests(unittest.TestCase):
 
         self.assertEqual(scene.chat.channel, "Лог боя")
         pygame.quit()
+
+    def test_duel_profile_close_click_is_consumed_before_battle_input(self):
+        pygame.init()
+        try:
+            scene = DuelScene()
+            scene.profile_overlay.open({"name": "Соперник", "stats": {}})
+            event = pygame.event.Event(
+                pygame.MOUSEBUTTONDOWN,
+                {"button": 1, "pos": scene.profile_overlay.close_button.center},
+            )
+
+            scene.handle_event(event)
+
+            self.assertFalse(scene.profile_overlay.is_open)
+            self.assertIsNone(scene.attack_zone)
+        finally:
+            pygame.quit()
 
     def test_duel_application_is_public_and_expires(self):
         user = self.database.register("tester", "password")

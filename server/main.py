@@ -58,6 +58,66 @@ class GameRequestHandler(BaseHTTPRequestHandler):
             raise ValueError("Слишком много сообщений. Подождите немного")
         timestamps.append(now)
 
+    def _handle_social_occupants(self):
+        token = self._token()
+        user_id = self.database.user_id_by_token(token)
+        location = self._query().get("location", ["tavern"])[0]
+        self._send(200, {"occupants": social.occupants(user_id, location)})
+
+    def _handle_chat_history(self, *, default_to_first_character=False):
+        query = self._query()
+        token = self._token()
+        user_id = self.database.user_id_by_token(token)
+        default_character_id = self.database.get_character(user_id)["id"] if default_to_first_character else 0
+        character_id = int(query.get("character_id", [default_character_id])[0])
+        self._chat_actor(token, character_id)
+        self._send(200, {
+            "messages": self.database.get_chat_history(
+                character_id,
+                query.get("location", ["tavern"])[0],
+                query.get("before_id", [None])[0],
+                query.get("limit", [50])[0],
+            )
+        })
+
+    def _handle_chat_unread(self):
+        query = self._query()
+        token = self._token()
+        character_id = int(query.get("character_id", [0])[0])
+        self._chat_actor(token, character_id)
+        location = query.get("location", ["tavern"])[0]
+        self._send(200, {"unread": self.database.chat_unread_count(character_id, location)})
+
+    def _handle_social_offers(self):
+        token = self._token()
+        user_id = self.database.user_id_by_token(token)
+        character = self.database.get_character(user_id)
+        location = self._query().get("location", ["tavern"])[0]
+        offers = social.offers_for(character["id"])
+        if location == "backyard":
+            offers += social.public_offers(location, character["id"])
+        self._send(200, {
+            "offers": offers,
+            "my_application": social.pending_public_offer(character["id"], location),
+        })
+
+    def _handle_chat_message(self, body, *, validation_error, prevent_self_message=False):
+        token = self._token()
+        character_id = int(body.get("character_id", 0))
+        _, character = self._chat_actor(token, character_id)
+        text = str(body.get("text", "")).strip()
+        if not 1 <= len(text) <= config.CHAT_MAX_LENGTH:
+            raise ValueError(validation_error)
+        self._check_chat_rate(character["id"])
+        location = str(body.get("location", "tavern"))
+        if self.database.is_muted(character["id"], location):
+            raise ValueError("Вы временно не можете отправлять сообщения")
+        recipient_id = body.get("recipient_id")
+        if prevent_self_message and recipient_id is not None and str(recipient_id) == str(character["id"]):
+            raise ValueError("Нельзя отправить сообщение самому себе")
+        message = self.database.add_chat_message(character["id"], location, text, recipient_id)
+        self._send(201, {"message": message})
+
     def do_GET(self):
         try:
             path = urlparse(self.path).path.rstrip("/")
@@ -78,49 +138,19 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                 self._send(200, {"opponents": self.database.get_opponents(user_id)})
                 return
             if path == "/api/social/occupants":
-                token = self._token()
-                user_id = self.database.user_id_by_token(token)
-                location = self.path.split("location=", 1)[1] if "location=" in self.path else "tavern"
-                self._send(200, {"occupants": social.occupants(user_id, location)})
+                self._handle_social_occupants()
                 return
             if path == "/api/social/messages":
-                token = self._token()
-                user_id = self.database.user_id_by_token(token)
-                query = self._query()
-                location = query.get("location", ["tavern"])[0]
-                character_id = int(query.get("character_id", [self.database.get_character(user_id)["id"]])[0])
-                self._chat_actor(token, character_id)
-                before_id = query.get("before_id", [None])[0]
-                limit = query.get("limit", [50])[0]
-                self._send(200, {"messages": self.database.get_chat_history(character_id, location, before_id, limit)})
+                self._handle_chat_history(default_to_first_character=True)
                 return
             if path == "/api/chat/history":
-                query = self._query()
-                token = self._token()
-                character_id = int(query.get("character_id", [0])[0])
-                self._chat_actor(token, character_id)
-                self._send(200, {"messages": self.database.get_chat_history(character_id, query.get("location", ["tavern"])[0], query.get("before_id", [None])[0], query.get("limit", [50])[0])})
+                self._handle_chat_history()
                 return
             if path == "/api/chat/unread":
-                query = self._query()
-                token = self._token()
-                character_id = int(query.get("character_id", [0])[0])
-                self._chat_actor(token, character_id)
-                location = query.get("location", ["tavern"])[0]
-                self._send(200, {"unread": self.database.chat_unread_count(character_id, location)})
+                self._handle_chat_unread()
                 return
             if path == "/api/social/offers":
-                token = self._token()
-                user_id = self.database.user_id_by_token(token)
-                character = self.database.get_character(user_id)
-                location = self.path.split("location=", 1)[1] if "location=" in self.path else "tavern"
-                offers = social.offers_for(character["id"])
-                if location == "backyard":
-                    offers += social.public_offers(location, character["id"])
-                self._send(200, {
-                    "offers": offers,
-                    "my_application": social.pending_public_offer(character["id"], location),
-                })
+                self._handle_social_offers()
                 return
             if path == "/api/social/group-battles":
                 self._token()
@@ -182,33 +212,17 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                 self._send(200, {"ok": True})
                 return
             if path == "/api/social/messages":
-                token = self._token()
-                user_id = self.database.user_id_by_token(token)
-                character = self.database.get_character(user_id, int(body["character_id"]))
-                text = str(body.get("text", "")).strip()
-                self._check_chat_rate(character["id"])
-                if self.database.is_muted(character["id"], body.get("location", "tavern")):
-                    raise ValueError("Вы временно не можете отправлять сообщения")
-                if character is None or not 1 <= len(text) <= config.CHAT_MAX_LENGTH:
-                    raise ValueError("Некорректное сообщение")
-                location = str(body.get("location", "tavern"))
-                recipient_id = body.get("recipient_id")
-                if recipient_id is not None and str(recipient_id) == str(character["id"]):
-                    raise ValueError("Нельзя отправить сообщение самому себе")
-                message = self.database.add_chat_message(character["id"], location, text, recipient_id)
-                self._send(201, {"message": message})
+                self._handle_chat_message(
+                    body,
+                    validation_error="Некорректное сообщение",
+                    prevent_self_message=True,
+                )
                 return
             if path == "/api/chat/messages":
-                token = self._token()
-                character_id = int(body.get("character_id", 0))
-                _, character = self._chat_actor(token, character_id)
-                text = str(body.get("text", "")).strip()
-                if not text or len(text) > config.CHAT_MAX_LENGTH:
-                    raise ValueError("Сообщение должно содержать от 1 до 300 символов")
-                self._check_chat_rate(character["id"])
-                if self.database.is_muted(character["id"], body.get("location", "tavern")):
-                    raise ValueError("Вы временно не можете отправлять сообщения")
-                self._send(201, {"message": self.database.add_chat_message(character["id"], str(body.get("location", "tavern")), text, body.get("recipient_id"))})
+                self._handle_chat_message(
+                    body,
+                    validation_error="Сообщение должно содержать от 1 до 300 символов",
+                )
                 return
             if path == "/api/chat/read":
                 token = self._token()
