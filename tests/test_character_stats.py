@@ -4,6 +4,7 @@ import pygame
 
 from combat.character_stats import adjust_stats, calculate_max_hp
 from combat.fighter import Fighter
+from core import settings
 from scenes.tavern_scene import TavernScene
 from ui.chat.panel import ChatPanel
 from ui.character_card import CharacterCard
@@ -148,6 +149,41 @@ class CharacterStatTests(unittest.TestCase):
             self.assertTrue(panel.handle_event(event))
             self.assertTrue(overlay.is_open)
             self.assertEqual(overlay.profile["name"], "Соперник")
+        finally:
+            pygame.quit()
+
+    def test_chat_divider_resizes_both_content_areas(self):
+        pygame.init()
+        try:
+            class Session:
+                character = {"id": 1, "name": "Игрок"}
+
+                def update_presence(self, location):
+                    return None
+
+                def list_occupants(self, location):
+                    return []
+
+                def list_messages(self, location):
+                    return []
+
+                def duel_board(self, location):
+                    return {"offers": []}
+
+            panel = ChatPanel(Session(), "tavern")
+            message_width = panel.message_list.rect.width
+            people_width = panel.people_rect.width
+            self.assertEqual(panel.panel_rect.left, 526)
+            self.assertEqual(panel.panel_rect.right, 1394)
+
+            panel.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, {"button": 1, "pos": panel.divider_rect.center}))
+            panel.handle_event(pygame.event.Event(pygame.MOUSEMOTION, {"pos": (panel.divider_rect.centerx - 80, panel.divider_rect.centery)}))
+            panel.handle_event(pygame.event.Event(pygame.MOUSEBUTTONUP, {"button": 1, "pos": panel.divider_rect.center}))
+
+            self.assertLess(panel.message_list.rect.width, message_width)
+            self.assertGreater(panel.people_rect.width, people_width)
+            self.assertEqual(panel.message_input.rect.right, panel.divider_rect.left - settings.CHAT_DIVIDER_GAP)
+            self.assertEqual(panel.people_rect.left, panel.divider_rect.right + settings.CHAT_DIVIDER_GAP)
         finally:
             pygame.quit()
 

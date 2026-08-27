@@ -112,6 +112,10 @@ class MessageList:
         self.messages = list(messages)
         self._layout_own_id = None
 
+    def set_rect(self, rect):
+        self.rect = pygame.Rect(rect)
+        self._layout_own_id = None
+
     def _layout_messages(self, own_id):
         max_width = max(40, self.rect.width - 4)
         self._layout = []
@@ -159,12 +163,17 @@ class MessageList:
 
 class MessageInput:
     def __init__(self, rect, font):
-        self.rect = rect
+        self.rect = pygame.Rect(rect)
         self.font = font
         self.text = ""
         self.focused = False
         self.caret_elapsed = 0.0
-        self.send_rect = pygame.Rect(rect.right - 70, rect.y, 70, rect.height)
+        self.send_rect = pygame.Rect(0, 0, 0, 0)
+        self.set_rect(rect)
+
+    def set_rect(self, rect):
+        self.rect = pygame.Rect(rect)
+        self.send_rect = pygame.Rect(self.rect.right - 70, self.rect.y, 70, self.rect.height)
 
     def update(self, dt):
         self.caret_elapsed = (self.caret_elapsed + max(0.0, dt)) % 1.0

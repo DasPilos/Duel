@@ -33,6 +33,8 @@ class ChatPanel:
         self.error = ""
         self.elapsed = 0.0
         self.panel_rect = pygame.Rect(settings.CHAT_PANEL_X, settings.CHAT_PANEL_Y, settings.CHAT_PANEL_WIDTH, settings.CHAT_PANEL_HEIGHT)
+        self.divider_x = self.panel_rect.right - settings.CHAT_PEOPLE_WIDTH - settings.CHAT_DIVIDER_GAP * 2 - settings.CHAT_DIVIDER_WIDTH
+        self.dragging_divider = False
         self._layout_widgets()
         self.unread_badge = UnreadBadge()
         self.refresh()
@@ -42,15 +44,21 @@ class ChatPanel:
         return self.ROOM_NAMES.get(self.location, self.location.upper())
 
     def _layout_widgets(self):
-        channel_width = 120
-        people_width = 150
-        gap = 15
         content_y = self.panel_rect.y + 58
         input_y = self.panel_rect.bottom - 35
         content_height = max(80, input_y - content_y - 10)
         message_x = self.panel_rect.x + 12
-        people_x = self.panel_rect.right - people_width - gap
-        message_width = people_x - message_x - gap
+        self.divider_x = self._clamp_divider_x(self.divider_x)
+        self.divider_rect = pygame.Rect(
+            self.divider_x,
+            content_y,
+            settings.CHAT_DIVIDER_WIDTH,
+            content_height,
+        )
+        people_x = self.divider_rect.right + settings.CHAT_DIVIDER_GAP
+        people_width = self.panel_rect.right - settings.CHAT_DIVIDER_GAP - people_x
+        message_right = self.divider_rect.left - settings.CHAT_DIVIDER_GAP
+        message_width = message_right - message_x
         font_header = pygame.font.SysFont("arial", 12)
         font_channel = pygame.font.SysFont("arial", 14)
         font_message = pygame.font.SysFont("arial", 15)
@@ -59,25 +67,29 @@ class ChatPanel:
             pygame.Rect(self.panel_rect.x + 12, self.panel_rect.y + 10, 220, 25),
             font_channel,
         )
-        self.message_input = MessageInput(
-            pygame.Rect(
-                self.panel_rect.x + 5,
-                input_y,
-                max(240, people_x - self.panel_rect.x - 10),
-                25,
-            ),
-            pygame.font.SysFont("arial", 15),
-        )
-        self.message_list = MessageList(
-            pygame.Rect(message_x, content_y, max(240, message_width), content_height),
-            font_message,
-        )
+        input_rect = pygame.Rect(self.panel_rect.x + 5, input_y, message_right - self.panel_rect.x - 5, 25)
+        message_rect = pygame.Rect(message_x, content_y, message_width, content_height)
+        if hasattr(self, "message_input"):
+            self.message_input.set_rect(input_rect)
+            self.message_list.set_rect(message_rect)
+        else:
+            self.message_input = MessageInput(input_rect, pygame.font.SysFont("arial", 15))
+            self.message_list = MessageList(message_rect, font_message)
         self.people_rect = pygame.Rect(
             people_x,
             content_y,
             people_width,
             content_height,
         )
+
+    def _clamp_divider_x(self, divider_x):
+        minimum_x = self.panel_rect.x + 12 + settings.CHAT_MIN_CHAT_WIDTH + settings.CHAT_DIVIDER_GAP
+        maximum_x = self.panel_rect.right - settings.CHAT_DIVIDER_GAP - settings.CHAT_MIN_PEOPLE_WIDTH - settings.CHAT_DIVIDER_GAP - settings.CHAT_DIVIDER_WIDTH
+        return max(minimum_x, min(maximum_x, int(divider_x)))
+
+    def _move_divider(self, mouse_x):
+        self.divider_x = self._clamp_divider_x(mouse_x - settings.CHAT_DIVIDER_WIDTH // 2)
+        self._layout_widgets()
 
     def refresh(self):
         try:
@@ -106,6 +118,12 @@ class ChatPanel:
             self.refresh()
 
     def handle_event(self, event):
+        if event.type == pygame.MOUSEMOTION and self.dragging_divider:
+            self._move_divider(event.pos[0])
+            return True
+        if event.type == pygame.MOUSEBUTTONUP and event.button == 1 and self.dragging_divider:
+            self.dragging_divider = False
+            return True
         if event.type == pygame.MOUSEWHEEL and not self.collapsed:
             if self.message_list.rect.collidepoint(pygame.mouse.get_pos()):
                 self.message_list.wheel(event.y)
@@ -129,6 +147,9 @@ class ChatPanel:
             return False
         if self.collapsed:
             return False
+        if event.button == 1 and self.divider_rect.inflate(6, 0).collidepoint(event.pos):
+            self.dragging_divider = True
+            return True
         row_height = 28
         visible_rows = max(1, self.people_rect.height // row_height)
         for visible_index, occupant in enumerate(self.occupants[self.people_scroll:self.people_scroll + visible_rows]):
@@ -233,7 +254,8 @@ class ChatPanel:
             return
         pygame.draw.rect(screen, (25, 27, 38), self.panel_rect, border_radius=8)
         pygame.draw.rect(screen, (60, 65, 80), self.panel_rect, width=2, border_radius=8)
-        pygame.draw.line(screen, (60, 65, 80), (self.people_rect.x - 8, self.panel_rect.y), (self.people_rect.x - 8, self.panel_rect.bottom), 2)
+        divider_color = (120, 170, 230) if self.dragging_divider or self.divider_rect.inflate(6, 0).collidepoint(pygame.mouse.get_pos()) else (60, 65, 80)
+        pygame.draw.rect(screen, divider_color, self.divider_rect, border_radius=3)
         self.channels.draw(screen, self.channel, {"Общий": 0, "Личные": 0})
         own_id = self.session.character["id"] if self.session.character else None
         self.message_list.draw(screen, own_id)
