@@ -6,6 +6,7 @@ import sqlite3
 import time
 from contextlib import contextmanager
 
+from combat.character_stats import calculate_max_hp
 from server import config
 
 
@@ -97,6 +98,19 @@ class Database:
                     muted_character_id INTEGER NOT NULL,
                     expires_at REAL,
                     PRIMARY KEY(character_id, muted_character_id)
+                );
+
+                CREATE TABLE IF NOT EXISTS active_battles (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    player_id INTEGER NOT NULL,
+                    opponent_id INTEGER NOT NULL,
+                    battle_data TEXT NOT NULL,
+                    player_afk INTEGER NOT NULL DEFAULT 0,
+                    opponent_afk INTEGER NOT NULL DEFAULT 0,
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL,
+                    FOREIGN KEY(player_id) REFERENCES characters(id),
+                    FOREIGN KEY(opponent_id) REFERENCES characters(id)
                 );
                 """
             )
@@ -244,20 +258,20 @@ class Database:
         self.validate_character_name(name)
         now = time.time()
         stats = {
-            "strength": 5,
-            "agility": 5,
-            "intuition": 5,
-            "endurance": 5,
+            "strength": 3,
+            "agility": 3,
+            "intuition": 3,
+            "endurance": 4,
         }
-        max_hp = 100 + stats["endurance"] * 14
+        max_hp = calculate_max_hp(1, stats["endurance"])
         with self.connection() as connection:
             cursor = connection.execute(
                 """
                 INSERT INTO characters
-                (user_id, name, hp, max_hp, stats_json, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?)
+                (user_id, name, hp, max_hp, stats_json, stat_points, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (user_id, name, max_hp, max_hp, json.dumps(stats), now),
+                (user_id, name, max_hp, max_hp, json.dumps(stats), 3, now),
             )
             character_id = cursor.lastrowid
         return self.get_character(user_id, character_id)
@@ -287,11 +301,6 @@ class Database:
                     self._apply_passive_regen(connection, row, now)
                 )
                 for row in rows
-                if not self._has_active_session(connection, user_id, now)
-            ] + [
-                self._character_payload(row)
-                for row in rows
-                if self._has_active_session(connection, user_id, now)
             ]
 
     def add_chat_message(self, character_id, location, text, recipient_id=None):
@@ -484,8 +493,6 @@ class Database:
                 self._character_payload(
                     self._apply_passive_regen(connection, row, now)
                 )
-                if not self._has_active_session(connection, row["user_id"], now)
-                else self._character_payload(row)
                 for row in rows
             ]
         for opponent in players:
@@ -512,9 +519,18 @@ class Database:
                 ).fetchone()
             if row is None:
                 return None
-            if not self._has_active_session(connection, user_id, now):
-                row = self._apply_passive_regen(connection, row, now)
+            row = self._apply_passive_regen(connection, row, now)
             return self._character_payload(row)
+
+    def get_character_for_battle(self, character_id):
+        with self.connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM characters WHERE id = ?",
+                (int(character_id),),
+            ).fetchone()
+        if row is None:
+            return None
+        return {"user_id": row["user_id"], "character": self._character_payload(row)}
 
     @staticmethod
     def _has_active_session(connection, user_id, now):
@@ -578,6 +594,56 @@ class Database:
             )
         return self.get_character(user_id, character_id)
 
+    def save_active_battle(self, player_id, opponent_id, battle_data):
+        """Сохраняет состояние активного боя"""
+        now = time.time()
+        with self.connection() as connection:
+            cursor = connection.execute(
+                "SELECT id FROM active_battles WHERE player_id = ? AND opponent_id = ?",
+                (player_id, opponent_id),
+            )
+            row = cursor.fetchone()
+            if row:
+                connection.execute(
+                    "UPDATE active_battles SET battle_data = ?, updated_at = ? WHERE id = ?",
+                    (json.dumps(battle_data), now, row["id"]),
+                )
+            else:
+                connection.execute(
+                    "INSERT INTO active_battles (player_id, opponent_id, battle_data, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+                    (player_id, opponent_id, json.dumps(battle_data), now, now),
+                )
+
+    def mark_player_afk(self, player_id, opponent_id, is_afk=True):
+        """Отмечает игрока как АФК в боевой системе"""
+        with self.connection() as connection:
+            connection.execute(
+                "UPDATE active_battles SET player_afk = ? WHERE player_id = ? AND opponent_id = ?",
+                (1 if is_afk else 0, player_id, opponent_id),
+            )
+
+    def get_active_battle(self, player_id, opponent_id):
+        """Получает сохраненное состояние боя"""
+        with self.connection() as connection:
+            row = connection.execute(
+                "SELECT battle_data, player_afk FROM active_battles WHERE player_id = ? AND opponent_id = ?",
+                (player_id, opponent_id),
+            ).fetchone()
+            if row:
+                return {
+                    "battle_data": json.loads(row["battle_data"]),
+                    "player_afk": bool(row["player_afk"]),
+                }
+            return None
+
+    def delete_active_battle(self, player_id, opponent_id):
+        """Удаляет завершенный бой"""
+        with self.connection() as connection:
+            connection.execute(
+                "DELETE FROM active_battles WHERE player_id = ? AND opponent_id = ?",
+                (player_id, opponent_id),
+            )
+
     @staticmethod
     def _validate_character(character):
         if not 1 <= character["level"] <= 1000:
@@ -593,16 +659,18 @@ class Database:
 
     @staticmethod
     def _character_payload(row):
+        stats = json.loads(row["stats_json"])
+        max_hp = calculate_max_hp(row["level"], stats["endurance"])
         return {
             "id": row["id"],
             "name": row["name"],
             "level": row["level"],
             "xp": row["xp"],
-            "hp": row["hp"],
-            "max_hp": row["max_hp"],
+            "hp": min(row["hp"], max_hp),
+            "max_hp": max_hp,
             "mp": row["mp"],
             "max_mp": row["max_mp"],
-            "stats": json.loads(row["stats_json"]),
+            "stats": stats,
             "stat_points": row["stat_points"],
             "zone": row["zone"],
             "updated_at": row["updated_at"],
