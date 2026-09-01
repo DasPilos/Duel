@@ -54,6 +54,7 @@ class OnlineSession:
         return self.client.save_character(self.character)
 
     def passive_regenerate(self, dt, in_tavern=False):
+        self.last_regen_amount = 0
         character = self.character
         if character is None or character["hp"] >= character["max_hp"]:
             self.regen_accumulator = 0.0
@@ -64,7 +65,10 @@ class OnlineSession:
         if amount <= 0:
             return character
         self.regen_accumulator -= amount
-        return self.regenerate_character(amount)
+        previous_hp = character["hp"]
+        result = self.regenerate_character(amount)
+        self.last_regen_amount = max(0, result["hp"] - previous_hp)
+        return result
 
     def update_presence(self, location):
         return self.client.update_presence(self.character["id"], location)
@@ -74,6 +78,9 @@ class OnlineSession:
 
     def list_messages(self, location, before_id=None, limit=50):
         return self.client.list_messages(location, self.character["id"], before_id, limit)
+
+    def social_snapshot(self, location):
+        return self.client.social_snapshot(location, self.character["id"])
 
     def mark_chat_read(self, location, message_id):
         return self.client.mark_chat_read(self.character["id"], location, message_id)

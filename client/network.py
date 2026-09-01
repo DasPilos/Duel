@@ -77,6 +77,10 @@ class GameClient:
             path += f"&before_id={before_id}"
         return self._request("GET", path, authenticated=True)["messages"]
 
+    def social_snapshot(self, location, character_id):
+        path = f"/api/social/snapshot?location={quote(location)}&character_id={character_id}"
+        return self._request("GET", path, authenticated=True)
+
     def send_message(self, character_id, location, text, recipient_id=None):
         return self._request("POST", "/api/chat/messages", {"character_id": character_id, "location": location, "text": text, "recipient_id": recipient_id}, authenticated=True)
 
@@ -147,3 +151,20 @@ class GameClient:
         result = self._request("POST", "/api/sessions/disconnect", payload, authenticated=True)
         self.token = None
         return result
+
+    def check_active_battle(self, player_id, opponent_id):
+        """Проверяет наличие активного боя"""
+        return self._request(
+            "GET",
+            f"/api/duel/active-battles/{player_id}/{opponent_id}",
+            authenticated=True
+        )
+
+    def restore_battle_state(self, player_id, opponent_id):
+        """Восстанавливает состояние боя при переподключении"""
+        return self._request(
+            "GET",
+            f"/api/duel/restore/{player_id}/{opponent_id}",
+            authenticated=True
+        )
+
