@@ -18,7 +18,7 @@
     "zone": "backyard",
     "kind": "bot",
     "locked_level": true,
-    "updated_at": 1788346874.4505708,
+    "updated_at": 1788347357.9710784,
     "last_battle_at": 0.0,
     "last_attack_at": 1788346097.0838795
   },
@@ -27,7 +27,7 @@
     "name": "Безпроводной Душ",
     "level": 1,
     "xp": 0,
-    "hp": 7,
+    "hp": 39,
     "max_hp": 40,
     "mp": 50,
     "max_mp": 50,
@@ -41,7 +41,7 @@
     "zone": "backyard",
     "kind": "bot",
     "locked_level": true,
-    "updated_at": 1788346874.4505708,
+    "updated_at": 1788347357.9710784,
     "last_battle_at": 0.0,
     "last_attack_at": 1788346097.0838795
   },
@@ -64,7 +64,7 @@
     "zone": "backyard",
     "kind": "bot",
     "locked_level": true,
-    "updated_at": 1788346874.4505708,
+    "updated_at": 1788347357.9710784,
     "last_battle_at": 0.0,
     "last_attack_at": 1788346097.0838795
   },
@@ -87,7 +87,7 @@
     "zone": "backyard",
     "kind": "bot",
     "locked_level": true,
-    "updated_at": 1788346874.4505708,
+    "updated_at": 1788347357.9710784,
     "last_battle_at": 0.0,
     "last_attack_at": 1788346097.0838795
   },
@@ -111,7 +111,7 @@
     "kind": "bot",
     "role": "critical",
     "locked_level": true,
-    "updated_at": 1788346874.4505708,
+    "updated_at": 1788347357.9710784,
     "last_battle_at": 0.0,
     "last_attack_at": 1788346097.0838795
   },
@@ -135,7 +135,7 @@
     "kind": "bot",
     "role": "critical",
     "locked_level": true,
-    "updated_at": 1788346874.4505708,
+    "updated_at": 1788347357.9710784,
     "last_battle_at": 0.0,
     "last_attack_at": 1788346097.0838795
   },
@@ -159,7 +159,7 @@
     "kind": "bot",
     "role": "critical",
     "locked_level": true,
-    "updated_at": 1788346874.4505708,
+    "updated_at": 1788347357.9710784,
     "last_battle_at": 0.0,
     "last_attack_at": 1788346097.0838795
   },
@@ -183,7 +183,7 @@
     "kind": "bot",
     "role": "critical",
     "locked_level": true,
-    "updated_at": 1788346874.4505708,
+    "updated_at": 1788347357.9710784,
     "last_battle_at": 0.0,
     "last_attack_at": 1788346097.0838795
   },
@@ -207,7 +207,7 @@
     "kind": "bot",
     "role": "critical",
     "locked_level": true,
-    "updated_at": 1788346874.4505708,
+    "updated_at": 1788347357.9710784,
     "last_battle_at": 0.0,
     "last_attack_at": 1788346097.0838795
   },
@@ -231,7 +231,7 @@
     "kind": "bot",
     "role": "critical",
     "locked_level": true,
-    "updated_at": 1788346874.4505708,
+    "updated_at": 1788347357.9710784,
     "last_battle_at": 0.0,
     "last_attack_at": 1788346097.0838795
   },
@@ -255,7 +255,7 @@
     "kind": "bot",
     "role": "agile",
     "locked_level": false,
-    "updated_at": 1788346874.4505708,
+    "updated_at": 1788347357.9710784,
     "last_battle_at": 0.0,
     "last_attack_at": 0.0
   },
@@ -279,7 +279,7 @@
     "kind": "bot",
     "role": "agile",
     "locked_level": false,
-    "updated_at": 1788346874.4505708,
+    "updated_at": 1788347357.9710784,
     "last_battle_at": 0.0,
     "last_attack_at": 0.0
   },
@@ -303,7 +303,7 @@
     "kind": "bot",
     "role": "agile",
     "locked_level": false,
-    "updated_at": 1788346874.4505708,
+    "updated_at": 1788347357.9710784,
     "last_battle_at": 0.0,
     "last_attack_at": 0.0
   },
@@ -327,7 +327,7 @@
     "kind": "bot",
     "role": "agile",
     "locked_level": false,
-    "updated_at": 1788346874.4505708,
+    "updated_at": 1788347357.9710784,
     "last_battle_at": 0.0,
     "last_attack_at": 0.0
   },
@@ -351,7 +351,7 @@
     "kind": "bot",
     "role": "agile",
     "locked_level": false,
-    "updated_at": 1788346874.4505708,
+    "updated_at": 1788347357.9710784,
     "last_battle_at": 0.0,
     "last_attack_at": 0.0
   },
@@ -375,7 +375,7 @@
     "kind": "bot",
     "role": "agile",
     "locked_level": false,
-    "updated_at": 1788346874.4505708,
+    "updated_at": 1788347357.9710784,
     "last_battle_at": 0.0,
     "last_attack_at": 0.0
   },
@@ -399,7 +399,7 @@
     "kind": "bot",
     "role": "tank",
     "locked_level": false,
-    "updated_at": 1788346874.4505708,
+    "updated_at": 1788347357.9710784,
     "last_battle_at": 0.0,
     "last_attack_at": 0.0
   },
@@ -423,7 +423,7 @@
     "kind": "bot",
     "role": "tank",
     "locked_level": false,
-    "updated_at": 1788346874.4505708,
+    "updated_at": 1788347357.9710784,
     "last_battle_at": 0.0,
     "last_attack_at": 0.0
   },
@@ -447,7 +447,7 @@
     "kind": "bot",
     "role": "tank",
     "locked_level": false,
-    "updated_at": 1788346874.4505708,
+    "updated_at": 1788347357.9710784,
     "last_battle_at": 0.0,
     "last_attack_at": 0.0
   },
@@ -471,7 +471,7 @@
     "kind": "bot",
     "role": "tank",
     "locked_level": false,
-    "updated_at": 1788346874.4505708,
+    "updated_at": 1788347357.9710784,
     "last_battle_at": 0.0,
     "last_attack_at": 0.0
   },
@@ -495,7 +495,7 @@
     "kind": "bot",
     "role": "tank",
     "locked_level": false,
-    "updated_at": 1788346874.4505708,
+    "updated_at": 1788347357.9710784,
     "last_battle_at": 0.0,
     "last_attack_at": 0.0
   },
@@ -519,7 +519,7 @@
     "kind": "bot",
     "role": "tank",
     "locked_level": false,
-    "updated_at": 1788346874.4505708,
+    "updated_at": 1788347357.9710784,
     "last_battle_at": 0.0,
     "last_attack_at": 0.0
   },
@@ -543,7 +543,7 @@
     "kind": "bot",
     "role": "boss",
     "locked_level": false,
-    "updated_at": 1788346874.4505708,
+    "updated_at": 1788347357.9710784,
     "last_battle_at": 0.0,
     "last_attack_at": 0.0
   }
