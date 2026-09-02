@@ -7,6 +7,7 @@ import time
 from contextlib import contextmanager
 
 from combat.character_stats import calculate_max_hp
+from core.currency import Currency
 from server import config
 
 
@@ -50,6 +51,9 @@ class Database:
                     stats_json TEXT NOT NULL,
                     stat_points INTEGER NOT NULL DEFAULT 6,
                     zone TEXT NOT NULL DEFAULT 'town',
+                    copper INTEGER NOT NULL DEFAULT 0,
+                    silver INTEGER NOT NULL DEFAULT 0,
+                    gold INTEGER NOT NULL DEFAULT 0,
                     updated_at REAL NOT NULL,
                     FOREIGN KEY(user_id) REFERENCES users(id)
                 );
@@ -112,12 +116,67 @@ class Database:
                     FOREIGN KEY(player_id) REFERENCES characters(id),
                     FOREIGN KEY(opponent_id) REFERENCES characters(id)
                 );
+
+                CREATE TABLE IF NOT EXISTS drinks (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL UNIQUE,
+                    description TEXT,
+                    price_copper INTEGER NOT NULL DEFAULT 0,
+                    price_silver INTEGER NOT NULL DEFAULT 0,
+                    price_gold INTEGER NOT NULL DEFAULT 0,
+                    effect TEXT NOT NULL,
+                    effect_value INTEGER NOT NULL,
+                    created_at REAL NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS character_inventory (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    character_id INTEGER NOT NULL,
+                    drink_id INTEGER NOT NULL,
+                    quantity INTEGER NOT NULL DEFAULT 1,
+                    FOREIGN KEY(character_id) REFERENCES characters(id),
+                    FOREIGN KEY(drink_id) REFERENCES drinks(id),
+                    UNIQUE(character_id, drink_id)
+                );
                 """
             )
             user_columns = {row[1] for row in connection.execute("PRAGMA table_info(users)")}
             if "role" not in user_columns:
                 connection.execute("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'user'")
+            
+            # Добавляем колонки валюты, если их нет
+            character_columns = {row[1] for row in connection.execute("PRAGMA table_info(characters)")}
+            if "copper" not in character_columns:
+                connection.execute("ALTER TABLE characters ADD COLUMN copper INTEGER NOT NULL DEFAULT 0")
+            if "silver" not in character_columns:
+                connection.execute("ALTER TABLE characters ADD COLUMN silver INTEGER NOT NULL DEFAULT 0")
+            if "gold" not in character_columns:
+                connection.execute("ALTER TABLE characters ADD COLUMN gold INTEGER NOT NULL DEFAULT 0")
+            
+            # Инициализируем напитки (если их еще нет)
+            self._initialize_drinks(connection)
+            
             self._migrate_characters(connection)
+    
+    @staticmethod
+    def _initialize_drinks(connection):
+        """Инициализирует напитки в БД"""
+        import time
+        now = time.time()
+        
+        drinks = [
+            ("Эль", "Восстанавливает 50 жизней", 20, 0, 0, "heal", 50),
+        ]
+        
+        for name, description, copper, silver, gold, effect, value in drinks:
+            try:
+                connection.execute(
+                    """INSERT INTO drinks (name, description, price_copper, price_silver, price_gold, effect, effect_value, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (name, description, copper, silver, gold, effect, value, now)
+                )
+            except:
+                pass  # Напиток уже существует
 
     @staticmethod
     def _migrate_characters(connection):
@@ -153,6 +212,9 @@ class Database:
                 stats_json TEXT NOT NULL,
                 stat_points INTEGER NOT NULL DEFAULT 6,
                 zone TEXT NOT NULL DEFAULT 'tavern',
+                copper INTEGER NOT NULL DEFAULT 0,
+                silver INTEGER NOT NULL DEFAULT 0,
+                gold INTEGER NOT NULL DEFAULT 0,
                 updated_at REAL NOT NULL,
                 FOREIGN KEY(user_id) REFERENCES users(id)
             )
@@ -162,9 +224,9 @@ class Database:
             """
             INSERT INTO characters
             (id, user_id, name, level, xp, hp, max_hp, mp, max_mp,
-             stats_json, stat_points, zone, updated_at)
+             stats_json, stat_points, zone, copper, silver, gold, updated_at)
             SELECT id, user_id, name, level, xp, hp, max_hp, mp, max_mp,
-                   stats_json, stat_points, zone, updated_at
+                   stats_json, stat_points, zone, 0, 0, 0, updated_at
             FROM characters_legacy
             """
         )
@@ -268,10 +330,10 @@ class Database:
             cursor = connection.execute(
                 """
                 INSERT INTO characters
-                (user_id, name, hp, max_hp, stats_json, stat_points, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                (user_id, name, hp, max_hp, stats_json, stat_points, copper, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (user_id, name, max_hp, max_hp, json.dumps(stats), 3, now),
+                (user_id, name, max_hp, max_hp, json.dumps(stats), 3, 1000, now),
             )
             character_id = cursor.lastrowid
         return self.get_character(user_id, character_id)
@@ -289,6 +351,34 @@ class Database:
         if any(word in normalized for word in forbidden):
             raise ValueError("Это имя нельзя использовать")
 
+    @staticmethod
+    def _inventory_rows_for_character(connection, character_id):
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(character_inventory)").fetchall()}
+        if "drink_id" in columns:
+            return connection.execute(
+                """SELECT ci.id as slot, d.id as drink_id, d.name, d.effect, d.effect_value, ci.quantity
+                FROM character_inventory ci
+                JOIN drinks d ON ci.drink_id = d.id
+                WHERE ci.character_id = ?
+                ORDER BY ci.id""",
+                (character_id,),
+            ).fetchall()
+        if "item_id" in columns:
+            return connection.execute(
+                """SELECT ci.id as slot,
+                        ci.item_id as drink_id,
+                        c.name,
+                        COALESCE(json_extract(c.effects_json, '$.type'), c.item_type) AS effect,
+                        COALESCE(CAST(json_extract(c.effects_json, '$.value') AS INTEGER), 0) AS effect_value,
+                        ci.quantity
+                FROM character_inventory ci
+                JOIN items_catalog c ON c.id = ci.item_id
+                WHERE ci.character_id = ?
+                ORDER BY ci.id""",
+                (character_id,),
+            ).fetchall()
+        return []
+
     def get_characters(self, user_id):
         now = time.time()
         with self.connection() as connection:
@@ -296,12 +386,24 @@ class Database:
                 "SELECT * FROM characters WHERE user_id = ? ORDER BY id",
                 (user_id,),
             ).fetchall()
-            return [
-                self._character_payload(
-                    self._apply_passive_regen(connection, row, now)
-                )
-                for row in rows
-            ]
+            characters = []
+            for original_row in rows:
+                row = self._apply_passive_regen(connection, original_row, now)
+                character = self._character_payload(row)
+
+                inventory_rows = self._inventory_rows_for_character(connection, row["id"])
+
+                inventory = {}
+                for idx, inv_row in enumerate(inventory_rows, 1):
+                    inventory[str(idx)] = {
+                        "name": inv_row["name"],
+                        "quantity": inv_row["quantity"],
+                        "effect": inv_row["effect"],
+                    }
+                character["inventory"] = inventory
+                characters.append(character)
+
+            return characters
 
     def add_chat_message(self, character_id, location, text, recipient_id=None):
         now = time.time()
@@ -520,7 +622,20 @@ class Database:
             if row is None:
                 return None
             row = self._apply_passive_regen(connection, row, now)
-            return self._character_payload(row)
+            character = self._character_payload(row)
+
+            inventory_rows = self._inventory_rows_for_character(connection, row["id"])
+
+            inventory = {}
+            for idx, inv_row in enumerate(inventory_rows, 1):
+                inventory[str(idx)] = {
+                    "name": inv_row["name"],
+                    "quantity": inv_row["quantity"],
+                    "effect": inv_row["effect"],
+                }
+            character["inventory"] = inventory
+
+            return character
 
     def get_character_for_battle(self, character_id):
         with self.connection() as connection:
@@ -564,6 +679,15 @@ class Database:
         current = self.get_character(user_id, character_id)
         if current is None:
             raise ValueError("Персонаж не найден")
+        
+        # Нормализуем валюту перед сохранением
+        currency = Currency(
+            copper=int(payload.get("copper", current["copper"])),
+            silver=int(payload.get("silver", current["silver"])),
+            gold=int(payload.get("gold", current["gold"])),
+        )
+        currency.normalize()
+        
         updated = {
             "name": str(payload.get("name", current["name"])),
             "level": int(payload.get("level", current["level"])),
@@ -575,6 +699,9 @@ class Database:
             "stats": payload.get("stats", current["stats"]),
             "stat_points": int(payload.get("stat_points", current["stat_points"])),
             "zone": str(payload.get("zone", current["zone"])),
+            "copper": currency.copper,
+            "silver": currency.silver,
+            "gold": currency.gold,
         }
         self.validate_character_name(updated["name"])
         self._validate_character(updated)
@@ -583,13 +710,14 @@ class Database:
                 """
                 UPDATE characters SET name = ?, level = ?, xp = ?, hp = ?,
                 max_hp = ?, mp = ?, max_mp = ?, stats_json = ?, stat_points = ?,
-                zone = ?, updated_at = ? WHERE id = ? AND user_id = ?
+                zone = ?, copper = ?, silver = ?, gold = ?, updated_at = ? WHERE id = ? AND user_id = ?
                 """,
                 (
                     updated["name"], updated["level"], updated["xp"], updated["hp"],
                     updated["max_hp"], updated["mp"], updated["max_mp"],
                     json.dumps(updated["stats"]), updated["stat_points"],
-                    updated["zone"], time.time(), character_id, user_id,
+                    updated["zone"], updated["copper"], updated["silver"], updated["gold"],
+                    time.time(), character_id, user_id,
                 ),
             )
         return self.get_character(user_id, character_id)
@@ -656,11 +784,24 @@ class Database:
             raise ValueError("Некорректное значение MP")
         if not isinstance(character["stats"], dict):
             raise ValueError("Характеристики должны быть объектом")
+        # Валюта неотрицательна
+        if character.get("copper", 0) < 0 or character.get("silver", 0) < 0 or character.get("gold", 0) < 0:
+            raise ValueError("Валюта не может быть отрицательной")
 
     @staticmethod
     def _character_payload(row):
+        row_dict = dict(row)
         stats = json.loads(row["stats_json"])
         max_hp = calculate_max_hp(row["level"], stats["endurance"])
+
+        # Нормализуем валюту
+        currency = Currency(
+            copper=int(row_dict.get("copper", 0)) if row_dict.get("copper") is not None else 0,
+            silver=int(row_dict.get("silver", 0)) if row_dict.get("silver") is not None else 0,
+            gold=int(row_dict.get("gold", 0)) if row_dict.get("gold") is not None else 0,
+        )
+        currency.normalize()
+
         return {
             "id": row["id"],
             "name": row["name"],
@@ -673,6 +814,9 @@ class Database:
             "stats": stats,
             "stat_points": row["stat_points"],
             "zone": row["zone"],
+            "copper": currency.copper,
+            "silver": currency.silver,
+            "gold": currency.gold,
             "updated_at": row["updated_at"],
         }
 
@@ -683,3 +827,110 @@ class Database:
         with self.connection() as connection:
             connection.execute("DELETE FROM sessions WHERE token = ?", (token,))
         return {"saved": True}
+    
+    def get_drinks_list(self):
+        """Получить список всех напитков"""
+        with self.connection() as connection:
+            rows = connection.execute("SELECT id, name, description, price_copper, price_silver, price_gold, effect, effect_value FROM drinks ORDER BY id").fetchall()
+            return [dict(row) for row in rows]
+    
+    def buy_drink(self, user_id, character_id, drink_id):
+        """Купить напиток - вычесть цену и добавить в инвентарь"""
+        from core.currency import Currency
+        
+        with self.connection() as connection:
+            # Получаем информацию о напитке
+            drink = connection.execute(
+                "SELECT price_copper, price_silver, price_gold FROM drinks WHERE id = ?",
+                (drink_id,)
+            ).fetchone()
+            
+            if drink is None:
+                raise ValueError("Напиток не найден")
+            
+            # Получаем персонажа
+            character = self.get_character(user_id, character_id)
+            if character is None:
+                raise ValueError("Персонаж не найден")
+            
+            # Проверяем деньги
+            current = Currency.from_dict(character)
+            if not current.has_enough(
+                copper=drink["price_copper"],
+                silver=drink["price_silver"],
+                gold=drink["price_gold"]
+            ):
+                raise ValueError("Недостаточно денег")
+            
+            # Вычитаем деньги
+            current.subtract(
+                copper=drink["price_copper"],
+                silver=drink["price_silver"],
+                gold=drink["price_gold"]
+            )
+            character.update(current.to_dict())
+            self.save_character(user_id, character_id, character)
+            
+            # Добавляем в инвентарь
+            try:
+                connection.execute(
+                    """INSERT INTO character_inventory (character_id, drink_id, quantity)
+                    VALUES (?, ?, 1)
+                    ON CONFLICT(character_id, drink_id) DO UPDATE SET quantity = quantity + 1""",
+                    (character_id, drink_id)
+                )
+            except Exception as e:
+                raise ValueError(f"Ошибка добавления в инвентарь: {str(e)}")
+            
+            return self.get_character(user_id, character_id)
+    
+    def get_character_inventory(self, character_id):
+        """Получить инвентарь персонажа"""
+        with self.connection() as connection:
+            rows = connection.execute(
+                """SELECT ci.id, d.id as drink_id, d.name, d.effect, d.effect_value, ci.quantity
+                FROM character_inventory ci
+                JOIN drinks d ON ci.drink_id = d.id
+                WHERE ci.character_id = ?
+                ORDER BY d.name""",
+                (character_id,)
+            ).fetchall()
+            return [dict(row) for row in rows]
+    
+    def use_drink(self, user_id, character_id, inventory_item_id):
+        """Использовать напиток из инвентаря"""
+        with self.connection() as connection:
+            # Получаем предмет из инвентаря
+            item = connection.execute(
+                """SELECT ci.id, d.effect, d.effect_value, ci.drink_id
+                FROM character_inventory ci
+                JOIN drinks d ON ci.drink_id = d.id
+                WHERE ci.id = ? AND ci.character_id = ?""",
+                (inventory_item_id, character_id)
+            ).fetchone()
+            
+            if item is None:
+                raise ValueError("Предмет не найден в инвентаре")
+            
+            # Получаем персонажа
+            character = self.get_character(user_id, character_id)
+            if character is None:
+                raise ValueError("Персонаж не найден")
+            
+            # Применяем эффект
+            if item["effect"] == "heal":
+                character["hp"] = min(character["hp"] + item["effect_value"], character["max_hp"])
+            
+            # Сохраняем изменения
+            self.save_character(user_id, character_id, character)
+            
+            # Удаляем из инвентаря или уменьшаем количество
+            connection.execute(
+                "UPDATE character_inventory SET quantity = quantity - 1 WHERE id = ?",
+                (inventory_item_id,)
+            )
+            connection.execute(
+                "DELETE FROM character_inventory WHERE quantity <= 0"
+            )
+            
+            return self.get_character(user_id, character_id)

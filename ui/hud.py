@@ -119,6 +119,7 @@ class FloatingText:
         font,
         color=(255, 60, 60),
         duration=60,
+        velocity=-1.5,
     ):
         # x и y — начальная позиция всплывающего текста.
         self.x = x
@@ -131,7 +132,7 @@ class FloatingText:
 
         # Скорость движения текста вверх.
         # Сделайте число более отрицательным — текст будет двигаться быстрее.
-        self.vy = -1.5
+        self.vy = velocity
 
     def update(self):
         self.y += self.vy
@@ -153,6 +154,34 @@ class FloatingText:
             center=(int(self.x), int(self.y))
         )
         screen.blit(surface, rect)
+
+
+class FloatingImage:
+    def __init__(self, x, y, image, label, font, color, duration=360, velocity=-1.5):
+        self.x = x
+        self.y = y
+        self.image = image
+        self.label = label
+        self.font = font
+        self.color = color
+        self.duration = duration
+        self.max_duration = duration
+        self.vy = velocity
+
+    def update(self):
+        self.y += self.vy
+        self.duration -= 1
+
+    def draw(self, screen):
+        if self.duration <= 0:
+            return
+        image = self.image.copy()
+        if self.duration < self.max_duration // 2:
+            image.set_alpha(int(255 * self.duration / (self.max_duration // 2)))
+        rect = image.get_rect(center=(int(self.x), int(self.y)))
+        screen.blit(image, rect)
+        label = self.font.render(self.label, True, self.color)
+        screen.blit(label, label.get_rect(center=(rect.centerx, rect.bottom - 28)))
 
 
 def update_and_draw_floating_texts(screen, floating_texts):

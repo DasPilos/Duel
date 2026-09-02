@@ -2,6 +2,7 @@ import pygame
 import time
 
 from core import settings
+from ui.music import play_card_move_sound
 
 
 class DuelInputHandler:
@@ -9,15 +10,28 @@ class DuelInputHandler:
         self.scene = scene
 
     def handle_event(self, event):
+        if self.scene.phase == "result":
+            # Прокрутка списков карт
+            if event.type == pygame.MOUSEWHEEL:
+                # Левая сторона (игрок) - примерно x < 550
+                # Правая сторона (противник) - примерно x > 550
+                mouse_x = pygame.mouse.get_pos()[0]
+                side = "player" if mouse_x < 550 else "enemy"
+                scroll_key = f"cards_scroll_{side}"
+                
+                current_scroll = getattr(self.scene, scroll_key, 0)
+                new_scroll = current_scroll - event.y * 20  # event.y > 0 для вверх
+                setattr(self.scene, scroll_key, max(0, new_scroll))
+                return
+            
+            if event.type == pygame.KEYDOWN and event.key in (pygame.K_RETURN, pygame.K_ESCAPE):
+                self.scene.return_to_tavern = True
+            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 and getattr(self.scene, "result_button", pygame.Rect(0, 0, 0, 0)).collidepoint(event.pos):
+                self.scene.return_to_tavern = True
+            return
         if event.type == pygame.KEYDOWN:
-            if (
-                event.key == pygame.K_r
-                and self.scene.phase == "result"
-            ):
-                if self.scene.online_session is None:
-                    self.scene.restart()
-                else:
-                    self.scene.return_to_tavern = True
+            if event.key == pygame.K_ESCAPE:
+                self.scene.return_to_tavern = True
                 return
 
         if event.type == pygame.MOUSEWHEEL:
@@ -26,16 +40,8 @@ class DuelInputHandler:
 
         if (
             event.type != pygame.MOUSEBUTTONDOWN
-            or event.button != 1
+            or event.button not in (1, 3)
         ):
-            return
-
-        if self.scene.phase == "result":
-            if self.scene.layout.new_button.collidepoint(event.pos):
-                if self.scene.online_session is None:
-                    self.scene.restart()
-                else:
-                    self.scene.return_to_tavern = True
             return
 
         from ui.character_card import CharacterCard
@@ -54,8 +60,17 @@ class DuelInputHandler:
         if self.scene.phase == "resolve":
             return
 
-        if self.scene.phase == "choose":
-            self._handle_choose_phase(event.pos)
+        if self.scene.layout.hide_player_card_button.collidepoint(event.pos):
+            self.scene.player_card_hidden = not self.scene.player_card_hidden
+            self.scene.player_card_manual_open = not self.scene.player_card_hidden
+            return
+        if self.scene.layout.hide_enemy_card_button.collidepoint(event.pos):
+            self.scene.enemy_card_hidden = not self.scene.enemy_card_hidden
+            self.scene.enemy_card_manual_open = not self.scene.enemy_card_hidden
+            return
+
+        if self.scene.phase in ("draft", "planning"):
+            self._handle_card_phase(event.pos, event.button)
             return
 
     def _handle_log_scroll(self, direction):
@@ -70,42 +85,67 @@ class DuelInputHandler:
             current_offset + (3 if direction > 0 else -3),
         )
 
-    def _handle_choose_phase(self, pos):
-        for zone, rect in (
-            self.scene.layout.attack_buttons.items()
-        ):
-            if rect.collidepoint(pos):
-                self.scene.attack_zone = zone
+    def _handle_card_phase(self, pos, button):
+        layout = self.scene.layout
+        battle = self.scene.battle
+        if self.scene.phase == "draft":
+            if self.scene.draft_next_side != "player":
+                return
+            visible_table = [card for card in battle.table if card.key not in battle.starting_reserved_keys]
+            for index, card in enumerate(visible_table):
+                if index < 5:
+                    row_area = pygame.Rect(
+                        layout.card_table.x + 20,
+                        layout.card_table.y + 5,
+                        layout.card_table.width - 40,
+                        self.scene.renderer.card_renderer.CARD_HEIGHT,
+                    )
+                else:
+                    row_area = pygame.Rect(
+                        layout.card_table.x + 20,
+                        layout.card_table.y + 5 + self.scene.renderer.card_renderer.CARD_HEIGHT + self.scene.renderer.card_renderer.GAP,
+                        layout.card_table.width - 40,
+                        self.scene.renderer.card_renderer.CARD_HEIGHT,
+                    )
+                if self.scene.renderer.card_renderer.card_rect(row_area, 5, index % 5).collidepoint(pos):
+                    battle.choose_starting_card("player", card.key)
+                    self.scene.draft_next_side = "enemy"
+                    self.scene.card_transfer = {
+                        "card": card,
+                        "started": time.monotonic(),
+                        "source": self.scene.renderer.card_renderer.card_rect(row_area, 5, index % 5),
+                    }
+                    self.scene.phase = "draft_transfer"
+                    play_card_move_sound()
+                    return
+            return
+
+        if button == 1 and layout.play_cards_button.collidepoint(pos):
+            battle.confirm_selection("player")
+            self.scene.enemy_wait_started = time.monotonic()
+            self.scene.phase = "waiting_enemy"
+            return
+
+        if button == 1:
+            for index, card in enumerate(battle.selected["player"]):
+                card_rect = self.scene.renderer.card_renderer.card_rect(layout.player_selected, len(battle.selected["player"]), index)
+                if card_rect.collidepoint(pos):
+                    self.scene.card_return_transfer = {
+                        "card": card,
+                        "started": time.monotonic(),
+                        "source": card_rect,
+                    }
+                    self.scene.phase = "card_return"
+                    play_card_move_sound()
+                    return
+
+        visible_hand = [card for card in battle.hands["player"] if card not in battle.selected["player"]]
+        for index, card in enumerate(visible_hand):
+            hand_rect = self.scene.renderer.card_renderer.card_rect(layout.player_hand, len(visible_hand), index)
+            if hand_rect.collidepoint(pos):
+                if button == 1:
+                    battle.select_card("player", card.key)
+                elif button == 3:
+                    battle.deselect_card("player", card.key)
                 return
 
-        for zone, rect in (
-            self.scene.layout.defense_buttons.items()
-        ):
-            if rect.collidepoint(pos):
-                if zone in self.scene.defense_zones:
-                    self.scene.defense_zones.remove(zone)
-                elif len(self.scene.defense_zones) < 2:
-                    self.scene.defense_zones.append(zone)
-                return
-
-        ready = (
-            self.scene.attack_zone is not None
-            and len(self.scene.defense_zones) == 2
-        )
-
-        if (
-            self.scene.layout.confirm_button.collidepoint(pos)
-            and ready
-        ):
-            self.scene.battle.choose_player_zones(
-                self.scene.attack_zone,
-                self.scene.defense_zones,
-            )
-
-            self.scene.phase = "resolve"
-            self.scene.resolve_state = "CALC"
-            self.scene.resolve_elapsed = 0.0
-            self.scene.turn_calculated = False
-            self.scene.comments_added = False
-
-            self.scene.start_battle_comments()

@@ -1,8 +1,7 @@
 """
-АФК система для боев - автоматические действия персонажа при отключении
+АФК система для боев - сохранение состояния при отключении
 """
 
-import random
 import logging
 from typing import Optional, Dict, Any
 
@@ -10,60 +9,47 @@ logger = logging.getLogger(__name__)
 
 
 class AFKBattleManager:
-    """Управляет автоматическими действиями АФК персонажей"""
+    """
+    Управляет АФК статусом персонажа в боях
+    
+    Примечание: АФК персонаж НЕ выполняет автоматические действия!
+    Только управляется игроком когда он подключен.
+    АФК персонаж просто стоит и получает урон.
+    """
 
     @staticmethod
-    def select_afk_card(available_cards: list) -> Optional[Dict[str, Any]]:
+    def can_player_act_if_afk() -> bool:
         """
-        Выбирает случайную карту для АФК персонажа
+        Определяет может ли персонаж действовать когда отключен
         
-        Args:
-            available_cards: Список доступных карт из руки
-            
         Returns:
-            Выбранная карта или None если нет карт
+            False - АФК персонаж не может действовать
         """
-        if not available_cards:
-            return None
-        return random.choice(available_cards)
+        # АФК персонаж не может делать ходы автоматически
+        # Только игрок может управлять персонажем
+        return False
 
     @staticmethod
-    def select_afk_attack_zone(valid_zones: list) -> Optional[str]:
+    def should_receive_damage_while_afk() -> bool:
         """
-        Выбирает случайную зону атаки для АФК персонажа
+        Определяет получает ли АФК персонаж урон
         
-        Args:
-            valid_zones: Список доступных зон атаки
-            
         Returns:
-            Выбранная зона (front/center/back) или None
+            True - АФК персонаж получает урон как обычно
         """
-        if not valid_zones:
-            return None
-        return random.choice(valid_zones)
+        # АФК персонаж получает урон как любой другой персонаж
+        return True
 
     @staticmethod
     def should_regenerate_during_afk() -> bool:
         """
-        Определяет, должен ли АФК персонаж восстанавливать HP во время боя
+        Определяет восстанавливает ли АФК персонаж HP во время боя
         
         Returns:
-            True если нужна регенерация, False если нет
+            False - АФК персонаж не регенерирует HP во время боя
         """
-        # АФК персонаж НЕ регенерирует HP во время боя (только между боями)
+        # АФК персонаж НЕ регенерирует HP во время боя
         return False
-
-    @staticmethod
-    def get_afk_strategy() -> str:
-        """
-        Получает текущую стратегию АФК персонажа
-        
-        Returns:
-            Стратегия ('random', 'aggressive', 'defensive')
-        """
-        # Простая стратегия - случайные действия
-        # В будущем можно добавить более интеллектуальные стратегии
-        return 'random'
 
 
 class AFKBattleHandler:

@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from combat.character_stats import adjust_stats
+from combat.character_stats import adjust_stats, calculate_max_hp, is_debug_unlimited, minimum_endurance
 from combat.mechanics import get_critical_chance, get_dodge_chance
 
 
@@ -28,6 +28,10 @@ def normalize_character_profile(profile, *, title=None, kind="player"):
             "max_mp": getattr(data, "max_mp", 0),
             "stats": dict(getattr(data, "stats", {})),
             "stat_points": getattr(data, "stat_points", 0),
+            "copper": getattr(data, "copper", 0),
+            "silver": getattr(data, "silver", 0),
+            "gold": getattr(data, "gold", 0),
+            "inventory": dict(getattr(data, "inventory", {})),
             "kind": kind,
         }
     elif isinstance(data, dict):
@@ -43,6 +47,10 @@ def normalize_character_profile(profile, *, title=None, kind="player"):
             "max_mp": data.get("max_mp", data.get("mp_max", 0)),
             "stats": dict(data.get("stats", {})),
             "stat_points": data.get("stat_points", 0),
+            "copper": int(data.get("copper", 0)),
+            "silver": int(data.get("silver", 0)),
+            "gold": int(data.get("gold", 0)),
+            "inventory": dict(data.get("inventory", {})),
             "kind": kind,
         }
     else:
@@ -58,6 +66,10 @@ def normalize_character_profile(profile, *, title=None, kind="player"):
             "max_mp": 0,
             "stats": {},
             "stat_points": 0,
+            "copper": 0,
+            "silver": 0,
+            "gold": 0,
+            "inventory": {},
             "kind": kind,
         }
 
@@ -99,12 +111,27 @@ def adjust_profile_stat(profile, stat_name, delta):
         profile["level"],
         stat_name,
         delta,
+        character_id=profile.get("character_id", profile.get("id")),
     )
     if updated_state is None:
         return False
 
     profile["stats"].update(updated_state.pop("stats"))
     profile.update(updated_state)
+    return True
+
+
+def adjust_profile_level(profile, delta):
+    """Напрямую меняет уровень тестового персонажа, минуя начисление опыта."""
+    if not is_debug_unlimited(profile.get("character_id", profile.get("id"))):
+        return False
+    new_level = max(1, min(1000, int(profile["level"]) + delta))
+    if new_level == profile["level"]:
+        return False
+    profile["level"] = new_level
+    profile["stats"]["endurance"] = max(profile["stats"].get("endurance", 0), minimum_endurance(new_level))
+    profile["max_hp"] = calculate_max_hp(new_level, profile["stats"]["endurance"])
+    profile["hp"] = profile["max_hp"]
     return True
 
 
@@ -117,7 +144,7 @@ def derived_values(profile, opponent):
     fighter = SimpleNamespace(**profile["stats"])
     enemy = SimpleNamespace(**opponent["stats"])
     return {
-        "Урон": max(1, int(fighter.strength * 3 - enemy.endurance * 0.5)),
+        "Урон": max(1, int(fighter.strength * 2 - enemy.endurance * 0.5)),
         "Уворот": f"{int(get_dodge_chance(enemy, fighter))}%",
         "Крит": f"{int(get_critical_chance(fighter, enemy))}%",
         "HP": profile["max_hp"],

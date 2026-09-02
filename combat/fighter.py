@@ -1,6 +1,8 @@
 from combat.character_stats import (
     BASE_STAT_VALUE,
+    STARTING_ENDURANCE_VALUE,
     STARTING_STAT_POINTS,
+    total_stat_points,
     adjust_stats,
     calculate_max_hp,
 )
@@ -18,17 +20,18 @@ class Fighter:
     def __init__(self, name, level=1, auto_allocate=False):
         self.name = name
         self.level = level
+        self.character_id = None
 
         # Базовые характеристики
         self.stats = {
             "strength": BASE_STAT_VALUE,
             "agility": BASE_STAT_VALUE,
             "intuition": BASE_STAT_VALUE,
-            "endurance": BASE_STAT_VALUE,
+            "endurance": STARTING_ENDURANCE_VALUE + max(0, int(level) - 1),
         }
 
         # Очки для распределения
-        self.stat_points = STARTING_STAT_POINTS
+        self.stat_points = total_stat_points(level)
 
         if auto_allocate:
             self.random_allocate_points()
@@ -63,6 +66,8 @@ class Fighter:
     def recalculate_parameters(self):
         """Пересчитывает производные параметры бойца."""
         self.max_hp = calculate_max_hp(self.level, self.endurance)
+        if hasattr(self, "hp"):
+            self.hp = min(int(self.hp), self.max_hp)
 
     def add_stat(self, stat_name):
         """Добавляет одно очко характеристики."""
@@ -74,6 +79,7 @@ class Fighter:
             self.level,
             stat_name,
             1,
+            character_id=self.character_id,
         )
         if updated_state is None:
             return False
@@ -95,6 +101,7 @@ class Fighter:
             self.level,
             stat_name,
             -1,
+            character_id=self.character_id,
         )
         if updated_state is None:
             return False

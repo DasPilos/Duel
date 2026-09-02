@@ -35,6 +35,15 @@ def update_presence(token, user_id, character, location):
     }
 
 
+def character_level(character_id, location):
+    """Возвращает уровень персонажа, если он сейчас присутствует в локации."""
+    cleanup()
+    for item in PRESENCE.values():
+        if item["character_id"] == character_id and item["location"] == location:
+            return item["level"]
+    return None
+
+
 def occupants(user_id, location):
     cleanup()
     result = [

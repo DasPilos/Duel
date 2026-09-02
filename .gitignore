@@ -3,3 +3,20 @@ __pycache__/
 .venv/
 server_data.sqlite3
 battle_archive/
+
+# Development workspace separation
+# Dev1 (City/Warrior system) - in main branch
+# Dev2 (Academy/Mage system) - in feature/academy branch
+
+# Protected Dev1 files - Dev2 should NOT modify
+!server/town/
+!scenes/town/
+!core/character/warrior.py
+!core/cards/warrior_card.py
+
+# Protected Dev2 files - Dev1 should NOT modify
+!server/academy/
+!scenes/academy/
+!core/character/mage.py
+!core/cards/magic_card.py
+!core/stats/mage_stats.py

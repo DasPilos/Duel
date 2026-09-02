@@ -28,11 +28,10 @@ CREATE TABLE IF NOT EXISTS active_battles (
 
 ### 2. **АФК логика** (`server/afk_battle.py`)
 
-**Класс `AFKBattleManager`** - управляет действиями АФК персонажа:
-- `select_afk_card()` - выбирает случайную карту из руки
-- `select_afk_attack_zone()` - выбирает случайную зону атаки (front/center/back)
+**Класс `AFKBattleManager`** - управляет АФК статусом:
+- `can_player_act_if_afk()` - возвращает False (АФК не может действовать)
+- `should_receive_damage_while_afk()` - возвращает True (АФК получает урон)
 - `should_regenerate_during_afk()` - возвращает False (АФК не регенерирует HP)
-- `get_afk_strategy()` - определяет стратегию ('random' в текущей версии)
 
 **Класс `AFKBattleHandler`** - управляет состоянием боев:
 - `mark_player_afk()` - отмечает игрока как АФК в БД
@@ -78,11 +77,12 @@ CREATE TABLE IF NOT EXISTS active_battles (
    ↓
 6. AFKBattleHandler.save_battle_state() сохраняет состояние в БД
    ↓
-7. Серверная система боя продолжает выполнять ходы:
-   - Использует AFKBattleManager для выбора действий
-   - Выбирает случайную карту из руки
-   - Выбирает случайную зону атаки
+7. АФК персонаж НЕ выполняет никаких действий
+   - Просто получает урон от противника
+   - Может получать баффы/дебаффы
+   - Стоит и ждет переподключения или таймаута
    - Обновляет состояние боя в БД
+
 ```
 
 ### Сценарий 2: Переподключение

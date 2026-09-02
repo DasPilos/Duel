@@ -197,56 +197,34 @@ class DuelCommentator:
 
     def add_combat_comments(self):
         battle = self.scene.battle
-
-        if getattr(battle, "last_player_attack", None) is None:
+        if not getattr(battle, "last_exchange", None):
             return
-
         player = self.scene.player
         enemy = self.scene.enemy
-        player_hit = getattr(battle, "last_player_hit", False)
-        enemy_hit = getattr(battle, "last_enemy_hit", False)
-        player_damage = getattr(battle, "last_player_damage", 0)
-        enemy_damage = getattr(battle, "last_enemy_damage", 0)
-        player_zone = ZONES_ACCUSATIVE.get(battle.last_player_attack, "цель")
-        enemy_zone = ZONES_ACCUSATIVE.get(battle.last_enemy_attack, "цель")
-
-        player_action = "попал" if player_hit else "ударил, но удар был заблокирован"
-        enemy_action = "попал" if enemy_hit else "ударил, но удар был заблокирован"
-        player_text = f"{player.name} {player_action} в {player_zone} {enemy.name} (-{player_damage} хп)"
-        enemy_text = f"{enemy.name} {enemy_action} в {enemy_zone} {player.name} (-{enemy_damage} хп)"
-
-        player_color = DODGE_COLOR if getattr(battle, "last_player_dodged", False) else self._get_action_color(
-            getattr(battle, "last_player_combo", 0), getattr(battle, "last_player_critical", False)
-        )
-        enemy_color = DODGE_COLOR if getattr(battle, "last_enemy_dodged", False) else self._get_action_color(
-            getattr(battle, "last_enemy_combo", 0), getattr(battle, "last_enemy_critical", False)
-        )
-        segments = self._damage_segments(player_text, player_color)
-        segments.append(self._make_segment("; а ответный удар ", DEFAULT_COLOR))
-        segments.extend(self._damage_segments(enemy_text, enemy_color))
+        segments = []
+        for index, event in enumerate(battle.last_exchange):
+            if index:
+                segments.append(self._make_segment(" ", DEFAULT_COLOR))
+            actor = player if event["side"] == "player" else enemy
+            target = enemy if event["side"] == "player" else player
+            if event.get("skipped"):
+                text = f"{actor.name} не предпринимает попыток в этот ход"
+                color = DEFAULT_COLOR
+            elif event["damage"]:
+                text = f"{actor.name} применил {event['card']}. {target.name} потерял здоровье (-{event['damage']} хп)"
+                color = CRIT_COLOR if event["critical"] else DEFAULT_COLOR
+            elif event["dodged"]:
+                text = f"{actor.name} применил {event['card']}, но {target.name} избежал удара (-0 хп)"
+                color = DODGE_COLOR
+            elif event["healed"]:
+                text = f"{actor.name} применил {event['card']} и восстановил {event['healed']} хп"
+                color = DEFAULT_COLOR
+            else:
+                text = f"{actor.name} применил {event['card']}"
+                color = DEFAULT_COLOR
+            segments.append(self._make_segment(text, DEFAULT_COLOR))
+            if "(-" in text:
+                marker = text[text.rfind("(-"):]
+                segments[-1] = self._make_segment(text[:-len(marker)], DEFAULT_COLOR)
+                segments.append(self._make_segment(marker, color))
         self.scene.comments.append({"segments": segments, "large": False})
-
-        enemy = getattr(self.scene, "enemy", None)
-        player = getattr(self.scene, "player", None)
-
-        if enemy is not None and enemy.is_dead():
-            self.scene.comments.append({
-                "segments": [
-                    self._make_segment(
-                        "Победа! Враг рухнул на землю.",
-                        (255, 215, 0),
-                    )
-                ],
-                "large": False,
-            })
-
-        elif player is not None and player.is_dead():
-            self.scene.comments.append({
-                "segments": [
-                    self._make_segment(
-                        "В глазах темнеет... Вы проиграли.",
-                        CRIT_COLOR,
-                    )
-                ],
-                "large": False,
-            })

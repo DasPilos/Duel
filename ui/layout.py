@@ -1,24 +1,25 @@
 import pygame
 
 from core import settings
-from combat.zones import ZONES
 
 
 class DuelLayout:
     def __init__(self):
-        self.attack_buttons = {}
-        self.defense_buttons = {}
-
-        for zone in ZONES:
-            y = settings.ZONE_Y[zone]
-
-            ax, _, aw, ah = settings.ATTACK_BUTTON_RECT
-            dx, _, dw, dh = settings.DEFENSE_BUTTON_RECT
-
-            self.attack_buttons[zone] = pygame.Rect(ax, y, aw, ah)
-            self.defense_buttons[zone] = pygame.Rect(dx, y, dw, dh)
-
-        self.confirm_button = pygame.Rect(settings.CONFIRM_BUTTON_RECT)
+        self.card_table = pygame.Rect(settings.CARD_TABLE_RECT)
+        self.player_hand = pygame.Rect(settings.PLAYER_HAND_RECT)
+        self.player_selected = pygame.Rect(settings.PLAYER_SELECTED_RECT)
+        self.enemy_selected = pygame.Rect(settings.ENEMY_SELECTED_RECT)
+        self.enemy_hand = pygame.Rect(settings.ENEMY_HAND_RECT)
+        self.player_points = pygame.Rect(settings.PLAYER_POINTS_RECT)
+        self.enemy_points = pygame.Rect(settings.ENEMY_POINTS_RECT)
+        self.confirm_selection_button = pygame.Rect(settings.CONFIRM_SELECTION_RECT)
+        self.play_cards_button = pygame.Rect(settings.PLAY_CARDS_RECT)
+        self.turn_bar = pygame.Rect(settings.TURN_BAR_RECT)
+        self.deck_rect = pygame.Rect(settings.DECK_RECT)
+        self.discard_rect = pygame.Rect(settings.DISCARD_RECT)
+        self.hide_player_card_button = pygame.Rect(settings.HIDE_PLAYER_CARD_RECT)
+        self.hide_enemy_card_button = pygame.Rect(settings.HIDE_ENEMY_CARD_RECT)
+        self.confirm_button = self.confirm_selection_button
         self.new_button = pygame.Rect(settings.NEW_BUTTON_RECT)
 
         self.player_panel_x = settings.PLAYER_PANEL_X

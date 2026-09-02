@@ -1,7 +1,6 @@
 import math
 import random
 from combat.mechanics import (
-    roll_critical_d8,
     get_dodge_chance,
     get_critical_chance,
 )
@@ -40,8 +39,7 @@ def resolve_attack(attacker, defender, blocked, current_combo):
     critical_multiplier = 1
 
     if critical:
-        critical_dice = roll_critical_d8()
-        critical_multiplier = critical_dice
+        critical_multiplier = 1.5
         damage = math.ceil(damage * critical_multiplier)
 
     # Блокировка: при полном блоке атака полностью гасится, кроме критического прорыва.

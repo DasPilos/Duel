@@ -155,9 +155,8 @@ class TestAttackResolver(unittest.TestCase):
         self.assertTrue(result["dodged"])
         self.assertEqual(result["damage"], 0)
 
-    @patch("combat.resolver.roll_critical_d8", return_value=2)
     @patch("combat.resolver.random.random", side_effect=(0.99, 0.0))
-    def test_critical_hit_deals_half_damage_through_block(self, _random, _critical_dice):
+    def test_critical_hit_deals_half_damage_through_block(self, _random):
         attacker = Fighter("Атакующий")
         defender = Fighter("Защитник")
         attacker.stats["intuition"] = 20
@@ -166,7 +165,7 @@ class TestAttackResolver(unittest.TestCase):
 
         self.assertTrue(result["critical"])
         self.assertTrue(result["blocked"])
-        self.assertEqual(result["damage"], 12)
+        self.assertEqual(result["damage"], 6)
 
 
 

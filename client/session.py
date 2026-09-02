@@ -33,6 +33,13 @@ class OnlineSession:
     def select_character(self, character):
         self.character = character
         return self.character
+    
+    def refresh_character(self):
+        """Перезагружает персонажа с сервера"""
+        if self.character is None:
+            return None
+        self.character = self.client.load_character(self.character["id"])
+        return self.character
 
     def create_character(self, name):
         self.character = self.client.create_character(name)
@@ -173,3 +180,77 @@ class OnlineSession:
         self.client.disconnect()
         self.character = None
         self.user = None
+    
+    def add_currency(self, copper=0, silver=0, gold=0):
+        """Add currency to character and save"""
+        from core.currency import Currency
+        
+        if self.character is None:
+            return None
+        
+        current = Currency.from_dict(self.character)
+        current.add(copper, silver, gold)
+        self.character.update(current.to_dict())
+        
+        return self.client.save_character(self.character)
+    
+    def subtract_currency(self, copper=0, silver=0, gold=0):
+        """Subtract currency from character, returns True if successful"""
+        from core.currency import Currency
+        
+        if self.character is None:
+            return False
+        
+        current = Currency.from_dict(self.character)
+        if not current.has_enough(copper, silver, gold):
+            return False
+        
+        current.subtract(copper, silver, gold)
+        self.character.update(current.to_dict())
+        self.client.save_character(self.character)
+        return True
+    
+    def get_currency(self):
+        """Get current character currency"""
+        if self.character is None:
+            return None
+        
+        from core.currency import Currency
+        return Currency.from_dict(self.character)
+    
+    def get_drinks_list(self):
+        """Get available drinks"""
+        return self.client.get("drinks")
+    
+    def buy_drink(self, drink_id):
+        """Buy a drink"""
+        if self.character is None:
+            return None
+        
+        result = self.client.post("character/buy_drink", {
+            "character_id": self.character["id"],
+            "drink_id": drink_id
+        })
+        if result:
+            self.character = result
+        return result
+    
+    def get_inventory(self):
+        """Get character inventory"""
+        if self.character is None:
+            return None
+        
+        return self.client.get(f"character/{self.character['id']}/inventory")
+    
+    def use_drink(self, inventory_item_id):
+        """Use a drink from inventory"""
+        if self.character is None:
+            return None
+        
+        result = self.client.post("character/use_drink", {
+            "character_id": self.character["id"],
+            "inventory_item_id": inventory_item_id
+        })
+        if result:
+            self.character = result
+        return result

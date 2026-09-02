@@ -85,10 +85,10 @@ class ServerPersistenceTests(unittest.TestCase):
         self.assertEqual(
             brawler["stats"],
             {
-                "strength": 9,
-                "agility": 4,
-                "intuition": 5,
-                "endurance": 8,
+                "strength": 6,
+                "agility": 3,
+                "intuition": 3,
+                "endurance": 4,
             },
         )
 
@@ -101,22 +101,22 @@ class ServerPersistenceTests(unittest.TestCase):
         self.assertEqual(set(bots), expected_names)
 
         self.assertEqual(bots["Безпроводной Душ"]["stats"], {
-            "strength": 6,
-            "agility": 4,
-            "intuition": 10,
-            "endurance": 6,
+            "strength": 3,
+            "agility": 3,
+            "intuition": 6,
+            "endurance": 4,
         })
         self.assertEqual(bots["Комфу Падла"]["stats"], {
-            "strength": 6,
-            "agility": 10,
-            "intuition": 4,
-            "endurance": 6,
+            "strength": 3,
+            "agility": 6,
+            "intuition": 3,
+            "endurance": 4,
         })
         self.assertEqual(bots["Пахарь"]["stats"], {
-            "strength": 12,
-            "agility": 4,
-            "intuition": 4,
-            "endurance": 6,
+            "strength": 3,
+            "agility": 3,
+            "intuition": 3,
+            "endurance": 7,
         })
 
     def test_password_is_not_accepted_in_plain_text(self):
@@ -291,7 +291,7 @@ class ServerPersistenceTests(unittest.TestCase):
 
     def test_bot_accepts_only_equal_backyard_duel(self):
         GameRequestHandler.database = self.database
-        world.update_bot("bot_brawler", 212)
+        world.update_bot("bot_brawler", 40)
         social.DUEL_OFFERS.clear()
         http_server = ThreadingHTTPServer(("127.0.0.1", 0), GameRequestHandler)
         thread = threading.Thread(target=http_server.serve_forever, daemon=True)
@@ -302,19 +302,12 @@ class ServerPersistenceTests(unittest.TestCase):
             client.register("botuser", "password")
             client.login("botuser", "password")
             character = client.create_character("Равный боец")
+            character.update({"level": 2})
+            character = client.save_character(character)
             with self.assertRaises(ServerError):
                 client.offer_duel(character["id"], "backyard", "bot_brawler")
 
-            character.update({
-                "stats": {
-                    "strength": 5,
-                    "agility": 5,
-                    "intuition": 5,
-                    "endurance": 11,
-                },
-                "max_hp": 254,
-                "hp": 254,
-            })
+            character.update({"level": 1})
             character = client.save_character(character)
             result = client.offer_duel(character["id"], "backyard", "bot_brawler")
         finally:

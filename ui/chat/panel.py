@@ -2,9 +2,10 @@ import pygame
 import time
 
 from client.network import ServerError
+from client.background_polling import BackgroundPoller
 from core import settings
 from ui.chat.widgets import ChannelList, ChatHeader, MessageInput, MessageList, UnreadBadge
-from ui.hud import draw_text
+from ui.hud import draw_button, draw_text
 
 
 class ChatPanel:
@@ -24,6 +25,7 @@ class ChatPanel:
         self.occupants = []
         self.messages = []
         self.offers = []
+        self.group_offers = []
         self.my_application = None
         self.private_target = None
         self.duel_accepted = None
@@ -32,12 +34,18 @@ class ChatPanel:
         self.people_scroll = 0
         self.error = ""
         self.elapsed = 0.0
+        self.background_poller = None
         self.panel_rect = pygame.Rect(settings.CHAT_PANEL_X, settings.CHAT_PANEL_Y, settings.CHAT_PANEL_WIDTH, settings.CHAT_PANEL_HEIGHT)
+        self.toggle_rect = pygame.Rect(self.panel_rect.right - 116, self.panel_rect.y + 9, 104, 26)
         self.divider_x = self.panel_rect.right - settings.CHAT_PEOPLE_WIDTH - settings.CHAT_DIVIDER_GAP * 2 - settings.CHAT_DIVIDER_WIDTH
         self.dragging_divider = False
         self._layout_widgets()
         self.unread_badge = UnreadBadge()
-        self.refresh()
+        if hasattr(session, "client"):
+            self.background_poller = BackgroundPoller(self._fetch_remote_state)
+            self.background_poller.start()
+        else:
+            self.refresh()
 
     @property
     def room_name(self):
@@ -92,32 +100,87 @@ class ChatPanel:
         self._layout_widgets()
 
     def refresh(self):
-        try:
-            self.session.update_presence(self.location)
-            self.occupants = sorted(self.session.list_occupants(self.location), key=lambda item: item.get("name", "").casefold())
-            self.messages = self.session.list_messages(self.location)
-            self.message_list.set_messages(self._visible_messages())
-            board = self.session.duel_board(self.location)
-            self.offers = board.get("offers", [])
-            server_application = board.get("my_application")
-            if server_application is not None:
-                self.my_application = server_application
-            elif self.my_application is not None:
-                created_at = float(self.my_application.get("created_at", 0))
-                if time.time() - created_at >= settings.DUEL_APPLICATION_TTL_SECONDS:
-                    self.my_application = None
-            self.error = ""
-        except ServerError as error:
+        state, error = self._fetch_remote_state_with_error()
+        if error is not None:
             self.error = str(error)
+            return
+        self._apply_remote_state(state)
+
+    def _fetch_remote_state(self):
+        state, error = self._fetch_remote_state_with_error()
+        if error is not None:
+            raise error
+        return state
+
+    def _fetch_remote_state_with_error(self):
+        try:
+            if hasattr(self.session, "social_snapshot"):
+                return self.session.social_snapshot(self.location), None
+            self.session.update_presence(self.location)
+            occupants = sorted(self.session.list_occupants(self.location), key=lambda item: item.get("name", "").casefold())
+            messages = self.session.list_messages(self.location)
+            board = self.session.duel_board(self.location)
+            return {"occupants": occupants, "messages": messages, "offers": board.get("offers", []), "my_application": board.get("my_application")}, None
+        except ServerError as error:
+            return None, error
+
+    def _apply_remote_state(self, state):
+        self.occupants = state["occupants"]
+        self.messages = state["messages"]
+        self.message_list.set_messages(self._visible_messages())
+        self.offers = state["offers"]
+        self.group_offers = state.get("group_offers", [])
+        server_application = state["my_application"]
+        if server_application is not None and server_application.get("status") == "accepted" and self.duel_accepted is None:
+            self._resolve_application_opponent(server_application)
+        self.my_application = server_application if server_application is not None and server_application.get("status") == "pending" else None
+        self.error = ""
+
+    def _resolve_application_opponent(self, application):
+        """Заявка игрока была принята (например, ботом по истечении срока ожидания) — запускаем бой."""
+        accepted_by = application.get("accepted_by")
+        opponent = next(
+            (item for item in self.occupants if str(item.get("character_id")) == str(accepted_by)),
+            None,
+        )
+        if opponent is not None:
+            self.duel_accepted = opponent
+
+    def _clear_expired_application(self):
+        if self.my_application is None or self.my_application.get("status", "pending") != "pending":
+            return
+        created_at = float(self.my_application.get("created_at", 0))
+        ttl = float(self.my_application.get("ttl", settings.DUEL_APPLICATION_TTL_SECONDS))
+        if time.time() >= created_at + ttl:
+            self.my_application = None
 
     def update(self, dt):
+        self._clear_expired_application()
         self.message_input.update(dt)
+        if self.background_poller is not None:
+            state, error = self.background_poller.poll()
+            if error is not None:
+                self.error = str(error)
+            elif state is not None:
+                self._apply_remote_state(state)
+            return
         self.elapsed += dt
         if self.elapsed >= 2:
             self.elapsed = 0
             self.refresh()
 
     def handle_event(self, event):
+        if pygame.display.get_surface() is not None:
+            screen = pygame.display.get_surface()
+            if self.collapsed:
+                self.toggle_rect = pygame.Rect(screen.get_width() - 80, screen.get_height() - 25, 70, 25)
+            else:
+                self.toggle_rect = pygame.Rect(self.panel_rect.right - 80, self.panel_rect.bottom - 30, 70, 25)
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 and self.toggle_rect.collidepoint(event.pos):
+            self.collapsed = not self.collapsed
+            if not self.collapsed:
+                self.message_list.set_messages(self._visible_messages())
+            return True
         if event.type == pygame.MOUSEMOTION and self.dragging_divider:
             self._move_divider(event.pos[0])
             return True
@@ -226,6 +289,10 @@ class ChatPanel:
         except ServerError as error:
             self.error = str(error)
 
+    def close(self):
+        if self.background_poller is not None:
+            self.background_poller.stop()
+
     def _visible_messages(self):
         if self.channel == "Общий":
             return self.messages
@@ -249,11 +316,13 @@ class ChatPanel:
 
     def draw(self, screen):
         if self.collapsed:
-            pygame.draw.rect(screen, (25, 27, 38), pygame.Rect(self.panel_rect.x, self.panel_rect.y, self.panel_rect.width, 44), border_radius=8)
-            self.header.draw(screen, self.location, True)
+            self.toggle_rect = pygame.Rect(screen.get_width() - 80, screen.get_height() - 25, 70, 25)
+            draw_button(screen, self.toggle_rect, "ЛОГ БОЯ", pygame.font.SysFont("arial", 12), color=(75, 105, 155))
             return
         pygame.draw.rect(screen, (25, 27, 38), self.panel_rect, border_radius=8)
         pygame.draw.rect(screen, (60, 65, 80), self.panel_rect, width=2, border_radius=8)
+        self.toggle_rect = pygame.Rect(self.panel_rect.right - 80, self.panel_rect.bottom - 30, 70, 25)
+        draw_button(screen, self.toggle_rect, "СВЕРНУТЬ", pygame.font.SysFont("arial", 13), color=(75, 105, 155))
         divider_color = (120, 170, 230) if self.dragging_divider or self.divider_rect.inflate(6, 0).collidepoint(pygame.mouse.get_pos()) else (60, 65, 80)
         pygame.draw.rect(screen, divider_color, self.divider_rect, border_radius=3)
         self.channels.draw(screen, self.channel, {"Общий": 0, "Личные": 0})

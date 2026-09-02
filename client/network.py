@@ -1,4 +1,5 @@
 import json
+from http.client import RemoteDisconnected
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from urllib.parse import quote
@@ -26,7 +27,7 @@ class GameClient:
             with urlopen(request, timeout=self.timeout) as response:
                 result = json.loads(response.read().decode("utf-8"))
                 return result
-        except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as error:
+        except (HTTPError, URLError, TimeoutError, json.JSONDecodeError, RemoteDisconnected, ConnectionResetError, OSError) as error:
             if isinstance(error, HTTPError):
                 try:
                     details = json.loads(error.read().decode("utf-8"))
@@ -167,4 +168,38 @@ class GameClient:
             f"/api/duel/restore/{player_id}/{opponent_id}",
             authenticated=True
         )
+
+    # ================== ИНВЕНТАРЬ И ЭКИПИРОВКА ==================
+    
+    def get_inventory(self, character_id):
+        """Получить инвентарь персонажа"""
+        return self._request("GET", f"/api/inventory/{character_id}", authenticated=True)["inventory"]
+    
+    def get_equipment(self, character_id):
+        """Получить экипировку персонажа"""
+        return self._request("GET", f"/api/equipment/{character_id}", authenticated=True)["equipment"]
+    
+    def get_storage(self, character_id, storage_type="chest1"):
+        """Получить хранилище персонажа"""
+        return self._request("GET", f"/api/storage/{character_id}/{storage_type}", authenticated=True)["storage"]
+    
+    def get_decks(self, character_id):
+        """Получить боевые колоды персонажа"""
+        return self._request("GET", f"/api/decks/{character_id}", authenticated=True)["decks"]
+    
+    def use_item(self, character_id, item_id):
+        """Использовать предмет"""
+        return self._request("POST", "/api/inventory/use", {"character_id": character_id, "item_id": item_id}, authenticated=True)
+    
+    def drop_item(self, character_id, item_id):
+        """Выбросить предмет"""
+        return self._request("POST", "/api/inventory/drop", {"character_id": character_id, "item_id": item_id}, authenticated=True)
+    
+    def equip_item(self, character_id, item_id, slot):
+        """Надеть предмет экипировки"""
+        return self._request("POST", "/api/equipment/equip", {"character_id": character_id, "item_id": item_id, "slot": slot}, authenticated=True)
+    
+    def unequip_item(self, character_id, slot):
+        """Снять предмет экипировки"""
+        return self._request("POST", "/api/equipment/unequip", {"character_id": character_id, "slot": slot}, authenticated=True)
 

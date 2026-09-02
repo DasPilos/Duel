@@ -12,8 +12,6 @@ DUEL_OFFERS = []
 def backyard_duel_error(player, opponent):
     if player.get("level") != opponent.get("level"):
         return "Бой возможен только между персонажами одного уровня"
-    if sum(player.get("stats", {}).values()) != 26 or sum(opponent.get("stats", {}).values()) != 26:
-        return "Для равного боя у каждого должно быть ровно 26 очков характеристик"
     equipment_keys = ("equipment", "items", "weapon", "armor", "gear")
     if any(player.get(key) for key in equipment_keys) or any(opponent.get(key) for key in equipment_keys):
         return "На заднем дворе проводятся только кулачные бои без экипировки"
@@ -74,6 +72,25 @@ def cancel_public_duel_offer(sender_id, location):
 
 def pending_bot_public_offers(location):
     return [copy.deepcopy(offer) for offer in DUEL_OFFERS if offer["location"] == location and offer["target_id"] is None and offer["status"] == "pending" and str(offer["sender_id"]).startswith("bot_")]
+
+
+def pending_player_public_offers(location):
+    cleanup()
+    return [copy.deepcopy(offer) for offer in DUEL_OFFERS if offer["location"] == location and offer["target_id"] is None and offer["status"] == "pending" and not str(offer["sender_id"]).startswith("bot_")]
+
+
+def own_public_offer(sender_id, location):
+    """Активная заявка этого отправителя, либо только что принятая ботом — чтобы клиент мог начать бой."""
+    cleanup()
+    candidates = [
+        offer for offer in DUEL_OFFERS
+        if offer["sender_id"] == sender_id and offer["location"] == location and offer["target_id"] is None
+        and offer["status"] in ("pending", "accepted")
+    ]
+    if not candidates:
+        return None
+    candidates.sort(key=lambda offer: offer["created_at"], reverse=True)
+    return copy.deepcopy(candidates[0])
 
 
 def close_public_offer(offer_id, status, now=None):

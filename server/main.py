@@ -1,11 +1,14 @@
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import threading
+import traceback
+from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 import time
 
 from server import config
 from server.database import Database
+from server.items_database import ItemsDatabase
 from server import social
 from server.world import run_bot_battle_tick
 from combat.anticheat import score_match
@@ -13,12 +16,26 @@ from combat.anticheat import score_match
 
 class GameRequestHandler(BaseHTTPRequestHandler):
     database = Database()
+    items_database = ItemsDatabase(database)
     chat_send_times = {}
 
     def _send(self, status, payload):
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _send_client_download(self):
+        package_path = Path(__file__).resolve().parent.parent / "client_package.zip"
+        if not package_path.is_file():
+            self._send(404, {"error": "Архив клиента не найден"})
+            return
+        data = package_path.read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/zip")
+        self.send_header("Content-Disposition", 'attachment; filename="client_package.zip"')
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
@@ -39,6 +56,10 @@ class GameRequestHandler(BaseHTTPRequestHandler):
     def _handle_error(self, error):
         status = 401 if "авторизац" in str(error) or "сессия" in str(error) else 400
         self._send(status, {"error": str(error)})
+
+    def _handle_server_error(self, error):
+        traceback.print_exc()
+        self._send(500, {"error": "Внутренняя ошибка сервера"})
 
     def _query(self):
         return parse_qs(urlparse(self.path).query)
@@ -88,6 +109,25 @@ class GameRequestHandler(BaseHTTPRequestHandler):
         location = query.get("location", ["tavern"])[0]
         self._send(200, {"unread": self.database.chat_unread_count(character_id, location)})
 
+    def _handle_social_snapshot(self):
+        query = self._query()
+        token = self._token()
+        user_id = self.database.user_id_by_token(token)
+        location = query.get("location", ["tavern"])[0]
+        character_id = int(query.get("character_id", [0])[0])
+        _, character = self._chat_actor(token, character_id)
+        social.update_presence(token, user_id, character, location)
+        offers = social.offers_for(character_id)
+        if location == "backyard":
+            offers += social.public_offers(location, character_id)
+        self._send(200, {
+            "occupants": social.occupants(user_id, location),
+            "messages": self.database.get_chat_history(character_id, location),
+            "offers": offers,
+            "my_application": social.own_public_offer(character_id, location),
+            "group_offers": social.group_battle_offers() if location == "backyard" else [],
+        })
+
     def _handle_social_offers(self):
         token = self._token()
         user_id = self.database.user_id_by_token(token)
@@ -98,7 +138,7 @@ class GameRequestHandler(BaseHTTPRequestHandler):
             offers += social.public_offers(location, character["id"])
         self._send(200, {
             "offers": offers,
-            "my_application": social.pending_public_offer(character["id"], location),
+            "my_application": social.own_public_offer(character["id"], location),
         })
 
     def _handle_chat_message(self, body, *, validation_error, prevent_self_message=False):
@@ -123,6 +163,9 @@ class GameRequestHandler(BaseHTTPRequestHandler):
             path = urlparse(self.path).path.rstrip("/")
             if path == "/health":
                 self._send(200, {"status": "ok"})
+                return
+            if path == "/download/client":
+                self._send_client_download()
                 return
             if path == "/api/characters/me":
                 user_id = self.database.user_id_by_token(self._token())
@@ -149,6 +192,9 @@ class GameRequestHandler(BaseHTTPRequestHandler):
             if path == "/api/chat/unread":
                 self._handle_chat_unread()
                 return
+            if path == "/api/social/snapshot":
+                self._handle_social_snapshot()
+                return
             if path == "/api/social/offers":
                 self._handle_social_offers()
                 return
@@ -174,9 +220,65 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                 else:
                     self._send(200, {"character": character})
                 return
+            
+            if path == "/api/drinks":
+                self._token()
+                drinks = self.database.get_drinks_list()
+                self._send(200, {"drinks": drinks})
+                return
+            
+            # ============= GET API ИНВЕНТАРЯ =============
+            if path.startswith("/api/inventory/"):
+               character_id = int(path.rsplit("/", 1)[1])
+               user_id = self.database.user_id_by_token(self._token())
+               character = self.database.get_character(user_id, character_id)
+               if character is None:
+                   self._send(404, {"error": "Персонаж не найден"})
+               else:
+                   inventory = self.items_database.get_inventory(character_id)
+                   self._send(200, {"inventory": inventory})
+               return
+            
+            if path.startswith("/api/equipment/"):
+               character_id = int(path.rsplit("/", 1)[1])
+               user_id = self.database.user_id_by_token(self._token())
+               character = self.database.get_character(user_id, character_id)
+               if character is None:
+                   self._send(404, {"error": "Персонаж не найден"})
+               else:
+                   equipment = self.items_database.get_equipment(character_id)
+                   self._send(200, {"equipment": equipment})
+               return
+            
+            if path.startswith("/api/storage/"):
+               parts = path.split("/")
+               character_id = int(parts[-2])
+               storage_type = str(parts[-1])
+               user_id = self.database.user_id_by_token(self._token())
+               character = self.database.get_character(user_id, character_id)
+               if character is None:
+                   self._send(404, {"error": "Персонаж не найден"})
+               else:
+                   storage = self.items_database.get_storage(character_id, storage_type)
+                   self._send(200, {"storage": storage})
+               return
+            
+            if path.startswith("/api/decks/"):
+               character_id = int(path.rsplit("/", 1)[1])
+               user_id = self.database.user_id_by_token(self._token())
+               character = self.database.get_character(user_id, character_id)
+               if character is None:
+                   self._send(404, {"error": "Персонаж не найден"})
+               else:
+                   decks = self.items_database.get_decks(character_id)
+                   self._send(200, {"decks": decks})
+               return
+            
             self._send(404, {"error": "Маршрут не найден"})
         except (ValueError, json.JSONDecodeError) as error:
             self._handle_error(error)
+        except Exception as error:
+            self._handle_server_error(error)
 
     def do_POST(self):
         try:
@@ -398,9 +500,125 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                 offer = social.respond_duel_offer(character["id"], body["offer_id"], bool(body.get("accepted")))
                 self._send(200, {"offer": offer})
                 return
+            
+            # ============= API ИНВЕНТАРЯ =============
+            if path == "/api/inventory":
+               token = self._token()
+               user_id = self.database.user_id_by_token(token)
+               character_id = int(body.get("character_id", 0))
+               character = self.database.get_character(user_id, character_id)
+               if character is None:
+                   raise ValueError("Персонаж не найден")
+               inventory = self.items_database.get_inventory(character_id)
+               self._send(200, {"inventory": inventory})
+               return
+            
+            if path == "/api/equipment":
+               token = self._token()
+               user_id = self.database.user_id_by_token(token)
+               character_id = int(body.get("character_id", 0))
+               character = self.database.get_character(user_id, character_id)
+               if character is None:
+                   raise ValueError("Персонаж не найден")
+               equipment = self.items_database.get_equipment(character_id)
+               self._send(200, {"equipment": equipment})
+               return
+            
+            if path == "/api/storage":
+               token = self._token()
+               user_id = self.database.user_id_by_token(token)
+               character_id = int(body.get("character_id", 0))
+               character = self.database.get_character(user_id, character_id)
+               if character is None:
+                   raise ValueError("Персонаж не найден")
+               storage_type = str(body.get("storage_type", "chest1"))
+               storage = self.items_database.get_storage(character_id, storage_type)
+               self._send(200, {"storage": storage})
+               return
+            
+            if path == "/api/decks":
+               token = self._token()
+               user_id = self.database.user_id_by_token(token)
+               character_id = int(body.get("character_id", 0))
+               character = self.database.get_character(user_id, character_id)
+               if character is None:
+                   raise ValueError("Персонаж не найден")
+               decks = self.items_database.get_decks(character_id)
+               self._send(200, {"decks": decks})
+               return
+            
+            if path == "/api/inventory/use":
+               token = self._token()
+               user_id = self.database.user_id_by_token(token)
+               character_id = int(body.get("character_id", 0))
+               character = self.database.get_character(user_id, character_id)
+               if character is None:
+                   raise ValueError("Персонаж не найден")
+               item_id = int(body.get("item_id", 0))
+               result = self.items_database.use_item(character_id, item_id)
+               self._send(200, {"used": result})
+               return
+            
+            if path == "/api/inventory/drop":
+               token = self._token()
+               user_id = self.database.user_id_by_token(token)
+               character_id = int(body.get("character_id", 0))
+               character = self.database.get_character(user_id, character_id)
+               if character is None:
+                   raise ValueError("Персонаж не найден")
+               item_id = int(body.get("item_id", 0))
+               self.items_database.remove_from_inventory(character_id, item_id)
+               self._send(200, {"dropped": True})
+               return
+            
+            if path == "/api/equipment/equip":
+               token = self._token()
+               user_id = self.database.user_id_by_token(token)
+               character_id = int(body.get("character_id", 0))
+               character = self.database.get_character(user_id, character_id)
+               if character is None:
+                   raise ValueError("Персонаж не найден")
+               item_id = int(body.get("item_id", 0))
+               slot = str(body.get("slot", "")).strip()
+               self.items_database.equip_item(character_id, item_id, slot)
+               self._send(200, {"equipped": True})
+               return
+            
+            if path == "/api/equipment/unequip":
+               token = self._token()
+               user_id = self.database.user_id_by_token(token)
+               character_id = int(body.get("character_id", 0))
+               character = self.database.get_character(user_id, character_id)
+               if character is None:
+                   raise ValueError("Персонаж не найден")
+               slot = str(body.get("slot", "")).strip()
+               self.items_database.unequip_item(character_id, slot)
+               self._send(200, {"unequipped": True})
+               return
+            
+            if path == "/api/character/buy_drink":
+               token = self._token()
+               user_id = self.database.user_id_by_token(token)
+               character_id = int(body.get("character_id", 0))
+               drink_id = int(body.get("drink_id", 0))
+               character = self.database.buy_drink(user_id, character_id, drink_id)
+               self._send(200, {"character": character})
+               return
+              
+            if path == "/api/character/use_drink":
+               token = self._token()
+               user_id = self.database.user_id_by_token(token)
+               character_id = int(body.get("character_id", 0))
+               inventory_item_id = int(body.get("inventory_item_id", 0))
+               character = self.database.use_drink(user_id, character_id, inventory_item_id)
+               self._send(200, {"character": character})
+               return
+              
             self._send(404, {"error": "Маршрут не найден"})
         except (ValueError, json.JSONDecodeError, KeyError) as error:
             self._handle_error(error)
+        except Exception as error:
+            self._handle_server_error(error)
 
     def do_PUT(self):
         try:
@@ -420,6 +638,8 @@ class GameRequestHandler(BaseHTTPRequestHandler):
             self._send(200, {"character": character})
         except (ValueError, json.JSONDecodeError, KeyError) as error:
             self._handle_error(error)
+        except Exception as error:
+            self._handle_server_error(error)
 
     def log_message(self, format_string, *args):
         print(f"[server] {self.address_string()} - {format_string % args}")
@@ -447,8 +667,13 @@ def run():
 
 
 def _run_bot_battles(stop_event):
-    while not stop_event.wait(1):
-        run_bot_battle_tick()
+    while not stop_event.is_set():
+        try:
+            run_bot_battle_tick()
+        except Exception:
+            traceback.print_exc()
+        if stop_event.wait(1):
+            break
 
 
 if __name__ == "__main__":

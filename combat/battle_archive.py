@@ -22,6 +22,7 @@ def record_battle(battle, *, source, extra=None):
     """Write one finished Battle as a JSON file under battle_archive/."""
     ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
     record = {
+        "battle_version": 2 if hasattr(battle, "hands") else 1,
         "id": uuid.uuid4().hex,
         "timestamp": time.time(),
         "source": source,
@@ -31,6 +32,12 @@ def record_battle(battle, *, source, extra=None):
         "enemy": _fighter_snapshot(battle.enemy),
         "stats": battle.stats,
     }
+    if hasattr(battle, "hands"):
+        record["hands"] = {
+            side: [card.key for card in cards]
+            for side, cards in battle.hands.items()
+        }
+        record["history"] = battle.history
     if extra:
         record.update(extra)
     path = ARCHIVE_DIR / f"{int(record['timestamp'])}_{record['id']}.json"

@@ -14,8 +14,8 @@ from ui.character_profile_overlay import CharacterProfileOverlay
 
 class CharacterStatTests(unittest.TestCase):
     def test_max_hp_formula_matches_level_and_endurance(self):
-        self.assertEqual(calculate_max_hp(1, 5), 170)
-        self.assertEqual(calculate_max_hp(3, 7), 238)
+        self.assertEqual(calculate_max_hp(1, 5), 50)
+        self.assertEqual(calculate_max_hp(3, 7), 70)
 
     def test_profile_model_normalizes_fighter_and_derived_values(self):
         fighter = Fighter("Тест")
@@ -23,33 +23,33 @@ class CharacterStatTests(unittest.TestCase):
 
         self.assertEqual(profile["stats"], fighter.stats)
         self.assertEqual(derived_values(profile, fighter), {
-            "Урон": 12,
-            "Уворот": "5%",
-            "Крит": "10%",
-            "HP": 170,
+            "Урон": 4,
+            "Уворот": "6%",
+            "Крит": "6%",
+            "HP": 40,
         })
 
     def test_endurance_increase_preserves_gained_health(self):
         state = adjust_stats(
             {"strength": 5, "agility": 5, "intuition": 5, "endurance": 5},
             6,
-            120,
-            170,
+            20,
+            25,
             1,
             "endurance",
             1,
         )
 
-        self.assertEqual(state["max_hp"], 184)
-        self.assertEqual(state["hp"], 134)
+        self.assertEqual(state["max_hp"], 60)
+        self.assertEqual(state["hp"], 55)
         self.assertEqual(state["stat_points"], 5)
 
     def test_stat_decrease_cannot_go_below_minimum(self):
         state = adjust_stats(
             {"strength": 4, "agility": 5, "intuition": 5, "endurance": 5},
             6,
-            170,
-            170,
+            25,
+            25,
             1,
             "strength",
             -1,
@@ -88,8 +88,8 @@ class CharacterStatTests(unittest.TestCase):
             overlay.player_card.sync({
                 "name": "Игрок",
                 "level": 1,
-                "hp": 170,
-                "max_hp": 170,
+                "hp": 25,
+                "max_hp": 25,
                 "stats": {"strength": 5, "agility": 5, "intuition": 5, "endurance": 5},
                 "stat_points": 6,
             })
@@ -268,8 +268,8 @@ class CharacterStatTests(unittest.TestCase):
                     "name": "Игрок",
                     "level": 1,
                     "xp": 0,
-                    "hp": 170,
-                    "max_hp": 170,
+                    "hp": 25,
+                    "max_hp": 25,
                     "mp": 50,
                     "max_mp": 50,
                     "stats": {"strength": 5, "agility": 5, "intuition": 5, "endurance": 5},

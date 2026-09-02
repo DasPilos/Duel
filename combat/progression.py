@@ -1,5 +1,7 @@
 import math
 
+from combat.character_stats import level_stat_points
+
 
 LEVEL_CAP = 30
 WIN_XP_BASE = 20
@@ -55,7 +57,8 @@ def apply_xp(fighter, amount, restore_hp=False):
         current_hp = fighter.hp
         fighter.xp -= threshold
         fighter.level += 1
-        fighter.stat_points += 6
+        fighter.stats["endurance"] += 1
+        fighter.stat_points += level_stat_points(fighter.level)
         fighter.recalculate_parameters()
         fighter.hp = fighter.max_hp if restore_hp else min(current_hp, fighter.max_hp)
         levels_gained += 1

@@ -41,7 +41,9 @@ mark_player_afk() отмечает как AFK в БД
   ↓
 save_battle_state() сохраняет состояние боя
   ↓
-Сервер продолжает бой с АФК персонажем
+АФК персонаж НЕ ДЕЛАЕТ НИКАКИХ ДЕЙСТВИЙ
+Получает урон от противника
+Ждет переподключения или таймаута
 ```
 
 ### Переподключение
@@ -55,6 +57,7 @@ restore_battle_state() восстанавливает полное состоя�
 unmark_player_afk() убирает AFK статус
   ↓
 Сцена боя отображается как раньше
+Игрок может продолжить управлять персонажем
 ```
 
 ## API endpoints структура
@@ -75,10 +78,9 @@ async def restore_battle(player_id, opponent_id):
 
 ### `AFKBattleManager`
 ```python
-select_afk_card(available_cards)        # Выбрать карту
-select_afk_attack_zone(valid_zones)     # Выбрать зону
-should_regenerate_during_afk()          # False - не регенерирует
-get_afk_strategy()                      # 'random'
+can_player_act_if_afk()                   # False - АФК не действует
+should_receive_damage_while_afk()         # True - получает урон
+should_regenerate_during_afk()            # False - не регенерирует
 ```
 
 ### `AFKBattleHandler`  

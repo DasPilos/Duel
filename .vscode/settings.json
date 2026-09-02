@@ -1,3 +1,9 @@
 {
-    "python-envs.defaultEnvManager": "ms-python.python:system"
+    "python-envs.defaultEnvManager": "ms-python.python:system",
+    "chat.tools.terminal.autoApprove": {
+        "/^cd 'e:\\\\python\\\\game'\n# Создаем структуру папок для двух разработчиков\nmkdir -p core/character\nmkdir -p core/cards\nmkdir -p core/stats\nmkdir -p server/town\nmkdir -p server/academy\nmkdir -p scenes/town\nmkdir -p scenes/academy\nmkdir -p scenes/battle\n\n# Проверяем что создалось\nGet-ChildItem -Path core -Directory\n$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
+    }
 }

@@ -21,13 +21,19 @@ class BackyardScene:
         self.profile_overlay = CharacterProfileOverlay(self.small_font)
         self.chat = ChatPanel(session, "backyard", profile_overlay=self.profile_overlay)
         self.navigate = None
+        self.inventory_button = pygame.Rect(settings.WIDTH - 70, 10, 50, 50)
         self.navigation_buttons = [
             {"rect": pygame.Rect(1640, 35, 220, 45), "label": "ТРАКТИР", "target": "tavern"},
         ]
         self.tavern_button = self.navigation_buttons[0]["rect"]
         self.application_frame = pygame.Rect(560, 40, 800, 560)
+        self.duel_list_rect = pygame.Rect(585, 115, 750, 145)
+        self.group_list_rect = pygame.Rect(585, 365, 750, 200)
+        self.duel_scroll = 0
+        self.group_scroll = 0
         self.application_button = pygame.Rect(560, 620, 220, 40)
         self.group_battle_button = pygame.Rect(800, 620, 220, 40)
+        self.accept_application_button = pygame.Rect(1040, 620, 220, 40)
         self.group_offers = []
         self.group_elapsed = 0.0
         self.group_application_id = None
@@ -37,6 +43,7 @@ class BackyardScene:
         self.group_menu_size = None
         self.group_menu_ttl = None
         self.application_popup = None
+        self.selected_application_id = None
         self.profile_comparison = CharacterComparison(self.small_font)
         self.renderer = BackyardRenderer(self)
 
@@ -45,10 +52,25 @@ class BackyardScene:
             if self.profile_overlay.is_open:
                 self.application_popup = None
             return
+        if event.type == pygame.MOUSEWHEEL:
+            if self.duel_list_rect.collidepoint(pygame.mouse.get_pos()):
+                self.duel_scroll = max(0, self.duel_scroll - event.y)
+                return
+            if self.group_list_rect.collidepoint(pygame.mouse.get_pos()):
+                self.group_scroll = max(0, self.group_scroll - event.y)
+                return
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            # Обработка клика по кнопке инвентаря
+            if self.inventory_button.collidepoint(event.pos):
+                self.profile_overlay.open(self.session.character, None)
+                return
+            
             action, profile = self.profile_overlay.handle_click(event.pos)
             if action == "stat_change":
                 self._save_profile_card(profile)
+                return
+            if action == "backpack":
+                # TODO: обработать клик по рюкзаку
                 return
             if action in ("handled", "close"):
                 return
@@ -69,6 +91,7 @@ class BackyardScene:
                     return
                 if action == "close":
                     self.application_popup = None
+                    self.selected_application_id = None
                     return
                 if action == "challenge":
                     self._challenge_selected()
@@ -79,20 +102,23 @@ class BackyardScene:
             if self.group_battle_button.collidepoint(event.pos):
                 self._create_group_battle()
                 return
+            if self.has_incoming_application() and self.accept_application_button.collidepoint(event.pos):
+                self._accept_application()
+                return
             for index, offer in enumerate(self._application_offers()):
                 row = pygame.Rect(
-                    self.application_frame.x + 25,
-                    self.application_frame.y + 75 + index * 42,
-                    self.application_frame.width - 50,
+                    self.duel_list_rect.x,
+                    self.duel_list_rect.y + (index - self.duel_scroll) * 42,
+                    self.duel_list_rect.width,
                     34,
                 )
-                if row.collidepoint(event.pos):
+                if self.duel_list_rect.colliderect(row) and row.collidepoint(event.pos):
                     self._open_application(offer)
                     return
-            group_start = self.application_frame.y + 275
+            group_start = self.group_list_rect.y
             for index, offer in enumerate(self.group_offers):
-                row = pygame.Rect(self.application_frame.x + 25, group_start + index * 42, self.application_frame.width - 50, 34)
-                if row.collidepoint(event.pos):
+                row = pygame.Rect(self.group_list_rect.x, group_start + (index - self.group_scroll) * 42, self.group_list_rect.width, 34)
+                if self.group_list_rect.colliderect(row) and row.collidepoint(event.pos):
                     self._join_group_battle(offer)
                     return
         if event.type == pygame.KEYDOWN:
@@ -105,25 +131,19 @@ class BackyardScene:
 
     def update(self, dt):
         self.chat.update(dt)
-        self.group_elapsed += dt
-        if self.group_elapsed >= 2:
-            self.group_elapsed = 0.0
-            try:
-                self.group_offers = self.session.list_group_battles()
-                if self.group_application_id is None:
-                    character_id = self.session.character["id"]
-                    own_offer = next(
-                        (
-                            offer for offer in self.group_offers
-                            if any(item["id"] == character_id for item in offer.get("participants", []))
-                        ),
-                        None,
-                    )
-                    if own_offer is not None:
-                        self.group_application_id = own_offer["id"]
-                        self.group_application = own_offer
-            except ServerError:
-                pass
+        self.group_offers = list(self.chat.group_offers)
+        if self.group_application_id is None:
+            character_id = self.session.character["id"]
+            own_offer = next(
+                (
+                    offer for offer in self.group_offers
+                    if any(item["id"] == character_id for item in offer.get("participants", []))
+                ),
+                None,
+            )
+            if own_offer is not None:
+                self.group_application_id = own_offer["id"]
+                self.group_application = own_offer
         if self.chat.duel_accepted is not None:
             accepted = self.chat.duel_accepted
             self.chat.duel_accepted = None
@@ -159,8 +179,10 @@ class BackyardScene:
         if self.group_application_id is not None:
             self.error = "Сначала отмените сбор стенка на стенку"
             return
+        self.chat._clear_expired_application()
         if self.chat.my_application is None:
             self.application_menu = "duel"
+            self.error = ""
             return
         try:
             self.session.cancel_duel_application("backyard")
@@ -252,6 +274,10 @@ class BackyardScene:
 
     def _open_application(self, offer):
         self.profile_overlay.close()
+        own_id = str(self.session.character["id"])
+        self.selected_application_id = (
+            offer["id"] if str(offer.get("sender_id")) != own_id else None
+        )
         self.application_popup = next(
             (
                 item for item in self.chat.occupants
@@ -278,13 +304,41 @@ class BackyardScene:
         except ServerError as error:
             self.error = str(error)
 
+    def _accept_application(self):
+        own_id = str(self.session.character["id"])
+        incoming = [
+            offer for offer in self._application_offers()
+            if str(offer.get("sender_id")) != own_id
+            and offer.get("id") == self.selected_application_id
+            and self.chat.my_application is not None
+            and str(offer.get("target_id")) == own_id
+        ]
+        if not incoming:
+            self.error = "Нет заявок для принятия"
+            return
+        offer = incoming[0]
+        try:
+            self.session.respond_duel_offer(offer["id"], True)
+            self.opponent = next(
+                (
+                    item for item in self.chat.occupants
+                    if str(item.get("character_id")) == str(offer["sender_id"])
+                ),
+                {"character_id": offer["sender_id"], "name": offer.get("sender", "Противник"), "level": 1, "stats": {}},
+            )
+            self.finished = True
+            self.selected_application_id = None
+        except ServerError as error:
+            self.error = str(error)
+
     def draw(self, screen):
         self.renderer.draw(screen)
 
     def close(self):
-        pass
+        self.chat.close()
 
     def _application_offers(self):
+        self.chat._clear_expired_application()
         offers = list(self.chat.offers)
         own_application = self.chat.my_application
         if own_application is not None and not any(
@@ -297,6 +351,16 @@ class BackyardScene:
             })
         offers.sort(key=lambda offer: float(offer.get("created_at", 0)), reverse=True)
         return offers
+
+    def has_incoming_application(self):
+        own_id = str(self.session.character["id"])
+        return any(
+            str(offer.get("sender_id")) != own_id
+            and offer.get("id") == self.selected_application_id
+            and self.chat.my_application is not None
+            and str(offer.get("target_id")) == own_id
+            for offer in self._application_offers()
+        )
 
     def _save_profile_card(self, profile):
         try:
