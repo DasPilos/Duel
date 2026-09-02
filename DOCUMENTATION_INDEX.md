@@ -29,8 +29,9 @@
 ### Что читать:
 
 1. **[ARCHITECTURE_DUAL_SYSTEM.md](./ARCHITECTURE_DUAL_SYSTEM.md)** ← ОБЯЗАТЕЛЬНО!
-2. **[CONTRIBUTING.md](./CONTRIBUTING.md)** - Правила разработки
-3. **[HANDOFF_GUIDE.md](./HANDOFF_GUIDE.md)** - Практический гайд
+2. **[PROFESSION_SELECT_DOCS.md](./PROFESSION_SELECT_DOCS.md)** - Система выбора профессии (новая)
+3. **[CONTRIBUTING.md](./CONTRIBUTING.md)** - Правила разработки
+4. **[HANDOFF_GUIDE.md](./HANDOFF_GUIDE.md)** - Практический гайд
 
 ### Ваши файлы (не трогайте):
 
@@ -72,19 +73,23 @@
    - Примеры единой валюты
    - Почему клиент это визуализация
 
-2. **[MAGE_DEVELOPER_GUIDE.md](./MAGE_DEVELOPER_GUIDE.md)** (30 мин)
+2. **[PROFESSION_SELECT_DOCS.md](./PROFESSION_SELECT_DOCS.md)** (10 мин)
+   - Как работает выбор профессии
+   - Как создаются маги в системе
+
+3. **[MAGE_DEVELOPER_GUIDE.md](./MAGE_DEVELOPER_GUIDE.md)** (30 мин)
    - Полная спецификация системы магии
    - Характеристики магов
    - Система элементов и заклинаний
    - БД схема и API
 
-3. **[HANDOFF_GUIDE.md](./HANDOFF_GUIDE.md)** (15 мин)
+4. **[HANDOFF_GUIDE.md](./HANDOFF_GUIDE.md)** (15 мин)
    - Что вы делаете, что ОП1 делает
    - Опасные ошибки и как избежать
    - Таблица разрешений
    - Чек-лист перед началом
 
-4. **[CONTRIBUTING.md](./CONTRIBUTING.md)** (10 мин)
+5. **[CONTRIBUTING.md](./CONTRIBUTING.md)** (10 мин)
    - Git workflow
    - Code standards
 
