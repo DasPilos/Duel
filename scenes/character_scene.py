@@ -25,8 +25,8 @@ class CharacterScene:
         self.character_scroll = 0
         self.max_visible_characters = 5
         self.selected_character = None  # Выбранный персонаж для показа карточки
-        self.continue_button = pygame.Rect(760, 1000, 400, 50)  # Кнопка центрирована на экране, под карточкой
-        self.delete_button = pygame.Rect(760, 1070, 400, 50)  # Кнопка удаления ниже continue
+        self.continue_button = pygame.Rect(760, 850, 400, 50)  # Поднял на 150 пикселей (было 1000)
+        self.delete_button = pygame.Rect(760, 920, 400, 50)  # Поднял на 150 пикселей (было 1070)
         
         # Password confirmation dialog
         self.show_delete_confirmation = False
@@ -190,7 +190,7 @@ class CharacterScene:
         # Рисуем карточку персонажа справа если выбран
         if self.selected_character is not None:
             # Рисуем фон карточки
-            card_frame = pygame.Rect(550, 180, 700, 800)
+            card_frame = pygame.Rect(550, 30, 700, 800)
             
             # Рисуем карточку
             self.card.draw(
