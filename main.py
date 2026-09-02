@@ -6,6 +6,7 @@ import pygame
 from core.settings import FPS, HEIGHT, WIDTH
 from scenes.duel_scene import DuelScene
 from scenes.character_scene import CharacterScene
+from scenes.create_character_scene import CreateCharacterScene
 from scenes.profession_select_scene import ProfessionSelectScene
 from scenes.tavern_scene import TavernScene
 from scenes.backyard_scene import BackyardScene
@@ -110,10 +111,28 @@ def main():
                     if scene.cancelled:
                         scene.session.disconnect()
                         running = False
-                    else:
+                    elif scene.create_new_character:
+                        # Transition to character creation scene
                         close_scene_ui(scene)
                         session = scene.session
-                        # Pass character name and ID to profession selection scene
+                        transition.start(screen, lambda: CreateCharacterScene(session))
+                    else:
+                        # Character was selected, continue to tavern
+                        close_scene_ui(scene)
+                        session = scene.session
+                        transition.start(screen, lambda: TavernScene(session))
+
+                elif args.online and isinstance(scene, CreateCharacterScene) and scene.finished:
+                    pygame.key.stop_text_input()
+                    if scene.cancelled:
+                        # Back to character selection
+                        close_scene_ui(scene)
+                        session = scene.session
+                        transition.start(screen, lambda: CharacterScene(session))
+                    else:
+                        # Character created, go to profession selection
+                        close_scene_ui(scene)
+                        session = scene.session
                         character_name = scene.created_character["name"]
                         character_id = scene.created_character["id"]
                         transition.start(screen, lambda: ProfessionSelectScene(session, character_name, character_id))
@@ -121,9 +140,12 @@ def main():
                 elif args.online and isinstance(scene, ProfessionSelectScene) and scene.finished:
                     pygame.key.stop_text_input()
                     if scene.cancelled:
-                        scene.session.disconnect()
-                        running = False
+                        # Back button clicked - character was deleted, return to character selection
+                        close_scene_ui(scene)
+                        session = scene.session
+                        transition.start(screen, lambda: CharacterScene(session))
                     else:
+                        # Profession selected, continue to tavern
                         close_scene_ui(scene)
                         session = scene.session
                         transition.start(screen, lambda: TavernScene(session))

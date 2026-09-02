@@ -18,9 +18,9 @@
     "zone": "backyard",
     "kind": "bot",
     "locked_level": true,
-    "updated_at": 1788362341.1126885,
+    "updated_at": 1788362631.7652128,
     "last_battle_at": 0.0,
-    "last_attack_at": 1788362341.1126885
+    "last_attack_at": 1788362631.7652128
   },
   "bot_wireless_soul": {
     "id": "bot_wireless_soul",
@@ -41,9 +41,9 @@
     "zone": "backyard",
     "kind": "bot",
     "locked_level": true,
-    "updated_at": 1788362341.1126885,
+    "updated_at": 1788362631.7652128,
     "last_battle_at": 0.0,
-    "last_attack_at": 1788362341.1126885
+    "last_attack_at": 1788362631.7652128
   },
   "bot_konfu_padla": {
     "id": "bot_konfu_padla",
@@ -64,9 +64,9 @@
     "zone": "backyard",
     "kind": "bot",
     "locked_level": true,
-    "updated_at": 1788362341.1126885,
+    "updated_at": 1788362631.7652128,
     "last_battle_at": 0.0,
-    "last_attack_at": 1788362341.1126885
+    "last_attack_at": 1788362631.7652128
   },
   "bot_plowman": {
     "id": "bot_plowman",
@@ -87,9 +87,9 @@
     "zone": "backyard",
     "kind": "bot",
     "locked_level": true,
-    "updated_at": 1788362341.1126885,
+    "updated_at": 1788362631.7652128,
     "last_battle_at": 0.0,
-    "last_attack_at": 1788362341.1126885
+    "last_attack_at": 1788362631.7652128
   },
   "bot_void_lightning": {
     "id": "bot_void_lightning",
@@ -111,9 +111,9 @@
     "kind": "bot",
     "role": "critical",
     "locked_level": true,
-    "updated_at": 1788362341.1126885,
+    "updated_at": 1788362631.7652128,
     "last_battle_at": 0.0,
-    "last_attack_at": 1788362341.1126885
+    "last_attack_at": 1788362631.7652128
   },
   "bot_fist_blade": {
     "id": "bot_fist_blade",
@@ -135,9 +135,9 @@
     "kind": "bot",
     "role": "critical",
     "locked_level": true,
-    "updated_at": 1788362341.1126885,
+    "updated_at": 1788362631.7652128,
     "last_battle_at": 0.0,
-    "last_attack_at": 1788362341.1126885
+    "last_attack_at": 1788362631.7652128
   },
   "bot_wasteland_fury": {
     "id": "bot_wasteland_fury",
@@ -159,9 +159,9 @@
     "kind": "bot",
     "role": "critical",
     "locked_level": true,
-    "updated_at": 1788362341.1126885,
+    "updated_at": 1788362631.7652128,
     "last_battle_at": 0.0,
-    "last_attack_at": 1788362341.1126885
+    "last_attack_at": 1788362631.7652128
   },
   "bot_fist_destroyer": {
     "id": "bot_fist_destroyer",
@@ -183,9 +183,9 @@
     "kind": "bot",
     "role": "critical",
     "locked_level": true,
-    "updated_at": 1788362341.1126885,
+    "updated_at": 1788362631.7652128,
     "last_battle_at": 0.0,
-    "last_attack_at": 1788362341.1126885
+    "last_attack_at": 1788362631.7652128
   },
   "bot_pit_demon": {
     "id": "bot_pit_demon",
@@ -207,9 +207,9 @@
     "kind": "bot",
     "role": "critical",
     "locked_level": true,
-    "updated_at": 1788362341.1126885,
+    "updated_at": 1788362631.7652128,
     "last_battle_at": 0.0,
-    "last_attack_at": 1788362341.1126885
+    "last_attack_at": 1788362631.7652128
   },
   "bot_oathbreaker": {
     "id": "bot_oathbreaker",
@@ -231,9 +231,9 @@
     "kind": "bot",
     "role": "critical",
     "locked_level": true,
-    "updated_at": 1788362341.1126885,
+    "updated_at": 1788362631.7652128,
     "last_battle_at": 0.0,
-    "last_attack_at": 1788362341.1126885
+    "last_attack_at": 1788362631.7652128
   },
   "bot_bloody_arena_shadow": {
     "id": "bot_bloody_arena_shadow",
@@ -255,7 +255,7 @@
     "kind": "bot",
     "role": "agile",
     "locked_level": false,
-    "updated_at": 1788362341.1126885,
+    "updated_at": 1788362631.7652128,
     "last_battle_at": 0.0,
     "last_attack_at": 0.0
   },
@@ -279,7 +279,7 @@
     "kind": "bot",
     "role": "agile",
     "locked_level": false,
-    "updated_at": 1788362341.1126885,
+    "updated_at": 1788362631.7652128,
     "last_battle_at": 0.0,
     "last_attack_at": 0.0
   },
@@ -303,7 +303,7 @@
     "kind": "bot",
     "role": "agile",
     "locked_level": false,
-    "updated_at": 1788362341.1126885,
+    "updated_at": 1788362631.7652128,
     "last_battle_at": 0.0,
     "last_attack_at": 0.0
   },
@@ -327,7 +327,7 @@
     "kind": "bot",
     "role": "agile",
     "locked_level": false,
-    "updated_at": 1788362341.1126885,
+    "updated_at": 1788362631.7652128,
     "last_battle_at": 0.0,
     "last_attack_at": 0.0
   },
@@ -351,7 +351,7 @@
     "kind": "bot",
     "role": "agile",
     "locked_level": false,
-    "updated_at": 1788362341.1126885,
+    "updated_at": 1788362631.7652128,
     "last_battle_at": 0.0,
     "last_attack_at": 0.0
   },
@@ -375,7 +375,7 @@
     "kind": "bot",
     "role": "agile",
     "locked_level": false,
-    "updated_at": 1788362341.1126885,
+    "updated_at": 1788362631.7652128,
     "last_battle_at": 0.0,
     "last_attack_at": 0.0
   },
@@ -399,7 +399,7 @@
     "kind": "bot",
     "role": "tank",
     "locked_level": false,
-    "updated_at": 1788362341.1126885,
+    "updated_at": 1788362631.7652128,
     "last_battle_at": 0.0,
     "last_attack_at": 0.0
   },
@@ -423,7 +423,7 @@
     "kind": "bot",
     "role": "tank",
     "locked_level": false,
-    "updated_at": 1788362341.1126885,
+    "updated_at": 1788362631.7652128,
     "last_battle_at": 0.0,
     "last_attack_at": 0.0
   },
@@ -447,7 +447,7 @@
     "kind": "bot",
     "role": "tank",
     "locked_level": false,
-    "updated_at": 1788362341.1126885,
+    "updated_at": 1788362631.7652128,
     "last_battle_at": 0.0,
     "last_attack_at": 0.0
   },
@@ -471,7 +471,7 @@
     "kind": "bot",
     "role": "tank",
     "locked_level": false,
-    "updated_at": 1788362341.1126885,
+    "updated_at": 1788362631.7652128,
     "last_battle_at": 0.0,
     "last_attack_at": 0.0
   },
@@ -495,7 +495,7 @@
     "kind": "bot",
     "role": "tank",
     "locked_level": false,
-    "updated_at": 1788362341.1126885,
+    "updated_at": 1788362631.7652128,
     "last_battle_at": 0.0,
     "last_attack_at": 0.0
   },
@@ -519,7 +519,7 @@
     "kind": "bot",
     "role": "tank",
     "locked_level": false,
-    "updated_at": 1788362341.1126885,
+    "updated_at": 1788362631.7652128,
     "last_battle_at": 0.0,
     "last_attack_at": 0.0
   },
@@ -543,7 +543,7 @@
     "kind": "bot",
     "role": "boss",
     "locked_level": false,
-    "updated_at": 1788362341.1126885,
+    "updated_at": 1788362631.7652128,
     "last_battle_at": 0.0,
     "last_attack_at": 0.0
   }
