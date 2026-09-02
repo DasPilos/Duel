@@ -6,6 +6,7 @@ import pygame
 from core.settings import FPS, HEIGHT, WIDTH
 from scenes.duel_scene import DuelScene
 from scenes.character_scene import CharacterScene
+from scenes.profession_select_scene import ProfessionSelectScene
 from scenes.tavern_scene import TavernScene
 from scenes.backyard_scene import BackyardScene
 from scenes.town.character_room import CharacterRoom
@@ -105,6 +106,16 @@ def main():
                         transition.start(screen, lambda: CharacterScene(session))
 
                 elif args.online and isinstance(scene, CharacterScene) and scene.finished:
+                    pygame.key.stop_text_input()
+                    if scene.cancelled:
+                        scene.session.disconnect()
+                        running = False
+                    else:
+                        close_scene_ui(scene)
+                        session = scene.session
+                        transition.start(screen, lambda: ProfessionSelectScene(session))
+
+                elif args.online and isinstance(scene, ProfessionSelectScene) and scene.finished:
                     pygame.key.stop_text_input()
                     if scene.cancelled:
                         scene.session.disconnect()

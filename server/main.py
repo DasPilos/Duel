@@ -297,8 +297,11 @@ class GameRequestHandler(BaseHTTPRequestHandler):
             if path == "/api/characters":
                 user_id = self.database.user_id_by_token(self._token())
                 name = str(body.get("name", "")).strip()
+                profession_type = str(body.get("profession_type", "warrior")).strip().lower()
                 self.database.validate_character_name(name)
-                self._send(201, {"character": self.database.create_character(user_id, name)})
+                if profession_type not in ["warrior", "mage"]:
+                    raise ValueError("Профессия должна быть 'warrior' или 'mage'")
+                self._send(201, {"character": self.database.create_character(user_id, name, profession_type)})
                 return
             if path == "/api/sessions/disconnect":
                 character_id = body.get("character_id")

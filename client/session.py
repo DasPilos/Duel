@@ -41,8 +41,8 @@ class OnlineSession:
         self.character = self.client.load_character(self.character["id"])
         return self.character
 
-    def create_character(self, name):
-        self.character = self.client.create_character(name)
+    def create_character(self, name, profession_type="warrior"):
+        self.character = self.client.create_character(name, profession_type=profession_type)
         return self.character
 
     def list_opponents(self):

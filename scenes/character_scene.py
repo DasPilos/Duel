@@ -84,7 +84,7 @@ class CharacterScene:
     def create(self):
         name = self.name.strip()
         try:
-            self.session.create_character(name)
+            self.session.create_character(name, profession_type="warrior")
         except ServerError as error:
             self.error = str(error)
             return

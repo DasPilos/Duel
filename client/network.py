@@ -49,8 +49,8 @@ class GameClient:
         self.token = result["token"]
         return result["user"]
 
-    def create_character(self, name):
-        return self._request("POST", "/api/characters", {"name": name}, authenticated=True)["character"]
+    def create_character(self, name, profession_type="warrior"):
+        return self._request("POST", "/api/characters", {"name": name, "profession_type": profession_type}, authenticated=True)["character"]
 
     def list_characters(self):
         return self._request("GET", "/api/characters", authenticated=True)["characters"]

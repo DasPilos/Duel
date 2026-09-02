@@ -42,6 +42,7 @@ class Database:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     user_id INTEGER NOT NULL,
                     name TEXT NOT NULL,
+                    type TEXT NOT NULL DEFAULT 'warrior',
                     level INTEGER NOT NULL DEFAULT 1,
                     xp INTEGER NOT NULL DEFAULT 0,
                     hp INTEGER NOT NULL,
@@ -316,24 +317,37 @@ class Database:
             )
         return row["user_id"]
 
-    def create_character(self, user_id, name):
+    def create_character(self, user_id, name, profession_type="warrior"):
         self.validate_character_name(name)
+        if profession_type not in ["warrior", "mage"]:
+            raise ValueError("Профессия должна быть 'warrior' или 'mage'")
+        
         now = time.time()
-        stats = {
-            "strength": 3,
-            "agility": 3,
-            "intuition": 3,
-            "endurance": 4,
-        }
+        
+        # Initialize stats based on profession
+        if profession_type == "warrior":
+            stats = {
+                "strength": 3,
+                "agility": 3,
+                "intuition": 3,
+                "endurance": 4,
+            }
+        else:  # mage
+            stats = {
+                "wisdom": 3,
+                "spirituality": 3,
+                "endurance": 4,
+            }
+        
         max_hp = calculate_max_hp(1, stats["endurance"])
         with self.connection() as connection:
             cursor = connection.execute(
                 """
                 INSERT INTO characters
-                (user_id, name, hp, max_hp, stats_json, stat_points, copper, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                (user_id, name, type, hp, max_hp, stats_json, stat_points, copper, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (user_id, name, max_hp, max_hp, json.dumps(stats), 3, 1000, now),
+                (user_id, name, profession_type, max_hp, max_hp, json.dumps(stats), 3, 1000, now),
             )
             character_id = cursor.lastrowid
         return self.get_character(user_id, character_id)
