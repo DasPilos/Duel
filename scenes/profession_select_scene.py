@@ -38,6 +38,9 @@ class ProfessionSelectScene:
         # Create button
         self.create_button = pygame.Rect(960 - 150, 900, 300, 60)
         
+        # Back button
+        self.back_button = pygame.Rect(50, 50, 120, 50)
+        
         # Colors
         self.color_warrior = (100, 60, 40)
         self.color_warrior_hover = (150, 80, 50)
@@ -76,6 +79,12 @@ class ProfessionSelectScene:
         
         elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             pos = event.pos
+            
+            # Click on back button
+            if self.back_button.collidepoint(pos):
+                self.cancelled = True
+                self.finished = True
+                return
             
             # Click on name input
             if self.name_input_rect.collidepoint(pos):
@@ -116,6 +125,17 @@ class ProfessionSelectScene:
     def draw(self, screen):
         """Draw the profession selection screen"""
         screen.fill((16, 18, 28))
+        
+        # Draw back button
+        mouse_pos = pygame.mouse.get_pos()
+        back_hover = self.back_button.collidepoint(mouse_pos)
+        back_color = (100, 120, 150) if back_hover else (80, 90, 120)
+        
+        pygame.draw.rect(screen, back_color, self.back_button)
+        pygame.draw.rect(screen, (120, 140, 170) if back_hover else (100, 110, 140), self.back_button, 2)
+        
+        back_text = self.small_font.render("НАЗАД", True, (200, 200, 200))
+        screen.blit(back_text, back_text.get_rect(center=self.back_button.center))
         
         # Title
         title = self.title_font.render("ВЫБОР ПРОФЕССИИ", True, (240, 240, 255))
@@ -222,6 +242,10 @@ class ProfessionSelectScene:
             screen.blit(error_text, error_text.get_rect(center=(960, 1000)))
         
         # Instructions
-        instructions = "ESC - Отмена | Нажмите на профессию для выбора | Введите имя и нажмите Создать"
+        instructions = "ESC/Назад - Отмена | Нажмите на профессию для выбора | Введите имя и нажмите Создать"
         instr_text = self.description_font.render(instructions, True, (120, 120, 120))
         screen.blit(instr_text, instr_text.get_rect(center=(960, 1050)))
+    
+    def close(self):
+        """Cleanup when scene closes"""
+        pass
