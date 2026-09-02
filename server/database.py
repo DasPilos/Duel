@@ -153,6 +153,8 @@ class Database:
                 connection.execute("ALTER TABLE characters ADD COLUMN silver INTEGER NOT NULL DEFAULT 0")
             if "gold" not in character_columns:
                 connection.execute("ALTER TABLE characters ADD COLUMN gold INTEGER NOT NULL DEFAULT 0")
+            if "type" not in character_columns:
+                connection.execute("ALTER TABLE characters ADD COLUMN type TEXT NOT NULL DEFAULT 'warrior'")
             
             # Инициализируем напитки (если их еще нет)
             self._initialize_drinks(connection)
@@ -819,6 +821,7 @@ class Database:
         return {
             "id": row["id"],
             "name": row["name"],
+            "type": row["type"] if "type" in row.keys() else "warrior",
             "level": row["level"],
             "xp": row["xp"],
             "hp": min(row["hp"], max_hp),
