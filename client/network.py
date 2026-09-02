@@ -51,6 +51,15 @@ class GameClient:
 
     def create_character(self, name, profession_type="warrior"):
         return self._request("POST", "/api/characters", {"name": name, "profession_type": profession_type}, authenticated=True)["character"]
+    
+    def delete_character(self, character_id):
+        return self._request("POST", f"/api/characters/{character_id}/delete", authenticated=True)
+    
+    def delete_character_with_password(self, character_id, password):
+        return self._request("POST", f"/api/characters/{character_id}/delete", {"password": password}, authenticated=True)
+    
+    def update_character_profession(self, character_id, profession_type):
+        return self._request("PUT", f"/api/characters/{character_id}", {"profession_type": profession_type}, authenticated=True)["character"]
 
     def list_characters(self):
         return self._request("GET", "/api/characters", authenticated=True)["characters"]

@@ -113,7 +113,10 @@ def main():
                     else:
                         close_scene_ui(scene)
                         session = scene.session
-                        transition.start(screen, lambda: ProfessionSelectScene(session))
+                        # Pass character name and ID to profession selection scene
+                        character_name = scene.created_character["name"]
+                        character_id = scene.created_character["id"]
+                        transition.start(screen, lambda: ProfessionSelectScene(session, character_name, character_id))
 
                 elif args.online and isinstance(scene, ProfessionSelectScene) and scene.finished:
                     pygame.key.stop_text_input()

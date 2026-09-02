@@ -8,9 +8,10 @@ from ui.hud import draw_button, draw_text
 class ProfessionSelectScene:
     """Scene for selecting character profession before creation"""
     
-    def __init__(self, session):
+    def __init__(self, session, character_name, character_id):
         self.session = session
-        self.character_name = ""
+        self.character_name = character_name
+        self.character_id = character_id  # ID персонажа, который был создан
         self.selected_profession = None  # 'warrior' or 'mage'
         self.finished = False
         self.cancelled = False
@@ -25,11 +26,6 @@ class ProfessionSelectScene:
         # UI Elements
         self.title_y = 100
         self.subtitle_y = 200
-        
-        # Name input
-        self.name_input_rect = pygame.Rect(960 - 200, 280, 400, 50)
-        self.name_input_active = False
-        self.name_input_placeholder = "Введите имя персонажа"
         
         # Profession buttons
         self.warrior_button = pygame.Rect(400, 400, 300, 300)
@@ -57,24 +53,11 @@ class ProfessionSelectScene:
         """Handle input events"""
         if event.type == pygame.KEYDOWN:
             if event.key == pygame.K_ESCAPE:
-                self.cancelled = True
-                self.finished = True
-                return
-            elif event.key == pygame.K_BACKSPACE and self.name_input_active:
-                self.character_name = self.character_name[:-1]
+                self.cancel()
                 return
             elif event.key == pygame.K_RETURN:
-                if self.name_input_active and self.character_name.strip():
-                    # Switch to profession selection if not already
-                    self.name_input_active = False
-                    return
-                elif self.selected_profession and self.character_name.strip():
+                if self.selected_profession:
                     self.create()
-                return
-                
-        elif event.type == pygame.TEXTINPUT and self.name_input_active:
-            if len(self.character_name) < 20:
-                self.character_name += event.text
                 return
         
         elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
@@ -82,13 +65,7 @@ class ProfessionSelectScene:
             
             # Click on back button
             if self.back_button.collidepoint(pos):
-                self.cancelled = True
-                self.finished = True
-                return
-            
-            # Click on name input
-            if self.name_input_rect.collidepoint(pos):
-                self.name_input_active = True
+                self.cancel()
                 return
             
             # Click on profession buttons
@@ -102,18 +79,28 @@ class ProfessionSelectScene:
             
             # Click on create button
             if self.create_button.collidepoint(pos):
-                if self.selected_profession and self.character_name.strip():
+                if self.selected_profession:
                     self.create()
                 return
 
+    def cancel(self):
+        """Cancel profession selection and delete the character"""
+        try:
+            # Delete the character since user cancelled profession selection
+            self.session.delete_character(self.character_id)
+        except Exception as e:
+            print(f"Error deleting character: {e}")
+        
+        self.cancelled = True
+        self.finished = True
+
     def create(self):
-        """Create character with selected profession"""
-        name = self.character_name.strip()
+        """Update character profession after selection"""
         profession = self.selected_profession
         
         try:
-            # Pass profession type to session.create_character
-            self.session.create_character(name, profession_type=profession)
+            # Update character with the selected profession
+            self.session.update_character_profession(self.character_id, profession)
             self.finished = True
         except Exception as error:
             self.error = str(error)
@@ -141,31 +128,9 @@ class ProfessionSelectScene:
         title = self.title_font.render("ВЫБОР ПРОФЕССИИ", True, (240, 240, 255))
         screen.blit(title, title.get_rect(center=(960, self.title_y)))
         
-        # Subtitle
-        subtitle = self.small_font.render("Создайте своего героя и выберите его путь", True, (170, 170, 170))
+        # Subtitle with character name
+        subtitle = self.small_font.render(f"Персонаж: {self.character_name} - Выберите путь", True, (170, 170, 170))
         screen.blit(subtitle, subtitle.get_rect(center=(960, self.subtitle_y)))
-        
-        # Name input section
-        draw_text(screen, self.small_font, "Имя персонажа:", 400, 270, (170, 170, 170))
-        
-        # Draw name input box
-        input_color = (100, 120, 150) if self.name_input_active else (80, 80, 100)
-        pygame.draw.rect(screen, input_color, self.name_input_rect, 2)
-        pygame.draw.rect(screen, (30, 30, 50), self.name_input_rect)
-        
-        # Draw name text
-        if self.character_name:
-            name_text = self.font.render(self.character_name, True, self.color_text)
-            screen.blit(name_text, (self.name_input_rect.x + 10, self.name_input_rect.y + 12))
-        else:
-            placeholder = self.font.render(self.name_input_placeholder, True, self.color_text_dark)
-            screen.blit(placeholder, (self.name_input_rect.x + 10, self.name_input_rect.y + 12))
-        
-        # Cursor
-        if self.name_input_active:
-            cursor_x = self.name_input_rect.x + 10 + (len(self.character_name) * 13)
-            pygame.draw.line(screen, (200, 200, 200), (cursor_x, self.name_input_rect.y + 5), 
-                           (cursor_x, self.name_input_rect.y + 45), 2)
         
         # Draw profession cards
         mouse_pos = pygame.mouse.get_pos()

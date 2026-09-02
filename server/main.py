@@ -303,6 +303,19 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                     raise ValueError("Профессия должна быть 'warrior' или 'mage'")
                 self._send(201, {"character": self.database.create_character(user_id, name, profession_type)})
                 return
+            if path.startswith("/api/characters/") and path.endswith("/delete"):
+                character_id = int(path.rsplit("/", 2)[1])
+                user_id = self.database.user_id_by_token(self._token())
+                
+                # If password is provided, verify it before deletion
+                if "password" in body:
+                    password = str(body.get("password", ""))
+                    self.database.delete_character_with_password(user_id, character_id, password)
+                else:
+                    self.database.delete_character(user_id, character_id)
+                
+                self._send(200, {"deleted": True})
+                return
             if path == "/api/sessions/disconnect":
                 character_id = body.get("character_id")
                 self._send(200, self.database.disconnect(self._token(), int(character_id) if character_id is not None else None, body.get("character")))
@@ -632,13 +645,19 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                 opponent = self.database.update_bot(user_id, opponent_id, self._body())
                 self._send(200, {"opponent": opponent})
                 return
-            if not path.startswith("/api/characters/"):
-                self._send(404, {"error": "Маршрут не найден"})
+            if path.startswith("/api/characters/"):
+                character_id = int(path.rsplit("/", 1)[1])
+                user_id = self.database.user_id_by_token(self._token())
+                body = self._body()
+                # Check if this is a profession update
+                if "profession_type" in body and len(body) == 1:
+                    character = self.database.update_character_profession(user_id, character_id, body["profession_type"])
+                    self._send(200, {"character": character})
+                else:
+                    character = self.database.save_character(user_id, character_id, body)
+                    self._send(200, {"character": character})
                 return
-            character_id = int(path.rsplit("/", 1)[1])
-            user_id = self.database.user_id_by_token(self._token())
-            character = self.database.save_character(user_id, character_id, self._body())
-            self._send(200, {"character": character})
+            self._send(404, {"error": "Маршрут не найден"})
         except (ValueError, json.JSONDecodeError, KeyError) as error:
             self._handle_error(error)
         except Exception as error:

@@ -14,6 +14,7 @@ class CharacterScene:
         self.error = ""
         self.name = ""
         self.active = "name"
+        self.created_character = None  # Store created character
         self.font = pygame.font.SysFont(settings.FONT_NAME, 22)
         self.small_font = pygame.font.SysFont(settings.FONT_NAME, 18)
         self.title_font = pygame.font.SysFont(settings.FONT_NAME, 36)
@@ -25,6 +26,16 @@ class CharacterScene:
         self.max_visible_characters = 5
         self.selected_character = None  # Выбранный персонаж для показа карточки
         self.continue_button = pygame.Rect(760, 1000, 400, 50)  # Кнопка центрирована на экране, под карточкой
+        self.delete_button = pygame.Rect(760, 1070, 400, 50)  # Кнопка удаления ниже continue
+        
+        # Password confirmation dialog
+        self.show_delete_confirmation = False
+        self.delete_password = ""
+        self.delete_error = ""
+        self.password_input_rect = pygame.Rect(550, 600, 700, 46)
+        self.confirm_delete_button = pygame.Rect(600, 680, 250, 50)
+        self.cancel_delete_button = pygame.Rect(900, 680, 250, 50)
+        
         self.refresh()
         # Импортируем CharacterCard для отображения
         from ui.character_card import CharacterCard
@@ -38,6 +49,32 @@ class CharacterScene:
             self.error = str(error)
 
     def handle_event(self, event):
+        # Handle delete confirmation dialog
+        if self.show_delete_confirmation:
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    self.show_delete_confirmation = False
+                    self.delete_password = ""
+                    self.delete_error = ""
+                elif event.key == pygame.K_BACKSPACE:
+                    self.delete_password = self.delete_password[:-1]
+                elif event.key == pygame.K_RETURN:
+                    self._confirm_delete()
+                    return
+            elif event.type == pygame.TEXTINPUT:
+                if len(self.delete_password) < 128:
+                    self.delete_password += event.text
+            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                if self.confirm_delete_button.collidepoint(event.pos):
+                    self._confirm_delete()
+                    return
+                elif self.cancel_delete_button.collidepoint(event.pos):
+                    self.show_delete_confirmation = False
+                    self.delete_password = ""
+                    self.delete_error = ""
+                    return
+            return
+        
         if event.type == pygame.KEYDOWN:
             if event.key == pygame.K_ESCAPE:
                 self.selected_character = None  # Закрываем карточку
@@ -66,6 +103,12 @@ class CharacterScene:
                     self.session.select_character(self.selected_character)
                     self.finished = True
                     return
+                # Кнопка удалить персонаж
+                if self.delete_button.collidepoint(event.pos):
+                    self.show_delete_confirmation = True
+                    self.delete_password = ""
+                    self.delete_error = ""
+                    return
             
             # Клик по персонажу в списке
             for visible_index, rect in enumerate(self.character_rects):
@@ -84,11 +127,28 @@ class CharacterScene:
     def create(self):
         name = self.name.strip()
         try:
-            self.session.create_character(name, profession_type="warrior")
+            character = self.session.create_character(name, profession_type="warrior")
+            self.created_character = character  # Save the created character
+            self.finished = True
         except ServerError as error:
             self.error = str(error)
             return
-        self.finished = True
+
+    def _confirm_delete(self):
+        """Confirm deletion with password"""
+        if not self.delete_password:
+            self.delete_error = "Введите пароль"
+            return
+        
+        try:
+            self.session.delete_character_with_password(self.selected_character["id"], self.delete_password)
+            self.show_delete_confirmation = False
+            self.delete_password = ""
+            self.delete_error = ""
+            self.selected_character = None
+            self.refresh()  # Reload character list
+        except ServerError as error:
+            self.delete_error = str(error)
 
     def update(self, dt):
         pass
@@ -144,6 +204,8 @@ class CharacterScene:
             
             # Кнопка "Продолжить игру" ПОД карточкой
             draw_button(screen, self.continue_button, "ПРОДОЛЖИТЬ ИГРУ", self.font, color=(70, 140, 220))
+            # Кнопка "Удалить персонаж" ниже кнопки продолжить
+            draw_button(screen, self.delete_button, "УДАЛИТЬ ПЕРСОНАЖА", self.font, color=(220, 100, 100))
         
         # Форма создания персонажа внизу
         draw_text(screen, self.font, "Имя нового персонажа", 60, 735, (205, 205, 215))
@@ -154,6 +216,42 @@ class CharacterScene:
         
         if self.error:
             draw_text(screen, self.small_font, self.error, 60, 920, (255, 100, 100))
+        
+        # Draw delete confirmation dialog
+        if self.show_delete_confirmation:
+            # Semi-transparent overlay
+            overlay = pygame.Surface((1920, 1080))
+            overlay.set_alpha(200)
+            overlay.fill((0, 0, 0))
+            screen.blit(overlay, (0, 0))
+            
+            # Dialog box
+            dialog_rect = pygame.Rect(400, 400, 1120, 280)
+            pygame.draw.rect(screen, (30, 34, 48), dialog_rect, border_radius=10)
+            pygame.draw.rect(screen, (220, 100, 100), dialog_rect, width=3, border_radius=10)
+            
+            # Title
+            title_text = self.font.render("Подтверждение удаления персонажа", True, (240, 240, 255))
+            screen.blit(title_text, (dialog_rect.x + 40, dialog_rect.y + 20))
+            
+            # Instructions
+            instr_text = self.small_font.render("Введите пароль для подтверждения удаления:", True, (200, 200, 200))
+            screen.blit(instr_text, (dialog_rect.x + 40, dialog_rect.y + 70))
+            
+            # Password input field
+            pygame.draw.rect(screen, (28, 30, 43), self.password_input_rect, border_radius=6)
+            pygame.draw.rect(screen, (220, 100, 100), self.password_input_rect, width=2, border_radius=6)
+            # Draw password as dots for security
+            password_display = "*" * len(self.delete_password)
+            draw_text(screen, self.font, password_display, self.password_input_rect.x + 12, self.password_input_rect.y + 10, (240, 240, 245))
+            
+            # Error message
+            if self.delete_error:
+                draw_text(screen, self.small_font, self.delete_error, dialog_rect.x + 40, dialog_rect.y + 160, (255, 100, 100))
+            
+            # Buttons
+            draw_button(screen, self.confirm_delete_button, "УДАЛИТЬ", self.font, color=(220, 100, 100))
+            draw_button(screen, self.cancel_delete_button, "ОТМЕНИТЬ", self.font, color=(70, 140, 220))
 
     def close(self):
         pass

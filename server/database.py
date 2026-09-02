@@ -318,6 +318,15 @@ class Database:
                 (now, token),
             )
         return row["user_id"]
+    
+    def get_user(self, user_id):
+        """Get user by ID with password hash"""
+        with self.connection() as connection:
+            row = connection.execute(
+                "SELECT id, username, password_hash FROM users WHERE id = ?",
+                (user_id,),
+            ).fetchone()
+        return row
 
     def create_character(self, user_id, name, profession_type="warrior"):
         self.validate_character_name(name)
@@ -354,6 +363,59 @@ class Database:
             character_id = cursor.lastrowid
         return self.get_character(user_id, character_id)
 
+    def delete_character(self, user_id, character_id):
+        """Delete a character"""
+        with self.connection() as connection:
+            # Verify ownership
+            row = connection.execute(
+                "SELECT user_id FROM characters WHERE id = ?",
+                (character_id,),
+            ).fetchone()
+            if row is None or row["user_id"] != user_id:
+                raise ValueError("Персонаж не найден")
+            
+            # Delete character
+            connection.execute(
+                "DELETE FROM characters WHERE id = ?",
+                (character_id,),
+            )
+    
+    def delete_character_with_password(self, user_id, character_id, password):
+        """Delete a character with password verification"""
+        # First verify the password
+        user = self.get_user(user_id)
+        if user is None:
+            raise ValueError("Пользователь не найден")
+        
+        # Verify password hash using existing method
+        if not self._check_password(password, user["password_hash"]):
+            raise ValueError("Неверный пароль")
+        
+        # Password is correct, delete the character
+        self.delete_character(user_id, character_id)
+
+    def update_character_profession(self, user_id, character_id, profession_type):
+        """Update character profession"""
+        if profession_type not in ["warrior", "mage"]:
+            raise ValueError("Профессия должна быть 'warrior' или 'mage'")
+        
+        with self.connection() as connection:
+            # Verify ownership
+            row = connection.execute(
+                "SELECT user_id FROM characters WHERE id = ?",
+                (character_id,),
+            ).fetchone()
+            if row is None or row["user_id"] != user_id:
+                raise ValueError("Персонаж не найден")
+            
+            # Update profession
+            connection.execute(
+                "UPDATE characters SET type = ? WHERE id = ?",
+                (profession_type, character_id),
+            )
+        
+        return self.get_character(user_id, character_id)
+    
     @staticmethod
     def validate_character_name(name):
         forbidden = {

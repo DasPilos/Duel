@@ -44,6 +44,19 @@ class OnlineSession:
     def create_character(self, name, profession_type="warrior"):
         self.character = self.client.create_character(name, profession_type=profession_type)
         return self.character
+    
+    def delete_character(self, character_id):
+        """Delete a character"""
+        return self.client.delete_character(character_id)
+    
+    def delete_character_with_password(self, character_id, password):
+        """Delete a character with password confirmation"""
+        return self.client.delete_character_with_password(character_id, password)
+    
+    def update_character_profession(self, character_id, profession_type):
+        """Update character profession"""
+        self.character = self.client.update_character_profession(character_id, profession_type)
+        return self.character
 
     def list_opponents(self):
         return self.client.list_opponents()
