@@ -1,5 +1,77 @@
 # Рекомендации для разработчиков
 
+⚠️ **ЧИТАЙТЕ СНАЧАЛА:**
+1. [ARCHITECTURE_DUAL_SYSTEM.md](./ARCHITECTURE_DUAL_SYSTEM.md) - как работает единая БД
+2. [MAGE_DEVELOPER_GUIDE.md](./MAGE_DEVELOPER_GUIDE.md) - для второго разработчика
+
+## 🎯 АРХИТЕКТУРА ДВОЙНОЙ СИСТЕМЫ
+
+### Валюта и инвентарь (ОБЩИЕ для всех типов персонажей)
+
+```python
+# ✅ ПРАВИЛЬНО: Используй методы БД
+from server.database import Database
+db = Database()
+
+# Добавить деньги (работает для воина и мага)
+db.add_currency(character_id=1, copper=10)
+db.add_currency(character_id=2, copper=20)  # может быть маг
+
+# Вычесть деньги (проверяет достаточность)
+success = db.subtract_currency(character_id=1, copper=20)
+if success:
+    print("Деньги вычтены!")
+else:
+    print("Недостаточно средств!")
+
+# Инвентарь (ОБЩИЙ для всех)
+db.add_to_inventory(character_id=1, item_id="drink_ale", quantity=1)
+
+# ❌ НЕПРАВИЛЬНО: Не считай на клиенте
+character.copper -= 20  # ОПАСНО! локальная переменная
+inventory.append(item)  # ОПАСНО! не сохранится на сервере
+```
+
+### Разделение кода
+
+#### Оператор 1 (Воины) - ваша собственность:
+```
+✅ scenes/duel_scene.py         - боевая система воинов
+✅ core/character/warrior.py    - класс Warrior
+✅ core/stats/warrior_stats.py  - статистика воинов
+✅ ui/character_card.py         - карточка воина
+```
+
+**НЕ трогайте:**
+- `core/character/mage.py` - это для ОП2
+- `scenes/mage_duel_scene.py` - это для ОП2
+- `core/magic/*` - это для ОП2
+
+#### Оператор 2 (Маги) - ваша собственность:
+```
+✅ scenes/mage_duel_scene.py    - боевая система магов
+✅ core/character/mage.py       - класс Mage
+✅ core/magic/spell.py          - заклинания
+✅ core/magic/element.py        - элементы
+✅ core/magic/spellbook.py      - гримуар
+✅ ui/mage_card.py              - карточка мага
+```
+
+**НЕ трогайте:**
+- `core/character/warrior.py` - это для ОП1
+- `scenes/duel_scene.py` - это для ОП1
+- `core/stats/warrior_stats.py` - это для ОП1
+
+#### Общее (оба разработчика, но осторожно!):
+```
+⚠️ server/database.py  - добавляйте методы, не меняйте существующие
+⚠️ server/main.py      - добавляйте endpoints
+⚠️ ui/shop.py          - может адаптироваться для обоих
+⚠️ ui/inventory.py     - может адаптироваться для обоих
+```
+
+**Правило:** Если нужно менять общий файл - создайте новый метод, не меняйте существующие!
+
 ## 🚀 Быстрый старт
 
 ### 1. Подготовка окружения
