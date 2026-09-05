@@ -12,6 +12,7 @@ from server.items_database import ItemsDatabase
 from server import social
 from server.world import run_bot_battle_tick
 from combat.anticheat import score_match
+from combat.card_database import card_to_dict, choose_battle_reward, load_cards
 
 
 class GameRequestHandler(BaseHTTPRequestHandler):
@@ -70,6 +71,15 @@ class GameRequestHandler(BaseHTTPRequestHandler):
         if character is None:
             raise ValueError("Персонаж не найден")
         return user_id, character
+
+    def _card_collection(self, character_id):
+        cards_by_key = {card.key: card for card in load_cards()}
+        collection = []
+        for entry in self.database.get_card_collection(character_id):
+            card = cards_by_key.get(entry["card_key"])
+            if card is not None:
+                collection.append({**entry, **card_to_dict(card)})
+        return collection
 
     def _check_chat_rate(self, character_id):
         now = time.time()
@@ -273,6 +283,16 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                    decks = self.items_database.get_decks(character_id)
                    self._send(200, {"decks": decks})
                return
+
+            if path.startswith("/api/card-collection/"):
+               character_id = int(path.rsplit("/", 1)[1])
+               user_id = self.database.user_id_by_token(self._token())
+               character = self.database.get_character(user_id, character_id)
+               if character is None:
+                  self._send(404, {"error": "Персонаж не найден"})
+               else:
+                  self._send(200, {"collection": self._card_collection(character_id)})
+               return
             
             self._send(404, {"error": "Маршрут не найден"})
         except (ValueError, json.JSONDecodeError) as error:
@@ -396,6 +416,35 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                 ))
                 result = self.database.record_match_audit(audit)
                 self._send(201, {**result, "xp": 0, "flags": audit["signals"], "denied": audit["action"] == "xp_denied"})
+                return
+            if path == "/api/battle/card-reward":
+                user_id = self.database.user_id_by_token(self._token())
+                character_id = int(body.get("character_id", 0))
+                character = self.database.get_character(user_id, character_id)
+                if character is None:
+                    raise ValueError("Персонаж не найден")
+                eligible_keys = body.get("card_keys", [])
+                if not isinstance(eligible_keys, list) or len(eligible_keys) > 100:
+                    raise ValueError("Некорректный список карт боя")
+                eligible_key_set = {str(key) for key in eligible_keys}
+                eligible_cards = [
+                    card for card in load_cards()
+                    if card.key in eligible_key_set
+                ]
+                reward = choose_battle_reward(eligible_cards)
+                if reward is None:
+                    self._send(200, {"reward": None})
+                    return
+                collection_entry = self.database.add_card_to_collection(
+                    character_id,
+                    reward.key,
+                )
+                self._send(200, {
+                    "reward": {
+                        **collection_entry,
+                        **card_to_dict(reward),
+                    },
+                })
                 return
             if path == "/api/social/duel-offers":
                 token = self._token()

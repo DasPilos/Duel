@@ -195,6 +195,21 @@ class GameClient:
     def get_decks(self, character_id):
         """Получить боевые колоды персонажа"""
         return self._request("GET", f"/api/decks/{character_id}", authenticated=True)["decks"]
+
+    def get_card_collection(self, character_id):
+        return self._request(
+            "GET",
+            f"/api/card-collection/{character_id}",
+            authenticated=True,
+        )["collection"]
+
+    def award_battle_card(self, character_id, card_keys):
+        return self._request(
+            "POST",
+            "/api/battle/card-reward",
+            {"character_id": character_id, "card_keys": list(card_keys)},
+            authenticated=True,
+        )["reward"]
     
     def use_item(self, character_id, item_id):
         """Использовать предмет"""
@@ -211,4 +226,3 @@ class GameClient:
     def unequip_item(self, character_id, slot):
         """Снять предмет экипировки"""
         return self._request("POST", "/api/equipment/unequip", {"character_id": character_id, "slot": slot}, authenticated=True)
-

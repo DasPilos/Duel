@@ -254,6 +254,16 @@ class OnlineSession:
             return None
         
         return self.client.get(f"character/{self.character['id']}/inventory")
+
+    def get_card_collection(self):
+        if self.character is None:
+            return []
+        return self.client.get_card_collection(self.character["id"])
+
+    def award_battle_card(self, card_keys):
+        if self.character is None:
+            return None
+        return self.client.award_battle_card(self.character["id"], card_keys)
     
     def use_drink(self, inventory_item_id):
         """Use a drink from inventory"""

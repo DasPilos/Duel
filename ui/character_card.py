@@ -44,16 +44,8 @@ class CharacterCard:
 
     def sync(self, profile, *, title=None, kind="player"):
         self.state = normalize_character_profile(profile, title=title, kind=kind)
-        # Загружаем инвентарь из профиля
+        # Инвентарь больше не отображается (напитки применяются сразу)
         self.inventory_data = []
-        if "inventory" in self.state and isinstance(self.state["inventory"], dict):
-            for slot_key, item in sorted(self.state["inventory"].items(), key=lambda x: int(x[0]) if x[0].isdigit() else 999):
-                self.inventory_data.append({
-                    "slot": slot_key,
-                    "name": item.get("name", "Неизвестный предмет"),
-                    "quantity": item.get("quantity", 1),
-                    "effect": item.get("effect", "")
-                })
         return self.state
 
     @property
@@ -158,22 +150,6 @@ class CharacterCard:
         currency_y = mp_y + 25
         currency_text = f"Медяки: {copper}  Серебро: {silver}  Золото: {gold}"
         draw_text(screen, self.small_font, currency_text, x, currency_y, (200, 170, 100))
-        
-        # Отображение инвентаря (если есть элементы)
-        if self.inventory_data:
-            inventory_y = currency_y + 30
-            draw_text(screen, self.small_font, "РЮКЗАК", x, inventory_y, (100, 200, 255))
-            
-            # Отображаем элементы инвентаря
-            for idx, item in enumerate(self.inventory_data):
-                item_y = inventory_y + 25 + idx * 22
-                if item_y > frame.bottom - 50:
-                    break
-                
-                # Основная информация о предмете
-                quantity_text = f" x{item['quantity']}" if item['quantity'] > 1 else ""
-                item_text = f"{item['name']}{quantity_text}"
-                draw_text(screen, self.small_font, item_text, x, item_y, (220, 200, 150))
 
         stats_header_y = frame.bottom - 120
         sprite_center_y = (mp_y + bar_height + stats_header_y) / 2

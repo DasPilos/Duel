@@ -18,7 +18,10 @@ class BackyardScene:
         self.font = pygame.font.SysFont(settings.FONT_NAME, 22)
         self.small_font = pygame.font.SysFont(settings.FONT_NAME, 18)
         self.title_font = pygame.font.SysFont(settings.FONT_NAME, 36)
-        self.profile_overlay = CharacterProfileOverlay(self.small_font)
+        self.profile_overlay = CharacterProfileOverlay(
+            self.small_font,
+            collection_loader=getattr(self.session, "get_card_collection", None),
+        )
         self.chat = ChatPanel(session, "backyard", profile_overlay=self.profile_overlay)
         self.navigate = None
         self.inventory_button = pygame.Rect(settings.WIDTH - 70, 10, 50, 50)
@@ -48,6 +51,8 @@ class BackyardScene:
         self.renderer = BackyardRenderer(self)
 
     def handle_event(self, event):
+        if self.profile_overlay.handle_event(event):
+            return
         if self.chat.handle_event(event):
             if self.profile_overlay.is_open:
                 self.application_popup = None

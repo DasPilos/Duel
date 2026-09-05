@@ -29,6 +29,11 @@ class Fighter:
             "intuition": BASE_STAT_VALUE,
             "endurance": STARTING_ENDURANCE_VALUE + max(0, int(level) - 1),
         }
+        self.temporary_stat_modifiers = {
+            stat_name: 0 for stat_name in self.STAT_NAMES
+        }
+        self.temporary_critical_chance_modifier = 0
+        self.temporary_dodge_chance_modifier = 0
 
         # Очки для распределения
         self.stat_points = total_stat_points(level)
@@ -49,19 +54,30 @@ class Fighter:
 
     @property
     def strength(self):
-        return self.stats["strength"]
+        return self._effective_stat("strength")
 
     @property
     def agility(self):
-        return self.stats["agility"]
+        return self._effective_stat("agility")
 
     @property
     def intuition(self):
-        return self.stats["intuition"]
+        return self._effective_stat("intuition")
 
     @property
     def endurance(self):
-        return self.stats["endurance"]
+        return self._effective_stat("endurance")
+
+    def _effective_stat(self, stat_name):
+        return max(
+            0,
+            self.stats[stat_name] + self.temporary_stat_modifiers[stat_name],
+        )
+
+    def adjust_temporary_stat(self, stat_name, amount):
+        if stat_name not in self.temporary_stat_modifiers:
+            raise ValueError(f"Неизвестная характеристика: {stat_name}")
+        self.temporary_stat_modifiers[stat_name] += int(amount)
 
     def recalculate_parameters(self):
         """Пересчитывает производные параметры бойца."""

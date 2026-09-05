@@ -139,6 +139,37 @@ class Database:
                     FOREIGN KEY(drink_id) REFERENCES drinks(id),
                     UNIQUE(character_id, drink_id)
                 );
+
+                CREATE TABLE IF NOT EXISTS battle_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    player_id INTEGER NOT NULL,
+                    opponent_id INTEGER NOT NULL,
+                    battle_data TEXT NOT NULL,
+                    player_afk INTEGER NOT NULL DEFAULT 0,
+                    opponent_afk INTEGER NOT NULL DEFAULT 0,
+                    created_at REAL NOT NULL,
+                    expires_at REAL NOT NULL,
+                    FOREIGN KEY(player_id) REFERENCES characters(id),
+                    FOREIGN KEY(opponent_id) REFERENCES characters(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS character_card_collection (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    character_id INTEGER NOT NULL,
+                    card_key TEXT NOT NULL,
+                    quantity INTEGER NOT NULL DEFAULT 1,
+                    slot_index INTEGER NOT NULL,
+                    acquired_at REAL NOT NULL,
+                    FOREIGN KEY(character_id) REFERENCES characters(id),
+                    UNIQUE(character_id, card_key),
+                    UNIQUE(character_id, slot_index)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_battle_logs_expires_at
+                    ON battle_logs(expires_at);
+
+                CREATE INDEX IF NOT EXISTS idx_card_collection_character
+                    ON character_card_collection(character_id);
                 """
             )
             user_columns = {row[1] for row in connection.execute("PRAGMA table_info(users)")}
@@ -376,6 +407,10 @@ class Database:
             
             # Delete character
             connection.execute(
+                "DELETE FROM character_card_collection WHERE character_id = ?",
+                (character_id,),
+            )
+            connection.execute(
                 "DELETE FROM characters WHERE id = ?",
                 (character_id,),
             )
@@ -570,6 +605,14 @@ class Database:
         connection.execute(
             "DELETE FROM chat_messages WHERE created_at < ?",
             (now - config.CHAT_HISTORY_TTL_SECONDS,),
+        )
+ 
+    @staticmethod
+    def _purge_old_battle_logs(connection, now):
+        """Удаляет логи боя старше 24 часов"""
+        connection.execute(
+            "DELETE FROM battle_logs WHERE expires_at < ?",
+            (now,),
         )
 
     def mark_chat_read(self, character_id, location, message_id):
@@ -843,12 +886,55 @@ class Database:
             return None
 
     def delete_active_battle(self, player_id, opponent_id):
-        """Удаляет завершенный бой"""
+        """Архивирует завершенный бой в логи (вместо удаления)"""
         with self.connection() as connection:
-            connection.execute(
-                "DELETE FROM active_battles WHERE player_id = ? AND opponent_id = ?",
+            # Получаем данные боя перед удалением
+            battle = connection.execute(
+                "SELECT battle_data, player_afk, opponent_afk FROM active_battles WHERE player_id = ? AND opponent_id = ?",
                 (player_id, opponent_id),
-            )
+            ).fetchone()
+            
+            if battle:
+                now = time.time()
+                expires_at = now + 24 * 60 * 60  # 24 часа
+                
+                # Архивируем в battle_logs
+                connection.execute(
+                    """INSERT INTO battle_logs 
+                    (player_id, opponent_id, battle_data, player_afk, opponent_afk, created_at, expires_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (player_id, opponent_id, battle["battle_data"], battle["player_afk"], 
+                     battle["opponent_afk"], now, expires_at),
+                )
+                
+                # Удаляем из активных боев
+                connection.execute(
+                    "DELETE FROM active_battles WHERE player_id = ? AND opponent_id = ?",
+                    (player_id, opponent_id),
+                )
+                
+                # Автоочистка старых логов (старше 24 часов)
+                self._purge_old_battle_logs(connection, now)
+
+    def get_battle_log(self, player_id, opponent_id):
+        """Получает сохраненный лог боя"""
+        with self.connection() as connection:
+            row = connection.execute(
+                """SELECT battle_data, player_afk, opponent_afk, created_at 
+                FROM battle_logs 
+                WHERE player_id = ? AND opponent_id = ? 
+                AND expires_at > ?
+                ORDER BY created_at DESC LIMIT 1""",
+                (player_id, opponent_id, time.time()),
+            ).fetchone()
+            if row:
+                return {
+                    "battle_data": json.loads(row["battle_data"]),
+                    "player_afk": bool(row["player_afk"]),
+                    "opponent_afk": bool(row["opponent_afk"]),
+                    "created_at": row["created_at"],
+                }
+            return None
 
     @staticmethod
     def _validate_character(character):
@@ -914,13 +1000,13 @@ class Database:
             return [dict(row) for row in rows]
     
     def buy_drink(self, user_id, character_id, drink_id):
-        """Купить напиток - вычесть цену и добавить в инвентарь"""
+        """Купить напиток - вычесть цену и применить эффект сразу (НЕ добавлять в инвентарь)"""
         from core.currency import Currency
         
         with self.connection() as connection:
             # Получаем информацию о напитке
             drink = connection.execute(
-                "SELECT price_copper, price_silver, price_gold FROM drinks WHERE id = ?",
+                "SELECT price_copper, price_silver, price_gold, effect, effect_value FROM drinks WHERE id = ?",
                 (drink_id,)
             ).fetchone()
             
@@ -931,6 +1017,21 @@ class Database:
             character = self.get_character(user_id, character_id)
             if character is None:
                 raise ValueError("Персонаж не найден")
+            
+            # ПРОВЕРЯЕМ: полное ли здоровье?
+            current_hp = character.get("hp", 0)
+            max_hp = character.get("max_hp", 100)
+            if current_hp >= max_hp:
+                # Отправляем сообщение бармена в чат таверны
+                bartender_id = "tavern_bartender"
+                self.ensure_bot_character(bartender_id, "Хозяин трактира")
+                bartender_character_id = -abs(int(hashlib.md5(str(bartender_id).encode("utf-8")).hexdigest()[:8], 16))
+                self.add_chat_message(
+                    bartender_character_id,
+                    "tavern",
+                    "Тебе уже хватит, прогуляйся на задний двор прийди в чуство!! ХА-ХА-ХА"
+                )
+                raise ValueError("БАРМАН_ПОЛНОЕ_ЗДОРОВЬЕ")
             
             # Проверяем деньги
             current = Currency.from_dict(character)
@@ -948,19 +1049,17 @@ class Database:
                 gold=drink["price_gold"]
             )
             character.update(current.to_dict())
+            
+            # Применяем эффект напитка (восстанавливаем HP, но не больше max_hp)
+            if drink["effect"] == "heal":
+                healing = drink["effect_value"]
+                new_hp = min(current_hp + healing, max_hp)
+                character["hp"] = new_hp
+            
+            # Сохраняем персонажа с эффектом и без денег
             self.save_character(user_id, character_id, character)
             
-            # Добавляем в инвентарь
-            try:
-                connection.execute(
-                    """INSERT INTO character_inventory (character_id, drink_id, quantity)
-                    VALUES (?, ?, 1)
-                    ON CONFLICT(character_id, drink_id) DO UPDATE SET quantity = quantity + 1""",
-                    (character_id, drink_id)
-                )
-            except Exception as e:
-                raise ValueError(f"Ошибка добавления в инвентарь: {str(e)}")
-            
+            # Возвращаем обновленного персонажа
             return self.get_character(user_id, character_id)
     
     def get_character_inventory(self, character_id):
@@ -1013,3 +1112,63 @@ class Database:
             )
             
             return self.get_character(user_id, character_id)
+
+    def get_card_collection(self, character_id):
+        with self.connection() as connection:
+            rows = connection.execute(
+                """SELECT id, card_key, quantity, slot_index, acquired_at
+                   FROM character_card_collection
+                   WHERE character_id = ?
+                   ORDER BY slot_index""",
+                (character_id,),
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+    def add_card_to_collection(self, character_id, card_key):
+        with self.connection() as connection:
+            existing = connection.execute(
+                """SELECT id, quantity, slot_index
+                   FROM character_card_collection
+                   WHERE character_id = ? AND card_key = ?""",
+                (character_id, card_key),
+            ).fetchone()
+            if existing is not None:
+                connection.execute(
+                    """UPDATE character_card_collection
+                       SET quantity = quantity + 1, acquired_at = ?
+                       WHERE id = ?""",
+                    (time.time(), existing["id"]),
+                )
+                return {
+                    "id": existing["id"],
+                    "card_key": card_key,
+                    "quantity": existing["quantity"] + 1,
+                    "slot_index": existing["slot_index"],
+                }
+
+            used_slots = {
+                row["slot_index"]
+                for row in connection.execute(
+                    """SELECT slot_index
+                       FROM character_card_collection
+                       WHERE character_id = ?""",
+                    (character_id,),
+                ).fetchall()
+            }
+            slot_index = next((slot for slot in range(60) if slot not in used_slots), None)
+            if slot_index is None:
+                raise ValueError("В коллекции нет свободных ячеек")
+            now = time.time()
+            cursor = connection.execute(
+                """INSERT INTO character_card_collection
+                   (character_id, card_key, quantity, slot_index, acquired_at)
+                   VALUES (?, ?, 1, ?, ?)""",
+                (character_id, card_key, slot_index, now),
+            )
+            return {
+                "id": cursor.lastrowid,
+                "card_key": card_key,
+                "quantity": 1,
+                "slot_index": slot_index,
+                "acquired_at": now,
+            }

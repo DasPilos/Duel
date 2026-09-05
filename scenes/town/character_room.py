@@ -33,7 +33,10 @@ class CharacterRoom:
             self.background = None
 
         # Профиль оверлей (для просмотра карточки персонажа)
-        self.profile_overlay = CharacterProfileOverlay(self.small_font)
+        self.profile_overlay = CharacterProfileOverlay(
+            self.small_font,
+            collection_loader=getattr(self.session, "get_card_collection", None),
+        )
 
         # Вкладки (рюкзак убран, он теперь в глобальной панели)
         self.current_tab = "equipment"
@@ -68,6 +71,8 @@ class CharacterRoom:
 
     def handle_event(self, event):
         """Обработка событий"""
+        if self.profile_overlay.handle_event(event):
+            return
         # Сначала обрабатываем profile_overlay
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             action, profile = self.profile_overlay.handle_click(event.pos)

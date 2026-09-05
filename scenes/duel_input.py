@@ -6,8 +6,11 @@ from ui.music import play_card_move_sound
 
 
 class DuelInputHandler:
+    DOUBLE_CLICK_SECONDS = 0.4
+
     def __init__(self, scene):
         self.scene = scene
+        self.last_instant_click = None
 
     def handle_event(self, event):
         if self.scene.phase == "result":
@@ -70,7 +73,11 @@ class DuelInputHandler:
             return
 
         if self.scene.phase in ("draft", "planning"):
-            self._handle_card_phase(event.pos, event.button)
+            self._handle_card_phase(
+                event.pos,
+                event.button,
+                getattr(event, "clicks", 1),
+            )
             return
 
     def _handle_log_scroll(self, direction):
@@ -85,7 +92,7 @@ class DuelInputHandler:
             current_offset + (3 if direction > 0 else -3),
         )
 
-    def _handle_card_phase(self, pos, button):
+    def _handle_card_phase(self, pos, button, clicks=1):
         layout = self.scene.layout
         battle = self.scene.battle
         if self.scene.phase == "draft":
@@ -108,7 +115,10 @@ class DuelInputHandler:
                         self.scene.renderer.card_renderer.CARD_HEIGHT,
                     )
                 if self.scene.renderer.card_renderer.card_rect(row_area, 5, index % 5).collidepoint(pos):
-                    battle.choose_starting_card("player", card.key)
+                    if battle.draft_mode == "starting":
+                        battle.choose_starting_card("player", card.key)
+                    else:
+                        battle.choose_redraft_card("player", card.key)
                     self.scene.draft_next_side = "enemy"
                     self.scene.card_transfer = {
                         "card": card,
@@ -144,8 +154,27 @@ class DuelInputHandler:
             hand_rect = self.scene.renderer.card_renderer.card_rect(layout.player_hand, len(visible_hand), index)
             if hand_rect.collidepoint(pos):
                 if button == 1:
-                    battle.select_card("player", card.key)
+                    if card.effect_type.startswith("instant_"):
+                        now = time.monotonic()
+                        is_double_click = clicks >= 2 or (
+                            self.last_instant_click is not None
+                            and self.last_instant_click["key"] == card.key
+                            and now - self.last_instant_click["time"]
+                            <= self.DOUBLE_CLICK_SECONDS
+                        )
+                        if is_double_click:
+                            if battle.activate_instant_card("player", card.key):
+                                play_card_move_sound()
+                            self.last_instant_click = None
+                        else:
+                            self.last_instant_click = {
+                                "key": card.key,
+                                "time": now,
+                            }
+                    else:
+                        self.last_instant_click = None
+                        battle.select_card("player", card.key)
                 elif button == 3:
+                    self.last_instant_click = None
                     battle.deselect_card("player", card.key)
                 return
-

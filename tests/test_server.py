@@ -4,8 +4,10 @@ import time
 import unittest
 from http.server import ThreadingHTTPServer
 from pathlib import Path
+from unittest.mock import patch
 
 from client.network import GameClient, ServerError
+from combat.card_database import Card
 from server.database import Database
 from server.main import GameRequestHandler
 from server import social, world
@@ -40,6 +42,68 @@ class ServerPersistenceTests(unittest.TestCase):
         self.assertEqual(saved["hp"], loaded["hp"])
         self.assertEqual(loaded["xp"], 30)
         self.assertEqual(loaded["name"], "Воин")
+
+    def test_card_collection_persists_and_stacks_duplicate_cards(self):
+        user = self.database.register("collector", "password")
+        character = self.database.create_character(user["id"], "Коллекционер")
+
+        first = self.database.add_card_to_collection(character["id"], "test_card")
+        second = self.database.add_card_to_collection(character["id"], "test_card")
+        collection = self.database.get_card_collection(character["id"])
+
+        self.assertEqual(first["slot_index"], 0)
+        self.assertEqual(second["quantity"], 2)
+        self.assertEqual(len(collection), 1)
+        self.assertEqual(collection[0]["card_key"], "test_card")
+        self.assertEqual(collection[0]["quantity"], 2)
+
+    def test_card_collection_has_sixty_unique_slots(self):
+        user = self.database.register("fullcollector", "password")
+        character = self.database.create_character(user["id"], "Хранитель")
+        for index in range(60):
+            self.database.add_card_to_collection(
+                character["id"],
+                f"card_{index}",
+            )
+
+        with self.assertRaisesRegex(ValueError, "нет свободных"):
+            self.database.add_card_to_collection(character["id"], "overflow")
+
+    def test_client_receives_battle_card_in_collection(self):
+        card = Card(
+            "reward_card",
+            "Наградная карта",
+            "Тест",
+            1, 0, 0, 0,
+            "damage",
+            {"dice": "1d4"},
+            1,
+            drop_chance=100,
+            image_path="assets/cards/faces/reward_card.png",
+        )
+        GameRequestHandler.database = self.database
+        http_server = ThreadingHTTPServer(("127.0.0.1", 0), GameRequestHandler)
+        thread = threading.Thread(target=http_server.serve_forever, daemon=True)
+        thread.start()
+        client = GameClient(f"http://127.0.0.1:{http_server.server_port}")
+
+        try:
+            client.register("rewarduser", "password")
+            client.login("rewarduser", "password")
+            character = client.create_character("Победитель")
+            with patch("server.main.load_cards", return_value=[card]):
+                reward = client.award_battle_card(
+                    character["id"],
+                    ["reward_card"],
+                )
+                collection = client.get_card_collection(character["id"])
+        finally:
+            http_server.shutdown()
+            http_server.server_close()
+
+        self.assertEqual(reward["key"], "reward_card")
+        self.assertEqual(collection[0]["key"], "reward_card")
+        self.assertEqual(collection[0]["quantity"], 1)
 
     def test_login_applies_offline_regen_before_session_starts(self):
         user = self.database.register("offline_login", "password")

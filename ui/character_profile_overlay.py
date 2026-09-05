@@ -4,13 +4,15 @@ from core import settings
 from ui.character_card import CharacterCard
 from ui.hud import draw_button
 from ui.backpack_panel import BackpackPanel
+from ui.collection_panel import CollectionPanel
 
 
 class CharacterProfileOverlay:
     """Reusable right-side profile card opened by any UI surface."""
 
-    def __init__(self, action_font):
+    def __init__(self, action_font, collection_loader=None):
         self.action_font = action_font
+        self.collection_loader = collection_loader
         self.player_card = CharacterCard()
         self.card = CharacterCard()
         self.player_frame = pygame.Rect(settings.PLAYER_CARD_RECT)
@@ -25,7 +27,7 @@ class CharacterProfileOverlay:
         self.backpack_button = pygame.Rect(
             self.player_frame.right + 5,
             self.player_frame.y,
-            100,
+            130,
             40,
         )
         # 9 дополнительных кнопок вертикально вниз
@@ -41,6 +43,7 @@ class CharacterProfileOverlay:
         
         # Панель рюкзака
         self.backpack_panel = BackpackPanel()
+        self.collection_panel = CollectionPanel()
         
         self.profile = None
         self.counterpart = None
@@ -54,8 +57,13 @@ class CharacterProfileOverlay:
         self.counterpart = dict(counterpart) if isinstance(counterpart, dict) else counterpart
 
     def close(self):
+        self.backpack_panel.close()
+        self.collection_panel.close()
         self.profile = None
         self.counterpart = None
+
+    def handle_event(self, event):
+        return self.collection_panel.handle_event(event)
 
     def update_counterpart(self, profile):
         self.counterpart = dict(profile)
@@ -65,6 +73,10 @@ class CharacterProfileOverlay:
         self.profile = dict(profile)
 
     def handle_click(self, position):
+        if self.collection_panel.is_open:
+            self.collection_panel.handle_click(position)
+            return "handled", None
+
         # Обработка клика по рюкзаку (приоритет выше всего)
         if self.backpack_panel.is_open:
             cell_index = self.backpack_panel.handle_click(position)
@@ -87,6 +99,10 @@ class CharacterProfileOverlay:
         # Обработка клика по слотам (1-9)
         for i, button in enumerate(self.slot_buttons):
             if self.is_open and button.collidepoint(position):
+                if i == 0:
+                    cards = self.collection_loader() if self.collection_loader else []
+                    self.collection_panel.open(cards)
+                    return "handled", None
                 return f"slot_{i+1}", None
         
         if not self.is_open:
@@ -126,9 +142,11 @@ class CharacterProfileOverlay:
             draw_button(screen, self.backpack_button, "РЮКЗАК", self.action_font, color=(210, 100, 90))
             # 9 слотов вертикально вниз
             for i, button in enumerate(self.slot_buttons):
-                draw_button(screen, button, str(i + 1), self.action_font, color=(210, 100, 90))
+                label = "КОЛЛЕКЦИЯ" if i == 0 else str(i + 1)
+                draw_button(screen, button, label, self.action_font, color=(210, 100, 90))
             # Рюкзак (над всем остальным)
             self.backpack_panel.draw(screen)
+            self.collection_panel.draw(screen)
             return
         
         if show_counterpart and opponent is not None:
@@ -153,6 +171,8 @@ class CharacterProfileOverlay:
         draw_button(screen, self.backpack_button, "РЮКЗАК", self.action_font, color=(210, 100, 90))
         # 9 слотов вертикально вниз
         for i, button in enumerate(self.slot_buttons):
-            draw_button(screen, button, str(i + 1), self.action_font, color=(210, 100, 90))
+            label = "КОЛЛЕКЦИЯ" if i == 0 else str(i + 1)
+            draw_button(screen, button, label, self.action_font, color=(210, 100, 90))
         # Рюкзак (над всем остальным)
         self.backpack_panel.draw(screen)
+        self.collection_panel.draw(screen)

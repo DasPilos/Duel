@@ -43,6 +43,11 @@ class DuelScene:
             settings.FONT_NAME,
             settings.SMALL_FONT_SIZE,
         )
+        self.gained_points_font = pygame.font.SysFont(
+            settings.FONT_NAME,
+            settings.GAINED_POINTS_FONT_SIZE,
+            bold=True,
+        )
         self.big = pygame.font.SysFont(
             settings.FONT_NAME,
             settings.BIG_FONT_SIZE,
@@ -60,7 +65,15 @@ class DuelScene:
         self.restart(initial=True)
 
         self.inventory_button = pygame.Rect(settings.WIDTH - 70, 10, 50, 50)
-        self.profile_overlay = CharacterProfileOverlay(self.small_font)
+        collection_loader = (
+            getattr(online_session, "get_card_collection", None)
+            if online_session is not None
+            else None
+        )
+        self.profile_overlay = CharacterProfileOverlay(
+            self.gained_points_font,
+            collection_loader=collection_loader,
+        )
         if online_session is not None:
             self.chat = ChatPanel(online_session, "backyard", self, profile_overlay=self.profile_overlay)
             self.start_battle_comments()
@@ -104,6 +117,10 @@ class DuelScene:
             self.online_session.disconnect(self.player)
 
     def finish_battle(self):
+        if self.battle_completion_saved:
+            return
+        self.battle_completion_saved = True
+
         if self.online_session is not None and self.opponent_profile is not None:
             self.opponent_profile.update({
                 "level": self.enemy.level,
@@ -120,7 +137,14 @@ class DuelScene:
                 self.online_session.save_opponent(self.opponent_profile)
         
         # Выдача награды за победу
-        if self.player.hp > 0 and self.enemy.hp <= 0:  # Игрок выиграл
+        if (
+            self.online_session is not None
+            and self.player.hp > 0
+            and self.enemy.hp <= 0
+        ):
+            self.card_reward = self.online_session.award_battle_card(
+                self.battle.reward_card_keys,
+            )
             level = int(self.player.level)
             reward_copper = 0
             reward_silver = 0
@@ -168,7 +192,7 @@ class DuelScene:
         self.intro_started = time.monotonic()
         self.draft_reveal_started = None
         self.draft_deal_sound_played = False
-        self.draft_next_side = "enemy" if self.enemy.intuition > self.player.intuition else "player"
+        self.draft_next_side = self.battle.draft_first_side()
         self.draft_cleanup_started = None
         self.card_transfer = None
         self.enemy_card_transfer = None
@@ -208,6 +232,8 @@ class DuelScene:
         self.timeout_surrender = False
         self.pending_phase_transition = None
         self.pending_transition_target = None
+        self.battle_completion_saved = False
+        self.card_reward = None
 
         if initial:
             self.active_floating_texts = []
@@ -236,6 +262,8 @@ class DuelScene:
             self.chat.message_list.set_messages(self.chat._visible_messages())
 
     def handle_event(self, event):
+        if self.profile_overlay.handle_event(event):
+            return
         if self._handle_profile_click(event):
             return
         if self.chat is not None and self.chat.handle_event(event):
@@ -345,6 +373,13 @@ class DuelScene:
                     self.pending_transition_target = "result"
                     stop_battle_music()
                     return
+                if self.battle.prepare_redraft():
+                    self.draft_next_side = self.battle.draft_first_side()
+                    self.turn_deadline = now + settings.DRAFT_TIMEOUT_SECONDS
+                    self.phase = "draft"
+                    play_draft_music()
+                    self._after_starting_pick()
+                    return
                 gained_points = self.battle.begin_next_turn()
                 self._show_gained_points(gained_points["player"], "player")
                 self._show_gained_points(gained_points["enemy"], "enemy")
@@ -362,22 +397,25 @@ class DuelScene:
                 side = self.draw_transfer["side"]
                 self.battle.draw_next_turn_card(side)
                 self.draw_transfer = None
-                if self.draw_queue:
-                    self._start_next_card_draw(now)
-                else:
-                    self.phase = "planning"
+                self._start_next_card_draw(now)
             return
 
         if self.phase == "draft_cleanup":
             if time.monotonic() - self.draft_cleanup_started >= settings.DRAFT_CLEANUP_SECONDS:
-                if self.battle.starting_deal_complete():
+                if self.battle.draft_mode == "starting":
                     self.battle.finish_starting_deal()
                     self.pending_phase_transition = "battle_start_transition"
                     self.pending_transition_target = "planning"
                     self.draft_cleanup_started = None
                     stop_draft_music()
-                else:
-                    self.phase = "draft"
+                elif self.battle.draft_mode == "redraft":
+                    gained_points = self.battle.finish_redraft()
+                    self._show_gained_points(gained_points["player"], "player")
+                    self._show_gained_points(gained_points["enemy"], "enemy")
+                    self.phase = "planning"
+                    self.turn_deadline = now + settings.TURN_CLOCK_SECONDS
+                    self.draft_cleanup_started = None
+                    stop_draft_music()
             return
         if self.phase == "draft_transfer":
             if time.monotonic() - self.card_transfer["started"] >= settings.PLAYER_DRAFT_PICK_MOVE_SECONDS:
@@ -385,11 +423,10 @@ class DuelScene:
                 self.card_transfer = None
                 self._after_starting_pick()
             return
-        if self.phase == "strength_transfer":
+        if self.phase == "draft_bonus_transfer":
             if now - self.card_transfer["started"] >= settings.TABLE_TO_HAND_MOVE_SECONDS:
                 self.battle.hands[self.card_transfer["target_side"]].append(self.card_transfer["card"])
                 self.card_transfer = None
-                self.battle.starting_bonus_awarded = True
                 self.phase = "draft_cleanup"
                 self.draft_cleanup_started = now
             return
@@ -496,10 +533,23 @@ class DuelScene:
     def _finish_afk_draft(self):
         self.turn_deadline = None
         stop_draft_music()
-        self.battle.finish_afk_starting_deal()
+        if self.battle.draft_mode == "starting":
+            self.battle.finish_afk_starting_deal()
+            message = (
+                f"{self.player.name} не участвовал в драфте "
+                "и начинает бой без карт."
+            )
+        else:
+            gained_points = self.battle.finish_afk_redraft()
+            self._show_gained_points(gained_points["player"], "player")
+            self._show_gained_points(gained_points["enemy"], "enemy")
+            message = (
+                f"{self.player.name} не выбрал карты повторного драфта; "
+                "карты распределены автоматически."
+            )
         self.comments.append({
             "segments": [{
-                "text": f"{self.player.name} не участвовал в драфте и начинает бой без карт.",
+                "text": message,
                 "color": (230, 230, 230),
             }],
             "large": False,
@@ -513,34 +563,59 @@ class DuelScene:
         if self.battle.confirmed["enemy"]:
             return
         self.battle.selected["enemy"] = []
-        for card in self.battle.hands["enemy"]:
-            if len(self.battle.selected["enemy"]) >= self.battle.MAX_PLAYED_CARDS:
+        for card in list(self.battle.hands["enemy"]):
+            if card.effect_type.startswith("instant_"):
+                self.battle.activate_instant_card("enemy", card.key)
+        for card in list(self.battle.hands["enemy"]):
+            if self.battle.remaining_card_slots("enemy") <= 0:
                 break
             if self.battle.can_select("enemy", card):
                 self.battle.selected["enemy"].append(card)
         self.battle.confirm_selection("enemy")
 
     def _start_next_card_draw(self, now):
-        if not self.draw_queue:
-            self.phase = "planning"
+        while self.draw_queue:
+            side = self.draw_queue.pop(0)
+            if not self.battle.can_draw_next_turn_card(side):
+                continue
+            card = self.battle.peek_card()
+            if card is None:
+                continue
+            self.draw_transfer = {"side": side, "started": now, "card": card}
+            self.phase = "card_draw"
+            play_card_move_sound()
             return
-        side = self.draw_queue.pop(0)
-        self.draw_transfer = {"side": side, "started": now, "card": self.battle.peek_card()}
-        self.phase = "card_draw"
-        play_card_move_sound()
+        self.draw_transfer = None
+        self.phase = "planning"
 
     def _auto_starting_pick(self):
         if self.draft_next_side == "enemy":
             self._start_enemy_card_transfer()
 
     def _auto_starting_pick_one(self):
-        if len(self.battle.hands["enemy"]) >= self.battle.STARTING_PICK_LIMIT or not self.battle.table:
+        if not self.battle.table:
             return
         card = self.battle.table[self.battle.rng.randrange(len(self.battle.table))]
-        self.battle.choose_starting_card("enemy", card.key)
+        if self.battle.draft_mode == "starting":
+            if len(self.battle.hands["enemy"]) >= self.battle.STARTING_PICK_LIMIT:
+                return
+            self.battle.choose_starting_card("enemy", card.key)
+        elif (
+            self.battle.redraft_picks["enemy"]
+            < self.battle.redraft_pick_limit("enemy")
+        ):
+            self.battle.choose_redraft_card("enemy", card.key)
 
     def _start_enemy_card_transfer(self):
-        if len(self.battle.hands["enemy"]) >= self.battle.STARTING_PICK_LIMIT or not self.battle.table:
+        if not self.battle.table:
+            return
+        if self.battle.draft_mode == "starting":
+            if len(self.battle.hands["enemy"]) >= self.battle.STARTING_PICK_LIMIT:
+                return
+        elif (
+            self.battle.redraft_picks["enemy"]
+            >= self.battle.redraft_pick_limit("enemy")
+        ):
             return
         index = self.battle.rng.randrange(len(self.battle.table))
         card = self.battle.table[index]
@@ -551,17 +626,22 @@ class DuelScene:
             self.renderer.card_renderer.CARD_HEIGHT,
         )
         source = self.renderer.card_renderer.card_rect(source_area, 5, index % 5)
-        self.battle.choose_starting_card("enemy", card.key)
+        if self.battle.draft_mode == "starting":
+            self.battle.choose_starting_card("enemy", card.key)
+        else:
+            self.battle.choose_redraft_card("enemy", card.key)
         self.enemy_card_transfer = {"card": card, "started": time.monotonic(), "source": source}
         self.phase = "enemy_transfer"
         play_card_move_sound()
 
     def _after_starting_pick(self):
-        if self.battle.starting_deal_complete():
-            stronger = self.battle._stronger_side("strength")
-            if not self.battle.starting_bonus_awarded and stronger is not None and self.battle.table:
-                bonus_card = self.battle.table.pop(0)
-                self.battle.starting_bonus_awarded = True
+        if self.battle.current_draft_complete():
+            bonus = self.battle.take_draft_bonus_card()
+            if bonus is not None:
+                stronger, bonus_card = bonus
+                if self.battle.draft_mode == "starting":
+                    self.battle.starting_bonus_awarded = True
+                    self.battle.starting_bonus_side = stronger
                 self.card_transfer = {
                     "card": bonus_card,
                     "started": time.monotonic(),
@@ -577,11 +657,19 @@ class DuelScene:
                     ),
                     "target_side": stronger,
                 }
-                self.phase = "strength_transfer"
+                self.phase = "draft_bonus_transfer"
                 play_card_move_sound()
             else:
                 self.draft_cleanup_started = time.monotonic()
                 self.phase = "draft_cleanup"
             return
+        if self.battle.draft_mode == "redraft":
+            if (
+                self.battle.redraft_picks[self.draft_next_side]
+                >= self.battle.redraft_pick_limit(self.draft_next_side)
+            ):
+                self.draft_next_side = (
+                    "enemy" if self.draft_next_side == "player" else "player"
+                )
         if self.draft_next_side == "enemy":
             self._start_enemy_card_transfer()

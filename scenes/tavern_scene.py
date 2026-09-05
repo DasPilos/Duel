@@ -19,7 +19,10 @@ class TavernScene:
         self.title_font = pygame.font.SysFont(settings.FONT_NAME, 36)
         self.battle_button = pygame.Rect(780, 850, 360, 55)
         self.inventory_button = pygame.Rect(settings.WIDTH - 70, 10, 50, 50)
-        self.profile_overlay = CharacterProfileOverlay(self.small_font)
+        self.profile_overlay = CharacterProfileOverlay(
+            self.small_font,
+            collection_loader=getattr(self.session, "get_card_collection", None),
+        )
         self.chat = ChatPanel(session, "tavern", profile_overlay=self.profile_overlay)
         self.tavern_shop = TavernShop(self.font, self.small_font)
         
@@ -66,6 +69,8 @@ class TavernScene:
         return pygame.Rect(x, y, width, height)
 
     def handle_event(self, event):
+        if self.profile_overlay.handle_event(event):
+            return
         if self.chat.handle_event(event):
             return
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
@@ -220,7 +225,12 @@ class TavernScene:
             self.profile_overlay.update_profile(self.session.character)
             self.profile_overlay.update_counterpart(self.session.character)
         except Exception as e:
-            self.tavern_shop.show_error(f"Ошибка покупки: {str(e)}")
+            error_msg = str(e)
+            # Скрываем внутреннее имя ошибки - сообщение уже в чате от бармена
+            if "БАРМАН_ПОЛНОЕ_ЗДОРОВЬЕ" in error_msg:
+                # Не показываем ошибку - сообщение уже отправлено в чат
+                return
+            self.tavern_shop.show_error(f"Ошибка покупки: {error_msg}")
 
     def _save_profile_card(self, profile):
         saved_profile = self.session.save_character_profile(profile)

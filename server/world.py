@@ -416,10 +416,12 @@ def _resolve_bot_battle(attacker_id, defender_id, now):
     defender_fighter = _fighter_from_profile(defender)
     battle = CardBattle(attacker_fighter, defender_fighter)
     while len(battle.hands["player"]) < battle.STARTING_PICK_LIMIT:
-        card = battle.table.pop(random.randrange(len(battle.table)))
-        battle.hands["player"].append(card)
-        card = battle.table.pop(random.randrange(len(battle.table)))
-        battle.hands["enemy"].append(card)
+        side = battle.draft_first_side()
+        card = battle.table[random.randrange(len(battle.table))]
+        battle.choose_starting_card(side, card.key)
+        side = "enemy" if side == "player" else "player"
+        card = battle.table[random.randrange(len(battle.table))]
+        battle.choose_starting_card(side, card.key)
     battle.finish_starting_deal()
     # На каждый ход нужно давать бойцам новые карты и очки действий, иначе,
     # когда у обеих сторон заканчиваются доступные по цене карты, ни одна из
@@ -427,8 +429,11 @@ def _resolve_bot_battle(attacker_id, defender_id, now):
     # блокируя фоновый поток планировщика ботов (бои на заднем дворе замирали).
     while not battle.is_over() and battle.turn < MAX_BOT_BATTLE_TURNS:
         for side in ("player", "enemy"):
-            affordable = [card for card in battle.hands[side] if battle.can_play(side, card)]
-            battle.selected[side] = affordable[:battle.MAX_PLAYED_CARDS]
+            for card in list(battle.hands[side]):
+                if card.effect_type.startswith("instant_"):
+                    battle.activate_instant_card(side, card.key)
+            for card in list(battle.hands[side]):
+                battle.select_card(side, card.key)
             battle.confirm_selection(side)
         battle.resolve_turn()
         if not battle.is_over():
