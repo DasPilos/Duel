@@ -228,6 +228,9 @@ class DuelRenderer:
         # Левый верхний угол - Игрок (зелёный)
         player_profile = normalize_character_profile(self.scene.player)
         enemy_profile = normalize_character_profile(self.scene.enemy)
+        if getattr(self.scene, "mage_battle", False):
+            self._draw_mage_battle_stats(screen, player_profile, enemy_profile)
+            return
         player_effective_profile = self._effective_profile_for_derived(
             self.scene.player,
             player_profile,
@@ -308,6 +311,31 @@ class DuelRenderer:
             width=enemy_stats_width,
             border_color=(210, 80, 80)
         )
+
+    def _draw_mage_battle_stats(self, screen, player_profile, enemy_profile):
+        screen_width, screen_height = screen.get_size()
+        for profile, x, color, align in (
+            (player_profile, 10, (80, 180, 120), "left"),
+            (enemy_profile, screen_width - 320, (210, 80, 80), "right"),
+        ):
+            self._draw_corner_fighter_card(screen, self.scene.player if align == "left" else self.scene.enemy, profile, {}, x, 10, color, align)
+            status = self.scene.player_status if align == "left" else self.scene.enemy_status
+            status_text = self.scene.small_font.render(status, True, color)
+            screen.blit(status_text, (x + 12, 188))
+            deck_text = self.scene.small_font.render("КОЛОДА: 22 УНИКАЛЬНЫЕ КАРТЫ", True, color)
+            screen.blit(deck_text, (x + 12, 210))
+            stats = profile.get("stats", {})
+            frame = pygame.Rect(x, screen_height - 130, 310, 70)
+            pygame.draw.rect(screen, (20, 24, 34, 210), frame, border_radius=8)
+            pygame.draw.rect(screen, color, frame, 2, border_radius=8)
+            labels = (
+                f"Мудрость: {stats.get('wisdom', 2)}",
+                f"Интеллект: {stats.get('intellect', 2)}",
+                f"Гармония: {stats.get('harmony', 2)}",
+                f"Выносливость: {stats.get('endurance', 2)}",
+            )
+            for index, label in enumerate(labels):
+                draw_text(screen, self.scene.small_font, label, frame.x + 8 + (index % 2) * 145, frame.y + 8 + (index // 2) * 24, color)
 
     def _draw_corner_fighter_card(self, screen, fighter, profile, derived, x, y, border_color, align):
         """Рисует укороченную карточку боца в углу (Имя, Уровень, HP/MP бары)."""

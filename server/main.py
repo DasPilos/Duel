@@ -128,7 +128,7 @@ class GameRequestHandler(BaseHTTPRequestHandler):
         _, character = self._chat_actor(token, character_id)
         social.update_presence(token, user_id, character, location)
         offers = social.offers_for(character_id)
-        if location == "backyard":
+        if location in ("backyard", "awakening_altar"):
             offers += social.public_offers(location, character_id)
         self._send(200, {
             "occupants": social.occupants(user_id, location),
@@ -144,7 +144,7 @@ class GameRequestHandler(BaseHTTPRequestHandler):
         character = self.database.get_character(user_id)
         location = self._query().get("location", ["tavern"])[0]
         offers = social.offers_for(character["id"])
-        if location == "backyard":
+        if location in ("backyard", "awakening_altar"):
             offers += social.public_offers(location, character["id"])
         self._send(200, {
             "offers": offers,
@@ -314,6 +314,23 @@ class GameRequestHandler(BaseHTTPRequestHandler):
             if path == "/api/login":
                 self._send(200, self.database.login(str(body.get("username", "")), str(body.get("password", ""))))
                 return
+            if path == "/api/decks":
+                user_id = self.database.user_id_by_token(self._token())
+                character_id = int(body.get("character_id", 0))
+                character = self.database.get_character(user_id, character_id)
+                if character is None:
+                    raise ValueError("Персонаж не найден")
+                name = str(body.get("name", "")).strip()
+                if not 1 <= len(name) <= 32:
+                    raise ValueError("Название колоды: от 1 до 32 символов")
+                cards = body.get("cards", {})
+                if isinstance(cards, list):
+                    cards = {str(key): 1 for key in cards}
+                if not isinstance(cards, dict) or len(cards) < 22:
+                    raise ValueError("В колоде должно быть минимум 22 уникальные карты")
+                deck_id = self.items_database.create_deck(character_id, name, cards)
+                self._send(201, {"deck": self.items_database.get_deck(deck_id)})
+                return
             if path == "/api/characters":
                 user_id = self.database.user_id_by_token(self._token())
                 name = str(body.get("name", "")).strip()
@@ -459,6 +476,8 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                 target = next((item for item in social.occupants(user_id, location) if str(item["character_id"]) == str(target_id)), None)
                 if target is None:
                     raise ValueError("Персонаж не найден в локации")
+                if target.get("type", "warrior") != character.get("type", "warrior"):
+                    raise ValueError("Нельзя вызвать персонажа другого класса")
                 if character["hp"] < character["max_hp"]:
                     raise ValueError("Нельзя вступить в бой: здоровье должно быть полностью восстановлено")
                 if target.get("hp", target.get("max_hp")) < target.get("max_hp", 0):
@@ -562,6 +581,15 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                     raise ValueError("Нельзя вступить в бой: здоровье должно быть полностью восстановлено")
                 if body.get("accepted") and social.has_active_application(character["id"]):
                     raise ValueError("Сначала отмените свою заявку, чтобы вступить в бой")
+                offer = next(
+                    (item for item in social.DUEL_OFFERS if item["id"] == body["offer_id"]),
+                    None,
+                )
+                if offer is not None and str(offer["sender_id"]).lstrip("-").isdigit():
+                    sender = self.database.get_character_for_battle(offer["sender_id"])
+                    sender_character = sender["character"] if sender is not None else None
+                    if sender_character is not None and sender_character.get("type", "warrior") != character.get("type", "warrior"):
+                        raise ValueError("Нельзя принять вызов персонажа другого класса")
                 offer = social.respond_duel_offer(character["id"], body["offer_id"], bool(body.get("accepted")))
                 self._send(200, {"offer": offer})
                 return

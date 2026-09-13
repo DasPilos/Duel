@@ -21,6 +21,7 @@ class BackyardScene:
         self.profile_overlay = CharacterProfileOverlay(
             self.small_font,
             collection_loader=getattr(self.session, "get_card_collection", None),
+            deck_loader=getattr(self.session, "get_decks", None),
         )
         self.chat = ChatPanel(session, "backyard", profile_overlay=self.profile_overlay)
         self.navigate = None
@@ -71,6 +72,9 @@ class BackyardScene:
                 return
             
             action, profile = self.profile_overlay.handle_click(event.pos)
+            if action == "deck_selected":
+                self.session.selected_deck = profile
+                return
             if action == "stat_change":
                 self._save_profile_card(profile)
                 return

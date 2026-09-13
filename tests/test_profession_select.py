@@ -57,7 +57,9 @@ try:
     assert mage['type'] == 'mage', "Mage type should be 'mage'"
     stats = mage['stats']
     assert 'wisdom' in stats, "Mage should have 'wisdom' stat"
-    assert 'spirituality' in stats, "Mage should have 'spirituality' stat"
+    assert 'intellect' in stats, "Mage should have 'intellect' stat"
+    assert 'harmony' in stats, "Mage should have 'harmony' stat"
+    assert set(stats) == {'wisdom', 'intellect', 'harmony', 'endurance'}, "Mage should have only mage stats"
     assert 'strength' not in stats, "Mage should NOT have 'strength' stat"
     assert stats['endurance'] == 4, "Mage endurance should be 4"
     print("  [OK] Mage stats validated")

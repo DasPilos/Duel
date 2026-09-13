@@ -191,6 +191,31 @@ class Database:
             self._initialize_drinks(connection)
             
             self._migrate_characters(connection)
+            self._normalize_mage_characters(connection)
+
+    @staticmethod
+    def _normalize_mage_characters(connection):
+        """Repair legacy mage stats without changing warrior records."""
+        rows = connection.execute(
+            "SELECT id, level, hp, stats_json FROM characters WHERE type = 'mage'"
+        ).fetchall()
+        for row in rows:
+            stored = json.loads(row["stats_json"] or "{}")
+            stats = {
+                "wisdom": max(3, int(stored.get("wisdom", 3))),
+                "intellect": max(3, int(stored.get("intellect", 3))),
+                "harmony": max(3, int(stored.get("harmony", 3))),
+                "endurance": max(4, int(stored.get("endurance", 4))),
+            }
+            max_hp = 50 + stats["endurance"] * 10
+            max_mp = 40 + stats["intellect"] * 5
+            connection.execute(
+                """UPDATE characters
+                   SET stats_json = ?, max_hp = ?, hp = MIN(hp, ?),
+                      mp = MIN(mp, ?), max_mp = ?, stat_points = MIN(stat_points, 4)
+                   WHERE id = ?""",
+                  (json.dumps(stats), max_hp, max_hp, max_mp, max_mp, row["id"]),
+            )
     
     @staticmethod
     def _initialize_drinks(connection):
@@ -377,19 +402,22 @@ class Database:
         else:  # mage
             stats = {
                 "wisdom": 3,
-                "spirituality": 3,
+                "intellect": 3,
+                "harmony": 3,
                 "endurance": 4,
             }
         
-        max_hp = calculate_max_hp(1, stats["endurance"])
+        max_hp = 50 + stats["endurance"] * 10 if profession_type == "mage" else calculate_max_hp(1, stats["endurance"])
+        max_mp = 40 + stats["intellect"] * 5 if profession_type == "mage" else 50
+        stat_points = 4 if profession_type == "mage" else 3
         with self.connection() as connection:
             cursor = connection.execute(
                 """
                 INSERT INTO characters
-                (user_id, name, type, hp, max_hp, stats_json, stat_points, copper, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (user_id, name, type, hp, max_hp, mp, max_mp, stats_json, stat_points, copper, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (user_id, name, profession_type, max_hp, max_hp, json.dumps(stats), 3, 1000, now),
+                (user_id, name, profession_type, max_hp, max_hp, max_mp, max_mp, json.dumps(stats), stat_points, 1000, now),
             )
             character_id = cursor.lastrowid
         return self.get_character(user_id, character_id)
@@ -430,7 +458,7 @@ class Database:
         self.delete_character(user_id, character_id)
 
     def update_character_profession(self, user_id, character_id, profession_type):
-        """Update character profession"""
+        """Update the profession marker without changing character stats."""
         if profession_type not in ["warrior", "mage"]:
             raise ValueError("Профессия должна быть 'warrior' или 'mage'")
         
@@ -443,7 +471,7 @@ class Database:
             if row is None or row["user_id"] != user_id:
                 raise ValueError("Персонаж не найден")
             
-            # Update profession
+            # Preserve stats; new characters receive them in create_character.
             connection.execute(
                 "UPDATE characters SET type = ? WHERE id = ?",
                 (profession_type, character_id),
@@ -824,6 +852,18 @@ class Database:
             "silver": currency.silver,
             "gold": currency.gold,
         }
+        if current.get("type") == "mage":
+            updated["stats"] = {
+                "wisdom": max(2, int(updated["stats"].get("wisdom", 2))),
+                "intellect": max(2, int(updated["stats"].get("intellect", 2))),
+                "harmony": max(2, int(updated["stats"].get("harmony", 2))),
+                "endurance": max(2, int(updated["stats"].get("endurance", 2))),
+            }
+            updated["max_hp"] = 50 + updated["stats"]["endurance"] * 10
+            updated["hp"] = min(updated["hp"], updated["max_hp"])
+            updated["max_mp"] = 40 + updated["stats"]["intellect"] * 5
+            updated["mp"] = min(updated["mp"], updated["max_mp"])
+            updated["stat_points"] = min(updated["stat_points"], 4)
         self.validate_character_name(updated["name"])
         self._validate_character(updated)
         with self.connection() as connection:
@@ -956,7 +996,10 @@ class Database:
     def _character_payload(row):
         row_dict = dict(row)
         stats = json.loads(row["stats_json"])
-        max_hp = calculate_max_hp(row["level"], stats["endurance"])
+        character_type = row["type"] if "type" in row.keys() else "warrior"
+        is_mage = character_type == "mage"
+        max_hp = 50 + stats["endurance"] * 10 if is_mage else calculate_max_hp(row["level"], stats["endurance"])
+        max_mp = 40 + stats["intellect"] * 5 if is_mage else row["max_mp"]
 
         # Нормализуем валюту
         currency = Currency(
@@ -969,13 +1012,13 @@ class Database:
         return {
             "id": row["id"],
             "name": row["name"],
-            "type": row["type"] if "type" in row.keys() else "warrior",
+            "type": character_type,
             "level": row["level"],
             "xp": row["xp"],
             "hp": min(row["hp"], max_hp),
             "max_hp": max_hp,
-            "mp": row["mp"],
-            "max_mp": row["max_mp"],
+            "mp": min(row["mp"], max_mp),
+            "max_mp": max_mp,
             "stats": stats,
             "stat_points": row["stat_points"],
             "zone": row["zone"],

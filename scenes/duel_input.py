@@ -36,6 +36,11 @@ class DuelInputHandler:
             if event.key == pygame.K_ESCAPE:
                 self.scene.return_to_tavern = True
                 return
+            if event.key == pygame.K_b and self.scene.phase == "planning":
+                selected = self.scene.battle.selected["player"]
+                if selected:
+                    self.scene.battle.burn_card("player", selected[0].key)
+                return
 
         if event.type == pygame.MOUSEWHEEL:
             self._handle_log_scroll(event.y)
@@ -114,7 +119,8 @@ class DuelInputHandler:
                         layout.card_table.width - 40,
                         self.scene.renderer.card_renderer.CARD_HEIGHT,
                     )
-                if self.scene.renderer.card_renderer.card_rect(row_area, 5, index % 5).collidepoint(pos):
+                draft_count = max(1, len(visible_table)) if getattr(self.scene, "mage_battle", False) else 5
+                if self.scene.renderer.card_renderer.card_rect(row_area, draft_count, index).collidepoint(pos):
                     if battle.draft_mode == "starting":
                         battle.choose_starting_card("player", card.key)
                     else:
@@ -123,7 +129,7 @@ class DuelInputHandler:
                     self.scene.card_transfer = {
                         "card": card,
                         "started": time.monotonic(),
-                        "source": self.scene.renderer.card_renderer.card_rect(row_area, 5, index % 5),
+                        "source": self.scene.renderer.card_renderer.card_rect(row_area, draft_count, index),
                     }
                     self.scene.phase = "draft_transfer"
                     play_card_move_sound()

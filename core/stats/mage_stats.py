@@ -1,6 +1,4 @@
-"""Mage character statistics system - for mountain academy mages
-Dev2 will use this file to implement mage leveling and element training
-"""
+"""Mage character statistics system for mountain academy mages."""
 
 from typing import Dict, Tuple, Optional
 
@@ -11,7 +9,7 @@ STARTING_ENDURANCE_VALUE = 4
 MIN_STAT_VALUE = 3
 STARTING_STAT_POINTS = 3
 ENDURANCE_HP_BONUS = 10
-MANA_PER_SPIRITUALITY = 5
+MANA_PER_INTELLECT = 5
 
 
 class MageStats:
@@ -19,30 +17,17 @@ class MageStats:
     
     Base Stats:
     - Wisdom (Мудрость): Magic damage output (like Strength for warriors)
-    - Spirituality (Духовность): Mana pool and mana regeneration
+    - Intellect (Интеллект): Mana pool and mana regeneration
+    - Harmony (Гармония): Magical balance
     - Endurance (Выносливость): Health points
-    
-    Element Levels (trained in academy):
-    - Earth (Земля): Physical/defensive magic
-    - Water (Вода): Healing and control magic
-    - Fire (Огонь): Offensive magic and damage
-    - Wind (Воздух): Speed and mobility magic
     """
     
     BASE_STATS = {
         "Мудрость": BASE_STAT_VALUE,
-        "Духовность": BASE_STAT_VALUE,
+        "Интеллект": BASE_STAT_VALUE,
+        "Гармония": BASE_STAT_VALUE,
         "Выносливость": STARTING_ENDURANCE_VALUE,
     }
-    
-    ELEMENTS = {
-        "Земля": 0,
-        "Вода": 0,
-        "Огонь": 0,
-        "Воздух": 0,
-    }
-
-
 def minimum_endurance(level: int) -> int:
     """Return endurance permanently granted by character level
     
@@ -65,9 +50,9 @@ def calculate_max_hp(endurance: int) -> int:
     return ENDURANCE_HP_BONUS * int(endurance)
 
 
-def calculate_max_mana(spirituality: int) -> int:
-    """Return maximum mana pool determined by spirituality"""
-    return MANA_PER_SPIRITUALITY * int(spirituality)
+def calculate_max_mana(intellect: int) -> int:
+    """Return maximum mana pool determined by intellect"""
+    return MANA_PER_INTELLECT * int(intellect)
 
 
 def validate_stat_increase(stat_name: str, current_value: int, 
@@ -169,10 +154,10 @@ def adjust_mage_stats(stats: Dict[str, int],
     if stat_name == "Выносливость" and delta > 0:
         updated_hp += updated_max_hp - int(max_hp)
     
-    # Update mana if spirituality changed
-    updated_max_mana = calculate_max_mana(updated_stats["Духовность"])
+    # Update mana if intellect changed
+    updated_max_mana = calculate_max_mana(updated_stats["Интеллект"])
     updated_mana = int(mana)
-    if stat_name == "Духовность" and delta > 0:
+    if stat_name == "Интеллект" and delta > 0:
         updated_mana += updated_max_mana - int(max_mana)
     
     return {
@@ -185,8 +170,3 @@ def adjust_mage_stats(stats: Dict[str, int],
     }
 
 
-# TODO for Dev2: 
-# - add_element_level(element_name, current_level) - train element in academy
-# - element_affects_cards() - which cards are available based on element levels
-# - element_build_validation() - validate mage build based on element choices
-# - element_to_card_mapping() - map elements to spell cards

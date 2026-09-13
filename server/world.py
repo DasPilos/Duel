@@ -156,6 +156,62 @@ BOT_OPPONENTS = (
     _bot("bot_bloody_sand_king", "Король Кровавого Песка", {"strength": 7, "agility": 6, "intuition": 6, "endurance": 7}, "boss"),
 )
 
+MAGE_BOT_OPPONENTS = (
+    {
+        "id": "bot_mage_ember",
+        "name": "Искра Алтаря",
+        "type": "mage",
+        "level": 1,
+        "xp": 0,
+        "hp": 50,
+        "max_hp": 50,
+        "mp": 40,
+        "max_mp": 40,
+        "stats": {"wisdom": 3, "intellect": 2, "harmony": 2, "endurance": 2},
+        "stat_points": 0,
+        "zone": "awakening_altar",
+        "kind": "bot",
+        "locked_level": True,
+        "deck": ["mage_flash", "mage_fireball", "mage_burning_support", "mage_fervent_service"],
+    },
+    {
+        "id": "bot_mage_tide",
+        "name": "Хранитель Потока",
+        "type": "mage",
+        "level": 1,
+        "xp": 0,
+        "hp": 50,
+        "max_hp": 50,
+        "mp": 40,
+        "max_mp": 40,
+        "stats": {"wisdom": 2, "intellect": 3, "harmony": 2, "endurance": 2},
+        "stat_points": 0,
+        "zone": "awakening_altar",
+        "kind": "bot",
+        "locked_level": True,
+        "deck": ["mage_water_summon", "mage_rising_flow", "mage_flow_blessing", "mage_water_guard"],
+    },
+    {
+        "id": "bot_mage_storm",
+        "name": "Голос Бури",
+        "type": "mage",
+        "level": 1,
+        "xp": 0,
+        "hp": 50,
+        "max_hp": 50,
+        "mp": 40,
+        "max_mp": 40,
+        "stats": {"wisdom": 2, "intellect": 2, "harmony": 3, "endurance": 2},
+        "stat_points": 0,
+        "zone": "awakening_altar",
+        "kind": "bot",
+        "locked_level": True,
+        "deck": ["mage_lightning_strike", "mage_thundercloud", "mage_paralysis", "mage_tailwind"],
+    },
+)
+
+BOT_OPPONENTS = BOT_OPPONENTS + MAGE_BOT_OPPONENTS
+
 BOT_STATE_PATH = Path(__file__).resolve().parent.parent / "bot_state.json"
 BOT_STATE = {opponent["id"]: copy.deepcopy(opponent) for opponent in BOT_OPPONENTS}
 BOT_UPDATED_AT = {opponent_id: time.time() for opponent_id in BOT_STATE}

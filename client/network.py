@@ -196,6 +196,14 @@ class GameClient:
         """Получить боевые колоды персонажа"""
         return self._request("GET", f"/api/decks/{character_id}", authenticated=True)["decks"]
 
+    def create_deck(self, character_id, name, cards):
+        return self._request(
+            "POST",
+            "/api/decks",
+            {"character_id": character_id, "name": name, "cards": cards},
+            authenticated=True,
+        )["deck"]
+
     def get_card_collection(self, character_id):
         return self._request(
             "GET",

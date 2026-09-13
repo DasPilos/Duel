@@ -5,11 +5,12 @@ import pygame
 
 from core.settings import FPS, HEIGHT, WIDTH
 from scenes.duel_scene import DuelScene
+from scenes.mage_battle_scene import MageBattleScene
 from scenes.character_scene import CharacterScene
 from scenes.create_character_scene import CreateCharacterScene
-from scenes.profession_select_scene import ProfessionSelectScene
 from scenes.tavern_scene import TavernScene
 from scenes.backyard_scene import BackyardScene
+from scenes.awakening_altar_scene import AwakeningAltarScene
 from scenes.town.character_room import CharacterRoom
 from scenes.title_scene import TitleScene
 from ui.scene_transition import SceneTransition
@@ -65,6 +66,7 @@ def parse_args():
 def main():
     args = parse_args()
     pygame.init()
+    pygame.mixer.init()  # Инициализируем звуковую систему
 
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
     pygame.display.set_caption("Мини-дуэль")
@@ -117,10 +119,12 @@ def main():
                         session = scene.session
                         transition.start(screen, lambda: CreateCharacterScene(session))
                     else:
-                        # Character was selected, continue to tavern
                         close_scene_ui(scene)
                         session = scene.session
-                        transition.start(screen, lambda: TavernScene(session))
+                        if scene.selected_character.get("type") == "mage":
+                            transition.start(screen, lambda: AwakeningAltarScene(session))
+                        else:
+                            transition.start(screen, lambda: TavernScene(session))
 
                 elif args.online and isinstance(scene, CreateCharacterScene) and scene.finished:
                     pygame.key.stop_text_input()
@@ -130,25 +134,13 @@ def main():
                         session = scene.session
                         transition.start(screen, lambda: CharacterScene(session))
                     else:
-                        # Character created, go to profession selection
+                        # Character created; route to its profession branch.
                         close_scene_ui(scene)
                         session = scene.session
-                        character_name = scene.created_character["name"]
-                        character_id = scene.created_character["id"]
-                        transition.start(screen, lambda: ProfessionSelectScene(session, character_name, character_id))
-
-                elif args.online and isinstance(scene, ProfessionSelectScene) and scene.finished:
-                    pygame.key.stop_text_input()
-                    if scene.cancelled:
-                        # Back button clicked - character was deleted, return to character selection
-                        close_scene_ui(scene)
-                        session = scene.session
-                        transition.start(screen, lambda: CharacterScene(session))
-                    else:
-                        # Profession selected, continue to tavern
-                        close_scene_ui(scene)
-                        session = scene.session
-                        transition.start(screen, lambda: TavernScene(session))
+                        if scene.created_character["type"] == "mage":
+                            transition.start(screen, lambda: AwakeningAltarScene(session))
+                        else:
+                            transition.start(screen, lambda: TavernScene(session))
 
                 elif args.online and isinstance(scene, TavernScene) and scene.finished:
                     if scene.cancelled:
@@ -157,7 +149,9 @@ def main():
                     else:
                         close_scene_ui(scene)
                         session = scene.session
-                        if scene.navigate == "character_room":
+                        if scene.navigate == "awakening_altar":
+                            transition.start(screen, lambda: AwakeningAltarScene(session))
+                        elif scene.navigate == "character_room":
                             transition.start(screen, lambda: CharacterRoom(session))
                         else:
                             transition.start(screen, lambda: BackyardScene(session))
@@ -176,6 +170,18 @@ def main():
                         opponent = scene.opponent
                         close_scene_ui(scene)
                         transition.start(screen, lambda: DuelScene(session, opponent))
+
+                elif args.online and isinstance(scene, AwakeningAltarScene) and scene.finished:
+                    session = scene.session
+                    if scene.navigate == "tavern" or scene.cancelled:
+                        # Маг возвращается в город (TavernScene для магов можно доработать позже)
+                        close_scene_ui(scene)
+                        transition.start(screen, lambda: TavernScene(session))
+                    else:
+                        # Маг вступает в дуэль
+                        opponent = scene.opponent
+                        close_scene_ui(scene)
+                        transition.start(screen, lambda: MageBattleScene(session, opponent))
 
                 elif args.online and isinstance(scene, DuelScene) and scene.return_to_tavern:
                     scene.return_to_tavern = False

@@ -51,7 +51,7 @@ def occupants(user_id, location):
         for item in PRESENCE.values()
         if item["location"] == location
     ]
-    if location in {"backyard", "tavern"}:
+    if location in {"backyard", "tavern", "awakening_altar"}:
         result.extend(
             {
                 **bot,

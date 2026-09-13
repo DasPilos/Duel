@@ -23,7 +23,10 @@ def build_battle_deck(cards, player_level, enemy_level, rng=None):
     if not cards:
         return []
     rng = random if rng is None else rng
-    deck = list(cards)
+    unique = {}
+    for card in cards:
+        unique.setdefault(card.key, card)
+    deck = list(unique.values())[:22]
     rng.shuffle(deck)
     return deck
 
@@ -45,21 +48,29 @@ def roll_dice(expression, rng=None):
 
 class CardBattle:
     MAX_PLAYED_CARDS = 2
-    MAX_HAND_SIZE = 6
-    STARTING_TABLE_SIZE = 10
-    STARTING_PICK_LIMIT = 3
+    MAX_HAND_SIZE = 5
+    STARTING_TABLE_SIZE = 4
+    STARTING_PICK_LIMIT = 2
     REDRAFT_TABLE_SIZE = 6
     REDRAFT_PICK_LIMIT = 2
 
-    def __init__(self, player, enemy, cards=None, rng=None):
+    def __init__(self, player, enemy, cards=None, rng=None, enemy_cards=None):
         self.player = player
         self.enemy = enemy
+        self.mage_mode = False
         self.rng = random if rng is None else rng
         self.cards = list(cards if cards is not None else load_cards())
+        self.enemy_cards = list(enemy_cards if enemy_cards is not None else self.cards)
         self.discard = []
+        self.draw_choices = {"player": [], "enemy": []}
+        self.burned_this_turn = {"player": False, "enemy": False}
+        self.mage_statuses = {"player": [], "enemy": []}
+        self.mage_clouds = {"player": [], "enemy": []}
+        self.mage_golems = {"player": [] , "enemy": []}
         self.table = []
         self.hands = {"player": [], "enemy": []}
         self.selected = {"player": [], "enemy": []}
+        self.burned_this_turn = {"player": False, "enemy": False}
         self.instant_played = {"player": [], "enemy": []}
         self.instant_events = {"player": [], "enemy": []}
         self.confirmed = {"player": False, "enemy": False}
@@ -68,6 +79,7 @@ class CardBattle:
             "enemy": {stat: 0 for stat in STAT_NAMES},
         }
         self.turn = 0
+        self.first_side = self.rng.choice(("player", "enemy"))
         self.history = []
         self.last_exchange = []
         self.last_played_cards = {"player": [], "enemy": []}
@@ -101,6 +113,7 @@ class CardBattle:
             return
 
         self.deck = build_battle_deck(self.cards, player.level, enemy.level, self.rng)
+        self.enemy_deck = build_battle_deck(self.enemy_cards, enemy.level, player.level, self.rng)
         if len(self.deck) < self.STARTING_TABLE_SIZE:
             self.deck = []
             return
@@ -138,13 +151,11 @@ class CardBattle:
 
     def finish_starting_deal(self):
         if self.turn or any(len(self.hands[side]) < self.STARTING_PICK_LIMIT for side in self.hands):
-            raise ValueError("Каждый боец должен выбрать минимум три карты")
-        stronger_side = self._stronger_side("agility")
-        if not self.starting_bonus_awarded and stronger_side is not None and self.table:
-            bonus_card = self.table.pop(self.rng.randrange(len(self.table)))
-            self.hands[stronger_side].append(bonus_card)
-            self.starting_bonus_awarded = True
-            self.starting_bonus_side = stronger_side
+            raise ValueError("Каждый игрок должен выбрать две стартовые карты")
+        while len(self.hands["player"]) < 5 and self.deck:
+            self.hands["player"].append(self._draw_card())
+        while len(self.hands["enemy"]) < 5 and self.enemy_deck:
+            self.hands["enemy"].append(self.enemy_deck.pop())
         self.deck.extend(card for card in self.table if card.key not in self.starting_reserved_keys)
         self.starting_reserved_keys.clear()
         self.table.clear()
@@ -160,6 +171,10 @@ class CardBattle:
         self.hands["player"].clear()
         while len(self.hands["enemy"]) < self.STARTING_PICK_LIMIT and self.table:
             self.choose_starting_card("enemy", self.table[0].key)
+        while len(self.hands["enemy"]) < 5 and self.enemy_deck:
+            self.hands["enemy"].append(self.enemy_deck.pop())
+        while len(self.hands["player"]) < 5 and self.deck:
+            self.hands["player"].append(self._draw_card())
         self.deck.extend(self.table)
         self.table.clear()
         self.starting_reserved_keys.clear()
@@ -174,7 +189,7 @@ class CardBattle:
         )
 
     def draft_first_side(self):
-        return self._stronger_side("intuition") or "player"
+        return self.first_side
 
     def prepare_redraft(self):
         if not self.can_prepare_redraft():
@@ -267,9 +282,15 @@ class CardBattle:
 
     def _start_turn(self, draw_cards=True):
         self.turn += 1
+        self.burned_this_turn = {"player": False, "enemy": False}
+        if self.mage_mode:
+            for fighter in (self.player, self.enemy):
+                intellect = int(fighter.stats.get("intellect", 0))
+                fighter.mp = min(fighter.max_mp, fighter.mp + 8 + intellect // 2)
+            self._resolve_mage_end_turn_effects()
         if draw_cards:
-            self.draw_next_turn_card("player")
-            self.draw_next_turn_card("enemy")
+            self.prepare_draw_choice("player")
+            self.prepare_draw_choice("enemy")
         gained_points = {"player": {}, "enemy": {}}
         for side, fighter in (("player", self.player), ("enemy", self.enemy)):
             fighter.card_dodge_bonus = 0
@@ -296,6 +317,58 @@ class CardBattle:
         self.instant_events = {"player": [], "enemy": []}
         self.confirmed = {"player": False, "enemy": False}
         return gained_points
+
+    def _resolve_mage_end_turn_effects(self):
+        for side, statuses in self.mage_statuses.items():
+            target = self.player if side == "player" else self.enemy
+            fire_stacks = sum(status["stacks"] for status in statuses if status["name"] == "огонь")
+            if fire_stacks:
+                target.take_damage(fire_stacks * 2)
+            for status in statuses:
+                status["remaining"] -= 1
+            self.mage_statuses[side] = [status for status in statuses if status["remaining"] > 0]
+        for side, clouds in self.mage_clouds.items():
+            defender = self.enemy if side == "player" else self.player
+            for cloud in clouds:
+                defender.take_damage(cloud["damage"])
+                self.mage_statuses["enemy" if side == "player" else "player"].append({"name": "электро", "remaining": 3, "stacks": 1})
+                cloud["remaining"] -= 1
+            self.mage_clouds[side] = [cloud for cloud in clouds if cloud["remaining"] > 0]
+        for side, golems in self.mage_golems.items():
+            defender = self.enemy if side == "player" else self.player
+            for golem in golems:
+                if golem["hp"] <= 0:
+                    continue
+                golem["attacks"] += 1
+                defender.take_damage(golem["damage"])
+                if golem["attacks"] % 3 == 0:
+                    defender.take_damage(8)
+
+    @staticmethod
+    def _mage_stat(fighter, name):
+        return int(getattr(fighter, "stats", {}).get(name, 0))
+
+    def _add_mage_status(self, side, name, duration, stacks=1):
+        statuses = self.mage_statuses[side]
+        if name == "электро":
+            statuses[:] = [status for status in statuses if status["name"] != name]
+        statuses.append({"name": name, "remaining": max(1, int(duration)), "stacks": max(1, int(stacks))})
+
+    def _apply_mage_status_reaction(self, target_side, element, event):
+        statuses = self.mage_statuses[target_side]
+        names = {status["name"] for status in statuses}
+        if element == "огонь" and "вода" in names:
+            event["damage"] = int(event["damage"] * 0.5)
+            for status in statuses:
+                if status["name"] in ("огонь", "вода"):
+                    status["remaining"] = max(0, status["remaining"] - 1)
+        elif element == "электро" and "огонь" in names:
+            reaction_damage = int(event.get("damage", 0) * (1.3 + self._mage_stat(self.player if target_side == "enemy" else self.enemy, "harmony") / 100))
+            target = self.enemy if target_side == "enemy" else self.player
+            target.take_damage(reaction_damage)
+            event["damage"] += reaction_damage
+            self.mage_statuses[target_side] = [status for status in statuses if status["name"] not in ("огонь", "электро")]
+            event["effect_text"] = "РЕАКЦИЯ: ОГОНЬ + ЭЛЕКТРИЧЕСТВО"
 
     def select_card(self, side, card_key):
         self._validate_side(side)
@@ -518,6 +591,46 @@ class CardBattle:
             self.hands[side].append(card)
         return card
 
+    def prepare_draw_choice(self, side):
+        self._validate_side(side)
+        if len(self.hands[side]) >= self.MAX_HAND_SIZE:
+            self.draw_choices[side] = []
+            return []
+        if not self.deck and self.discard:
+            self._shuffle_discard_into_deck()
+        self.draw_choices[side] = [card for _ in range(2) if (card := self._draw_card()) is not None]
+        return list(self.draw_choices[side])
+
+    def choose_draw_card(self, side, card_key):
+        self._validate_side(side)
+        if len(self.hands[side]) >= self.MAX_HAND_SIZE:
+            self.draw_choices[side] = []
+            return False
+        card = next((item for item in self.draw_choices[side] if item.key == card_key), None)
+        if card is None:
+            return False
+        self.hands[side].append(card)
+        self.deck.extend(item for item in self.draw_choices[side] if item is not card)
+        self.rng.shuffle(self.deck)
+        self.draw_choices[side] = []
+        return True
+
+    def burn_card(self, side, card_key):
+        self._validate_side(side)
+        if self.burned_this_turn[side] or self.confirmed[side]:
+            return False
+        card = next((item for item in self.hands[side] if item.key == card_key), None)
+        if card is None:
+            return False
+        self.hands[side].remove(card)
+        self.selected[side] = [item for item in self.selected[side] if item is not card]
+        max_mana = int(getattr(self.player if side == "player" else self.enemy, "max_mp", 0))
+        fighter = self.player if side == "player" else self.enemy
+        fighter.mp = min(max_mana, int(fighter.mp) + max(0, int(max_mana * 0.2)))
+        self.burned_this_turn[side] = True
+        self.history.append({"turn": self.turn, "events": [{"side": side, "card": card.name, "burned": True, "mana": max(0, int(max_mana * 0.2))}]})
+        return True
+
     def can_draw_next_turn_card(self, side):
         self._validate_side(side)
         return bool(self.deck) and len(self.hands[side]) < self.MAX_HAND_SIZE
@@ -586,6 +699,78 @@ class CardBattle:
         if card.effect_type == "damage_reduce":
             attacker.card_damage_reduce = max(getattr(attacker, "card_damage_reduce", 0), data.get("reduce", 0))
             event["effect_text"] = f"-{data.get('reduce', 0)} УРОН"
+            return event
+
+        if card.effect_type.startswith("mage_"):
+            mana_cost = int(data.get("mana_cost", 0))
+            if attacker.mp < mana_cost:
+                event["effect_text"] = "НЕДОСТАТОЧНО МАНЫ"
+                return event
+            attacker.mp -= mana_cost
+            wisdom = self._mage_stat(attacker, "wisdom")
+            intellect = self._mage_stat(attacker, "intellect")
+            harmony = self._mage_stat(attacker, "harmony")
+            if card.effect_type == "mage_restore_mana":
+                if attacker.mp > int(attacker.max_mp * data.get("max_mana_percent", 30) / 100):
+                    event["effect_text"] = "МАНА СЛИШКОМ ВЫСОКА"
+                    return event
+                restored = int((attacker.max_mp - attacker.mp) * data.get("missing_mana_percent", 25) / 100)
+                restored += int((attacker.max_mp - attacker.mp) * harmony * data.get("harmony_percent", 0) / 100)
+                attacker.mp = min(attacker.max_mp, attacker.mp + restored)
+                event["effect_text"] = f"МАНА +{restored}"
+                return event
+            if card.effect_type == "mage_golem":
+                self.mage_golems[side].append({"hp": int(data.get("hp", 16)) + wisdom, "damage": int(data.get("damage", 2)) + wisdom, "attacks": 0})
+                event["effect_text"] = "ПРИЗВАН ГОЛЕМ"
+                return event
+            if card.effect_type == "mage_cloud":
+                duration = int(data.get("duration", 2)) + harmony // int(data.get("harmony_duration", 6))
+                self.mage_clouds[side].append({"remaining": duration, "damage": int(data.get("damage", 3))})
+                event["effect_text"] = "ПРИЗВАНА ГРОМОВАЯ ТУЧА"
+                return event
+            if card.effect_type == "mage_hp_for_mana":
+                hp_loss = max(1, int(attacker.max_hp * data.get("hp_percent", 7) / 100))
+                if attacker.hp - hp_loss <= 0:
+                    attacker.mp += mana_cost
+                    event["effect_text"] = "НЕЛЬЗЯ ПРИМЕНИТЬ: СМЕРТЕЛЬНЫЙ УРОН"
+                    return event
+                attacker.hp -= hp_loss
+                restored = int(attacker.max_mp * data.get("mana_percent", 21) / 100)
+                attacker.mp = min(attacker.max_mp, attacker.mp + restored)
+                event["effect_text"] = f"МАНА +{restored}"
+                return event
+            if card.effect_type == "mage_damage_status":
+                status = data.get("status")
+                if status:
+                    target_side = "enemy" if side == "player" else "player"
+                    self._add_mage_status(target_side, status, data.get("status_duration", card.effect_duration or 1))
+                    self._apply_mage_status_reaction(target_side, status, event)
+            if card.effect_type == "mage_heal_missing_hp":
+                missing_hp = max(0, attacker.max_hp - attacker.hp)
+                healed = int(missing_hp * int(data.get("missing_hp_percent", 0)) / 100)
+                healed += intellect * int(data.get("intellect_hp", 0))
+                attacker.hp = min(attacker.max_hp, attacker.hp + healed)
+                event["healed"] = healed
+                event["effect_text"] = f"ВОССТАНОВЛЕНО HP: {healed}"
+                return event
+            if card.effect_type == "mage_health_buff":
+                bonus_hp = int(data.get("bonus_hp", 0))
+                bonus_hp += intellect * int(data.get("intellect_hp", 0))
+                attacker.max_hp += bonus_hp
+                attacker.hp += bonus_hp
+                event["healed"] = bonus_hp
+                event["effect_text"] = f"МАКСИМАЛЬНОЕ HP +{bonus_hp}"
+                return event
+            direct_damage = int(data.get("damage", 0))
+            if direct_damage:
+                defender.take_damage(direct_damage + wisdom)
+                event["damage"] = direct_damage + wisdom
+                event["hits"] = 1
+                event["attack"] = True
+            if data.get("status"):
+                event["effect_text"] = f"СТАТУС: {data['status']}"
+            elif not direct_damage:
+                event["effect_text"] = "МАГИЧЕСКИЙ ЭФФЕКТ"
             return event
 
         total_damage = 0

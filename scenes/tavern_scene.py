@@ -22,6 +22,7 @@ class TavernScene:
         self.profile_overlay = CharacterProfileOverlay(
             self.small_font,
             collection_loader=getattr(self.session, "get_card_collection", None),
+            deck_loader=getattr(self.session, "get_decks", None),
         )
         self.chat = ChatPanel(session, "tavern", profile_overlay=self.profile_overlay)
         self.tavern_shop = TavernShop(self.font, self.small_font)
@@ -42,6 +43,7 @@ class TavernScene:
         )
         
         self.navigate = None
+        self.altar_button = pygame.Rect(1395, 35, 220, 45)
         # Горячие зоны привязаны к фону таверны, а не к размерам чата.
         self.tavern_hotspots = (
             ("Выход на улицу", 160, 400, 130, 300, None),
@@ -69,11 +71,25 @@ class TavernScene:
         return pygame.Rect(x, y, width, height)
 
     def handle_event(self, event):
-        if self.profile_overlay.handle_event(event):
+        self.profile_overlay.handle_event(event)
+        deck_name = self.profile_overlay.take_create_deck_request()
+        if deck_name:
+            try:
+                name, cards = deck_name
+                self.session.create_deck(name, cards)
+                self.profile_overlay.deck_panel.open(self.session.get_decks())
+            except Exception as error:
+                self.tavern_shop.show_error(str(error))
+            return
+        if self.profile_overlay.collection_panel.is_open or self.profile_overlay.deck_panel.is_open:
             return
         if self.chat.handle_event(event):
             return
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            if self.session.character.get("type") == "mage" and self.altar_button.collidepoint(event.pos):
+                self.navigate = "awakening_altar"
+                self.finished = True
+                return
             # Обработка магазина (приоритет выше всех)
             if self.tavern_shop.is_open:
                 if self.shop_drinks_button.collidepoint(event.pos):
@@ -99,6 +115,9 @@ class TavernScene:
                 return
             
             action, profile = self.profile_overlay.handle_click(event.pos)
+            if action == "deck_selected":
+                self.session.selected_deck = profile
+                return
             if action == "stat_change":
                 self._save_profile_card(profile)
                 return
@@ -166,6 +185,9 @@ class TavernScene:
             screen.blit(label_surface, label_rect)
 
         self.chat.draw(screen)
+
+        if self.session.character.get("type") == "mage":
+            draw_button(screen, self.altar_button, "АЛТАРЬ", self.small_font, color=(120, 80, 170))
         
         # Кнопка инвентаря в верхнем правом углу
         pygame.draw.rect(screen, (100, 100, 120), self.inventory_button)

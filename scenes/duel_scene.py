@@ -3,6 +3,7 @@ import time
 
 from combat.fighter import Fighter
 from combat.card_battle import CardBattle
+from combat.card_database import load_cards
 from core import settings
 from ui.hud import FloatingText
 from ui.layout import DuelLayout
@@ -73,6 +74,7 @@ class DuelScene:
         self.profile_overlay = CharacterProfileOverlay(
             self.gained_points_font,
             collection_loader=collection_loader,
+            deck_loader=getattr(online_session, "get_decks", None),
         )
         if online_session is not None:
             self.chat = ChatPanel(online_session, "backyard", self, profile_overlay=self.profile_overlay)
@@ -97,9 +99,16 @@ class DuelScene:
         fighter.level = profile["level"]
         fighter.xp = profile.get("xp", 0)
         fighter.stats = dict(profile["stats"])
+        # The shared battlefield renderer still reads warrior-derived fields;
+        # keep those compatibility values out of the persisted mage profile.
+        for stat_name, default in (("strength", 0), ("agility", 0), ("intuition", 0)):
+            fighter.stats.setdefault(stat_name, default)
         fighter.stat_points = profile.get("stat_points", 0)
         fighter.character_id = profile.get("id", profile.get("character_id"))
         fighter.recalculate_parameters()
+        if profile.get("type") == "mage":
+            fighter.max_hp = 50 + fighter.stats["endurance"] * 10
+            fighter.max_mp = 40 + fighter.stats["intellect"] * 5
         fighter.hp = min(profile.get("hp", fighter.max_hp), fighter.max_hp)
         fighter.mp = min(profile.get("mp", fighter.max_mp), fighter.max_mp)
 
@@ -184,7 +193,15 @@ class DuelScene:
             self._apply_online_character()
         if self.opponent_profile is not None:
             self._apply_fighter_profile(self.enemy, self.opponent_profile)
-        self.battle = CardBattle(self.player, self.enemy)
+        battle_cards = None
+        selected_deck = getattr(self.online_session, "selected_deck", None)
+        if self.online_character and self.online_character.get("type") == "mage" and selected_deck:
+            card_keys = selected_deck.get("cards", {})
+            if isinstance(card_keys, dict):
+                card_keys = card_keys.keys()
+            allowed = set(card_keys or ())
+            battle_cards = [card for card in load_cards() if card.key in allowed]
+        self.battle = CardBattle(self.player, self.enemy, cards=battle_cards)
         self.attack_zone = None
         self.defense_zones = set()
 

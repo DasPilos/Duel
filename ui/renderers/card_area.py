@@ -151,7 +151,10 @@ class CardAreaRenderer:
     def draw(self, screen):
         battle = self.scene.battle
         if self.scene.phase != "result":
-            if self.battle_table_image is not None:
+            if getattr(self.scene, "mage_battle", False):
+                screen.fill((24, 20, 34))
+                pygame.draw.rect(screen, (130, 90, 175), self.layout.card_table, 2, border_radius=8)
+            elif self.battle_table_image is not None:
                 screen.blit(self.battle_table_image, self.layout.card_table)
             else:
                 pygame.draw.rect(screen, (27, 31, 43), self.layout.card_table, border_radius=8)
@@ -172,7 +175,7 @@ class CardAreaRenderer:
             if self.scene.phase == "draft_cleanup":
                 message = "Возврат в колоду..."
             else:
-                message = "Выберите две карты" if is_redraft else "Выберите до трёх карт"
+                message = "Выберите две карты" if is_redraft else "Выберите две стартовые карты"
             draw_text(screen, self.scene.small_font, message, self.layout.card_table.right - 220, self.layout.card_table.y + 16, (170, 170, 170))
             if self.scene.phase == "draft_cleanup":
                 elapsed = time.monotonic() - self.scene.draft_cleanup_started
@@ -194,7 +197,7 @@ class CardAreaRenderer:
             if self.scene.phase == "draft_reveal":
                 self._draw_reveal_cards(screen, battle.table, elapsed, row_area)
             else:
-                self._draw_cards(screen, visible_table[:5], row_area, [])
+                    self._draw_cards(screen, visible_table[:5], row_area, [])
             row_area.y += self.CARD_HEIGHT + self.GAP
             if self.scene.phase != "draft_reveal":
                 self._draw_cards(screen, visible_table[5:], row_area, [])
@@ -285,8 +288,9 @@ class CardAreaRenderer:
                 center_x = int(self.layout.deck_rect.centerx + (target.centerx - self.layout.deck_rect.centerx) * progress)
                 center_y = int(self.layout.deck_rect.centery + (target.centery - self.layout.deck_rect.centery) * progress)
                 self._draw_moving_card(screen, transfer["card"], center_x, center_y, progress)
-        self._draw_points(screen, battle.action_points["player"], self.layout.player_points, "")
-        self._draw_points(screen, battle.action_points["enemy"], self.layout.enemy_points, "")
+        if not getattr(self.scene, "mage_battle", False):
+            self._draw_points(screen, battle.action_points["player"], self.layout.player_points, "")
+            self._draw_points(screen, battle.action_points["enemy"], self.layout.enemy_points, "")
 
     def _draw_reveal_cards(self, screen, cards, elapsed, first_row):
         for index, card in enumerate(cards[:10]):
@@ -341,6 +345,9 @@ class CardAreaRenderer:
             pygame.draw.line(screen, (190, 170, 110), inner.topright, inner.bottomleft, 1)
 
     def _draw_card_front_scaled(self, screen, card, rect):
+        if getattr(self.scene, "mage_battle", False):
+            self._draw_mage_card(screen, card, rect, False, False)
+            return
         face_image = self._card_face_image(card)
         if face_image is not None:
             image = pygame.transform.smoothscale(face_image, rect.size)
@@ -448,6 +455,9 @@ class CardAreaRenderer:
                 color = (45, 105, 68)
             else:
                 color = (48, 53, 70)
+            if getattr(self.scene, "mage_battle", False):
+                self._draw_mage_card(screen, card, rect, is_selected, is_available)
+                continue
             face_image = self._card_face_image(card)
             if face_image is not None:
                 screen.blit(pygame.transform.smoothscale(face_image, rect.size), rect)
@@ -463,6 +473,30 @@ class CardAreaRenderer:
 
         if hovered_card is not None:
             self._draw_card_tooltip(screen, hovered_card, hovered_rect)
+
+    def _draw_mage_card(self, screen, card, rect, selected, available):
+        color = (55, 105, 80) if selected else (43, 35, 62) if available else (35, 29, 50)
+        pygame.draw.rect(screen, color, rect, border_radius=8)
+        pygame.draw.rect(screen, (180, 120, 230), rect, 2, border_radius=8)
+        title = self.scene.small_font.render(card.name, True, (245, 225, 255))
+        screen.blit(title, title.get_rect(midtop=(rect.centerx, rect.y + 12)))
+        mana = self.scene.small_font.render(f"Мана: {card.effect_data.get('mana_cost', 0)}", True, (100, 190, 255))
+        screen.blit(mana, mana.get_rect(midtop=(rect.centerx, rect.y + 42)))
+        description = self._card_description(card)
+        words = description.split()
+        lines, line = [], ""
+        for word in words:
+            candidate = f"{line} {word}".strip()
+            if line and self.scene.small_font.size(candidate)[0] > rect.width - 16:
+                lines.append(line)
+                line = word
+            else:
+                line = candidate
+        if line:
+            lines.append(line)
+        for index, text in enumerate(lines[:7]):
+            surface = self.scene.small_font.render(text, True, (225, 220, 235))
+            screen.blit(surface, (rect.x + 8, rect.y + 75 + index * 18))
 
     def _draw_card_availability(self, screen, rect, is_available):
         if is_available:
@@ -528,6 +562,19 @@ class CardAreaRenderer:
     @staticmethod
     def _card_description(card):
         data = card.effect_data
+        if card.group_name.startswith("Магия:"):
+            mana = data.get("mana_cost", 0)
+            element = data.get("element", "магии")
+            descriptions = {
+                "mage_damage_status": f"Наносит {data.get('damage', 0)} урона и накладывает статус {data.get('status', 'магии')}.",
+                "mage_damage": f"Наносит {data.get('damage', 0)} урона.",
+                "mage_area_damage": f"Наносит всем врагам {data.get('damage', 0)} урона.",
+                "mage_area_damage_status": f"Наносит всем врагам {data.get('damage', 0)} урона и накладывает статус {data.get('status', element)}.",
+                "mage_heal_missing_hp": "Восстанавливает часть недостающего здоровья.",
+                "mage_restore_mana": "Восстанавливает ману при низком запасе.",
+                "mage_stun_status": "Оглушает врага и накладывает электрический статус.",
+            }
+            return f"{descriptions.get(card.effect_type, 'Особое действие карты.')} Мана: {mana}."
         damage_text = f"Наносит {data.get('dice', '')} урона."
         duration = max(1, int(card.effect_duration))
         if duration % 10 == 1 and duration % 100 != 11:

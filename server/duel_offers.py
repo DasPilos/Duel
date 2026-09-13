@@ -119,16 +119,37 @@ def _set_offer_status(offer_id, status, character_id, now=None):
 def public_offers(location, exclude_character_id=None):
     cleanup()
     available_bots = {bot["id"]: bot for bot in get_bot_opponents()} if location == "backyard" else {}
+    if location == "awakening_altar":
+        for bot in get_bot_opponents():
+            if bot.get("zone") == location:
+                add_public_duel_offer(
+                    {"character_id": bot["id"], "name": bot["name"]},
+                    location,
+                    ttl=1800,
+                )
+        available_bots = {bot["id"]: bot for bot in get_bot_opponents() if bot.get("zone") == location}
     for offer in DUEL_OFFERS:
         bot = available_bots.get(offer["sender_id"])
         if (
-            offer["status"] == "pending"
+            location == "backyard"
+            and offer["status"] == "pending"
             and offer["location"] == location
             and bot is not None
-            and (bot["zone"] != "backyard" or bot["hp"] < bot["max_hp"])
+            and bot["hp"] < bot["max_hp"]
         ):
             offer["status"] = "expired"
-    return [copy.deepcopy(offer) for offer in DUEL_OFFERS if offer["location"] == location and offer["target_id"] is None and offer["status"] == "pending" and offer["sender_id"] != exclude_character_id and (offer["sender_id"] not in available_bots or (available_bots[offer["sender_id"]]["zone"] == "backyard" and available_bots[offer["sender_id"]]["hp"] >= available_bots[offer["sender_id"]]["max_hp"]))]
+    return [
+        copy.deepcopy(offer)
+        for offer in DUEL_OFFERS
+        if offer["location"] == location
+        and offer["target_id"] is None
+        and offer["status"] == "pending"
+        and offer["sender_id"] != exclude_character_id
+        and (
+            offer["sender_id"] not in available_bots
+            or available_bots[offer["sender_id"]]["hp"] >= available_bots[offer["sender_id"]]["max_hp"]
+        )
+    ]
 
 
 def respond_duel_offer(character_id, offer_id, accepted):

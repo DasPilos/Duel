@@ -10,6 +10,7 @@ class OnlineSession:
         self.character_name = character_name
         self.user = None
         self.character = None
+        self.selected_deck = None
         self.regen_accumulator = 0.0
 
     def connect(self):
@@ -259,6 +260,16 @@ class OnlineSession:
         if self.character is None:
             return []
         return self.client.get_card_collection(self.character["id"])
+
+    def get_decks(self):
+        if self.character is None:
+            return []
+        return self.client.get_decks(self.character["id"])
+
+    def create_deck(self, name, cards):
+        if self.character is None:
+            return None
+        return self.client.create_deck(self.character["id"], name, cards)
 
     def award_battle_card(self, card_keys):
         if self.character is None:

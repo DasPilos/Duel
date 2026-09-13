@@ -2,6 +2,8 @@ import pygame
 
 from client.network import ServerError
 from core import settings
+from ui.character_card import CharacterCard
+from ui.mage_card import MageCard
 from ui.hud import draw_button, draw_text
 
 
@@ -38,10 +40,9 @@ class CharacterScene:
         
         # Flag to transition to character creation screen
         self.create_new_character = False
+        self.card = CharacterCard()
         
         self.refresh()
-        from ui.character_card import CharacterCard
-        self.card = CharacterCard()
 
     def refresh(self):
         try:
@@ -116,6 +117,7 @@ class CharacterScene:
                     actual_index = visible_index + self.character_scroll
                     if 0 <= actual_index < len(self.characters):
                         self.selected_character = self.characters[actual_index]
+                        self.card = MageCard() if self.selected_character.get("type") == "mage" else CharacterCard()
                         self.card.sync(self.selected_character, title=None, kind="player")
                     return
 

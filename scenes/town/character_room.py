@@ -36,6 +36,7 @@ class CharacterRoom:
         self.profile_overlay = CharacterProfileOverlay(
             self.small_font,
             collection_loader=getattr(self.session, "get_card_collection", None),
+            deck_loader=getattr(self.session, "get_decks", None),
         )
 
         # Вкладки (рюкзак убран, он теперь в глобальной панели)
