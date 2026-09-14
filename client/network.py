@@ -204,6 +204,14 @@ class GameClient:
             authenticated=True,
         )["deck"]
 
+    def delete_deck(self, character_id, deck_id):
+        return self._request(
+            "DELETE",
+            f"/api/decks/{int(deck_id)}",
+            {"character_id": character_id},
+            authenticated=True,
+        )
+
     def get_card_collection(self, character_id):
         return self._request(
             "GET",

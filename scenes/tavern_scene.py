@@ -81,6 +81,15 @@ class TavernScene:
             except Exception as error:
                 self.tavern_shop.show_error(str(error))
             return
+        if self.profile_overlay.deck_panel.is_open and event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            action, profile = self.profile_overlay.handle_click(event.pos)
+            if action == "delete_deck":
+                try:
+                    self.session.delete_deck(profile.get("id"))
+                    self.profile_overlay.deck_panel.open(self.session.get_decks())
+                except ServerError as error:
+                    self.tavern_shop.show_error(str(error))
+            return
         if self.profile_overlay.collection_panel.is_open or self.profile_overlay.deck_panel.is_open:
             return
         if self.chat.handle_event(event):
@@ -115,6 +124,13 @@ class TavernScene:
                 return
             
             action, profile = self.profile_overlay.handle_click(event.pos)
+            if action == "delete_deck":
+                try:
+                    self.session.delete_deck(profile.get("id"))
+                    self.profile_overlay.deck_panel.open(self.session.get_decks())
+                except ServerError as error:
+                    self.tavern_shop.show_error(str(error))
+                return
             if action == "deck_selected":
                 self.session.selected_deck = profile
                 return

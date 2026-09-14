@@ -68,6 +68,9 @@ class DuelInputHandler:
         if self.scene.phase == "resolve":
             return
 
+        if event.button == 3 and self.scene.renderer.card_renderer.handle_details_click(event.pos):
+            return
+
         if self.scene.layout.hide_player_card_button.collidepoint(event.pos):
             self.scene.player_card_hidden = not self.scene.player_card_hidden
             self.scene.player_card_manual_open = not self.scene.player_card_hidden
@@ -103,23 +106,10 @@ class DuelInputHandler:
         if self.scene.phase == "draft":
             if self.scene.draft_next_side != "player":
                 return
-            visible_table = [card for card in battle.table if card.key not in battle.starting_reserved_keys]
+            visible_table = list(battle.table)
             for index, card in enumerate(visible_table):
-                if index < 5:
-                    row_area = pygame.Rect(
-                        layout.card_table.x + 20,
-                        layout.card_table.y + 5,
-                        layout.card_table.width - 40,
-                        self.scene.renderer.card_renderer.CARD_HEIGHT,
-                    )
-                else:
-                    row_area = pygame.Rect(
-                        layout.card_table.x + 20,
-                        layout.card_table.y + 5 + self.scene.renderer.card_renderer.CARD_HEIGHT + self.scene.renderer.card_renderer.GAP,
-                        layout.card_table.width - 40,
-                        self.scene.renderer.card_renderer.CARD_HEIGHT,
-                    )
-                draft_count = max(1, len(visible_table)) if getattr(self.scene, "mage_battle", False) else 5
+                row_area = layout.card_table
+                draft_count = len(visible_table) if getattr(self.scene, "mage_battle", False) else 5
                 if self.scene.renderer.card_renderer.card_rect(row_area, draft_count, index).collidepoint(pos):
                     if battle.draft_mode == "starting":
                         battle.choose_starting_card("player", card.key)

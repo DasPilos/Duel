@@ -1,5 +1,6 @@
 import pygame
 
+from core import settings
 from scenes.duel_scene import DuelScene
 from combat.card_battle import CardBattle
 from combat.card_database import load_cards
@@ -13,6 +14,7 @@ class MageBattleScene(DuelScene):
         self.player_status = "СТАРТОВЫЙ ДРАФТ"
         self.enemy_status = "СТАРТОВЫЙ ДРАФТ"
         super().__init__(online_session, opponent)
+        self._configure_mage_layout()
         mage_cards = [card for card in load_cards() if card.group_name.startswith("Магия:")]
         if mage_cards:
             by_key = {card.key: card for card in mage_cards}
@@ -36,6 +38,18 @@ class MageBattleScene(DuelScene):
             )
             self.battle.mage_mode = True
             self.draft_next_side = "player"
+
+    def _configure_mage_layout(self):
+        """Arrange the mage duel like the shared battle-board design."""
+        self.layout.card_table = pygame.Rect(20, 170, settings.WIDTH - 40, 520)
+        self.layout.enemy_hand = pygame.Rect(410, 20, 1100, 130)
+        self.layout.enemy_selected = pygame.Rect(390, 245, 1140, 120)
+        self.layout.player_selected = pygame.Rect(390, 520, 1140, 120)
+        self.layout.player_hand = pygame.Rect(300, 850, 1320, 180)
+        self.layout.discard_rect = pygame.Rect(75, 285, 170, 300)
+        self.layout.deck_rect = pygame.Rect(settings.WIDTH - 245, 285, 170, 300)
+        self.layout.turn_bar = pygame.Rect(settings.WIDTH // 2 - 150, 715, 300, 18)
+        self.layout.play_cards_button = pygame.Rect(settings.WIDTH // 2 + 185, 705, 250, 38)
 
     def draw(self, screen):
         super().draw(screen)

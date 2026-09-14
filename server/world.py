@@ -473,10 +473,12 @@ def _resolve_bot_battle(attacker_id, defender_id, now):
     battle = CardBattle(attacker_fighter, defender_fighter)
     while len(battle.hands["player"]) < battle.STARTING_PICK_LIMIT:
         side = battle.draft_first_side()
-        card = battle.table[random.randrange(len(battle.table))]
+        source = battle.table if side == "player" else battle.enemy_table
+        card = source[random.randrange(len(source))]
         battle.choose_starting_card(side, card.key)
         side = "enemy" if side == "player" else "player"
-        card = battle.table[random.randrange(len(battle.table))]
+        source = battle.table if side == "player" else battle.enemy_table
+        card = source[random.randrange(len(source))]
         battle.choose_starting_card(side, card.key)
     battle.finish_starting_deal()
     # На каждый ход нужно давать бойцам новые карты и очки действий, иначе,

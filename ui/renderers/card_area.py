@@ -26,6 +26,11 @@ class CardAreaRenderer:
     def __init__(self, scene, layout):
         self.scene = scene
         self.layout = layout
+        self.details_card = None
+        self.details_close_rect = pygame.Rect(0, 0, 0, 0)
+        if getattr(scene, "mage_battle", False):
+            self.CARD_WIDTH = 110
+            self.CARD_HEIGHT = 145
         self.card_cost_font = pygame.font.SysFont(
             settings.FONT_NAME,
             self.CARD_COST_FONT_SIZE,
@@ -140,6 +145,14 @@ class CardAreaRenderer:
             start_x = area.centerx - total_width // 2
             height = min(self.CARD_HEIGHT, area.height)
             return pygame.Rect(start_x + index * (width + self.GAP), area.y, width, height)
+        if area == self.layout.card_table and count > 5:
+            columns = 8
+            width = min(self.CARD_WIDTH, max(50, (area.width - self.GAP * (columns - 1)) // columns))
+            row = index // columns
+            column = index % columns
+            height = min(self.CARD_HEIGHT, max(50, (area.height - self.GAP * 2) // 3))
+            start_x = area.centerx - (width * columns + self.GAP * (columns - 1)) // 2
+            return pygame.Rect(start_x + column * (width + self.GAP), area.y + row * (height + self.GAP), width, height)
         else:
             # Рука, стол и другие: центрируем по реальному количеству карт
             width = min(self.CARD_WIDTH, max(50, (area.width - self.GAP * max(0, count - 1)) // max(1, count)))
@@ -152,8 +165,15 @@ class CardAreaRenderer:
         battle = self.scene.battle
         if self.scene.phase != "result":
             if getattr(self.scene, "mage_battle", False):
-                screen.fill((24, 20, 34))
-                pygame.draw.rect(screen, (130, 90, 175), self.layout.card_table, 2, border_radius=8)
+                pygame.draw.rect(screen, (12, 10, 18), self.layout.card_table, border_radius=18)
+                pygame.draw.rect(screen, (130, 90, 175), self.layout.card_table, 4, border_radius=18)
+                pygame.draw.line(
+                    screen,
+                    (75, 55, 95),
+                    (self.layout.card_table.centerx, self.layout.card_table.top + 18),
+                    (self.layout.card_table.centerx, self.layout.card_table.bottom - 18),
+                    2,
+                )
             elif self.battle_table_image is not None:
                 screen.blit(self.battle_table_image, self.layout.card_table)
             else:
@@ -181,26 +201,18 @@ class CardAreaRenderer:
                 elapsed = time.monotonic() - self.scene.draft_cleanup_started
                 progress = min(1.0, max(0.0, elapsed / settings.DRAFT_CLEANUP_SECONDS))
                 for index, card in enumerate(battle.table):
-                    source_area = pygame.Rect(
-                        self.layout.card_table.x + 20,
-                        self.layout.card_table.y + 5 + (self.CARD_HEIGHT + self.GAP if index >= 5 else 0),
-                        self.layout.card_table.width - 40,
-                        self.CARD_HEIGHT,
-                    )
-                    source = self.card_rect(source_area, 5, index % 5)
+                    source_area = self.layout.card_table
+                    source = self.card_rect(source_area, len(battle.table), index)
                     center_x = int(source.centerx + (self.layout.deck_rect.centerx - source.centerx) * progress)
                     center_y = int(source.centery + (self.layout.deck_rect.centery - source.centery) * progress)
                     moving_area = pygame.Rect(center_x - self.CARD_WIDTH // 2, center_y - self.CARD_HEIGHT // 2, self.CARD_WIDTH, self.CARD_HEIGHT)
                     self._draw_cards(screen, [card], moving_area, [])
                 visible_table = []
-            row_area = pygame.Rect(self.layout.card_table.x + 20, self.layout.card_table.y + 5, self.layout.card_table.width - 40, self.CARD_HEIGHT)
+            row_area = self.layout.card_table
             if self.scene.phase == "draft_reveal":
                 self._draw_reveal_cards(screen, battle.table, elapsed, row_area)
             else:
-                    self._draw_cards(screen, visible_table[:5], row_area, [])
-            row_area.y += self.CARD_HEIGHT + self.GAP
-            if self.scene.phase != "draft_reveal":
-                self._draw_cards(screen, visible_table[5:], row_area, [])
+                self._draw_cards(screen, visible_table, row_area, [])
             enemy_hand = list(battle.hands["enemy"])
             player_hand = list(battle.hands["player"])
             if self.scene.phase == "enemy_transfer" and self.scene.enemy_card_transfer is not None:
@@ -291,6 +303,53 @@ class CardAreaRenderer:
         if not getattr(self.scene, "mage_battle", False):
             self._draw_points(screen, battle.action_points["player"], self.layout.player_points, "")
             self._draw_points(screen, battle.action_points["enemy"], self.layout.enemy_points, "")
+        self._draw_card_details(screen)
+
+    def handle_details_click(self, position):
+        if self.details_card is not None:
+            if self.details_close_rect.collidepoint(position):
+                self.details_card = None
+            return True
+        battle = self.scene.battle
+        candidates = []
+        visible_hand = [card for card in battle.hands["player"] if card not in battle.selected["player"]]
+        candidates.append((self.layout.player_hand, visible_hand))
+        candidates.append((self.layout.player_selected, battle.selected["player"]))
+        for area, cards in candidates:
+            for index, card in enumerate(cards):
+                if self.card_rect(area, len(cards), index).collidepoint(position):
+                    self.details_card = card
+                    return True
+        return False
+
+    def _draw_card_details(self, screen):
+        if self.details_card is None:
+            return
+        card = self.details_card
+        description = self._card_description(card)
+        font = self.scene.small_font
+        lines = []
+        current = ""
+        for word in description.split():
+            candidate = f"{current} {word}".strip()
+            if current and font.size(candidate)[0] > 560:
+                lines.append(current)
+                current = word
+            else:
+                current = candidate
+        if current:
+            lines.append(current)
+        panel = pygame.Rect(620, 250, 680, min(500, 115 + len(lines) * 24))
+        pygame.draw.rect(screen, (20, 22, 32), panel, border_radius=8)
+        pygame.draw.rect(screen, (210, 185, 105), panel, 3, border_radius=8)
+        self.details_close_rect = pygame.Rect(panel.right - 45, panel.top + 12, 30, 30)
+        pygame.draw.rect(screen, (125, 60, 70), self.details_close_rect, border_radius=4)
+        title = self.tooltip_title_font.render(card.name, True, (245, 225, 150))
+        screen.blit(title, (panel.x + 18, panel.y + 18))
+        mana = font.render(f"Мана: {card.effect_data.get('mana_cost', 0)}", True, (100, 190, 255))
+        screen.blit(mana, (panel.x + 18, panel.y + 55))
+        for index, line in enumerate(lines):
+            screen.blit(font.render(line, True, (230, 230, 235)), (panel.x + 18, panel.y + 88 + index * 24))
 
     def _draw_reveal_cards(self, screen, cards, elapsed, first_row):
         for index, card in enumerate(cards[:10]):
@@ -298,8 +357,7 @@ class CardAreaRenderer:
             if elapsed < start:
                 continue
             progress = min(1.0, (elapsed - start) / settings.CARD_MOVE_SECONDS)
-            row = first_row if index < 5 else first_row.move(0, self.CARD_HEIGHT + self.GAP)
-            target = self.card_rect(row, 5, index % 5)
+            target = self.card_rect(first_row, len(cards), index)
             center_x = int(self.layout.deck_rect.centerx + (target.centerx - self.layout.deck_rect.centerx) * progress)
             center_y = int(self.layout.deck_rect.centery + (target.centery - self.layout.deck_rect.centery) * progress)
             self._draw_moving_card(screen, card, center_x, center_y, progress)
@@ -434,8 +492,6 @@ class CardAreaRenderer:
 
     def _draw_cards(self, screen, cards, area, selected, highlight_available=False):
         selected_keys = {card.key for card in selected}
-        hovered_card = None
-        hovered_rect = None
         for index, card in enumerate(cards):
             rect = self.card_rect(area, len(cards), index)
             is_selected = card.key in selected_keys
@@ -456,7 +512,11 @@ class CardAreaRenderer:
             else:
                 color = (48, 53, 70)
             if getattr(self.scene, "mage_battle", False):
-                self._draw_mage_card(screen, card, rect, is_selected, is_available)
+                enemy_hidden = area == self.layout.enemy_hand or area == self.layout.enemy_selected
+                if enemy_hidden:
+                    self._draw_card_back(screen, rect)
+                else:
+                    self._draw_mage_card(screen, card, rect, is_selected, is_available)
                 continue
             face_image = self._card_face_image(card)
             if face_image is not None:
@@ -467,36 +527,23 @@ class CardAreaRenderer:
             self._draw_card_costs(screen, card, rect)
             if highlight_available:
                 self._draw_card_availability(screen, rect, is_available)
-            if rect.collidepoint(pygame.mouse.get_pos()):
-                hovered_card = card
-                hovered_rect = rect
-
-        if hovered_card is not None:
-            self._draw_card_tooltip(screen, hovered_card, hovered_rect)
 
     def _draw_mage_card(self, screen, card, rect, selected, available):
         color = (55, 105, 80) if selected else (43, 35, 62) if available else (35, 29, 50)
         pygame.draw.rect(screen, color, rect, border_radius=8)
         pygame.draw.rect(screen, (180, 120, 230), rect, 2, border_radius=8)
-        title = self.scene.small_font.render(card.name, True, (245, 225, 255))
-        screen.blit(title, title.get_rect(midtop=(rect.centerx, rect.y + 12)))
-        mana = self.scene.small_font.render(f"Мана: {card.effect_data.get('mana_cost', 0)}", True, (100, 190, 255))
-        screen.blit(mana, mana.get_rect(midtop=(rect.centerx, rect.y + 42)))
-        description = self._card_description(card)
-        words = description.split()
-        lines, line = [], ""
-        for word in words:
-            candidate = f"{line} {word}".strip()
-            if line and self.scene.small_font.size(candidate)[0] > rect.width - 16:
-                lines.append(line)
-                line = word
-            else:
-                line = candidate
-        if line:
-            lines.append(line)
-        for index, text in enumerate(lines[:7]):
-            surface = self.scene.small_font.render(text, True, (225, 220, 235))
-            screen.blit(surface, (rect.x + 8, rect.y + 75 + index * 18))
+        font = self.scene.small_font
+        title_text = card.name
+        max_title_width = max(12, rect.width - 12)
+        if font.size(title_text)[0] > max_title_width:
+            title_text = title_text[: max(1, len(title_text) - 3)]
+            while len(title_text) > 1 and font.size(title_text + "...")[0] > max_title_width:
+                title_text = title_text[:-1]
+            title_text = title_text.rstrip() + "..."
+        title = font.render(title_text, True, (245, 225, 255))
+        screen.blit(title, title.get_rect(midtop=(rect.centerx, rect.y + 10)))
+        cost = font.render(f"{card.effect_data.get('mana_cost', 0)} маны", True, (100, 190, 255))
+        screen.blit(cost, cost.get_rect(midbottom=(rect.centerx, rect.bottom - 8)))
 
     def _draw_card_availability(self, screen, rect, is_available):
         if is_available:
@@ -566,15 +613,29 @@ class CardAreaRenderer:
             mana = data.get("mana_cost", 0)
             element = data.get("element", "магии")
             descriptions = {
-                "mage_damage_status": f"Наносит {data.get('damage', 0)} урона и накладывает статус {data.get('status', 'магии')}.",
-                "mage_damage": f"Наносит {data.get('damage', 0)} урона.",
-                "mage_area_damage": f"Наносит всем врагам {data.get('damage', 0)} урона.",
-                "mage_area_damage_status": f"Наносит всем врагам {data.get('damage', 0)} урона и накладывает статус {data.get('status', element)}.",
-                "mage_heal_missing_hp": "Восстанавливает часть недостающего здоровья.",
-                "mage_restore_mana": "Восстанавливает ману при низком запасе.",
-                "mage_stun_status": "Оглушает врага и накладывает электрический статус.",
+                "mage_damage_status": f"Наносит {data.get('damage', 0)} прямого урона + Мудрость и накладывает {data.get('stacks', 1)} ур. статуса {data.get('status', 'магии')} на {data.get('status_duration', card.effect_duration or 1)} ход.",
+                "mage_damage": f"Наносит {data.get('damage', 0)} прямого урона + Мудрость.",
+                "mage_area_damage": f"Всем врагам наносится {data.get('damage', 0)} урона.",
+                "mage_area_damage_status": f"Всем врагам наносится {data.get('damage', 0)} урона и накладывается {data.get('stacks', 1)} ур. статуса {data.get('status', element)}.",
+                "mage_heal_missing_hp": f"Восстанавливает {data.get('missing_hp_percent', 0)}% недостающего HP + {data.get('intellect_hp', 0)} HP за Интеллект. Щит: {data.get('shield_hp', 0)} + Интеллект на {4 if data.get('ultimate') else 2} хода.",
+                "mage_restore_mana": f"Восстанавливает {data.get('missing_mana_percent', 25)}% недостающей маны + {data.get('harmony_percent', 0)}% за Гармонию. Только при мане до {data.get('max_mana_percent', 30)}%.",
+                "mage_stun_status": f"Оглушает врага на {data.get('stun_duration', 1)} ход и накладывает Электричество.",
+                "mage_golem": f"Призывает голема: {data.get('hp', 16)} HP + Мудрость, атака {data.get('damage', 2)} + Мудрость.",
+                "mage_cloud": f"Туча действует {data.get('duration', 2)} ходов, наносит {data.get('damage', 3)} урона каждый ход.",
+                "mage_team_health_buff": f"Всем союзникам даёт +{data.get('bonus_hp', 0)} HP + Мудрость на щит.",
+                "mage_damage_buff": f"Даёт +{data.get('damage_percent', 0)}% урона на {card.effect_duration or 2} хода.",
             }
-            return f"{descriptions.get(card.effect_type, 'Особое действие карты.')} Мана: {mana}."
+            description = descriptions.get(card.effect_type)
+            if description is None:
+                parts = [f"Элемент: {element}"]
+                if data.get("damage"):
+                    parts.append(f"Урон: {data['damage']}")
+                if data.get("duration") or card.effect_duration:
+                    parts.append(f"Длительность: {data.get('duration', card.effect_duration)} ход.")
+                if data.get("remove_statuses"):
+                    parts.append("Снимает статусы и зависящие от них бафы.")
+                description = " ".join(parts) or "Магический эффект."
+            return f"{description} Мана: {mana}."
         damage_text = f"Наносит {data.get('dice', '')} урона."
         duration = max(1, int(card.effect_duration))
         if duration % 10 == 1 and duration % 100 != 11:

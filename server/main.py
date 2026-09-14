@@ -326,8 +326,23 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                 cards = body.get("cards", {})
                 if isinstance(cards, list):
                     cards = {str(key): 1 for key in cards}
-                if not isinstance(cards, dict) or len(cards) < 22:
-                    raise ValueError("В колоде должно быть минимум 22 уникальные карты")
+                if not isinstance(cards, dict) or len(cards) != 22:
+                    raise ValueError("В колоде должно быть ровно 22 уникальные карты")
+                from combat.card_database import load_cards
+                available = {card.key: card for card in load_cards()}
+                if any(key not in available for key in cards):
+                    raise ValueError("Колода содержит неизвестную карту")
+                for key, card in available.items():
+                    if key in cards and card.effect_data.get("ultimate"):
+                        element = card.effect_data.get("element")
+                        same_element = sum(
+                            1 for selected_key in cards
+                            if selected_key in available
+                            and available[selected_key].effect_data.get("element") == element
+                            and not available[selected_key].effect_data.get("ultimate")
+                        )
+                        if same_element < 5:
+                            raise ValueError(f"Ульта «{card.name}» требует минимум 5 обычных карт элемента «{element}»")
                 deck_id = self.items_database.create_deck(character_id, name, cards)
                 self._send(201, {"deck": self.items_database.get_deck(deck_id)})
                 return
@@ -709,6 +724,27 @@ class GameRequestHandler(BaseHTTPRequestHandler):
               
             self._send(404, {"error": "Маршрут не найден"})
         except (ValueError, json.JSONDecodeError, KeyError) as error:
+            self._handle_error(error)
+        except Exception as error:
+            self._handle_server_error(error)
+
+    def do_DELETE(self):
+        try:
+            path = urlparse(self.path).path.rstrip("/")
+            if path.startswith("/api/decks/"):
+                deck_id = int(path.rsplit("/", 1)[1])
+                body = self._body()
+                user_id = self.database.user_id_by_token(self._token())
+                character_id = int(body.get("character_id", 0))
+                character = self.database.get_character(user_id, character_id)
+                if character is None:
+                    raise ValueError("Персонаж не найден")
+                if not self.items_database.delete_deck(character_id, deck_id):
+                    raise ValueError("Колода не найдена")
+                self._send(200, {"deleted": True})
+                return
+            self._send(404, {"error": "Маршрут не найден"})
+        except (ValueError, json.JSONDecodeError) as error:
             self._handle_error(error)
         except Exception as error:
             self._handle_server_error(error)

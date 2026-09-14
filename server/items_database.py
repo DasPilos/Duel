@@ -488,6 +488,14 @@ class ItemsDatabase:
 
             return True
 
+    def delete_deck(self, character_id: int, deck_id: int) -> bool:
+        with self.db.connection() as connection:
+            cursor = connection.execute(
+                "DELETE FROM character_decks WHERE id = ? AND character_id = ?",
+                (deck_id, character_id),
+            )
+            return cursor.rowcount > 0
+
     def get_active_deck(self, character_id: int) -> Optional[Dict]:
         """Получает активную колоду персонажа"""
         with self.db.connection() as connection:

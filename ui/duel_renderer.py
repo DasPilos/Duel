@@ -35,6 +35,21 @@ class DuelRenderer:
             self.hit_placeholder = pygame.image.load(str(placeholder_path)).convert_alpha()
         except (pygame.error, OSError):
             self.hit_placeholder = None
+        self.mage_status_icons = self._load_mage_status_icons()
+
+    def _load_mage_status_icons(self):
+        icon_dir = Path(__file__).resolve().parent.parent / "assets" / "mage" / "statuses"
+        icons = {}
+        for status in ("water", "fire", "electric", "cold"):
+            path = icon_dir / f"{status}.png"
+            try:
+                icons[status] = pygame.transform.smoothscale(
+                    pygame.image.load(str(path)).convert_alpha(),
+                    (34, 34),
+                )
+            except (pygame.error, OSError):
+                pass
+        return icons
 
     def draw(self, screen):
         if self.background is None or screen.get_size() != self.background.get_size():
@@ -49,6 +64,9 @@ class DuelRenderer:
         if self.scene.phase in ("result_transition", "battle_start_transition"):
             if self.scene.phase_transition.draw(screen):
                 return
+
+        if getattr(self.scene, "mage_battle", False):
+            screen.fill((24, 20, 34))
 
         self.draw_header(screen)
 
@@ -315,17 +333,14 @@ class DuelRenderer:
     def _draw_mage_battle_stats(self, screen, player_profile, enemy_profile):
         screen_width, screen_height = screen.get_size()
         for profile, x, color, align in (
-            (player_profile, 10, (80, 180, 120), "left"),
-            (enemy_profile, screen_width - 320, (210, 80, 80), "right"),
+            (player_profile, 390, (80, 180, 120), "left"),
+            (enemy_profile, screen_width - 700, (210, 80, 80), "right"),
         ):
             self._draw_corner_fighter_card(screen, self.scene.player if align == "left" else self.scene.enemy, profile, {}, x, 10, color, align)
-            status = self.scene.player_status if align == "left" else self.scene.enemy_status
-            status_text = self.scene.small_font.render(status, True, color)
-            screen.blit(status_text, (x + 12, 188))
-            deck_text = self.scene.small_font.render("КОЛОДА: 22 УНИКАЛЬНЫЕ КАРТЫ", True, color)
-            screen.blit(deck_text, (x + 12, 210))
+            side = "player" if align == "left" else "enemy"
+            self._draw_mage_status(screen, x + 12, 370, color, align, side)
             stats = profile.get("stats", {})
-            frame = pygame.Rect(x, screen_height - 130, 310, 70)
+            frame = pygame.Rect(10 if align == "left" else screen_width - 320, screen_height - 115, 310, 95)
             pygame.draw.rect(screen, (20, 24, 34, 210), frame, border_radius=8)
             pygame.draw.rect(screen, color, frame, 2, border_radius=8)
             labels = (
@@ -336,6 +351,96 @@ class DuelRenderer:
             )
             for index, label in enumerate(labels):
                 draw_text(screen, self.scene.small_font, label, frame.x + 8 + (index % 2) * 145, frame.y + 8 + (index // 2) * 24, color)
+            summon_x = 270 if align == "left" else screen_width - 550
+            self._draw_mage_summons(screen, summon_x, 705, side, color)
+
+    def _draw_mage_summons(self, screen, x, y, side, border_color):
+        golems = getattr(self.scene.battle, "mage_golems", {}).get(side, [])
+        clouds = getattr(self.scene.battle, "mage_clouds", {}).get(side, [])
+        panel = pygame.Rect(x, y, 280, 105)
+        pygame.draw.rect(screen, (20, 24, 34), panel, border_radius=8)
+        pygame.draw.rect(screen, border_color, panel, 2, border_radius=8)
+        draw_text(screen, self.scene.small_font, "ПРИЗВАННЫЕ", x + 10, y + 7, border_color)
+        if not golems and not clouds:
+            draw_text(screen, self.scene.small_font, "нет существ", x + 10, y + 43, (150, 155, 170))
+            return
+        row_y = y + 34
+        for golem in golems[:2]:
+            name = golem.get("name", "Голем земли")
+            hp = int(golem.get("hp", 0))
+            max_hp = max(1, int(golem.get("max_hp", hp)))
+            mana = int(golem.get("mana", 0))
+            max_mana = int(golem.get("max_mana", 0))
+            draw_text(screen, self.scene.small_font, name, x + 10, row_y, (230, 230, 240))
+            draw_text(screen, self.scene.small_font, f"HP: {hp}/{max_hp}", x + 10, row_y + 22, (110, 235, 120))
+            draw_text(screen, self.scene.small_font, f"МАНА: {mana}/{max_mana}", x + 135, row_y + 22, (100, 190, 255))
+            row_y += 46
+        for cloud in clouds[:2]:
+            remaining = int(cloud.get("remaining", 0))
+            icon = self.mage_status_icons.get("electric")
+            if icon is not None:
+                screen.blit(icon, (x + 8, row_y - 5))
+            else:
+                self._draw_mage_status_fallback(screen, "electric", (x + 25, row_y + 12))
+            draw_text(screen, self.scene.small_font, f"ГРОМОВАЯ ТУЧА: {remaining} хода", x + 48, row_y + 5, (225, 225, 235))
+            row_y += 32
+
+    def _draw_mage_status(self, screen, x, y, color, align, side):
+        draw_text(screen, self.scene.small_font, "СТАТУСЫ", x, y, color)
+        effects = getattr(self.scene.battle, "mage_statuses", {}).get(side, [])
+        if not effects:
+            draw_text(screen, self.scene.small_font, "нет эффектов", x, y + 24, (150, 155, 170))
+        for index, effect in enumerate(effects[:4]):
+            icon_key = self._mage_status_icon_key(effect.get("name", ""))
+            icon = self.mage_status_icons.get(icon_key)
+            row_y = y + 22 + index * 36
+            icon_x = x if align == "left" else x + 210
+            if icon is not None:
+                screen.blit(icon, (icon_x, row_y - 5))
+            else:
+                self._draw_mage_status_fallback(screen, icon_key, (icon_x + 17, row_y + 12))
+            remaining = int(effect.get("remaining", 0))
+            stacks = int(effect.get("stacks", 1))
+            label = f"{effect.get('name', '').upper()}  {remaining} хода  x{stacks}"
+            text_x = x + 42 if align == "left" else x
+            draw_text(screen, self.scene.small_font, label, text_x, row_y + 2, (225, 225, 235))
+        bonuses = getattr(self.scene.battle, "mage_damage_bonuses", {}).get(side, [])
+        effect_line_y = y + 28 + min(4, len(effects)) * 36
+        if bonuses:
+            total = sum(float(bonus.get("percent", 0)) for bonus in bonuses)
+            turns = max(1, max(int(bonus.get("remaining", 0)) for bonus in bonuses) - 1)
+            draw_text(screen, self.scene.small_font, f"ДОП. УРОН: {total:+g}% ({turns} ход.)", x, effect_line_y, (255, 215, 120))
+            effect_line_y += 28
+        shields = getattr(self.scene.battle, "mage_shield_effects", {}).get(side, [])
+        if shields:
+            shield = sum(int(effect.get("amount", 0)) for effect in shields)
+            turns = max(1, max(int(effect.get("remaining", 0)) for effect in shields) - 1)
+            draw_text(screen, self.scene.small_font, f"ЩИТ: +{shield} HP ({turns} ход.)", x, effect_line_y, (100, 210, 255))
+
+    @staticmethod
+    def _mage_status_icon_key(status):
+        status = status.lower()
+        if "вод" in status:
+            return "water"
+        if "огн" in status or "огон" in status:
+            return "fire"
+        if "элект" in status or "молни" in status:
+            return "electric"
+        if "холод" in status or "лед" in status:
+            return "cold"
+        return None
+
+    @staticmethod
+    def _draw_mage_status_fallback(screen, icon_key, center):
+        x, y = center
+        if icon_key == "water":
+            pygame.draw.polygon(screen, (40, 180, 240), ((x, y - 15), (x - 10, y + 3), (x - 7, y + 11), (x, y + 15), (x + 8, y + 10), (x + 10, y + 2)))
+        elif icon_key == "fire":
+            pygame.draw.polygon(screen, (245, 55, 35), ((x, y + 15), (x - 12, y + 7), (x - 5, y - 3), (x - 3, y - 16), (x + 5, y - 5), (x + 13, y - 13), (x + 10, y + 5)))
+        elif icon_key == "electric":
+            pygame.draw.polygon(screen, (195, 55, 220), ((x + 5, y - 17), (x - 11, y + 1), (x - 2, y + 1), (x - 8, y + 17), (x + 12, y - 5), (x + 3, y - 5)))
+        else:
+            pygame.draw.polygon(screen, (65, 225, 235), ((x, y - 17), (x + 13, y - 5), (x + 10, y + 11), (x, y + 17), (x - 12, y + 8), (x - 12, y - 7)))
 
     def _draw_corner_fighter_card(self, screen, fighter, profile, derived, x, y, border_color, align):
         """Рисует укороченную карточку боца в углу (Имя, Уровень, HP/MP бары)."""
@@ -380,6 +485,11 @@ class DuelRenderer:
             profile["max_hp"],
             (210, 80, 80)
         )
+        if getattr(self.scene, "mage_battle", False):
+            side = "player" if fighter is self.scene.player else "enemy"
+            shield = int(getattr(self.scene.battle, "mage_shields", {}).get(side, 0))
+            if shield:
+                draw_text(screen, self.scene.small_font, f"ЩИТ: +{shield} HP", inner_x, y + 84, (100, 210, 255))
         
         # MP шкала ниже HP
         mp_y = y + 105

@@ -303,7 +303,8 @@ class DuelScene:
         # Обработка клика по кнопке инвентаря
         if self.inventory_button.collidepoint(event.pos):
             if self.online_session is not None:
-                self.profile_overlay.open(self.online_session.character, None)
+                profile = self.online_character or self.online_session.character
+                self.profile_overlay.open(profile, None)
             return True
 
         action, _ = self.profile_overlay.handle_click(event.pos)
@@ -610,9 +611,10 @@ class DuelScene:
             self._start_enemy_card_transfer()
 
     def _auto_starting_pick_one(self):
-        if not self.battle.table:
+        source = self.battle.enemy_table
+        if not source:
             return
-        card = self.battle.table[self.battle.rng.randrange(len(self.battle.table))]
+        card = source[self.battle.rng.randrange(len(source))]
         if self.battle.draft_mode == "starting":
             if len(self.battle.hands["enemy"]) >= self.battle.STARTING_PICK_LIMIT:
                 return
@@ -624,7 +626,10 @@ class DuelScene:
             self.battle.choose_redraft_card("enemy", card.key)
 
     def _start_enemy_card_transfer(self):
-        if not self.battle.table:
+        source_cards = self.battle.enemy_table if self.battle.draft_mode == "starting" else self.battle.table
+        if not source_cards:
+            self.draft_next_side = "player"
+            self._after_starting_pick()
             return
         if self.battle.draft_mode == "starting":
             if len(self.battle.hands["enemy"]) >= self.battle.STARTING_PICK_LIMIT:
@@ -634,8 +639,8 @@ class DuelScene:
             >= self.battle.redraft_pick_limit("enemy")
         ):
             return
-        index = self.battle.rng.randrange(len(self.battle.table))
-        card = self.battle.table[index]
+        index = self.battle.rng.randrange(len(source_cards))
+        card = source_cards[index]
         source_area = pygame.Rect(
             self.layout.card_table.x + 20,
             self.layout.card_table.y + 5 + (self.renderer.card_renderer.CARD_HEIGHT + self.renderer.card_renderer.GAP if index >= 5 else 0),

@@ -12,6 +12,7 @@ class OnlineSession:
         self.character = None
         self.selected_deck = None
         self.regen_accumulator = 0.0
+        self.regen_mp_accumulator = 0.0
 
     def connect(self):
         try:
@@ -74,21 +75,35 @@ class OnlineSession:
         )
         return self.client.save_character(self.character)
 
-    def passive_regenerate(self, dt, in_tavern=False):
+    def passive_regenerate(self, dt, in_tavern=False, full_regen_seconds=None):
         self.last_regen_amount = 0
+        self.last_mp_regen_amount = 0
         character = self.character
-        if character is None or character["hp"] >= character["max_hp"]:
+        if character is None or (
+            character["hp"] >= character["max_hp"]
+            and character.get("mp", character.get("max_mp", 0)) >= character.get("max_mp", 0)
+        ):
             self.regen_accumulator = 0.0
+            self.regen_mp_accumulator = 0.0
             return character
-        full_regen_seconds = settings.TAVERN_FULL_REGEN_SECONDS if in_tavern else settings.FULL_REGEN_SECONDS
-        self.regen_accumulator += character["max_hp"] / full_regen_seconds * max(0.0, float(dt))
-        amount = int(self.regen_accumulator)
-        if amount <= 0:
+        full_regen_seconds = full_regen_seconds or (settings.TAVERN_FULL_REGEN_SECONDS if in_tavern else settings.FULL_REGEN_SECONDS)
+        dt = max(0.0, float(dt))
+        self.regen_accumulator += character["max_hp"] / full_regen_seconds * dt
+        self.regen_mp_accumulator += character.get("max_mp", 0) / full_regen_seconds * dt
+        hp_amount = int(self.regen_accumulator)
+        mp_amount = int(self.regen_mp_accumulator)
+        if hp_amount <= 0 and mp_amount <= 0:
             return character
-        self.regen_accumulator -= amount
+        self.regen_accumulator -= hp_amount
+        self.regen_mp_accumulator -= mp_amount
         previous_hp = character["hp"]
-        result = self.regenerate_character(amount)
+        previous_mp = character.get("mp", 0)
+        character["hp"] = min(character["max_hp"], character["hp"] + hp_amount)
+        character["mp"] = min(character.get("max_mp", 0), character.get("mp", 0) + mp_amount)
+        result = self.client.save_character(character)
+        self.character = result
         self.last_regen_amount = max(0, result["hp"] - previous_hp)
+        self.last_mp_regen_amount = max(0, result.get("mp", 0) - previous_mp)
         return result
 
     def update_presence(self, location):
@@ -270,6 +285,11 @@ class OnlineSession:
         if self.character is None:
             return None
         return self.client.create_deck(self.character["id"], name, cards)
+
+    def delete_deck(self, deck_id):
+        if self.character is None:
+            return None
+        return self.client.delete_deck(self.character["id"], deck_id)
 
     def award_battle_card(self, card_keys):
         if self.character is None:

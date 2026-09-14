@@ -90,6 +90,15 @@ class AwakeningAltarScene:
             except ServerError as error:
                 self.error = str(error)
             return
+        if self.profile_overlay.deck_panel.is_open and event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            action, profile = self.profile_overlay.handle_click(event.pos)
+            if action == "delete_deck":
+                try:
+                    self.session.delete_deck(profile.get("id"))
+                    self.profile_overlay.deck_panel.open(self.session.get_decks())
+                except ServerError as error:
+                    self.error = str(error)
+            return
         # Приоритет 1: Чат
         if self.chat.handle_event(event):
             if self.profile_overlay.is_open:
@@ -114,6 +123,13 @@ class AwakeningAltarScene:
             
             # Профиль персонажа
             action, profile = self.profile_overlay.handle_click(event.pos)
+            if action == "delete_deck":
+                try:
+                    self.session.delete_deck(profile.get("id"))
+                    self.profile_overlay.deck_panel.open(self.session.get_decks())
+                except ServerError as error:
+                    self.error = str(error)
+                return
             if action == "deck_selected":
                 self.session.selected_deck = profile
                 return
@@ -148,6 +164,7 @@ class AwakeningAltarScene:
 
     def update(self, dt):
         """Обновление логики сцены"""
+        self.session.passive_regenerate(dt, full_regen_seconds=settings.ALTAR_FULL_REGEN_SECONDS)
         self.chat.update(dt)
         self.renderer.update(dt)
 
