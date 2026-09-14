@@ -1,18 +1,17 @@
 import tempfile
-import threading
 import time
 import unittest
-from http.server import ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
 
-from client.network import GameClient, ServerError
+from client.network import ServerError
 from combat.card_database import Card
 from server.database import Database
 from server.main import GameRequestHandler
 from server import social, world
 from client.state import ChatState
 from ui.chat.widgets import MessageList
+from tests.fixtures import running_server
 from scenes.duel_scene import DuelScene
 import pygame
 
@@ -81,25 +80,19 @@ class ServerPersistenceTests(unittest.TestCase):
             drop_chance=100,
             image_path="assets/cards/faces/reward_card.png",
         )
-        GameRequestHandler.database = self.database
-        http_server = ThreadingHTTPServer(("127.0.0.1", 0), GameRequestHandler)
-        thread = threading.Thread(target=http_server.serve_forever, daemon=True)
-        thread.start()
-        client = GameClient(f"http://127.0.0.1:{http_server.server_port}")
-
-        try:
+        with running_server(self.database) as client:
             client.register("rewarduser", "password")
             client.login("rewarduser", "password")
             character = client.create_character("Победитель")
-            with patch("server.main.load_cards", return_value=[card]):
+            with (
+                patch("server.main.load_cards", return_value=[card]),
+                patch("server.main.choose_battle_reward", return_value=card),
+            ):
                 reward = client.award_battle_card(
                     character["id"],
                     ["reward_card"],
                 )
                 collection = client.get_card_collection(character["id"])
-        finally:
-            http_server.shutdown()
-            http_server.server_close()
 
         self.assertEqual(reward["key"], "reward_card")
         self.assertEqual(collection[0]["key"], "reward_card")
@@ -200,33 +193,18 @@ class ServerPersistenceTests(unittest.TestCase):
         self.assertEqual(history[0]["text"], "<b>текст</b>")
 
     def test_client_can_send_and_read_chat_message(self):
-        GameRequestHandler.database = self.database
-        http_server = ThreadingHTTPServer(("127.0.0.1", 0), GameRequestHandler)
-        thread = threading.Thread(target=http_server.serve_forever, daemon=True)
-        thread.start()
-        client = GameClient(f"http://127.0.0.1:{http_server.server_port}")
-
-        try:
+        with running_server(self.database) as client:
             client.register("chatuser", "password")
             client.login("chatuser", "password")
             character = client.create_character("Собеседник")
             message = client.send_message(character["id"], "tavern", "Привет")
             history = client.list_messages("tavern", character["id"])
-        finally:
-            http_server.shutdown()
-            http_server.server_close()
 
         self.assertEqual(message["message"]["text"], "Привет")
         self.assertEqual(history[-1]["text"], "Привет")
 
     def test_legacy_social_message_route_remains_compatible(self):
-        GameRequestHandler.database = self.database
-        http_server = ThreadingHTTPServer(("127.0.0.1", 0), GameRequestHandler)
-        thread = threading.Thread(target=http_server.serve_forever, daemon=True)
-        thread.start()
-        client = GameClient(f"http://127.0.0.1:{http_server.server_port}")
-
-        try:
+        with running_server(self.database) as client:
             client.register("legacychat", "password")
             client.login("legacychat", "password")
             character = client.create_character("Старый чат")
@@ -236,9 +214,6 @@ class ServerPersistenceTests(unittest.TestCase):
                 {"character_id": character["id"], "location": "tavern", "text": "Совместимо"},
                 authenticated=True,
             )
-        finally:
-            http_server.shutdown()
-            http_server.server_close()
 
         self.assertEqual(result["message"]["text"], "Совместимо")
 
@@ -357,12 +332,7 @@ class ServerPersistenceTests(unittest.TestCase):
         GameRequestHandler.database = self.database
         world.update_bot("bot_brawler", 40)
         social.DUEL_OFFERS.clear()
-        http_server = ThreadingHTTPServer(("127.0.0.1", 0), GameRequestHandler)
-        thread = threading.Thread(target=http_server.serve_forever, daemon=True)
-        thread.start()
-        client = GameClient(f"http://127.0.0.1:{http_server.server_port}")
-
-        try:
+        with running_server(self.database) as client:
             client.register("botuser", "password")
             client.login("botuser", "password")
             character = client.create_character("Равный боец")
@@ -374,22 +344,13 @@ class ServerPersistenceTests(unittest.TestCase):
             character.update({"level": 1})
             character = client.save_character(character)
             result = client.offer_duel(character["id"], "backyard", "bot_brawler")
-        finally:
-            http_server.shutdown()
-            http_server.server_close()
 
         self.assertTrue(result["accepted"])
         self.assertEqual(result["offer"]["status"], "accepted")
         self.assertEqual(result["offer"]["accepted_by"], "bot_brawler")
 
     def test_client_api_round_trip(self):
-        GameRequestHandler.database = self.database
-        http_server = ThreadingHTTPServer(("127.0.0.1", 0), GameRequestHandler)
-        thread = threading.Thread(target=http_server.serve_forever, daemon=True)
-        thread.start()
-        client = GameClient(f"http://127.0.0.1:{http_server.server_port}")
-
-        try:
+        with running_server(self.database) as client:
             client.register("apiuser", "password")
             client.login("apiuser", "password")
             character = client.create_character("Сетевой воин")
@@ -397,28 +358,16 @@ class ServerPersistenceTests(unittest.TestCase):
             saved = client.save_character(character)
             loaded = client.load_character()
             client.disconnect(loaded)
-        finally:
-            http_server.shutdown()
-            http_server.server_close()
 
         self.assertEqual(saved["xp"], 30)
         self.assertEqual(loaded["name"], "Сетевой воин")
 
     def test_client_can_create_duel_application(self):
-        GameRequestHandler.database = self.database
-        http_server = ThreadingHTTPServer(("127.0.0.1", 0), GameRequestHandler)
-        thread = threading.Thread(target=http_server.serve_forever, daemon=True)
-        thread.start()
-        client = GameClient(f"http://127.0.0.1:{http_server.server_port}")
-
-        try:
+        with running_server(self.database) as client:
             client.register("appuser", "password")
             client.login("appuser", "password")
             character = client.create_character("Заявитель")
             application = client.create_duel_application(character["id"], "backyard")
-        finally:
-            http_server.shutdown()
-            http_server.server_close()
 
         self.assertEqual(application["application"]["sender_id"], character["id"])
 

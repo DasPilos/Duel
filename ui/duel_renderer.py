@@ -1,5 +1,6 @@
 from pathlib import Path
 import time
+from types import SimpleNamespace
 
 import pygame
 
@@ -11,12 +12,22 @@ from ui.renderers.card_area import CardAreaRenderer
 
 
 class DuelRenderer:
+    REWARD_CURRENCY_ICON_SIZE = 70
+    REWARD_CARD_SIZE = (150, 200)
+
     def __init__(self, scene):
         self.scene = scene
         self.layout = scene.layout
 
         self.player_card = CharacterCard()
         self.enemy_card = CharacterCard()
+        self.reward_currency_icons = {
+            currency: pygame.transform.smoothscale(
+                image,
+                (self.REWARD_CURRENCY_ICON_SIZE, self.REWARD_CURRENCY_ICON_SIZE),
+            )
+            for currency, image in self.player_card.currency_icons.items()
+        }
 
         self.card_renderer = CardAreaRenderer(
             scene,
@@ -120,8 +131,74 @@ class DuelRenderer:
         
         # Информация о победителе
         winner_text = f"Победитель: {scene.battle.winner_name() or 'Ничья'}"
-        draw_text(screen, scene.small_font, winner_text, screen_width // 2 - 100, 100, (220, 220, 225))
+        draw_text(screen, scene.small_font, winner_text, screen_width // 2 - 100, 80, (220, 220, 225))
+
+        currency_reward = getattr(
+            scene,
+            "currency_reward",
+            {"copper": 0, "silver": 0, "gold": 0},
+        )
+        reward_entries = [
+            (currency, int(currency_reward.get(currency, 0)))
+            for currency in ("copper", "silver", "gold")
+            if int(currency_reward.get(currency, 0)) > 0
+        ]
+        if reward_entries:
+            reward_label = scene.small_font.render(
+                "Денежная награда:",
+                True,
+                (245, 210, 110),
+            )
+            screen.blit(
+                reward_label,
+                reward_label.get_rect(center=(screen_width // 2, 112)),
+            )
+            entry_widths = [
+                self.REWARD_CURRENCY_ICON_SIZE
+                + 8
+                + scene.font.size(f"+{amount}")[0]
+                for _currency, amount in reward_entries
+            ]
+            total_width = sum(entry_widths) + 24 * (len(entry_widths) - 1)
+            cursor_x = (screen_width - total_width) // 2
+            for (currency, amount), entry_width in zip(reward_entries, entry_widths):
+                icon = self.reward_currency_icons[currency]
+                screen.blit(icon, (cursor_x, 125))
+                amount_surface = scene.font.render(
+                    f"+{amount}",
+                    True,
+                    (245, 210, 110),
+                )
+                amount_rect = amount_surface.get_rect(
+                    midleft=(
+                        cursor_x + self.REWARD_CURRENCY_ICON_SIZE + 8,
+                        125 + self.REWARD_CURRENCY_ICON_SIZE // 2,
+                    ),
+                )
+                screen.blit(amount_surface, amount_rect)
+                cursor_x += entry_width + 24
+
         if scene.card_reward is not None:
+            costs = scene.card_reward.get("costs", {})
+            reward_card = SimpleNamespace(
+                image_path=scene.card_reward.get("image_path", ""),
+                group_name=scene.card_reward.get("group_name", ""),
+                strength_cost=int(costs.get("strength", 0)),
+                endurance_cost=int(costs.get("endurance", 0)),
+                agility_cost=int(costs.get("agility", 0)),
+                intuition_cost=int(costs.get("intuition", 0)),
+            )
+            reward_card_rect = pygame.Rect(
+                0,
+                210,
+                *self.REWARD_CARD_SIZE,
+            )
+            reward_card_rect.centerx = screen_width // 2
+            self.card_renderer._draw_card_front_scaled(
+                screen,
+                reward_card,
+                reward_card_rect,
+            )
             reward_text = f"Карта отправлена в Коллекцию: {scene.card_reward['name']}"
             reward_surface = scene.small_font.render(
                 reward_text,
@@ -130,7 +207,7 @@ class DuelRenderer:
             )
             screen.blit(
                 reward_surface,
-                reward_surface.get_rect(center=(screen_width // 2, 130)),
+                reward_surface.get_rect(center=(screen_width // 2, 425)),
             )
         
         # Параметры панелей с информацией о игроке и противнике
@@ -141,7 +218,7 @@ class DuelRenderer:
         
         player_x = left_margin
         enemy_x = left_margin + half_width + 50
-        y_start = 150
+        y_start = 460 if scene.card_reward is not None else 245
         
         for index, side in enumerate(("player", "enemy")):
             stats = scene.battle.stats[side]
@@ -204,9 +281,20 @@ class DuelRenderer:
                 
                 # Урон нанесен этой картой (если есть)
                 damage = stats["card_damage"].get(card_name, 0)
+                healing = stats["card_healing"].get(card_name, 0)
                 card_text = f"{card_name}" + (f" ({damage} урон)" if damage > 0 else "")
-                
+
                 draw_text(screen, scene.small_font, card_text, x, card_y, (215, 220, 230))
+                if healing > 0:
+                    healing_x = x + scene.small_font.size(card_text)[0] + 8
+                    draw_text(
+                        screen,
+                        scene.small_font,
+                        f"+{healing} HP",
+                        healing_x,
+                        card_y,
+                        (90, 230, 120),
+                    )
         
         # Кнопка "В ТАВЕРНУ"
         scene.result_button = pygame.Rect(screen_width // 2 - 160, screen_height - 75, 320, 45)
@@ -629,6 +717,12 @@ class DuelRenderer:
             statuses["Крит"].append(
                 self._format_effect_status(int(effect["amount"]), "%", turns)
             )
+
+        for effect in battle.timed_damage_ratio_effects[side]:
+            turns = max(1, int(effect["expires_after_turn"]) - battle.turn + 1)
+            reduction = int((1 - effect["ratio"]) * 100)
+            text = f"Защита {reduction}% на {turns} {self._turn_word(turns)}"
+            statuses["Урон"].append((text, (90, 230, 120)))
 
         for effect in battle.regen_effects[side]:
             turns = max(1, int(effect["remaining"]))

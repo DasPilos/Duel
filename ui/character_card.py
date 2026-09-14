@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pygame
 
 from combat.character_stats import is_debug_unlimited
@@ -17,11 +19,30 @@ from ui.sprite_loader import FighterSprite
 class CharacterCard:
     """The authoritative state container and renderer for a character card."""
 
+    CURRENCY_ICON_SIZE = 30
+
     def __init__(self, sprite=None):
         self.title_font = pygame.font.SysFont(settings.FONT_NAME, settings.CHARACTER_CARD_NAME_FONT_SIZE)
         self.body_font = pygame.font.SysFont(settings.FONT_NAME, settings.CHARACTER_CARD_BODY_FONT_SIZE)
         self.small_font = pygame.font.SysFont(settings.FONT_NAME, settings.CHARACTER_CARD_SMALL_FONT_SIZE)
         self.sprite = sprite or FighterSprite()
+        currency_path = (
+            Path(__file__).resolve().parent.parent
+            / "assets"
+            / "ui"
+            / "currency"
+        )
+        self.currency_icons = {
+            currency: pygame.transform.smoothscale(
+                pygame.image.load(str(currency_path / filename)),
+                (self.CURRENCY_ICON_SIZE, self.CURRENCY_ICON_SIZE),
+            )
+            for currency, filename in (
+                ("copper", "copper.png"),
+                ("silver", "silver.png"),
+                ("gold", "gold.png"),
+            )
+        }
         self.state = normalize_character_profile({}, title=None, kind="player")
         self.regen_floating_texts = []
         
@@ -148,8 +169,16 @@ class CharacterCard:
         silver = int(normalized.get("silver", 0))
         gold = int(normalized.get("gold", 0))
         currency_y = mp_y + 25
-        currency_text = f"Медяки: {copper}  Серебро: {silver}  Золото: {gold}"
-        draw_text(screen, self.small_font, currency_text, x, currency_y, (200, 170, 100))
+        self._draw_currency(
+            screen,
+            x,
+            currency_y,
+            {
+                "copper": copper,
+                "silver": silver,
+                "gold": gold,
+            },
+        )
 
         stats_header_y = frame.bottom - 120
         sprite_center_y = (mp_y + bar_height + stats_header_y) / 2
@@ -311,6 +340,25 @@ class CharacterCard:
         )
         return minus, plus
 
+    def _draw_currency(self, screen, x, y, amounts):
+        cursor_x = x
+        for currency in ("copper", "silver", "gold"):
+            icon = self.currency_icons[currency]
+            screen.blit(icon, (cursor_x, y))
+            amount = self.small_font.render(
+                str(amounts[currency]),
+                True,
+                (235, 235, 240),
+            )
+            amount_rect = amount.get_rect(
+                midleft=(
+                    cursor_x + self.CURRENCY_ICON_SIZE + 4,
+                    y + self.CURRENCY_ICON_SIZE // 2,
+                )
+            )
+            screen.blit(amount, amount_rect)
+            cursor_x = amount_rect.right + 18
+
     def _draw_resource(self, screen, x, y, width, height, name, value, maximum, color):
         draw_text(screen, self.small_font, f"{name}: {value}/{maximum}", x, y - 24, (220, 225, 235))
         draw_bar(screen, x, y, width, height, value, maximum, fg=color)
@@ -356,4 +404,3 @@ class CharacterCard:
         start_y = frame.y + frame.height + 10
         tab_x = frame.x + 20 + tab_index * (tab_width + 5)
         return pygame.Rect(tab_x, start_y, tab_width, tab_height)
-

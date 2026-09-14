@@ -62,7 +62,8 @@ class TavernScene:
         play_tavern_music()
         
         # Перезагружаем персонажа чтобы получить свежие данные с сервера
-        self.session.refresh_character()
+        if hasattr(self.session, "refresh_character"):
+            self.session.refresh_character()
         
         # Загружаем напитки с сервера
         self._load_drinks_from_server()

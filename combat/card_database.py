@@ -6,6 +6,7 @@ from pathlib import Path
 
 
 DATABASE_PATH = Path(__file__).resolve().parent.parent / "cards.sqlite3"
+BATTLE_CARD_REWARD_CHANCE = 20
 
 
 @dataclass(frozen=True)
@@ -34,6 +35,102 @@ class Card:
 
 # Список карт очищен: будем собирать набор заново с нуля.
 BASE_CARDS = (
+    Card(
+        key="deaf_defense",
+        name="Глухая оборона",
+        group_name="Выносливость",
+        strength_cost=0,
+        intuition_cost=1,
+        agility_cost=1,
+        endurance_cost=3,
+        effect_type="damage_resistance",
+        effect_data={"ratio": 0.5},
+        level=2,
+        price_silver=11,
+        drop_chance=14,
+        image_path="assets/cards/faces/deaf_defense.png",
+        effect_duration=3,
+    ),
+    Card(
+        key="wipe_sweat",
+        name="Утереть пот",
+        group_name="Выносливость",
+        strength_cost=1,
+        intuition_cost=0,
+        agility_cost=0,
+        endurance_cost=4,
+        effect_type="heal_duration",
+        effect_data={"dice": "2d3"},
+        level=2,
+        price_silver=9,
+        drop_chance=16,
+        image_path="assets/cards/faces/wipe_sweat.png",
+        effect_duration=2,
+    ),
+    Card(
+        key="regeneration",
+        name="Регенерация",
+        group_name="Выносливость",
+        strength_cost=0,
+        intuition_cost=1,
+        agility_cost=1,
+        endurance_cost=5,
+        effect_type="heal_duration",
+        effect_data={"dice": "2d4"},
+        level=3,
+        price_silver=11,
+        drop_chance=12,
+        image_path="assets/cards/faces/regeneration.png",
+        effect_duration=4,
+    ),
+    Card(
+        key="bandage_wounds",
+        name="Перевязать раны",
+        group_name="Выносливость",
+        strength_cost=0,
+        intuition_cost=0,
+        agility_cost=0,
+        endurance_cost=4,
+        effect_type="instant_heal",
+        effect_data={"dice": "2d6"},
+        level=1,
+        price_silver=6,
+        drop_chance=16,
+        image_path="assets/cards/faces/bandage_wounds.png",
+        effect_duration=0,
+    ),
+    Card(
+        key="ale_sip",
+        name="Глоток Эля",
+        group_name="Выносливость",
+        strength_cost=0,
+        intuition_cost=0,
+        agility_cost=0,
+        endurance_cost=3,
+        effect_type="instant_heal",
+        effect_data={"dice": "2d3"},
+        level=1,
+        price_silver=4,
+        drop_chance=18,
+        image_path="assets/cards/faces/ale_sip.png",
+        effect_duration=0,
+    ),
+    Card(
+        key="block",
+        name="Блок",
+        group_name="Выносливость",
+        strength_cost=0,
+        intuition_cost=0,
+        agility_cost=0,
+        endurance_cost=1,
+        effect_type="damage_resistance",
+        effect_data={"ratio": 0.7},
+        level=1,
+        price_silver=2,
+        drop_chance=22,
+        image_path="assets/cards/faces/block.png",
+        effect_duration=0,
+    ),
     Card(
         key="podsechka",
         name="Подсечка",
@@ -486,9 +583,15 @@ def card_to_dict(card):
 
 def choose_battle_reward(cards, rng=None):
     rng = random if rng is None else rng
-    successful = [
-        card
-        for card in cards
-        if card.drop_chance > 0 and rng.random() * 100 < card.drop_chance
-    ]
-    return rng.choice(successful) if successful else None
+    eligible = [card for card in cards if card.drop_chance > 0]
+    if not eligible or rng.random() * 100 >= BATTLE_CARD_REWARD_CHANCE:
+        return None
+
+    total_weight = sum(card.drop_chance for card in eligible)
+    roll = rng.random() * total_weight
+    cumulative = 0
+    for card in eligible:
+        cumulative += card.drop_chance
+        if roll < cumulative:
+            return card
+    return eligible[-1]

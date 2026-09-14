@@ -328,7 +328,6 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                     cards = {str(key): 1 for key in cards}
                 if not isinstance(cards, dict) or len(cards) != 22:
                     raise ValueError("В колоде должно быть ровно 22 уникальные карты")
-                from combat.card_database import load_cards
                 available = {card.key: card for card in load_cards()}
                 if any(key not in available for key in cards):
                     raise ValueError("Колода содержит неизвестную карту")
@@ -609,52 +608,7 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                 self._send(200, {"offer": offer})
                 return
             
-            # ============= API ИНВЕНТАРЯ =============
-            if path == "/api/inventory":
-               token = self._token()
-               user_id = self.database.user_id_by_token(token)
-               character_id = int(body.get("character_id", 0))
-               character = self.database.get_character(user_id, character_id)
-               if character is None:
-                   raise ValueError("Персонаж не найден")
-               inventory = self.items_database.get_inventory(character_id)
-               self._send(200, {"inventory": inventory})
-               return
-            
-            if path == "/api/equipment":
-               token = self._token()
-               user_id = self.database.user_id_by_token(token)
-               character_id = int(body.get("character_id", 0))
-               character = self.database.get_character(user_id, character_id)
-               if character is None:
-                   raise ValueError("Персонаж не найден")
-               equipment = self.items_database.get_equipment(character_id)
-               self._send(200, {"equipment": equipment})
-               return
-            
-            if path == "/api/storage":
-               token = self._token()
-               user_id = self.database.user_id_by_token(token)
-               character_id = int(body.get("character_id", 0))
-               character = self.database.get_character(user_id, character_id)
-               if character is None:
-                   raise ValueError("Персонаж не найден")
-               storage_type = str(body.get("storage_type", "chest1"))
-               storage = self.items_database.get_storage(character_id, storage_type)
-               self._send(200, {"storage": storage})
-               return
-            
-            if path == "/api/decks":
-               token = self._token()
-               user_id = self.database.user_id_by_token(token)
-               character_id = int(body.get("character_id", 0))
-               character = self.database.get_character(user_id, character_id)
-               if character is None:
-                   raise ValueError("Персонаж не найден")
-               decks = self.items_database.get_decks(character_id)
-               self._send(200, {"decks": decks})
-               return
-            
+            # ============= API ИНВЕНТАРЯ (действия) =============
             if path == "/api/inventory/use":
                token = self._token()
                user_id = self.database.user_id_by_token(token)

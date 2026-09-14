@@ -23,20 +23,7 @@ def build_battle_deck(cards, player_level, enemy_level, rng=None):
     if not cards:
         return []
     rng = random if rng is None else rng
-    unique = {}
-    for card in cards:
-        unique.setdefault(card.key, card)
-    candidates = list(unique.values())
-    element_counts = {}
-    for card in candidates:
-        element = card.effect_data.get("element")
-        if element:
-            element_counts[element] = element_counts.get(element, 0) + 1
-    deck = [
-        card for card in candidates
-        if not card.effect_data.get("ultimate")
-        or element_counts.get(card.effect_data.get("element"), 0) >= 6
-    ][:22]
+    deck = list(cards)
     rng.shuffle(deck)
     return deck
 
@@ -58,22 +45,22 @@ def roll_dice(expression, rng=None):
 
 class CardBattle:
     MAX_PLAYED_CARDS = 2
-    MAX_HAND_SIZE = 5
-    STARTING_TABLE_SIZE = 0
-    STARTING_PICK_LIMIT = 2
+    MAX_HAND_SIZE = 6
+    STARTING_TABLE_SIZE = 10
+    STARTING_PICK_LIMIT = 3
     REDRAFT_TABLE_SIZE = 6
     REDRAFT_PICK_LIMIT = 2
 
     def __init__(self, player, enemy, cards=None, rng=None, enemy_cards=None):
         self.player = player
         self.enemy = enemy
-        self.mage_mode = False
         self.rng = random if rng is None else rng
         self.cards = list(cards if cards is not None else load_cards())
         self.enemy_cards = list(enemy_cards if enemy_cards is not None else self.cards)
         self.discard = []
         self.draw_choices = {"player": [], "enemy": []}
         self.burned_this_turn = {"player": False, "enemy": False}
+        self.mage_mode = False
         self.mage_statuses = {"player": [], "enemy": []}
         self.mage_clouds = {"player": [], "enemy": []}
         self.mage_golems = {"player": [] , "enemy": []}
@@ -85,7 +72,6 @@ class CardBattle:
         self.mage_reactive_blessings = {"player": [], "enemy": []}
         self.mage_pending_effects = {"player": [], "enemy": []}
         self.table = []
-        self.enemy_table = []
         self.hands = {"player": [], "enemy": []}
         self.selected = {"player": [], "enemy": []}
         self.burned_this_turn = {"player": False, "enemy": False}
@@ -98,7 +84,6 @@ class CardBattle:
             "enemy": {stat: 0 for stat in STAT_NAMES},
         }
         self.turn = 0
-        self.first_side = self.rng.choice(("player", "enemy"))
         self.history = []
         self.last_exchange = []
         self.last_played_cards = {"player": [], "enemy": []}
@@ -118,18 +103,22 @@ class CardBattle:
         self.timed_stat_effects = {"player": [], "enemy": []}
         self.timed_critical_effects = {"player": [], "enemy": []}
         self.timed_dodge_effects = {"player": [], "enemy": []}
+        self.timed_damage_ratio_effects = {"player": [], "enemy": []}
         self.reward_card_keys = ()
         self.stats = {
-            "player": {"cards_played": 0, "damage": 0, "healed": 0, "critical": 0, "dodges": 0, "hits": 0, "cards": [], "card_damage": {}},
-            "enemy": {"cards_played": 0, "damage": 0, "healed": 0, "critical": 0, "dodges": 0, "hits": 0, "cards": [], "card_damage": {}},
+            "player": {"cards_played": 0, "damage": 0, "healed": 0, "critical": 0, "dodges": 0, "hits": 0, "cards": [], "card_damage": {}, "card_healing": {}},
+            "enemy": {"cards_played": 0, "damage": 0, "healed": 0, "critical": 0, "dodges": 0, "hits": 0, "cards": [], "card_damage": {}, "card_healing": {}},
         }
         self._xp_awarded_applied = False
         if not self.cards:
             self.deck = []
             return
+        if len(self.cards) < self.STARTING_TABLE_SIZE:
+            self.deck = []
+            return
+
         self.deck = build_battle_deck(self.cards, player.level, enemy.level, self.rng)
-        self.enemy_deck = build_battle_deck(self.enemy_cards, enemy.level, player.level, self.rng)
-        if len(self.deck) < 5:
+        if len(self.deck) < self.STARTING_TABLE_SIZE:
             self.deck = []
             return
         self.reward_card_keys = tuple(dict.fromkeys(card.key for card in self.deck))
@@ -140,11 +129,7 @@ class CardBattle:
             self.table = []
             return
         self.rng.shuffle(self.deck)
-        self.table = list(self.deck)
-        self.deck.clear()
-        self.rng.shuffle(self.enemy_deck)
-        self.enemy_table = list(self.enemy_deck)
-        self.enemy_deck.clear()
+        self.table = [self._draw_card() for _ in range(self.STARTING_TABLE_SIZE)]
 
     def _draw_card(self):
         if not self.deck:
@@ -160,29 +145,26 @@ class CardBattle:
         self._validate_side(side)
         if self.turn or len(self.hands[side]) >= self.STARTING_PICK_LIMIT:
             raise ValueError("Стартовая раздача уже завершена")
-        source = self.table if side == "player" else self.enemy_table
-        card = next((item for item in source if item.key == card_key), None)
+        card = next((item for item in self.table if item.key == card_key), None)
         if card is None:
             raise ValueError("Карты нет на столе")
         if side == "enemy":
             self.starting_reserved_keys.add(card.key)
-        source.remove(card)
+        self.table.remove(card)
         self.hands[side].append(card)
 
     def finish_starting_deal(self):
         if self.turn or any(len(self.hands[side]) < self.STARTING_PICK_LIMIT for side in self.hands):
-            raise ValueError("Каждый игрок должен выбрать две стартовые карты")
-        self.rng.shuffle(self.table)
-        while len(self.hands["player"]) < 5 and self.table:
-            self.hands["player"].append(self.table.pop())
-        self.rng.shuffle(self.enemy_table)
-        while len(self.hands["enemy"]) < 5 and self.enemy_table:
-            self.hands["enemy"].append(self.enemy_table.pop())
-        self.deck.extend(self.table)
-        self.enemy_deck.extend(self.enemy_table)
+            raise ValueError("Каждый боец должен выбрать минимум три карты")
+        stronger_side = self._stronger_side("agility")
+        if not self.starting_bonus_awarded and stronger_side is not None and self.table:
+            bonus_card = self.table.pop(self.rng.randrange(len(self.table)))
+            self.hands[stronger_side].append(bonus_card)
+            self.starting_bonus_awarded = True
+            self.starting_bonus_side = stronger_side
+        self.deck.extend(card for card in self.table if card.key not in self.starting_reserved_keys)
         self.starting_reserved_keys.clear()
         self.table.clear()
-        self.enemy_table.clear()
         self.draft_mode = None
         self._start_turn(draw_cards=False)
 
@@ -193,18 +175,10 @@ class CardBattle:
         if self.turn:
             raise ValueError("Стартовая раздача уже завершена")
         self.hands["player"].clear()
-        while len(self.hands["enemy"]) < self.STARTING_PICK_LIMIT and self.enemy_table:
-            self.choose_starting_card("enemy", self.enemy_table[0].key)
-        self.rng.shuffle(self.enemy_table)
-        while len(self.hands["enemy"]) < 5 and self.enemy_table:
-            self.hands["enemy"].append(self.enemy_table.pop())
-        self.rng.shuffle(self.table)
-        while len(self.hands["player"]) < 5 and self.table:
-            self.hands["player"].append(self.table.pop())
+        while len(self.hands["enemy"]) < self.STARTING_PICK_LIMIT and self.table:
+            self.choose_starting_card("enemy", self.table[0].key)
         self.deck.extend(self.table)
-        self.enemy_deck.extend(self.enemy_table)
         self.table.clear()
-        self.enemy_table.clear()
         self.starting_reserved_keys.clear()
         self.draft_mode = None
         self._start_turn(draw_cards=False)
@@ -217,7 +191,7 @@ class CardBattle:
         )
 
     def draft_first_side(self):
-        return self.first_side
+        return self._stronger_side("intuition") or "player"
 
     def prepare_redraft(self):
         if not self.can_prepare_redraft():
@@ -323,8 +297,8 @@ class CardBattle:
                     bonus["remaining"] -= 1
                 self.mage_damage_bonuses[side] = [bonus for bonus in bonuses if bonus["remaining"] > 0]
         if draw_cards:
-            self.prepare_draw_choice("player")
-            self.prepare_draw_choice("enemy")
+            self.draw_next_turn_card("player")
+            self.draw_next_turn_card("enemy")
         for side, effects in self.mage_shield_effects.items():
             for effect in effects:
                 effect["remaining"] -= 1
@@ -340,6 +314,11 @@ class CardBattle:
             fighter.card_damage_ratio = 1
             fighter.card_damage_reduce = 0
             fighter.mage_damage_bonus_ratio = 1
+            for effect in self.timed_damage_ratio_effects[side]:
+                fighter.card_damage_ratio = min(
+                    fighter.card_damage_ratio,
+                    effect["ratio"],
+                )
             for stat in STAT_NAMES:
                 gained = points_from_stat(getattr(fighter, stat), self.rng)
                 self.action_points[side][stat] += gained
@@ -351,7 +330,20 @@ class CardBattle:
                 fighter.hp = min(fighter.max_hp, fighter.hp + roll_dice(effect["dice"], self.rng))
                 effect["remaining"] -= 1
                 if fighter.hp > before:
-                    self.history.append({"turn": self.turn, "events": [{"side": side, "card": "Регенерация", "damage": 0, "healed": fighter.hp - before}]})
+                    healed = fighter.hp - before
+                    self.stats[side]["healed"] += healed
+                    card_name = effect.get("card", "Регенерация")
+                    card_healing = self.stats[side]["card_healing"]
+                    card_healing[card_name] = card_healing.get(card_name, 0) + healed
+                    self.history.append({
+                        "turn": self.turn,
+                        "events": [{
+                            "side": side,
+                            "card": card_name,
+                            "damage": 0,
+                            "healed": healed,
+                        }],
+                    })
                 if effect["remaining"] <= 0:
                     self.regen_effects[side].remove(effect)
         self.selected = {"player": [], "enemy": []}
@@ -590,6 +582,7 @@ class CardBattle:
             return None
 
         self._spend_points(side, card)
+        healed = 0
         if card.effect_type == "instant_action_points":
             stat_name = card.effect_data["stat"]
             if stat_name not in STAT_NAMES:
@@ -597,6 +590,15 @@ class CardBattle:
             amount = max(0, int(card.effect_data["amount"]))
             self.action_points[side][stat_name] += amount
             effect_text = f"+{amount} {self._stat_label(stat_name)}"
+        elif card.effect_type == "instant_heal":
+            fighter = self.player if side == "player" else self.enemy
+            before = fighter.hp
+            fighter.hp = min(
+                fighter.max_hp,
+                fighter.hp + roll_dice(card.effect_data["dice"], self.rng),
+            )
+            healed = fighter.hp - before
+            effect_text = f"+{healed} HP"
         else:
             raise ValueError(f"Неизвестный тип мгновенной карты: {card.effect_type}")
 
@@ -604,7 +606,7 @@ class CardBattle:
             "side": side,
             "card": card.name,
             "damage": 0,
-            "healed": 0,
+            "healed": healed,
             "dodge_bonus": 0,
             "effect_text": effect_text,
             "critical": False,
@@ -619,8 +621,12 @@ class CardBattle:
         self.instant_events[side].append(event)
         stats = self.stats[side]
         stats["cards_played"] += 1
+        stats["healed"] += healed
         stats["cards"].append(card.name)
         stats["card_damage"].setdefault(card.name, 0)
+        stats["card_healing"][card.name] = (
+            stats["card_healing"].get(card.name, 0) + healed
+        )
         return event
 
     def _cards_used_this_exchange(self, side):
@@ -651,6 +657,11 @@ class CardBattle:
             "player": list(self.instant_played["player"]) + list(self.selected["player"]),
             "enemy": list(self.instant_played["enemy"]) + list(self.selected["enemy"]),
         }
+        pre_resolved = {"player": {}, "enemy": {}}
+        for side in ("player", "enemy"):
+            for card in self.selected[side]:
+                if card.effect_type == "damage_resistance":
+                    pre_resolved[side][card.key] = self._resolve_card(side, card)
         for side in ("player", "enemy"):
             if not self.selected[side] and not self.instant_events[side]:
                 self.last_exchange.append({
@@ -669,8 +680,10 @@ class CardBattle:
             # клика, чтобы все статы хода складывались в один размен.
             buff_cards = [card for card in played_cards if card.effect_type not in ATTACK_EFFECT_TYPES]
             attack_cards = [card for card in played_cards if card.effect_type in ATTACK_EFFECT_TYPES]
-            events_by_key = {}
+            events_by_key = dict(pre_resolved[side])
             for card in buff_cards + attack_cards:
+                if card.key in events_by_key:
+                    continue
                 events_by_key[card.key] = self._resolve_card(side, card)
             side_events = [events_by_key[card.key] for card in played_cards]
             for card, event in zip(played_cards, side_events):
@@ -689,6 +702,9 @@ class CardBattle:
                if card_name not in stats["card_damage"]:
                    stats["card_damage"][card_name] = 0
                stats["card_damage"][card_name] += event["damage"]
+               stats["card_healing"][card_name] = (
+                   stats["card_healing"].get(card_name, 0) + event["healed"]
+               )
                if card in self.hands[side]:
                    self.hands[side].remove(card)
                self.discard.append(card)
@@ -817,6 +833,7 @@ class CardBattle:
             attacker.hp = min(attacker.max_hp, attacker.hp + roll_dice(data["dice"], self.rng))
             event["healed"] = attacker.hp - before
             self.regen_effects[side].append({
+                "card": card.name,
                 "dice": data["dice"],
                 "remaining": max(0, card.effect_duration - 1),
             })
@@ -852,7 +869,16 @@ class CardBattle:
             return event
         if card.effect_type == "damage_resistance":
             attacker.card_damage_ratio = min(getattr(attacker, "card_damage_ratio", 1), data["ratio"])
-            event["effect_text"] = f"-{int((1 - data['ratio']) * 100)}% УРОН"
+            duration = max(1, card.effect_duration)
+            if card.effect_duration > 1:
+                self.timed_damage_ratio_effects[side].append({
+                    "ratio": data["ratio"],
+                    "expires_after_turn": self.turn + duration - 1,
+                })
+            duration_text = f" НА {duration} РАЗМЕНА" if duration > 1 else ""
+            event["effect_text"] = (
+                f"-{int((1 - data['ratio']) * 100)}% УРОН{duration_text}"
+            )
             return event
         if card.effect_type == "damage_reduce":
             attacker.card_damage_reduce = max(getattr(attacker, "card_damage_reduce", 0), data.get("reduce", 0))
@@ -1074,9 +1100,8 @@ class CardBattle:
             stat_name = data["stat"]
             amount = max(0, int(data["amount"]))
             duration = max(1, card.effect_duration)
-            defender_side = "enemy" if side == "player" else "player"
-            applied_amount = self._add_timed_stat_effect(
-                defender_side,
+            applied_amount = self._add_opponent_timed_stat_effect(
+                side,
                 stat_name,
                 -amount,
                 duration,
@@ -1133,6 +1158,22 @@ class CardBattle:
         event["damage"] = total_damage
         return event
 
+    def _add_opponent_timed_stat_effect(
+        self,
+        source_side,
+        stat_name,
+        amount,
+        duration,
+    ):
+        self._validate_side(source_side)
+        target_side = "enemy" if source_side == "player" else "player"
+        return self._add_timed_stat_effect(
+            target_side,
+            stat_name,
+            amount,
+            duration,
+        )
+
     def _add_timed_stat_effect(self, side, stat_name, amount, duration):
         self._validate_side(side)
         fighter = self.player if side == "player" else self.enemy
@@ -1169,6 +1210,9 @@ class CardBattle:
                     continue
                 fighter.temporary_dodge_chance_modifier -= effect["amount"]
                 self.timed_dodge_effects[side].remove(effect)
+            for effect in self.timed_damage_ratio_effects[side][:]:
+                if effect["expires_after_turn"] <= self.turn:
+                    self.timed_damage_ratio_effects[side].remove(effect)
 
     def _add_timed_critical_effect(self, side, amount, duration):
         self._validate_side(side)

@@ -10,6 +10,7 @@ from ui.chat.panel import ChatPanel
 from ui.character_card import CharacterCard
 from ui.character_profile import derived_values, normalize_character_profile, profile_from_fighter
 from ui.character_profile_overlay import CharacterProfileOverlay
+from ui.tavern_shop import TavernShop
 
 
 class CharacterStatTests(unittest.TestCase):
@@ -29,7 +30,7 @@ class CharacterStatTests(unittest.TestCase):
             "HP": 40,
         })
 
-    def test_endurance_increase_preserves_gained_health(self):
+    def test_endurance_cannot_increase_manually(self):
         state = adjust_stats(
             {"strength": 5, "agility": 5, "intuition": 5, "endurance": 5},
             6,
@@ -40,13 +41,11 @@ class CharacterStatTests(unittest.TestCase):
             1,
         )
 
-        self.assertEqual(state["max_hp"], 60)
-        self.assertEqual(state["hp"], 55)
-        self.assertEqual(state["stat_points"], 5)
+        self.assertIsNone(state)
 
     def test_stat_decrease_cannot_go_below_minimum(self):
         state = adjust_stats(
-            {"strength": 4, "agility": 5, "intuition": 5, "endurance": 5},
+            {"strength": 3, "agility": 5, "intuition": 5, "endurance": 5},
             6,
             25,
             25,
@@ -71,12 +70,41 @@ class CharacterStatTests(unittest.TestCase):
                 "stat_points": fighter.stat_points,
             })
 
-            self.assertTrue(fighter.add_stat("endurance"))
-            self.assertTrue(card.adjust_stat("endurance", 1))
+            self.assertTrue(fighter.add_stat("strength"))
+            self.assertTrue(card.adjust_stat("strength", 1))
             self.assertEqual(card.data["stats"], fighter.stats)
             self.assertEqual(card.data["stat_points"], fighter.stat_points)
             self.assertEqual(card.data["hp"], fighter.hp)
             self.assertEqual(card.data["max_hp"], fighter.max_hp)
+        finally:
+            pygame.quit()
+
+    def test_character_card_currency_icons_are_30_pixels(self):
+        pygame.init()
+        try:
+            card = CharacterCard()
+
+            self.assertEqual(card.CURRENCY_ICON_SIZE, 30)
+            self.assertEqual(
+                {name: icon.get_size() for name, icon in card.currency_icons.items()},
+                {
+                    "copper": (30, 30),
+                    "silver": (30, 30),
+                    "gold": (30, 30),
+                },
+            )
+        finally:
+            pygame.quit()
+
+    def test_tavern_ale_image_is_100_pixels(self):
+        pygame.init()
+        try:
+            font = pygame.font.Font(None, 18)
+            shop = TavernShop(font, font)
+
+            self.assertEqual(shop.DRINK_ICON_SIZE, 100)
+            self.assertEqual(shop.ale_image.get_size(), (100, 100))
+            self.assertEqual(shop._drink_rect(0).height, 110)
         finally:
             pygame.quit()
 
@@ -112,8 +140,8 @@ class CharacterStatTests(unittest.TestCase):
             frame = pygame.Rect(20, 120, 500, 955)
             minus, plus = CharacterCard._stat_control_rects(frame, frame.bottom - 92)
 
-            self.assertEqual(minus.topleft, (176, 988))
-            self.assertEqual(plus.topleft, (195, 988))
+            self.assertEqual(minus.topleft, (203, 988))
+            self.assertEqual(plus.topleft, (222, 988))
             self.assertEqual(minus.size, (13, 13))
             self.assertEqual(plus.size, (13, 13))
         finally:
@@ -173,8 +201,8 @@ class CharacterStatTests(unittest.TestCase):
             panel = ChatPanel(Session(), "tavern")
             message_width = panel.message_list.rect.width
             people_width = panel.people_rect.width
-            self.assertEqual(panel.panel_rect.left, 526)
-            self.assertEqual(panel.panel_rect.right, 1394)
+            self.assertEqual(panel.panel_rect.left, settings.CHAT_PANEL_X)
+            self.assertEqual(panel.panel_rect.right, settings.CHAT_PANEL_X + settings.CHAT_PANEL_WIDTH)
 
             panel.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, {"button": 1, "pos": panel.divider_rect.center}))
             panel.handle_event(pygame.event.Event(pygame.MOUSEMOTION, {"pos": (panel.divider_rect.centerx - 80, panel.divider_rect.centery)}))
