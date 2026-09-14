@@ -162,7 +162,12 @@ class DuelScene:
                 reward_copper = 20
             elif level >= 6:
                 reward_silver = 2
-            
+
+            self.currency_reward = {
+                "copper": reward_copper,
+                "silver": reward_silver,
+                "gold": 0,
+            }
             if reward_copper > 0 or reward_silver > 0:
                 self.online_session.add_currency(copper=reward_copper, silver=reward_silver)
         
@@ -234,6 +239,7 @@ class DuelScene:
         self.pending_transition_target = None
         self.battle_completion_saved = False
         self.card_reward = None
+        self.currency_reward = {"copper": 0, "silver": 0, "gold": 0}
 
         if initial:
             self.active_floating_texts = []

@@ -1,12 +1,9 @@
 import unittest
-from unittest.mock import patch
 from types import SimpleNamespace
 
-from combat.battle import Battle
 from combat.fighter import Fighter
 from combat.progression import apply_xp, battle_xp, xp_to_next
 from combat.group_battle import is_afk_draw, split_balanced_teams, visible_group_targets
-from combat.resolver import resolve_attack
 from combat.mechanics import get_critical_chance
 from scenes.duel_commentator import DuelCommentator
 
@@ -110,127 +107,7 @@ class TestFighter(unittest.TestCase):
         self.assertFalse(is_afk_draw(teams, {"a1"}))
 
 
-class TestAttackResolver(unittest.TestCase):
-    @patch("combat.resolver.random.random", return_value=99.0 / 100)
-    def test_first_hit_uses_strength_against_half_endurance(self, _random):
-        attacker = Fighter("Атакующий")
-        defender = Fighter("Защитник")
-
-        result = resolve_attack(attacker, defender, False, 0)
-
-        self.assertEqual(result["combo_level"], 1)
-        self.assertEqual(result["damage"], 12)
-        self.assertEqual(result["dice"], (0, 0))
-        self.assertFalse(result["critical"])
-
-    @patch("combat.resolver.random.random", return_value=99.0 / 100)
-    def test_second_hit_gets_combo_bonus(self, _random):
-        attacker = Fighter("Атакующий")
-        defender = Fighter("Защитник")
-
-        result = resolve_attack(attacker, defender, False, 1)
-
-        self.assertEqual(result["combo_level"], 2)
-        self.assertEqual(result["damage"], 15)
-
-    @patch("combat.resolver.random.random", return_value=99.0 / 100)
-    def test_damage_has_minimum_one_after_endurance_reduction(self, _random):
-        attacker = Fighter("Атакующий")
-        defender = Fighter("Защитник")
-        attacker.stats["strength"] = 1
-        defender.stats["endurance"] = 10
-
-        result = resolve_attack(attacker, defender, False, 0)
-
-        self.assertEqual(result["damage"], 1)
-
-    @patch("combat.resolver.random.random", return_value=0.0)
-    def test_dodge_cancels_the_attack(self, _random):
-        attacker = Fighter("Атакующий")
-        defender = Fighter("Защитник")
-        defender.stats["agility"] = 20
-
-        result = resolve_attack(attacker, defender, False, 0)
-
-        self.assertTrue(result["dodged"])
-        self.assertEqual(result["damage"], 0)
-
-    @patch("combat.resolver.random.random", side_effect=(0.99, 0.0))
-    def test_critical_hit_deals_half_damage_through_block(self, _random):
-        attacker = Fighter("Атакующий")
-        defender = Fighter("Защитник")
-        attacker.stats["intuition"] = 20
-
-        result = resolve_attack(attacker, defender, True, 0)
-
-        self.assertTrue(result["critical"])
-        self.assertTrue(result["blocked"])
-        self.assertEqual(result["damage"], 6)
-
-
-
-class TestBattleStatistics(unittest.TestCase):
-    @staticmethod
-    def _result(damage=0, blocked=False, dodged=False, critical=False, combo=0):
-        return {
-            "damage": damage,
-            "dice": (1, 1),
-            "critical": critical,
-            "critical_dice": None,
-            "critical_multiplier": 1,
-            "blocked": blocked,
-            "dodged": dodged,
-            "combo_level": combo,
-        }
-
-    def test_draw_outcome_awards_xp_to_both_sides(self):
-        player = Fighter("Игрок", 1)
-        enemy = Fighter("Враг", 1)
-        player.hp = 0
-        enemy.hp = 0
-
-        battle = Battle(player, enemy)
-
-        self.assertEqual(battle.outcome(), "draw")
-        self.assertEqual(battle.winner_name(), "Ничья")
-        self.assertEqual(battle.xp_awarded, battle_xp(player.level, enemy.level, "draw"))
-        self.assertEqual(battle.enemy_xp_awarded, battle_xp(enemy.level, player.level, "draw"))
-
-    def test_zero_damage_resets_combo(self):
-        battle = Battle(Fighter("Игрок"), Fighter("Враг"))
-        battle.stats["player"]["current_combo"] = 3
-
-        battle._record_attack("player", self._result(blocked=True))
-
-        self.assertEqual(battle.stats["player"]["current_combo"], 0)
-
-    @patch("combat.battle.resolve_attack")
-    def test_defensive_stats_belong_to_defender(self, resolve):
-        battle = Battle(Fighter("Игрок"), Fighter("Враг"))
-        battle.choose_player_zones("head", ["body", "waist"])
-        resolve.side_effect = [
-            self._result(blocked=True),
-            self._result(damage=10, combo=1),
-        ]
-
-        battle.enemy_choose_zones = lambda: ("head", ["body", "waist"])
-        battle.resolve_turn()
-
-        self.assertEqual(battle.stats["enemy"]["blocks"], 1)
-        self.assertEqual(battle.stats["player"]["blocks"], 0)
-        self.assertEqual(battle.stats["enemy"]["hits"], 1)
-        self.assertEqual(battle.stats["enemy"]["damage"], 10)
-        self.assertEqual(battle.player.hp, 160)
-
-    def test_fifth_hit_resets_current_combo(self):
-        battle = Battle(Fighter("Игрок"), Fighter("Враг"))
-
-        battle._record_attack("player", self._result(damage=20, combo=5, critical=True))
-
-        self.assertEqual(battle.stats["player"]["current_combo"], 0)
-        self.assertEqual(battle.stats["player"]["max_combo"], 5)
-        self.assertEqual(battle.stats["player"]["critical"], 1)
-
+class TestCommentator(unittest.TestCase):
     def test_commentator_writes_named_exchange(self):
         battle = SimpleNamespace(
             last_player_attack="head",

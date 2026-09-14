@@ -530,6 +530,17 @@ class CardAreaRenderer:
         data = card.effect_data
         damage_text = f"Наносит {data.get('dice', '')} урона."
         duration = max(1, int(card.effect_duration))
+        remaining_heal_turns = max(0, card.effect_duration - 1)
+        if remaining_heal_turns == 1:
+            heal_duration_text = (
+                f"Восстанавливает {data.get('dice', '')} HP при розыгрыше "
+                "и в начале следующего хода."
+            )
+        else:
+            heal_duration_text = (
+                f"Восстанавливает {data.get('dice', '')} HP при розыгрыше "
+                f"и в начале следующих {remaining_heal_turns} ходов."
+            )
         if duration % 10 == 1 and duration % 100 != 11:
             exchange_word = "размен"
         elif duration % 10 in (2, 3, 4) and duration % 100 not in (12, 13, 14):
@@ -577,15 +588,29 @@ class CardAreaRenderer:
             "anti_dodge": f"Снижает уклонение противника на {data.get('bonus', 0)}%.",
             "damage_dodge": f"Наносит {data.get('dice', '')} урона и увеличивает уклонение на {data.get('bonus', 0)}%.",
             "critical": f"Увеличивает шанс критического удара на {data.get('bonus', 0)}%.",
-            "damage_resistance": f"Снижает получаемый урон до {int(data.get('ratio', 1) * 100)}% от обычного.",
+            "damage_resistance": (
+                "Уменьшает получаемый урон на "
+                f"{int((1 - data.get('ratio', 1)) * 100)}% "
+                + (
+                    f"{duration_text}."
+                    if card.effect_duration > 1
+                    else "в текущем размене."
+                )
+            ),
             "extra_action_points": "Повторно начисляет очки хода. Один раз за бой.",
-            "heal_duration": f"Восстанавливает {data.get('dice', '')} HP и лечит ещё {data.get('duration', 0)} хода.",
+            "heal_duration": heal_duration_text,
             "instant_action_points": (
                 "Двойной ЛКМ во время подготовки: мгновенно добавляет "
                 f"{data.get('amount', 0)} очка "
                 f"{instant_stat_names.get(data.get('stat'), 'характеристики')}. "
                 "Стоимость списывается сразу, карта уходит в сброс и занимает "
                 "одно из двух мест карт текущего размена."
+            ),
+            "instant_heal": (
+                "Двойной ЛКМ во время подготовки: мгновенно восстанавливает "
+                f"{data.get('dice', '')} HP. Стоимость списывается сразу, "
+                "карта уходит в сброс и занимает одно из двух мест карт "
+                "текущего размена."
             ),
         }
         return descriptions.get(card.effect_type, "Особое действие карты.")

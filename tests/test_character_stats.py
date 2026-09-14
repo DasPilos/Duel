@@ -10,6 +10,7 @@ from ui.chat.panel import ChatPanel
 from ui.character_card import CharacterCard
 from ui.character_profile import derived_values, normalize_character_profile, profile_from_fighter
 from ui.character_profile_overlay import CharacterProfileOverlay
+from ui.tavern_shop import TavernShop
 
 
 class CharacterStatTests(unittest.TestCase):
@@ -77,6 +78,35 @@ class CharacterStatTests(unittest.TestCase):
             self.assertEqual(card.data["stat_points"], fighter.stat_points)
             self.assertEqual(card.data["hp"], fighter.hp)
             self.assertEqual(card.data["max_hp"], fighter.max_hp)
+        finally:
+            pygame.quit()
+
+    def test_character_card_currency_icons_are_30_pixels(self):
+        pygame.init()
+        try:
+            card = CharacterCard()
+
+            self.assertEqual(card.CURRENCY_ICON_SIZE, 30)
+            self.assertEqual(
+                {name: icon.get_size() for name, icon in card.currency_icons.items()},
+                {
+                    "copper": (30, 30),
+                    "silver": (30, 30),
+                    "gold": (30, 30),
+                },
+            )
+        finally:
+            pygame.quit()
+
+    def test_tavern_ale_image_is_100_pixels(self):
+        pygame.init()
+        try:
+            font = pygame.font.Font(None, 18)
+            shop = TavernShop(font, font)
+
+            self.assertEqual(shop.DRINK_ICON_SIZE, 100)
+            self.assertEqual(shop.ale_image.get_size(), (100, 100))
+            self.assertEqual(shop._drink_rect(0).height, 110)
         finally:
             pygame.quit()
 

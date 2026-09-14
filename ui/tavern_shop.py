@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pygame
 from core import settings
 from ui.hud import draw_button
@@ -5,10 +7,25 @@ from ui.hud import draw_button
 
 class TavernShop:
     """Магазин хозяина трактира справа с закладками"""
+
+    DRINK_ICON_SIZE = 100
+    DRINK_ROW_HEIGHT = 110
+    DRINK_ROW_GAP = 10
     
     def __init__(self, action_font, small_font):
         self.action_font = action_font
         self.small_font = small_font
+        ale_path = (
+            Path(__file__).resolve().parent.parent
+            / "assets"
+            / "ui"
+            / "tavern"
+            / "ale.png"
+        )
+        self.ale_image = pygame.transform.smoothscale(
+            pygame.image.load(str(ale_path)),
+            (self.DRINK_ICON_SIZE, self.DRINK_ICON_SIZE),
+        )
         self.is_open = False
         self.current_tab = "drinks"  # "drinks" или "sell"
         self.hovered_drink_index = -1  # Индекс напитка под мышкой
@@ -70,8 +87,7 @@ class TavernShop:
         
         if self.content_rect.collidepoint(position):
             for i in range(len(self.drinks)):
-                y = self.content_rect.y + 70 + i * 60
-                rect = pygame.Rect(self.content_rect.x + 10, y, self.content_rect.width - 20, 50)
+                rect = self._drink_rect(i)
                 if rect.collidepoint(position):
                     self.hovered_drink_index = i
                     break
@@ -86,22 +102,19 @@ class TavernShop:
         if self.error_time > 0:
             self.error_time -= 1
     
-    def _draw_drink_icon(self, screen, x, y, size=40):
-        """Рисует простую иконку напитка"""
-        # Кружка (основной корпус)
-        cup_rect = pygame.Rect(x, y, size - 10, size)
-        pygame.draw.rect(screen, (139, 69, 19), cup_rect, border_radius=4)  # Коричневый цвет кружки
-        pygame.draw.rect(screen, (200, 150, 80), cup_rect, 2, border_radius=4)  # Светлый контур
-        
-        # Жидкость внутри (жидкость)
-        liquid_height = int(size * 0.6)
-        liquid_rect = pygame.Rect(x + 2, y + size - liquid_height - 2, size - 14, liquid_height)
-        pygame.draw.rect(screen, (220, 180, 100), liquid_rect, border_radius=2)  # Светлый пиво
-        
-        # Ручка кружки
-        handle_x = x + size - 10
-        handle_y = y + 8
-        pygame.draw.arc(screen, (200, 150, 80), pygame.Rect(handle_x, handle_y, 8, 16), 0, 3.14, 2)
+    def _drink_rect(self, index):
+        y = self.content_rect.y + 70 + index * (
+            self.DRINK_ROW_HEIGHT + self.DRINK_ROW_GAP
+        )
+        return pygame.Rect(
+            self.content_rect.x + 10,
+            y,
+            self.content_rect.width - 20,
+            self.DRINK_ROW_HEIGHT,
+        )
+
+    def _draw_drink_icon(self, screen, x, y):
+        screen.blit(self.ale_image, (x, y))
     def handle_click(self, position):
         """Обработать клик (возвращает событие или None)"""
         if not self.is_open:
@@ -119,8 +132,7 @@ class TavernShop:
         if self.content_rect.collidepoint(position):
             if self.current_tab == "drinks":
                 for i, drink in enumerate(self.drinks):
-                    y = self.content_rect.y + 70 + i * 60
-                    rect = pygame.Rect(self.content_rect.x + 10, y, self.content_rect.width - 20, 50)
+                    rect = self._drink_rect(i)
                     if rect.collidepoint(position):
                         # Проверяем двойной клик (300 мс)
                         if i == self.last_click_index and (current_time - self.last_click_time) < 0.3:
@@ -159,8 +171,7 @@ class TavernShop:
             
             # Список напитков
             for i, drink in enumerate(self.drinks):
-                y = self.content_rect.y + 70 + i * 60
-                rect = pygame.Rect(self.content_rect.x + 10, y, self.content_rect.width - 20, 50)
+                rect = self._drink_rect(i)
                 
                 # Выбор цвета в зависимости от наведения
                 color = self.hover_color if i == self.hovered_drink_index else (80, 120, 150)
@@ -170,11 +181,19 @@ class TavernShop:
                 pygame.draw.rect(screen, self.tab_border_color, rect, 1)
                 
                 # Иконка напитка (слева)
-                self._draw_drink_icon(screen, rect.x + 8, rect.y + 5, size=40)
+                self._draw_drink_icon(screen, rect.x + 5, rect.y + 5)
                 
                 # Текст товара (справа от иконки)
                 drink_text = self.small_font.render(f"{drink['name']} - {drink['price']} медяков", True, (255, 255, 255))
-                screen.blit(drink_text, (rect.x + 55, rect.y + 15))
+                screen.blit(
+                    drink_text,
+                    drink_text.get_rect(
+                        midleft=(
+                            rect.x + self.DRINK_ICON_SIZE + 15,
+                            rect.centery,
+                        )
+                    ),
+                )
             
             # Tooltip при наведении
             if self.hovered_drink_index >= 0 and self.hovered_drink_index < len(self.drinks):
@@ -210,4 +229,3 @@ class TavernShop:
         if self.error_time > 0:
             error_text = self.small_font.render(self.error_message, True, (255, 100, 100))
             screen.blit(error_text, (self.content_rect.x + 20, self.content_rect.y + 140))
-
