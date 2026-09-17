@@ -19,6 +19,7 @@ class TavernScene:
         self.title_font = pygame.font.SysFont(settings.FONT_NAME, 36)
         self.battle_button = pygame.Rect(780, 850, 360, 55)
         self.inventory_button = pygame.Rect(settings.WIDTH - 70, 10, 50, 50)
+        self.map_button = pygame.Rect(settings.WIDTH - 190, 10, 110, 50)
         self.profile_overlay = CharacterProfileOverlay(
             self.small_font,
             collection_loader=getattr(self.session, "get_card_collection", None),
@@ -123,6 +124,12 @@ class TavernScene:
             if self.inventory_button.collidepoint(event.pos):
                 self.profile_overlay.open(self.session.character, None)
                 return
+
+            # Обработка клика по кнопке карты
+            if self.map_button.collidepoint(event.pos):
+                self.navigate = "world_map"
+                self.finished = True
+                return
             
             action, profile = self.profile_overlay.handle_click(event.pos)
             if action == "delete_deck":
@@ -212,6 +219,9 @@ class TavernScene:
         inv_text = self.font.render("📦", True, (255, 255, 255))
         inv_rect = inv_text.get_rect(center=self.inventory_button.center)
         screen.blit(inv_text, inv_rect)
+
+        # Кнопка перехода на карту мира
+        draw_button(screen, self.map_button, "🗺️ КАРТА", self.small_font, color=(50, 100, 150))
         
         # Если открыто через инвентарь (counterpart is None), показываем только левую панель
         show_player_only = self.profile_overlay.counterpart is None

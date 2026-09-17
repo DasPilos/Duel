@@ -12,6 +12,7 @@ from scenes.tavern_scene import TavernScene
 from scenes.backyard_scene import BackyardScene
 from scenes.awakening_altar_scene import AwakeningAltarScene
 from scenes.town.character_room import CharacterRoom
+from scenes.world_map_scene import WorldMapScene
 from scenes.title_scene import TitleScene
 from ui.scene_transition import SceneTransition
 
@@ -153,8 +154,15 @@ def main():
                             transition.start(screen, lambda: AwakeningAltarScene(session))
                         elif scene.navigate == "character_room":
                             transition.start(screen, lambda: CharacterRoom(session))
+                        elif scene.navigate == "world_map":
+                            transition.start(screen, lambda: WorldMapScene(session))
                         else:
                             transition.start(screen, lambda: BackyardScene(session))
+
+                elif args.online and isinstance(scene, WorldMapScene) and scene.finished:
+                    close_scene_ui(scene)
+                    session = scene.session
+                    transition.start(screen, lambda: TavernScene(session))
 
                 elif args.online and isinstance(scene, CharacterRoom) and scene.finished:
                     close_scene_ui(scene)
