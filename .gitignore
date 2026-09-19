@@ -3,6 +3,7 @@ __pycache__/
 .venv/
 server_data.sqlite3
 battle_archive/
+debug_*.png
 
 # Development workspace separation
 # Dev1 (City/Warrior system) - in main branch

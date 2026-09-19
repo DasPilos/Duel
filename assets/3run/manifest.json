@@ -1,0 +1,151 @@
+{
+  "version": 1,
+  "type": "sprite-direction-animation",
+  "fps": 8,
+  "frameOrder": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6
+  ],
+  "items": [
+    {
+      "recordId": "18b96825e55ca90d7885840a134a8af737e73871d2a1cdc941abd82586600568",
+      "batchId": "bf13ead7-9589-47e6-b01b-d8fb012cd369",
+      "motion": "run",
+      "direction": "N",
+      "frameCount": 6,
+      "frameOrder": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "status": "completed",
+      "included": true
+    },
+    {
+      "recordId": "6fa631949a6cadbd3ca7d10f00ab88ed5161c4dba465b0b396785db6dfdcdc01",
+      "batchId": "bf13ead7-9589-47e6-b01b-d8fb012cd369",
+      "motion": "run",
+      "direction": "NE",
+      "frameCount": 6,
+      "frameOrder": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "status": "completed",
+      "included": true
+    },
+    {
+      "recordId": "13563a45206ab730e288f0460ccc40e62b918e293bdbfee64c64c14b558ae691",
+      "batchId": "bf13ead7-9589-47e6-b01b-d8fb012cd369",
+      "motion": "run",
+      "direction": "E",
+      "frameCount": 6,
+      "frameOrder": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "status": "completed",
+      "included": true
+    },
+    {
+      "recordId": "46824229b2391d6993f2d464c5948ba646062ba160341f56b5ee2351e2319ad5",
+      "batchId": "bf13ead7-9589-47e6-b01b-d8fb012cd369",
+      "motion": "run",
+      "direction": "SE",
+      "frameCount": 6,
+      "frameOrder": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "status": "completed",
+      "included": true
+    },
+    {
+      "recordId": "c15bd509b2083e6e8f240a049cf070020d9f90a28ae12618ca3a08398044d8bb",
+      "batchId": "bf13ead7-9589-47e6-b01b-d8fb012cd369",
+      "motion": "run",
+      "direction": "S",
+      "frameCount": 6,
+      "frameOrder": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "status": "completed",
+      "included": true
+    },
+    {
+      "recordId": "38652a478670a3f9f4de224eb5fa93d1a490139da4b25bdeb4dd0482338d3fc9",
+      "batchId": "bf13ead7-9589-47e6-b01b-d8fb012cd369",
+      "motion": "run",
+      "direction": "SW",
+      "frameCount": 6,
+      "frameOrder": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "status": "completed",
+      "included": true
+    },
+    {
+      "recordId": "c366b1a4a857cc4fb674e1cf832d941bed06d0713025554b828b2afcd14a4836",
+      "batchId": "bf13ead7-9589-47e6-b01b-d8fb012cd369",
+      "motion": "run",
+      "direction": "W",
+      "frameCount": 6,
+      "frameOrder": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "status": "completed",
+      "included": true
+    },
+    {
+      "recordId": "1e9f945e581f81a7f64524b29e62c213e640e981de46a917e200d9add5411fb2",
+      "batchId": "bf13ead7-9589-47e6-b01b-d8fb012cd369",
+      "motion": "run",
+      "direction": "NW",
+      "frameCount": 6,
+      "frameOrder": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "status": "completed",
+      "included": true
+    }
+  ]
+}
