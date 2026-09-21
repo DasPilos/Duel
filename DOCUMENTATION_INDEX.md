@@ -23,6 +23,7 @@
 
 ### Ваша собственность:
 - `scenes/world_map_scene.py` (глобальная карта 512x256, мир 16384x8192 px) — см. **[docs/WORLD_MAP_SYSTEM.md](docs/WORLD_MAP_SYSTEM.md)**
+- `scenes/city_scene.py` + пакет `scenes/city/` (город Радбург 100x100, все здания) — см. **[docs/CITY_SYSTEM.md](docs/CITY_SYSTEM.md)**
 - `scenes/tavern_scene.py` (таверна, онбординг, переходы)
 - Городские локации, склад, амбар, добыча ресурсов и цепочки доставки.
 

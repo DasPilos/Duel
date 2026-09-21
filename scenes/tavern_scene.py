@@ -47,7 +47,7 @@ class TavernScene:
         self.altar_button = pygame.Rect(1395, 35, 220, 45)
         # Горячие зоны привязаны к фону таверны, а не к размерам чата.
         self.tavern_hotspots = (
-            ("Выход на улицу", 160, 400, 130, 300, None),
+            ("Выход на улицу", 160, 400, 130, 300, "city"),
             ("Главный зал", 944, 373, 126, 141, None),
             ("Комната отдыха", 1160, 443, 69, 85, "character_room"),
             ("Задний двор", 1560, 390, 55, 153, "backyard"),
@@ -125,12 +125,6 @@ class TavernScene:
                 self.profile_overlay.open(self.session.character, None)
                 return
 
-            # Обработка клика по кнопке карты
-            if self.map_button.collidepoint(event.pos):
-                self.navigate = "world_map"
-                self.finished = True
-                return
-            
             action, profile = self.profile_overlay.handle_click(event.pos)
             if action == "delete_deck":
                 try:
@@ -220,9 +214,6 @@ class TavernScene:
         inv_rect = inv_text.get_rect(center=self.inventory_button.center)
         screen.blit(inv_text, inv_rect)
 
-        # Кнопка перехода на карту мира
-        draw_button(screen, self.map_button, "🗺️ КАРТА", self.small_font, color=(50, 100, 150))
-        
         # Если открыто через инвентарь (counterpart is None), показываем только левую панель
         show_player_only = self.profile_overlay.counterpart is None
         self.profile_overlay.draw(screen, opponent=self.session.character, show_player_only=show_player_only)

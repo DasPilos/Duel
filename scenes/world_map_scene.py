@@ -77,11 +77,12 @@ class WorldMapScene:
     Координатная сетка начинается с левого верхнего угла: (0, 0) = [0, 0].
     """
 
-    def __init__(self, session):
+    def __init__(self, session, spawn_gate=None, spawn_pos=None):
         self.session = session
         self.finished = False
         self.cancelled = False
         self.navigate = None
+        self.city_gate = None
 
         # Размеры сетки: 512 по X, 256 по Y
         self.grid_w = 512
@@ -99,13 +100,33 @@ class WorldMapScene:
         self.min_world_y = 0
         self.max_world_y = self.world_h
 
-        # Базовый старт игрока (по центру карты или в свободной точке)
-        self.player_x = float(self.world_w // 2)
-        self.player_y = float(self.world_h // 2)
+        # Точки появления при выходе из ворот города Радбург:
+        gate_spawns = {
+            "east": (75 * self.tile_size + 16, 53 * self.tile_size + 16, "e"),
+            "main": (75 * self.tile_size + 16, 53 * self.tile_size + 16, "e"),
+            "north": (67 * self.tile_size + 16, 45 * self.tile_size + 16, "n"),
+            "south": (67 * self.tile_size + 16, 61 * self.tile_size + 16, "s"),
+            "west": (59 * self.tile_size + 16, 53 * self.tile_size + 16, "w"),
+        }
+
+        if spawn_pos is not None:
+            self.player_x = float(spawn_pos[0])
+            self.player_y = float(spawn_pos[1])
+            self.player_direction = "s"
+        elif spawn_gate in gate_spawns:
+            sp = gate_spawns[spawn_gate]
+            self.player_x = float(sp[0])
+            self.player_y = float(sp[1])
+            self.player_direction = sp[2]
+        else:
+            # Базовый старт игрока (по центру карты или в свободной точке)
+            self.player_x = float(self.world_w // 2)
+            self.player_y = float(self.world_h // 2)
+            self.player_direction = "s"
+
         self.player_target = None
         self.player_speed = 220.0
         self.player_state = "idle"
-        self.player_direction = "s"  # Текущее направление (8 сторон: n, ne, e, se, s, sw, w, nw)
         self.player_anim_timer = 0.0
         self.click_effect = None
 
@@ -159,6 +180,59 @@ class WorldMapScene:
         chest_px = chest_gx * self.tile_size
         chest_py = chest_gy * self.tile_size
 
+        # 3. Хижина лесника: размер 10х10 тайлов (320х320 px)
+        forester_gx, forester_gy = 33, 104
+        forester_px = forester_gx * self.tile_size
+        forester_py = forester_gy * self.tile_size
+        forester_w = 10 * self.tile_size
+        forester_h = 10 * self.tile_size
+
+        # 4. Город Радбург (Город Света): размер 15х15 тайлов (480х480 px)
+        # Левый нижний тайл: 60х60 -> левый верхний тайл: gx=60, gy = 60 - 15 + 1 = 46
+        castle_w_tiles = 15
+        castle_h_tiles = 15
+        castle_gx = 60
+        castle_gy = 60 - castle_h_tiles + 1  # 46 (диапазон X: 60..74, Y: 46..60)
+        castle_px = castle_gx * self.tile_size  # 1920 px
+        castle_py = castle_gy * self.tile_size  # 1472 px
+        castle_w_px = castle_w_tiles * self.tile_size  # 480 px
+        castle_h_px = castle_h_tiles * self.tile_size  # 480 px
+
+        # 4 входа в город Радбург:
+        # 1. Главные (восточные) ворота: 74/52, 74/53, 74/54
+        # 2. Южные ворота: 67/60
+        # 3. Северные ворота: 67/46 (внешний тайл подхода 67/45)
+        # 4. Западные ворота: 60/53
+        castle_entrances = [
+            {"id": "east", "name": "Главные ворота", "tiles": [(74, 52), (74, 53), (74, 54)], "approach_pos": (75 * self.tile_size + 16, 53 * self.tile_size + 16)},
+            {"id": "south", "name": "Южные ворота", "tiles": [(67, 60)], "approach_pos": (67 * self.tile_size + 16, 61 * self.tile_size + 16)},
+            {"id": "north", "name": "Северные ворота", "tiles": [(67, 46)], "approach_pos": (67 * self.tile_size + 16, 45 * self.tile_size + 16)},
+            {"id": "west", "name": "Западные ворота", "tiles": [(60, 53)], "approach_pos": (59 * self.tile_size + 16, 53 * self.tile_size + 16)},
+        ]
+
+        # Непроходимые стены периметра замка с 4 проемами для ворот:
+        # Северная стена: тайлы Y=46, X: 60..74 кроме X=67
+        # Южная стена: тайлы Y=60, X: 60..74 кроме X=67
+        # Западная стена: тайлы X=60, Y: 46..60 кроме Y=53
+        # Восточная стена: тайлы X=74, Y: 46..60 кроме Y=52, 53, 54
+        # Внутренний двор и донжон: тайлы внутри крепости
+        castle_solids = [
+            # Внутренний массив крепости / донжон (X: 62..72, Y: 48..58)
+            pygame.Rect((castle_gx + 2) * self.tile_size, (castle_gy + 2) * self.tile_size, 11 * self.tile_size, 11 * self.tile_size),
+            # Северная стена: левая часть (X: 60..66) и правая часть (X: 68..74)
+            pygame.Rect(castle_px, castle_py, 7 * self.tile_size, self.tile_size),
+            pygame.Rect(castle_px + 8 * self.tile_size, castle_py, 7 * self.tile_size, self.tile_size),
+            # Южная стена: левая часть (X: 60..66) и правая часть (X: 68..74)
+            pygame.Rect(castle_px, castle_py + 14 * self.tile_size, 7 * self.tile_size, self.tile_size),
+            pygame.Rect(castle_px + 8 * self.tile_size, castle_py + 14 * self.tile_size, 7 * self.tile_size, self.tile_size),
+            # Западная стена: верхняя часть (Y: 46..52) и нижняя часть (Y: 54..60)
+            pygame.Rect(castle_px, castle_py, self.tile_size, 7 * self.tile_size),
+            pygame.Rect(castle_px, castle_py + 8 * self.tile_size, self.tile_size, 7 * self.tile_size),
+            # Восточная стена: верхняя часть (Y: 46..51) и нижняя часть (Y: 55..60)
+            pygame.Rect(castle_px + 14 * self.tile_size, castle_py, self.tile_size, 6 * self.tile_size),
+            pygame.Rect(castle_px + 14 * self.tile_size, castle_py + 9 * self.tile_size, self.tile_size, 6 * self.tile_size),
+        ]
+
         self.objects = [
             {
                 "id": "camp_1",
@@ -200,12 +274,77 @@ class WorldMapScene:
                     pygame.Rect(chest_px + 2, chest_py + 4, 28, 24)
                 ],
             },
+            {
+                "id": "forester_hut",
+                "name": "Хижина лесника",
+                "type": "Строение 10х10",
+                "tile_x": forester_gx,
+                "tile_y": forester_gy,
+                "tile_w": 10,
+                "tile_h": 10,
+                "x": forester_px + forester_w // 2,
+                "y": forester_py + forester_h // 2,
+                "radius": 140,
+                "entrance_tile": (forester_gx + 5, forester_gy + 9),
+                "approach_pos": (forester_px + 5 * self.tile_size + 16, forester_py + 10 * self.tile_size + 16),
+                "desc": "Усадьба лесника в чаще леса. Бревна, дрова, инструменты и рабочая телега.",
+                "icon": "🌲",
+                "solid_rects": [
+                    pygame.Rect(forester_px + 24, forester_py + 64, 272, 160),
+                    pygame.Rect(forester_px + 16, forester_py + 224, 88, 64),
+                    pygame.Rect(forester_px + 216, forester_py + 224, 88, 64),
+                ],
+            },
+            {
+                "id": "town_radburg",
+                "name": "Город Радбург",
+                "type": "Город Света (15х15)",
+                "is_placeholder": True,
+                "tile_x": castle_gx,
+                "tile_y": castle_gy,
+                "tile_w": castle_w_tiles,
+                "tile_h": castle_h_tiles,
+                "origin_desc": "Левый нижний тайл: [60, 60]",
+                "x": castle_px + castle_w_px // 2,
+                "y": castle_py + castle_h_px // 2,
+                "radius": 230,
+                "entrances": castle_entrances,
+                "desc": "Радбург — священный Город Света. Размер 15х15 тайлов (X: 60..74, Y: 46..60). 4 ворот: Главные (восток), Южные, Северные, Западные.",
+                "icon": "🏛️",
+                "solid_rects": castle_solids,
+            },
         ]
+
+        # Анимация строения лесника 10х10 тайлов (3 кадра анимации дыма из assets/forester's1.png)
+        self.forester_frames = []
+        self._load_forester_sprite()
 
         # Загрузка 8-направленных спрайтов idle (из assets/2Idle/) и бега (из assets/3run/)
         self.player_directional_frames = {}
         self.player_run_directional_frames = {}
         self._load_player_directional_sprites()
+
+    def _load_forester_sprite(self):
+        """
+        Нарезает и масштабирует 3 кадра анимации дыма хижины лесника под размер 10х10 тайлов (320х320 px).
+        Спрайтшит содержит 3 фазы дыма из трубы.
+        """
+        forester_path = Path(__file__).resolve().parent.parent / "assets" / "forester's1.png"
+        if forester_path.is_file():
+            try:
+                sheet = pygame.image.load(str(forester_path)).convert_alpha()
+                target_size = (10 * self.tile_size, 10 * self.tile_size)
+                # Точные смещения для 3 кадров с идеальным выравниванием домика и трубы
+                frame_w, frame_h = 238, 330
+                shifts = [-240, 0, 239]
+                self.forester_frames = []
+                for shift in shifts:
+                    frame_surf = pygame.Surface((frame_w, frame_h), pygame.SRCALPHA)
+                    frame_surf.blit(sheet, (0, 0), pygame.Rect(237 + shift, 85, frame_w, frame_h))
+                    scaled_frame = pygame.transform.smoothscale(frame_surf, target_size)
+                    self.forester_frames.append(scaled_frame)
+            except Exception as e:
+                print(f"Ошибка загрузки спрайта лесника: {e}")
 
     def _load_player_directional_sprites(self):
         """
@@ -373,6 +512,7 @@ class WorldMapScene:
         Проверяет, находится ли персонаж не дальше 1 тайла от места взаимодействия объекта.
         Для сундука (1x1) - соседние 8 тайлов вокруг сундука (max(|dx|, |dy|) <= 1).
         Для лагеря (4x4) - не дальше 1 тайла от входа (средний нижний тайл).
+        Для замка с несколькими входами - не дальше 1 тайла от любого из 4 ворот.
         """
         if not entity:
             return False
@@ -381,6 +521,15 @@ class WorldMapScene:
 
         pgx = int(self.player_x // self.tile_size)
         pgy = int(self.player_y // self.tile_size)
+
+        # Объект с несколькими входами (например, замок с 4 воротами)
+        entrances = entity.get("entrances")
+        if entrances:
+            for ent_info in entrances:
+                for (egx, egy) in ent_info.get("tiles", []):
+                    if max(abs(pgx - egx), abs(pgy - egy)) <= 1:
+                        return True
+            return False
 
         entrance = entity.get("entrance_tile")
         if entrance:
@@ -423,6 +572,20 @@ class WorldMapScene:
 
     def _get_entity_approach_target(self, entity):
         """Возвращает точку входа/подхода к объекту, в которую персонаж может подойти вплотную."""
+        # Для замка с несколькими входами выбираем ближайший вход к текущей позиции персонажа
+        if entity.get("entrances"):
+            best_pos = None
+            min_dist = float("inf")
+            for ent_info in entity["entrances"]:
+                ap = ent_info.get("approach_pos")
+                if ap:
+                    d = math.hypot(ap[0] - self.player_x, ap[1] - self.player_y)
+                    if d < min_dist:
+                        min_dist = d
+                        best_pos = ap
+            if best_pos:
+                return best_pos
+
         if entity.get("approach_pos"):
             return entity["approach_pos"]
 
@@ -472,9 +635,32 @@ class WorldMapScene:
                 self._add_floating_message("Сундук уже пуст", self.active_entity["x"], self.active_entity["y"] - 24, (200, 200, 200))
                 self.action_notice = "Сундук уже пуст."
                 self.action_notice_timer = 2.0
+        elif eid == "forester_hut":
+            self._add_floating_message("Лесник: 'Береги лес, путник!'", self.active_entity["x"], self.active_entity["y"] - 140, (120, 255, 150))
+            self.action_notice = "Лесник приветствует вас."
+            self.action_notice_timer = 2.5
+        elif eid in ("town_radburg", "main_castle"):
+            gate = self._get_nearest_gate(self.active_entity)
+            self.navigate = "city"
+            self.city_gate = gate
+            self.finished = True
+            return
         else:
             self.action_notice = "Взаимодействие выполнено!"
             self.action_notice_timer = 2.0
+
+    def _get_nearest_gate(self, entity):
+        """Определяет ближайшие к персонажу ворота города."""
+        best_gate = "east"
+        min_dist = float("inf")
+        for ent_info in entity.get("entrances", []):
+            ap = ent_info.get("approach_pos")
+            if ap:
+                d = math.hypot(ap[0] - self.player_x, ap[1] - self.player_y)
+                if d < min_dist:
+                    min_dist = d
+                    best_gate = ent_info.get("id", "east")
+        return best_gate
 
     def _add_floating_message(self, text, wx, wy, color=(255, 220, 80)):
         """Добавляет всплывающее сообщение в игровом мире над объектом/персонажем."""
@@ -656,6 +842,18 @@ class WorldMapScene:
             if self.camera_follow_player:
                 self.camera_x += (self.player_x - self.camera_x) * min(1.0, 8.0 * dt)
                 self.camera_y += (self.player_y - self.camera_y) * min(1.0, 8.0 * dt)
+
+        # Проверка наступления персонажа на ворота города Радбург на глобальной карте
+        pgx = int(self.player_x // self.tile_size)
+        pgy = int(self.player_y // self.tile_size)
+        for obj in self.objects:
+            if obj.get("id") in ("town_radburg", "main_castle"):
+                for ent_info in obj.get("entrances", []):
+                    if (pgx, pgy) in ent_info.get("tiles", []):
+                        self.navigate = "city"
+                        self.city_gate = ent_info.get("id", "east")
+                        self.finished = True
+                        return
 
         # 2. Анимационный таймер персонажа
         self.player_anim_timer += dt
@@ -927,6 +1125,189 @@ class WorldMapScene:
                 badge_color = (255, 215, 60) if is_active else (100, 200, 255) if is_hovered else (200, 190, 160)
                 self._draw_badge(screen, sx, sy - 22, f"📦 {obj['name']}{badge_status}", badge_color)
 
+            elif obj.get("id") == "forester_hut":
+                # Хижина лесника 10х10 тайлов (320х320 px)
+                top_left_x = obj["tile_x"] * self.tile_size
+                top_left_y = obj["tile_y"] * self.tile_size
+                sx, sy = self.world_to_screen(top_left_x, top_left_y)
+                obj_w = obj["tile_w"] * self.tile_size
+                obj_h = obj["tile_h"] * self.tile_size
+                forester_rect = pygame.Rect(sx, sy, obj_w, obj_h)
+
+                if not (-obj_w <= sx <= settings.WIDTH + obj_w and -obj_h <= sy <= settings.HEIGHT + obj_h):
+                    continue
+
+                is_active = self.active_entity and self.active_entity.get("id") == obj["id"]
+                is_hovered = self.hovered_entity and self.hovered_entity.get("id") == obj["id"]
+
+                # Мягкая тень под строением
+                pygame.draw.ellipse(screen, (16, 24, 16, 170), (sx + 20, sy + 180, obj_w - 40, 120))
+
+                # Отрисовка анимированного спрайта хижины лесника (дым из трубы)
+                if self.forester_frames:
+                    # 3 кадра анимации дыма, смена кадра каждые 0.35 секунды (~3 FPS)
+                    frame_idx = int(self.player_anim_timer / 0.35) % len(self.forester_frames)
+                    current_frame = self.forester_frames[frame_idx]
+                    screen.blit(current_frame, (sx, sy))
+                else:
+                    pygame.draw.rect(screen, (42, 60, 42), forester_rect, border_radius=6)
+
+                # Подсветка активного / наведенного
+                if is_active:
+                    pygame.draw.rect(screen, (255, 215, 60), forester_rect, 2, border_radius=6)
+                elif is_hovered:
+                    pygame.draw.rect(screen, (80, 200, 255), forester_rect, 2, border_radius=6)
+
+                # Бейдж названия над строением
+                badge_color = (255, 215, 60) if is_active else (100, 200, 255) if is_hovered else (200, 190, 160)
+                self._draw_badge(screen, forester_rect.centerx, sy - 10, f"🌲 {obj['name']} [10x10]", badge_color)
+
+            elif obj.get("id") in ("town_radburg", "main_castle") or obj.get("is_placeholder"):
+                # Заглушка города (например, Город Радбург 15х15 тайлов, 480х480 px)
+                top_left_x = obj["tile_x"] * self.tile_size
+                top_left_y = obj["tile_y"] * self.tile_size
+                sx, sy = self.world_to_screen(top_left_x, top_left_y)
+                obj_w = obj["tile_w"] * self.tile_size
+                obj_h = obj["tile_h"] * self.tile_size
+                castle_rect = pygame.Rect(sx, sy, obj_w, obj_h)
+
+                if not (-obj_w <= sx <= settings.WIDTH + obj_w and -obj_h <= sy <= settings.HEIGHT + obj_h):
+                    continue
+
+                is_active = self.active_entity and self.active_entity.get("id") == obj["id"]
+                is_hovered = self.hovered_entity and self.hovered_entity.get("id") == obj["id"]
+
+                # Мягкая тень под замком
+                pygame.draw.ellipse(screen, (15, 20, 26, 190), (sx + 20, sy + obj_h - 70, obj_w - 40, 90))
+
+                # Поверхность заглушки здания
+                ph_surf = pygame.Surface((obj_w, obj_h), pygame.SRCALPHA)
+
+                # 1. Основное каменное основание крепости
+                pygame.draw.rect(ph_surf, (35, 42, 52, 225), (0, 0, obj_w, obj_h), border_radius=10)
+
+                # 2. Внутренняя сетка тайлов здания (для наглядной оценки размеров и разметки)
+                for gx in range(obj["tile_w"] + 1):
+                    x_line = gx * self.tile_size
+                    line_col = (75, 95, 120, 160) if gx % 5 == 0 else (50, 65, 80, 100)
+                    line_w = 2 if gx % 5 == 0 else 1
+                    pygame.draw.line(ph_surf, line_col, (x_line, 0), (x_line, obj_h), line_w)
+
+                for gy in range(obj["tile_h"] + 1):
+                    y_line = gy * self.tile_size
+                    line_col = (75, 95, 120, 160) if gy % 5 == 0 else (50, 65, 80, 100)
+                    line_w = 2 if gy % 5 == 0 else 1
+                    pygame.draw.line(ph_surf, line_col, (0, y_line), (obj_w, y_line), line_w)
+
+                # 3. Четыре угловые бастионные башни (каждая по 3х3 тайла = 96х96 px)
+                tower_size = 3 * self.tile_size
+                towers = [
+                    (0, 0),
+                    (obj_w - tower_size, 0),
+                    (0, obj_h - tower_size),
+                    (obj_w - tower_size, obj_h - tower_size),
+                ]
+                for tx, ty in towers:
+                    t_rect = pygame.Rect(tx, ty, tower_size, tower_size)
+                    pygame.draw.rect(ph_surf, (45, 55, 68, 245), t_rect, border_radius=4)
+                    pygame.draw.rect(ph_surf, (85, 105, 130), t_rect, 2, border_radius=4)
+                    for bx in range(tx + 4, tx + tower_size - 8, 16):
+                        pygame.draw.rect(ph_surf, (25, 32, 40), (bx, ty + 2, 8, 6))
+
+                # 4. Центральная цитадель / донжон (5х5 тайлов = 160х160 px)
+                keep_size = 5 * self.tile_size
+                keep_x = (obj_w - keep_size) // 2
+                keep_y = (obj_h - keep_size) // 2
+                keep_rect = pygame.Rect(keep_x, keep_y, keep_size, keep_size)
+                pygame.draw.rect(ph_surf, (40, 50, 62, 245), keep_rect, border_radius=6)
+                pygame.draw.rect(ph_surf, (110, 135, 165), keep_rect, 2, border_radius=6)
+
+                # 5. Отрисовка 4 ворот замка (Главные, Южные, Северные, Западные)
+                # 1) Главные ворота (Восточные): 74/52, 74/53, 74/54 -> локально: x = 14*32, y = (52-46)*32 = 6*32 = 192, h = 3*32 = 96
+                gw_e = self.tile_size
+                gh_e = 3 * self.tile_size
+                gx_e = 14 * self.tile_size
+                gy_e = 6 * self.tile_size
+                rect_e = pygame.Rect(gx_e, gy_e, gw_e, gh_e)
+                pygame.draw.rect(ph_surf, (22, 26, 34), rect_e, border_radius=3)
+                pygame.draw.rect(ph_surf, (255, 215, 80), rect_e, 2, border_radius=3)
+                lbl_e = self.grid_font.render("ГЛАВНЫЕ", True, (255, 220, 100))
+                lbl_e_sub = self.grid_font.render("ВОРОТА", True, (255, 220, 100))
+                ph_surf.blit(lbl_e, lbl_e.get_rect(center=(gx_e + gw_e // 2, gy_e + gh_e // 2 - 8)))
+                ph_surf.blit(lbl_e_sub, lbl_e_sub.get_rect(center=(gx_e + gw_e // 2, gy_e + gh_e // 2 + 8)))
+                # Факелы у главных ворот
+                pygame.draw.circle(ph_surf, (255, 160, 30), (gx_e - 4, gy_e + 10), 4)
+                pygame.draw.circle(ph_surf, (255, 160, 30), (gx_e - 4, gy_e + gh_e - 10), 4)
+
+                # 2) Южные ворота: 67/60 -> локально: x = (67-60)*32 = 224, y = 14*32 = 448
+                gw_s = self.tile_size
+                gh_s = self.tile_size
+                gx_s = 7 * self.tile_size
+                gy_s = 14 * self.tile_size
+                rect_s = pygame.Rect(gx_s, gy_s, gw_s, gh_s)
+                pygame.draw.rect(ph_surf, (22, 26, 34), rect_s, border_radius=3)
+                pygame.draw.rect(ph_surf, (140, 190, 240), rect_s, 2, border_radius=3)
+                lbl_s = self.grid_font.render("ЮЖНЫЕ", True, (160, 210, 255))
+                ph_surf.blit(lbl_s, lbl_s.get_rect(center=rect_s.center))
+
+                # 3) Северные ворота: 67/46 -> локально: x = (67-60)*32 = 224, y = 0
+                gx_n = 7 * self.tile_size
+                gy_n = 0
+                rect_n = pygame.Rect(gx_n, gy_n, gw_s, gh_s)
+                pygame.draw.rect(ph_surf, (22, 26, 34), rect_n, border_radius=3)
+                pygame.draw.rect(ph_surf, (140, 190, 240), rect_n, 2, border_radius=3)
+                lbl_n = self.grid_font.render("СЕВЕР", True, (160, 210, 255))
+                ph_surf.blit(lbl_n, lbl_n.get_rect(center=rect_n.center))
+
+                # 4) Западные ворота: 60/53 -> локально: x = 0, y = (53-46)*32 = 224
+                gx_w = 0
+                gy_w = 7 * self.tile_size
+                rect_w = pygame.Rect(gx_w, gy_w, gw_s, gh_s)
+                pygame.draw.rect(ph_surf, (22, 26, 34), rect_w, border_radius=3)
+                pygame.draw.rect(ph_surf, (140, 190, 240), rect_w, 2, border_radius=3)
+                lbl_w = self.grid_font.render("ЗАПАД", True, (160, 210, 255))
+                ph_surf.blit(lbl_w, lbl_w.get_rect(center=rect_w.center))
+
+                # 6. Информационные надписи внутри цитадели
+                title_surf = self.large_font.render("ГОРОД РАДБУРГ", True, (255, 220, 100))
+                ph_surf.blit(title_surf, title_surf.get_rect(center=(obj_w // 2, keep_y + 30)))
+
+                sub_surf = self.badge_font.render(f"[ГОРОД СВЕТА • {obj['tile_w']} x {obj['tile_h']} ТАЙЛОВ]", True, (130, 200, 255))
+                ph_surf.blit(sub_surf, sub_surf.get_rect(center=(obj_w // 2, keep_y + 54)))
+
+                origin_text = obj.get("origin_desc", f"Левый нижний: [{obj['tile_x']}, {obj['tile_y'] + obj['tile_h'] - 1}]")
+                origin_surf = self.small_font.render(origin_text, True, (240, 240, 240))
+                ph_surf.blit(origin_surf, origin_surf.get_rect(center=(obj_w // 2, keep_y + 76)))
+
+                coord_surf = self.grid_font.render(f"Сетка: X [{obj['tile_x']}..{obj['tile_x'] + obj['tile_w'] - 1}], Y [{obj['tile_y']}..{obj['tile_y'] + obj['tile_h'] - 1}]", True, (180, 195, 210))
+                ph_surf.blit(coord_surf, coord_surf.get_rect(center=(obj_w // 2, keep_y + 96)))
+
+                entrances_lbl = self.grid_font.render("ВХОДЫ: Восток(3т) | Юг(1т) | Север(1т) | Запад(1т)", True, (255, 230, 140))
+                ph_surf.blit(entrances_lbl, entrances_lbl.get_rect(center=(obj_w // 2, keep_y + 116)))
+
+                status_surf = self.grid_font.render("[ СТОЛИЦА СВЕТА • ЗАГЛУШКА ]", True, (200, 170, 120))
+                ph_surf.blit(status_surf, status_surf.get_rect(center=(obj_w // 2, keep_y + 134)))
+
+                # Рисуем поверхность заглушки на экран
+                screen.blit(ph_surf, (sx, sy))
+
+                # Внешняя рамка и подсветка
+                if is_active:
+                    pulse = 1.0 + 0.04 * math.sin(self.player_anim_timer * 6.0)
+                    glow_w = int(obj_w * pulse)
+                    glow_h = int(obj_h * pulse)
+                    glow_x = castle_rect.centerx - glow_w // 2
+                    glow_y = castle_rect.centery - glow_h // 2
+                    pygame.draw.rect(screen, (255, 215, 60), (glow_x, glow_y, glow_w, glow_h), 3, border_radius=12)
+                elif is_hovered:
+                    pygame.draw.rect(screen, (80, 200, 255), castle_rect.inflate(8, 8), 2, border_radius=12)
+                else:
+                    pygame.draw.rect(screen, (100, 125, 155), castle_rect, 2, border_radius=10)
+
+                # Бейдж названия над замком
+                badge_color = (255, 215, 60) if is_active else (100, 200, 255) if is_hovered else (220, 200, 160)
+                self._draw_badge(screen, castle_rect.centerx, sy - 12, f"🏛️ {obj['name']} [15x15]", badge_color)
+
     def _draw_floating_messages(self, screen):
         """Отрисовывает всплывающие сообщения в мире ('Слишком далеко' и т.д.)."""
         for msg in self.floating_messages:
@@ -983,8 +1364,8 @@ class WorldMapScene:
         type_surf = self.grid_font.render(f"[{type_str}]", True, (130, 200, 255))
         screen.blit(type_surf, (box_x + 12, box_y + 32))
 
-        gx = int(ent.get("x", 0) // self.tile_size)
-        gy = int(ent.get("y", 0) // self.tile_size)
+        gx = ent.get("tile_x", int(ent.get("x", 0) // self.tile_size))
+        gy = ent.get("tile_y", int(ent.get("y", 0) // self.tile_size))
         coord_surf = self.grid_font.render(f"Тайл: [{gx}, {gy}]", True, (170, 180, 190))
         screen.blit(coord_surf, (box_x + box_w - coord_surf.get_width() - 12, box_y + 32))
 
@@ -1085,6 +1466,10 @@ class WorldMapScene:
                 action_label = "ОСМОТРЕТЬ" if ent.get("opened") else "ОТКРЫТЬ СУНДУК"
             elif ent.get("id") == "camp_1":
                 action_label = "СДЕЛАТЬ ПРИВАЛ"
+            elif ent.get("id") == "forester_hut":
+                action_label = "ПОГОВОРИТЬ С ЛЕСНИКОМ"
+            elif ent.get("id") in ("town_radburg", "main_castle"):
+                action_label = "ВОЙТИ В ГОРОД"
             else:
                 action_label = "ВЗАИМОДЕЙСТВОВАТЬ"
 
