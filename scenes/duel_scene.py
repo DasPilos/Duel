@@ -3,7 +3,7 @@ import time
 
 from combat.fighter import Fighter
 from combat.card_battle import CardBattle
-from combat.card_database import load_cards
+from combat.card_database import cards_for_type, is_mage_card, load_cards
 from core import settings
 from ui.hud import FloatingText
 from ui.layout import DuelLayout
@@ -200,12 +200,18 @@ class DuelScene:
             self._apply_fighter_profile(self.enemy, self.opponent_profile)
         battle_cards = None
         selected_deck = getattr(self.online_session, "selected_deck", None)
-        if self.online_character and self.online_character.get("type") == "mage" and selected_deck:
+        character_type = self.online_character.get("type") if self.online_character else "warrior"
+        if character_type == "mage" and selected_deck:
             card_keys = selected_deck.get("cards", {})
             if isinstance(card_keys, dict):
                 card_keys = card_keys.keys()
             allowed = set(card_keys or ())
-            battle_cards = [card for card in load_cards() if card.key in allowed]
+            # is_mage_card guards against a corrupted/legacy deck smuggling in warrior cards.
+            battle_cards = [card for card in load_cards() if card.key in allowed and is_mage_card(card)]
+        if battle_cards is None:
+            # Warrior and mage card pools never mix (mage cards cost 0 in every stat
+            # field, so they'd be trivially "free" inside a warrior's stat-cost draft).
+            battle_cards = cards_for_type(character_type)
         self.battle = CardBattle(self.player, self.enemy, cards=battle_cards)
         self.attack_zone = None
         self.defense_zones = set()
@@ -602,7 +608,7 @@ class DuelScene:
             side = self.draw_queue.pop(0)
             if not self.battle.can_draw_next_turn_card(side):
                 continue
-            card = self.battle.peek_card()
+            card = self.battle.peek_card(side)
             if card is None:
                 continue
             self.draw_transfer = {"side": side, "started": now, "card": card}
@@ -617,7 +623,7 @@ class DuelScene:
             self._start_enemy_card_transfer()
 
     def _auto_starting_pick_one(self):
-        source = self.battle.enemy_table
+        source = self.battle.table
         if not source:
             return
         card = source[self.battle.rng.randrange(len(source))]
@@ -632,7 +638,7 @@ class DuelScene:
             self.battle.choose_redraft_card("enemy", card.key)
 
     def _start_enemy_card_transfer(self):
-        source_cards = self.battle.enemy_table if self.battle.draft_mode == "starting" else self.battle.table
+        source_cards = self.battle.table
         if not source_cards:
             self.draft_next_side = "player"
             self._after_starting_pick()

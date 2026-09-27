@@ -3,7 +3,7 @@ import pygame
 from core import settings
 from scenes.duel_scene import DuelScene
 from combat.card_battle import CardBattle
-from combat.card_database import load_cards
+from combat.card_database import cards_for_type
 
 
 class MageBattleScene(DuelScene):
@@ -15,7 +15,7 @@ class MageBattleScene(DuelScene):
         self.enemy_status = "СТАРТОВЫЙ ДРАФТ"
         super().__init__(online_session, opponent)
         self._configure_mage_layout()
-        mage_cards = [card for card in load_cards() if card.group_name.startswith("Магия:")]
+        mage_cards = cards_for_type("mage")
         if mage_cards:
             by_key = {card.key: card for card in mage_cards}
             selected = getattr(online_session, "selected_deck", None) if online_session else None

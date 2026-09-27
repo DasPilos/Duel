@@ -29,12 +29,42 @@ class TestCardBattle(unittest.TestCase):
         self.assertCountEqual(deck, cards)
         self.assertEqual(len(deck), len(cards))
 
+    def test_warrior_duel_battle_excludes_mage_cards(self):
+        pygame.init()
+        try:
+            scene = DuelScene()
+            self.assertTrue(scene.battle.cards)
+            self.assertFalse(any(card.group_name.startswith("Магия:") for card in scene.battle.cards))
+        finally:
+            pygame.quit()
+
+    def test_mage_duel_battle_excludes_warrior_cards(self):
+        pygame.init()
+        try:
+            scene = DuelScene()
+            mage_profile = {
+                "id": 1,
+                "name": "TestMage",
+                "level": 1,
+                "xp": 0,
+                "type": "mage",
+                "stats": {"wisdom": 3, "intellect": 3, "harmony": 3, "endurance": 4},
+                "stat_points": 0,
+                "hp": 90,
+                "mp": 55,
+            }
+            scene.online_session = SimpleNamespace(character=mage_profile, selected_deck=None)
+            scene.restart()
+            self.assertTrue(scene.battle.cards)
+            self.assertTrue(all(card.group_name.startswith("Магия:") for card in scene.battle.cards))
+        finally:
+            pygame.quit()
+
     def test_all_current_cards_have_complete_descriptions(self):
         cards = load_cards()
         descriptions = {
             card.key: CardAreaRenderer._card_description(card)
-            for card in cards
-        }
+            for card in cards        }
 
         self.assertNotIn("Особое действие карты.", descriptions.values())
         self.assertIn("Наносит 3d4 урона", descriptions["reveal_threat"])

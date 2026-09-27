@@ -538,6 +538,13 @@ def initialize_database(path=DATABASE_PATH):
                 for card in BASE_CARDS
             ],
         )
+        # Отключаем/удаляем устаревшие карты, которых больше нет в коде.
+        valid_keys = [card.key for card in BASE_CARDS]
+        placeholders = ",".join("?" for _ in valid_keys)
+        connection.execute(
+            f"DELETE FROM cards WHERE key NOT IN ({placeholders})",
+            valid_keys,
+        )
         connection.commit()
 
 
@@ -561,6 +568,22 @@ def load_cards(path=DATABASE_PATH):
         )
         for row in rows
     ]
+
+
+MAGE_GROUP_PREFIX = "Магия:"
+
+
+def is_mage_card(card):
+    return card.group_name.startswith(MAGE_GROUP_PREFIX)
+
+
+def cards_for_type(character_type, path=DATABASE_PATH):
+    """Cards eligible for a character's class, so warrior and mage pools never mix
+    (mage cards cost 0 in every stat field, so they'd be "free" in a warrior's draft)."""
+    cards = load_cards(path)
+    if character_type == "mage":
+        return [card for card in cards if is_mage_card(card)]
+    return [card for card in cards if not is_mage_card(card)]
 
 
 def card_to_dict(card):

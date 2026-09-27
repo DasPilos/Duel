@@ -175,7 +175,8 @@ class CharacterProfileOverlay:
                 return f"slot_{i+1}", None
         if self.is_open and self.deck_button.collidepoint(position):
             decks = self.deck_loader() if self.deck_loader else []
-            self.deck_panel.open(decks)
+            character_type = self.profile.get("type", "warrior") if isinstance(self.profile, dict) else "warrior"
+            self.deck_panel.open(decks, character_type=character_type)
             return "handled", None
         
         if not self.is_open:

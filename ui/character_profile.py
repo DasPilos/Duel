@@ -19,6 +19,7 @@ def normalize_character_profile(profile, *, title=None, kind="player"):
         profile_dict = {
             "id": getattr(data, "id", getattr(data, "character_id", None)),
             "character_id": getattr(data, "character_id", getattr(data, "id", None)),
+            "type": getattr(data, "type", "warrior"),
             "name": getattr(data, "name", "Персонаж"),
             "level": getattr(data, "level", 1),
             "xp": getattr(data, "xp", 0),
@@ -38,6 +39,7 @@ def normalize_character_profile(profile, *, title=None, kind="player"):
         profile_dict = {
             "id": data.get("id", data.get("character_id", None)),
             "character_id": data.get("character_id", data.get("id", None)),
+            "type": data.get("type", "warrior"),
             "name": data.get("name", "Персонаж"),
             "level": int(data.get("level", 1)),
             "xp": data.get("xp", 0),
@@ -57,6 +59,7 @@ def normalize_character_profile(profile, *, title=None, kind="player"):
         profile_dict = {
             "id": None,
             "character_id": None,
+            "type": "warrior",
             "name": "Персонаж",
             "level": 1,
             "xp": 0,
@@ -141,8 +144,14 @@ def derived_values(profile, opponent):
         return {"Урон": "--", "Уворот": "--", "Крит": "--", "HP": profile["max_hp"]}
 
     opponent = normalize_character_profile(opponent)
-    fighter = SimpleNamespace(**profile["stats"])
-    enemy = SimpleNamespace(**opponent["stats"])
+    fighter_stats = profile.get("stats", {})
+    enemy_stats = opponent.get("stats", {})
+    required = ("strength", "agility", "intuition", "endurance")
+    if not (all(k in fighter_stats for k in required) and all(k in enemy_stats for k in required)):
+        return {"Урон": "--", "Уворот": "--", "Крит": "--", "HP": profile["max_hp"]}
+
+    fighter = SimpleNamespace(**fighter_stats)
+    enemy = SimpleNamespace(**enemy_stats)
     return {
         "Урон": max(1, int(fighter.strength * 2 - enemy.endurance * 0.5)),
         "Уворот": f"{int(get_dodge_chance(enemy, fighter))}%",

@@ -22,6 +22,7 @@ def update_presence(token, user_id, character, location):
         "user_id": user_id,
         "character_id": character["id"],
         "name": character["name"],
+        "type": character.get("type", "warrior"),
         "level": character["level"],
         "xp": character["xp"],
         "hp": character["hp"],
@@ -51,7 +52,7 @@ def occupants(user_id, location):
         for item in PRESENCE.values()
         if item["location"] == location
     ]
-    if location in {"backyard", "tavern", "awakening_altar"}:
+    if location in {"backyard", "tavern"}:
         result.extend(
             {
                 **bot,

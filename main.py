@@ -10,7 +10,6 @@ from scenes.character_scene import CharacterScene
 from scenes.create_character_scene import CreateCharacterScene
 from scenes.tavern_scene import TavernScene
 from scenes.backyard_scene import BackyardScene
-from scenes.awakening_altar_scene import AwakeningAltarScene
 from scenes.town.character_room import CharacterRoom
 from scenes.world_map_scene import WorldMapScene
 from scenes.title_scene import TitleScene
@@ -122,10 +121,7 @@ def main():
                     else:
                         close_scene_ui(scene)
                         session = scene.session
-                        if scene.selected_character.get("type") == "mage":
-                            transition.start(screen, lambda: AwakeningAltarScene(session))
-                        else:
-                            transition.start(screen, lambda: TavernScene(session))
+                        transition.start(screen, lambda: TavernScene(session))
 
                 elif args.online and isinstance(scene, CreateCharacterScene) and scene.finished:
                     pygame.key.stop_text_input()
@@ -135,13 +131,10 @@ def main():
                         session = scene.session
                         transition.start(screen, lambda: CharacterScene(session))
                     else:
-                        # Character created; route to its profession branch.
+                        # Character created; both professions share the same tavern hub.
                         close_scene_ui(scene)
                         session = scene.session
-                        if scene.created_character["type"] == "mage":
-                            transition.start(screen, lambda: AwakeningAltarScene(session))
-                        else:
-                            transition.start(screen, lambda: TavernScene(session))
+                        transition.start(screen, lambda: TavernScene(session))
 
                 elif args.online and isinstance(scene, TavernScene) and scene.finished:
                     if scene.cancelled:
@@ -150,9 +143,7 @@ def main():
                     else:
                         close_scene_ui(scene)
                         session = scene.session
-                        if scene.navigate == "awakening_altar":
-                            transition.start(screen, lambda: AwakeningAltarScene(session))
-                        elif scene.navigate == "character_room":
+                        if scene.navigate == "character_room":
                             transition.start(screen, lambda: CharacterRoom(session))
                         elif scene.navigate == "world_map":
                             transition.start(screen, lambda: WorldMapScene(session))
@@ -177,19 +168,10 @@ def main():
                     else:
                         opponent = scene.opponent
                         close_scene_ui(scene)
-                        transition.start(screen, lambda: DuelScene(session, opponent))
-
-                elif args.online and isinstance(scene, AwakeningAltarScene) and scene.finished:
-                    session = scene.session
-                    if scene.navigate == "tavern" or scene.cancelled:
-                        # Маг возвращается в город (TavernScene для магов можно доработать позже)
-                        close_scene_ui(scene)
-                        transition.start(screen, lambda: TavernScene(session))
-                    else:
-                        # Маг вступает в дуэль
-                        opponent = scene.opponent
-                        close_scene_ui(scene)
-                        transition.start(screen, lambda: MageBattleScene(session, opponent))
+                        if session.character.get("type") == "mage":
+                            transition.start(screen, lambda: MageBattleScene(session, opponent))
+                        else:
+                            transition.start(screen, lambda: DuelScene(session, opponent))
 
                 elif args.online and isinstance(scene, DuelScene) and scene.return_to_tavern:
                     scene.return_to_tavern = False

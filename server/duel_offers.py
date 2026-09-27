@@ -119,15 +119,6 @@ def _set_offer_status(offer_id, status, character_id, now=None):
 def public_offers(location, exclude_character_id=None):
     cleanup()
     available_bots = {bot["id"]: bot for bot in get_bot_opponents()} if location == "backyard" else {}
-    if location == "awakening_altar":
-        for bot in get_bot_opponents():
-            if bot.get("zone") == location:
-                add_public_duel_offer(
-                    {"character_id": bot["id"], "name": bot["name"]},
-                    location,
-                    ttl=1800,
-                )
-        available_bots = {bot["id"]: bot for bot in get_bot_opponents() if bot.get("zone") == location}
     for offer in DUEL_OFFERS:
         bot = available_bots.get(offer["sender_id"])
         if (

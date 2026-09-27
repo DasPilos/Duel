@@ -114,6 +114,8 @@ def play_draft_music():
     """Запускает фоновую музыку драфта по кругу; тихо игнорирует отсутствие звука."""
     _reset_music_volume()
     try:
+        pygame.mixer.music.stop()
+        pygame.mixer.music.set_volume(1.0)
         pygame.mixer.music.load(str(DRAFT_MUSIC_PATH))
         pygame.mixer.music.play(loops=-1)
     except (pygame.error, OSError):
@@ -131,6 +133,8 @@ def play_battle_music():
     """Запускает случайный боевой трек по кругу, пока бой не завершится."""
     _reset_music_volume()
     try:
+        pygame.mixer.music.stop()
+        pygame.mixer.music.set_volume(1.0)
         pygame.mixer.music.load(str(random.choice(BATTLE_MUSIC_PATHS)))
         pygame.mixer.music.play(loops=-1)
     except (pygame.error, OSError):

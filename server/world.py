@@ -169,7 +169,7 @@ MAGE_BOT_OPPONENTS = (
         "max_mp": 40,
         "stats": {"wisdom": 3, "intellect": 2, "harmony": 2, "endurance": 2},
         "stat_points": 0,
-        "zone": "awakening_altar",
+        "zone": "backyard",
         "kind": "bot",
         "locked_level": True,
         "deck": ["mage_flash", "mage_fireball", "mage_burning_support", "mage_fervent_service"],
@@ -186,7 +186,7 @@ MAGE_BOT_OPPONENTS = (
         "max_mp": 40,
         "stats": {"wisdom": 2, "intellect": 3, "harmony": 2, "endurance": 2},
         "stat_points": 0,
-        "zone": "awakening_altar",
+        "zone": "backyard",
         "kind": "bot",
         "locked_level": True,
         "deck": ["mage_water_summon", "mage_rising_flow", "mage_flow_blessing", "mage_water_guard"],
@@ -203,7 +203,7 @@ MAGE_BOT_OPPONENTS = (
         "max_mp": 40,
         "stats": {"wisdom": 2, "intellect": 2, "harmony": 3, "endurance": 2},
         "stat_points": 0,
-        "zone": "awakening_altar",
+        "zone": "backyard",
         "kind": "bot",
         "locked_level": True,
         "deck": ["mage_lightning_strike", "mage_thundercloud", "mage_paralysis", "mage_tailwind"],
@@ -356,12 +356,17 @@ def run_bot_battle_tick(now=None):
         )
         if stale is not None and now - BOT_LAST_SIMULATED_BATTLE_AT >= BOT_BATTLE_INTERVAL_SECONDS:
             social.close_public_offer(stale["id"], "cancelled", now)
+            stale_type = BOT_STATE.get(stale["sender_id"], {}).get("type", "warrior")
             target_offer = next(
-                (offer for offer in pending if offer["id"] != stale["id"]),
+                (
+                    offer for offer in pending
+                    if offer["id"] != stale["id"]
+                    and BOT_STATE.get(offer["sender_id"], {}).get("type", "warrior") == stale_type
+                ),
                 None,
             )
             if target_offer is None:
-                target = _pick_attacker(now, exclude_ids={stale["sender_id"]})
+                target = _pick_attacker(now, exclude_ids={stale["sender_id"]}, character_type=stale_type)
                 if target is None:
                     return None
                 target_offer = _post_bot_application(target, now)
@@ -389,9 +394,11 @@ def _accept_player_offer_with_bot(player_offer, now):
         social.close_public_offer(player_offer["id"], "cancelled", now)
         return None
     player_profile = player_record["character"]
+    player_type = player_profile.get("type", "warrior")
     candidates = [
         bot for bot in BOT_STATE.values()
         if bot["zone"] == "backyard"
+        and bot.get("type", "warrior") == player_type
         and bot["level"] == player_profile["level"]
         and bot["hp"] == bot["max_hp"]
     ]
@@ -416,12 +423,13 @@ def _can_accept_application(opponent_id, now):
     )
 
 
-def _pick_attacker(now, exclude_ids=frozenset()):
+def _pick_attacker(now, exclude_ids=frozenset(), character_type=None):
     eligible = [
         opponent for opponent in BOT_STATE.values()
         if opponent["id"] not in exclude_ids
         and not opponent.get("locked_level")
         and opponent["zone"] == "backyard"
+        and (character_type is None or opponent.get("type", "warrior") == character_type)
         and opponent["hp"] == opponent["max_hp"]
         and now - BOT_LAST_ATTACK_AT[opponent["id"]] >= BOT_BATTLE_COOLDOWN_SECONDS
         and now - BOT_LAST_BATTLE_AT[opponent["id"]] >= BOT_BATTLE_COOLDOWN_SECONDS
@@ -473,12 +481,10 @@ def _resolve_bot_battle(attacker_id, defender_id, now):
     battle = CardBattle(attacker_fighter, defender_fighter)
     while len(battle.hands["player"]) < battle.STARTING_PICK_LIMIT:
         side = battle.draft_first_side()
-        source = battle.table if side == "player" else battle.enemy_table
-        card = source[random.randrange(len(source))]
+        card = battle.table[random.randrange(len(battle.table))]
         battle.choose_starting_card(side, card.key)
         side = "enemy" if side == "player" else "player"
-        source = battle.table if side == "player" else battle.enemy_table
-        card = source[random.randrange(len(source))]
+        card = battle.table[random.randrange(len(battle.table))]
         battle.choose_starting_card(side, card.key)
     battle.finish_starting_deal()
     # На каждый ход нужно давать бойцам новые карты и очки действий, иначе,

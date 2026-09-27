@@ -343,6 +343,70 @@ class CharacterStatTests(unittest.TestCase):
         finally:
             pygame.quit()
 
+    def test_derived_values_cross_class_does_not_crash(self):
+        warrior = {
+            "name": "Воин",
+            "type": "warrior",
+            "level": 1,
+            "max_hp": 40,
+            "stats": {"strength": 5, "agility": 5, "intuition": 5, "endurance": 5},
+        }
+        mage = {
+            "name": "Маг",
+            "type": "mage",
+            "level": 1,
+            "max_hp": 90,
+            "stats": {"wisdom": 3, "intellect": 3, "harmony": 3, "endurance": 4},
+        }
+
+        self.assertEqual(derived_values(warrior, mage), {
+            "Урон": "--",
+            "Уворот": "--",
+            "Крит": "--",
+            "HP": 40,
+        })
+        self.assertEqual(derived_values(mage, warrior), {
+            "Урон": "--",
+            "Уворот": "--",
+            "Крит": "--",
+            "HP": 90,
+        })
+
+    def test_character_comparison_draw_cross_class_does_not_crash(self):
+        from ui.character_comparison import CharacterComparison
+        pygame.init()
+        try:
+            comparison = CharacterComparison(pygame.font.Font(None, 18))
+            screen = pygame.Surface((1920, 1080))
+            mage_player = {
+                "id": 1,
+                "name": "МагИгрок",
+                "type": "mage",
+                "level": 1,
+                "hp": 90,
+                "max_hp": 90,
+                "mp": 55,
+                "max_mp": 55,
+                "stats": {"wisdom": 3, "intellect": 3, "harmony": 3, "endurance": 4},
+                "stat_points": 0,
+            }
+            warrior_opponent = {
+                "id": 2,
+                "name": "ВоинБот",
+                "type": "warrior",
+                "level": 1,
+                "hp": 40,
+                "max_hp": 40,
+                "mp": 50,
+                "max_mp": 50,
+                "stats": {"strength": 6, "agility": 3, "intuition": 3, "endurance": 4},
+                "stat_points": 0,
+            }
+            comparison.draw(screen, mage_player, warrior_opponent)
+            comparison.draw(screen, warrior_opponent, mage_player)
+        finally:
+            pygame.quit()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -16,13 +16,16 @@ class DeckSelectionPanel:
         self.collection = []
         self.selected_cards = []
         self.error = ""
+        self.character_type = "warrior"
         self.create_button = pygame.Rect(430, 215, 220, 40)
         self.name_rect = pygame.Rect(680, 215, 500, 40)
         self.panel = pygame.Rect(380, 180, 1160, 620)
         self.close_button = pygame.Rect(1370, 205, 140, 40)
 
-    def open(self, decks):
+    def open(self, decks, character_type=None):
         self.decks = list(decks or [])
+        if character_type is not None:
+            self.character_type = character_type
         self.selected_deck = next((deck for deck in self.decks if deck.get("is_active")), None)
         self.is_open = True
         self.rects = [pygame.Rect(430, 280 + index * 72, 1060, 58) for index in range(len(self.decks))]
@@ -57,10 +60,10 @@ class DeckSelectionPanel:
             self.error = ""
             self.collection = list(self.card_loader() if self.card_loader else [])
             if not self.collection:
-                from combat.card_database import MAGE_CARDS
+                from combat.card_database import cards_for_type
                 self.collection = [
                     {"key": card.key, "name": card.name, "quantity": 1}
-                    for card in MAGE_CARDS
+                    for card in cards_for_type(self.character_type)
                 ]
             self.selected_cards = []
             self.rects = [pygame.Rect(430 + (index % 4) * 260, 290 + (index // 4) * 62, 240, 50) for index in range(len(self.collection))]
@@ -88,11 +91,11 @@ class DeckSelectionPanel:
         if len(self.selected_cards) != 22:
             return "Нужно выбрать ровно 22 уникальные карты"
         selected = {str(key) for key in self.selected_cards}
-        from combat.card_database import MAGE_CARDS
-        by_key = {card.key: card for card in MAGE_CARDS}
+        from combat.card_database import cards_for_type
+        by_key = {card.key: card for card in cards_for_type(self.character_type)}
         missing = [key for key in selected if key not in by_key]
         if missing:
-            return "В колоде есть неизвестная карта"
+            return "В колоде есть неизвестная или чужого класса карта"
         for key in selected:
             card = by_key[key]
             if card.effect_data.get("ultimate"):

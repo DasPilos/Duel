@@ -303,7 +303,28 @@ class CardAreaRenderer:
         if not getattr(self.scene, "mage_battle", False):
             self._draw_points(screen, battle.action_points["player"], self.layout.player_points, "")
             self._draw_points(screen, battle.action_points["enemy"], self.layout.enemy_points, "")
+        self._draw_card_hover_tooltip(screen)
         self._draw_card_details(screen)
+
+    def _draw_card_hover_tooltip(self, screen):
+        """Рисует всплывающее окно подсказки при наведении курсора мыши на карту."""
+        if self.details_card is not None:
+            return
+        battle = self.scene.battle
+        mouse_pos = pygame.mouse.get_pos()
+        candidates = []
+        if self.scene.phase in ("intro_table", "intro_deck", "draft_reveal", "draft", "draft_transfer", "enemy_transfer", "draft_bonus_transfer", "draft_cleanup"):
+            if self.scene.phase not in ("intro_table", "intro_deck", "draft_reveal"):
+                candidates.append((self.layout.card_table, list(battle.table)))
+        visible_hand = [card for card in battle.hands["player"] if card not in battle.selected["player"]]
+        candidates.append((self.layout.player_hand, visible_hand))
+        candidates.append((self.layout.player_selected, list(battle.selected["player"])))
+        for area, cards in candidates:
+            for index, card in enumerate(cards):
+                rect = self.card_rect(area, len(cards), index)
+                if rect.collidepoint(mouse_pos):
+                    self._draw_card_tooltip(screen, card, rect)
+                    return
 
     def handle_details_click(self, position):
         if self.details_card is not None:
@@ -439,13 +460,15 @@ class CardAreaRenderer:
         rect = self.layout.deck_rect
         for offset in (8, 5, 2):
             self._draw_card_back(screen, rect.move(-offset, -offset))
-        self._draw_pile_count(screen, rect, "КОЛОДА", len(battle.deck))
+        count = len(battle.deck) + (len(battle.enemy_deck) if battle.dual_table else 0)
+        self._draw_pile_count(screen, rect, "КОЛОДА", count)
 
     def _draw_discard(self, screen, battle):
         rect = self.layout.discard_rect
         for offset in (8, 5, 2):
             self._draw_card_back(screen, rect.move(-offset, -offset))
-        self._draw_pile_count(screen, rect, "СБРОС", len(battle.discard))
+        count = len(battle.discard) + (len(battle.enemy_discard) if battle.dual_table else 0)
+        self._draw_pile_count(screen, rect, "СБРОС", count)
 
     def _draw_pile_count(self, screen, rect, title, count):
         title_surface = self.card_cost_font.render(title, True, (245, 225, 160))

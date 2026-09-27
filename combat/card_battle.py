@@ -56,8 +56,12 @@ class CardBattle:
         self.enemy = enemy
         self.rng = random if rng is None else rng
         self.cards = list(cards if cards is not None else load_cards())
+        # Отдельный пул карт для противника (маги) означает, что колоды и столы
+        # обеих сторон никогда не пересекаются, в отличие от воинов с общим столом.
+        self.dual_table = enemy_cards is not None
         self.enemy_cards = list(enemy_cards if enemy_cards is not None else self.cards)
         self.discard = []
+        self.enemy_discard = []
         self.draw_choices = {"player": [], "enemy": []}
         self.burned_this_turn = {"player": False, "enemy": False}
         self.mage_mode = False
@@ -72,6 +76,7 @@ class CardBattle:
         self.mage_reactive_blessings = {"player": [], "enemy": []}
         self.mage_pending_effects = {"player": [], "enemy": []}
         self.table = []
+        self.enemy_table = []
         self.hands = {"player": [], "enemy": []}
         self.selected = {"player": [], "enemy": []}
         self.burned_this_turn = {"player": False, "enemy": False}
@@ -110,6 +115,7 @@ class CardBattle:
             "enemy": {"cards_played": 0, "damage": 0, "healed": 0, "critical": 0, "dodges": 0, "hits": 0, "cards": [], "card_damage": {}, "card_healing": {}},
         }
         self._xp_awarded_applied = False
+        self.enemy_deck = []
         if not self.cards:
             self.deck = []
             return
@@ -121,50 +127,99 @@ class CardBattle:
         if len(self.deck) < self.STARTING_TABLE_SIZE:
             self.deck = []
             return
+        if self.dual_table:
+            if not self.enemy_cards or len(self.enemy_cards) < self.STARTING_TABLE_SIZE:
+                self.deck = []
+                return
+            self.enemy_deck = build_battle_deck(self.enemy_cards, enemy.level, player.level, self.rng)
+            if len(self.enemy_deck) < self.STARTING_TABLE_SIZE:
+                self.deck = []
+                return
         self.reward_card_keys = tuple(dict.fromkeys(card.key for card in self.deck))
         self._prepare_starting_table()
 
     def _prepare_starting_table(self):
         if not self.deck:
             self.table = []
-            return
-        self.rng.shuffle(self.deck)
-        self.table = [self._draw_card() for _ in range(self.STARTING_TABLE_SIZE)]
+        else:
+            self.rng.shuffle(self.deck)
+            self.table = [self._draw_card("player") for _ in range(self.STARTING_TABLE_SIZE)]
+        if self.dual_table:
+            if not self.enemy_deck:
+                self.enemy_table = []
+            else:
+                self.rng.shuffle(self.enemy_deck)
+                self.enemy_table = [self._draw_card("enemy") for _ in range(self.STARTING_TABLE_SIZE)]
+        else:
+            self.enemy_table = self.table
 
-    def _draw_card(self):
-        if not self.deck:
+    def _deck_for(self, side):
+        if side == "enemy" and self.dual_table:
+            return self.enemy_deck
+        return self.deck
+
+    def _discard_for(self, side):
+        if side == "enemy" and self.dual_table:
+            return self.enemy_discard
+        return self.discard
+
+    def _table_for(self, side):
+        if side == "enemy" and self.dual_table:
+            return self.enemy_table
+        return self.table
+
+    def _draw_card(self, side="player"):
+        deck = self._deck_for(side)
+        if not deck:
             return None
-        return self.deck.pop()
+        return deck.pop()
 
-    def _shuffle_discard_into_deck(self):
-        self.deck.extend(self.discard)
-        self.discard.clear()
-        self.rng.shuffle(self.deck)
+    def _shuffle_discard_into_deck(self, side="player"):
+        deck = self._deck_for(side)
+        discard = self._discard_for(side)
+        deck.extend(discard)
+        discard.clear()
+        self.rng.shuffle(deck)
 
     def choose_starting_card(self, side, card_key):
         self._validate_side(side)
         if self.turn or len(self.hands[side]) >= self.STARTING_PICK_LIMIT:
             raise ValueError("Стартовая раздача уже завершена")
-        card = next((item for item in self.table if item.key == card_key), None)
+        table = self._table_for(side)
+        card = next((item for item in table if item.key == card_key), None)
         if card is None:
             raise ValueError("Карты нет на столе")
-        if side == "enemy":
+        if side == "enemy" and not self.dual_table:
             self.starting_reserved_keys.add(card.key)
-        self.table.remove(card)
+        table.remove(card)
         self.hands[side].append(card)
 
     def finish_starting_deal(self):
         if self.turn or any(len(self.hands[side]) < self.STARTING_PICK_LIMIT for side in self.hands):
             raise ValueError("Каждый боец должен выбрать минимум три карты")
-        stronger_side = self._stronger_side("agility")
-        if not self.starting_bonus_awarded and stronger_side is not None and self.table:
-            bonus_card = self.table.pop(self.rng.randrange(len(self.table)))
-            self.hands[stronger_side].append(bonus_card)
-            self.starting_bonus_awarded = True
-            self.starting_bonus_side = stronger_side
-        self.deck.extend(card for card in self.table if card.key not in self.starting_reserved_keys)
+        if self.dual_table:
+            stronger_side = self._stronger_side("agility")
+            if not self.starting_bonus_awarded and stronger_side is not None:
+                table = self._table_for(stronger_side)
+                if table:
+                    bonus_card = table.pop(self.rng.randrange(len(table)))
+                    self.hands[stronger_side].append(bonus_card)
+                    self.starting_bonus_awarded = True
+                    self.starting_bonus_side = stronger_side
+            self.deck.extend(self.table)
+            self.table.clear()
+            self.enemy_deck.extend(self.enemy_table)
+            self.enemy_table.clear()
+        else:
+            stronger_side = self._stronger_side("agility")
+            if not self.starting_bonus_awarded and stronger_side is not None and self.table:
+                bonus_card = self.table.pop(self.rng.randrange(len(self.table)))
+                self.hands[stronger_side].append(bonus_card)
+                self.starting_bonus_awarded = True
+                self.starting_bonus_side = stronger_side
+            self.deck.extend(card for card in self.table if card.key not in self.starting_reserved_keys)
+            self.table.clear()
         self.starting_reserved_keys.clear()
-        self.table.clear()
         self.draft_mode = None
         self._start_turn(draw_cards=False)
 
@@ -175,15 +230,27 @@ class CardBattle:
         if self.turn:
             raise ValueError("Стартовая раздача уже завершена")
         self.hands["player"].clear()
-        while len(self.hands["enemy"]) < self.STARTING_PICK_LIMIT and self.table:
-            self.choose_starting_card("enemy", self.table[0].key)
+        enemy_table = self._table_for("enemy")
+        while len(self.hands["enemy"]) < self.STARTING_PICK_LIMIT and enemy_table:
+            self.choose_starting_card("enemy", enemy_table[0].key)
         self.deck.extend(self.table)
         self.table.clear()
+        if self.dual_table:
+            self.enemy_deck.extend(self.enemy_table)
+            self.enemy_table.clear()
         self.starting_reserved_keys.clear()
         self.draft_mode = None
         self._start_turn(draw_cards=False)
 
     def can_prepare_redraft(self):
+        if self.dual_table:
+            return (
+                self.draft_mode is None
+                and not self.deck
+                and not self.enemy_deck
+                and len(self.discard) >= self.REDRAFT_TABLE_SIZE
+                and len(self.enemy_discard) >= self.REDRAFT_TABLE_SIZE
+            )
         return (
             self.draft_mode is None
             and not self.deck
@@ -196,11 +263,19 @@ class CardBattle:
     def prepare_redraft(self):
         if not self.can_prepare_redraft():
             return False
-        self._shuffle_discard_into_deck()
+        self._shuffle_discard_into_deck("player")
         self.table = [
-            self._draw_card()
+            self._draw_card("player")
             for _ in range(self.REDRAFT_TABLE_SIZE)
         ]
+        if self.dual_table:
+            self._shuffle_discard_into_deck("enemy")
+            self.enemy_table = [
+                self._draw_card("enemy")
+                for _ in range(self.REDRAFT_TABLE_SIZE)
+            ]
+        else:
+            self.enemy_table = self.table
         self.redraft_picks = {"player": 0, "enemy": 0}
         self.redraft_pick_limits = {
             side: min(
@@ -219,10 +294,11 @@ class CardBattle:
             raise ValueError("Повторный драфт сейчас не проводится")
         if self.redraft_picks[side] >= self.redraft_pick_limits[side]:
             raise ValueError("Рука заполнена или игрок уже выбрал доступные карты")
-        card = next((item for item in self.table if item.key == card_key), None)
+        table = self._table_for(side)
+        card = next((item for item in table if item.key == card_key), None)
         if card is None:
             raise ValueError("Карты нет на столе")
-        self.table.remove(card)
+        table.remove(card)
         self.hands[side].append(card)
         self.redraft_picks[side] += 1
 
@@ -237,6 +313,22 @@ class CardBattle:
         return False
 
     def take_draft_bonus_card(self):
+        if self.dual_table:
+            if not self.current_draft_complete() or self.draft_bonus_awarded:
+                return None
+            stronger_side = self._stronger_side("agility")
+            if (
+                stronger_side is None
+                or len(self.hands[stronger_side]) >= self.MAX_HAND_SIZE
+            ):
+                self.draft_bonus_awarded = True
+                return None
+            table = self._table_for(stronger_side)
+            if not table:
+                return None
+            bonus_card = table.pop(self.rng.randrange(len(table)))
+            self.draft_bonus_awarded = True
+            return stronger_side, bonus_card
         if (
             not self.current_draft_complete()
             or self.draft_bonus_awarded
@@ -259,6 +351,9 @@ class CardBattle:
             raise ValueError("Повторный драфт ещё не завершён")
         self.deck.extend(self.table)
         self.table.clear()
+        if self.dual_table:
+            self.enemy_deck.extend(self.enemy_table)
+            self.enemy_table.clear()
         self.draft_mode = None
         return self._start_turn(draw_cards=False)
 
@@ -268,7 +363,8 @@ class CardBattle:
         side = self.draft_first_side()
         while not self.current_draft_complete():
             if self.redraft_picks[side] < self.redraft_pick_limits[side]:
-                card = self.table[self.rng.randrange(len(self.table))]
+                table = self._table_for(side)
+                card = table[self.rng.randrange(len(table))]
                 self.choose_redraft_card(side, card.key)
             side = "enemy" if side == "player" else "player"
         bonus = self.take_draft_bonus_card()
@@ -616,7 +712,7 @@ class CardBattle:
             "instant": True,
         }
         self.hands[side].remove(card)
-        self.discard.append(card)
+        self._discard_for(side).append(card)
         self.instant_played[side].append(card)
         self.instant_events[side].append(event)
         stats = self.stats[side]
@@ -707,7 +803,7 @@ class CardBattle:
                )
                if card in self.hands[side]:
                    self.hands[side].remove(card)
-               self.discard.append(card)
+               self._discard_for(side).append(card)
             # Обнуляем бонусы ПОСЛЕ всех карт стороны
             attacker = self.player if side == "player" else self.enemy
             attacker.card_critical_bonus = 0
@@ -736,7 +832,7 @@ class CardBattle:
             for card in self.last_played_cards[side]:
                 if card in self.hands[side]:
                     self.hands[side].remove(card)
-                    self.discard.append(card)
+                    self._discard_for(side).append(card)
         self._expire_timed_stat_effects()
         self.history.append({"turn": self.turn, "events": list(self.last_exchange)})
         if self.is_over():
@@ -760,7 +856,7 @@ class CardBattle:
         self._validate_side(side)
         if len(self.hands[side]) >= self.MAX_HAND_SIZE:
             return None
-        card = self._draw_card()
+        card = self._draw_card(side)
         if card is not None:
             self.hands[side].append(card)
         return card
@@ -770,9 +866,9 @@ class CardBattle:
         if len(self.hands[side]) >= self.MAX_HAND_SIZE:
             self.draw_choices[side] = []
             return []
-        if not self.deck and self.discard:
-            self._shuffle_discard_into_deck()
-        self.draw_choices[side] = [card for _ in range(2) if (card := self._draw_card()) is not None]
+        if not self._deck_for(side) and self._discard_for(side):
+            self._shuffle_discard_into_deck(side)
+        self.draw_choices[side] = [card for _ in range(2) if (card := self._draw_card(side)) is not None]
         return list(self.draw_choices[side])
 
     def choose_draw_card(self, side, card_key):
@@ -785,7 +881,7 @@ class CardBattle:
             return False
         self.hands[side].append(card)
         other_card = next(item for item in self.draw_choices[side] if item is not card)
-        self.deck.insert(0, other_card)
+        self._deck_for(side).insert(0, other_card)
         self.draw_choices[side] = []
         return True
 
@@ -807,14 +903,15 @@ class CardBattle:
 
     def can_draw_next_turn_card(self, side):
         self._validate_side(side)
-        return bool(self.deck) and len(self.hands[side]) < self.MAX_HAND_SIZE
+        return bool(self._deck_for(side)) and len(self.hands[side]) < self.MAX_HAND_SIZE
 
     def redraft_pick_limit(self, side):
         self._validate_side(side)
         return self.redraft_pick_limits[side]
 
-    def peek_card(self):
-        return self.deck[-1] if self.deck else None
+    def peek_card(self, side="player"):
+        deck = self._deck_for(side)
+        return deck[-1] if deck else None
 
     def _resolve_card(self, side, card):
         attacker = self.player if side == "player" else self.enemy

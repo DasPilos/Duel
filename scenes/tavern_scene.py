@@ -44,7 +44,6 @@ class TavernScene:
         )
         
         self.navigate = None
-        self.altar_button = pygame.Rect(1395, 35, 220, 45)
         # Горячие зоны привязаны к фону таверны, а не к размерам чата.
         self.tavern_hotspots = (
             ("Выход на улицу", 160, 400, 130, 300, None),
@@ -97,10 +96,6 @@ class TavernScene:
         if self.chat.handle_event(event):
             return
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-            if self.session.character.get("type") == "mage" and self.altar_button.collidepoint(event.pos):
-                self.navigate = "awakening_altar"
-                self.finished = True
-                return
             # Обработка магазина (приоритет выше всех)
             if self.tavern_shop.is_open:
                 if self.shop_drinks_button.collidepoint(event.pos):
@@ -210,9 +205,6 @@ class TavernScene:
 
         self.chat.draw(screen)
 
-        if self.session.character.get("type") == "mage":
-            draw_button(screen, self.altar_button, "АЛТАРЬ", self.small_font, color=(120, 80, 170))
-        
         # Кнопка инвентаря в верхнем правом углу
         pygame.draw.rect(screen, (100, 100, 120), self.inventory_button)
         pygame.draw.rect(screen, (150, 150, 170), self.inventory_button, 2)

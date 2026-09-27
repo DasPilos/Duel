@@ -12,7 +12,7 @@ from server.items_database import ItemsDatabase
 from server import social
 from server.world import run_bot_battle_tick
 from combat.anticheat import score_match
-from combat.card_database import card_to_dict, choose_battle_reward, load_cards
+from combat.card_database import card_to_dict, choose_battle_reward, is_mage_card, load_cards
 
 
 class GameRequestHandler(BaseHTTPRequestHandler):
@@ -128,7 +128,7 @@ class GameRequestHandler(BaseHTTPRequestHandler):
         _, character = self._chat_actor(token, character_id)
         social.update_presence(token, user_id, character, location)
         offers = social.offers_for(character_id)
-        if location in ("backyard", "awakening_altar"):
+        if location == "backyard":
             offers += social.public_offers(location, character_id)
         self._send(200, {
             "occupants": social.occupants(user_id, location),
@@ -144,7 +144,7 @@ class GameRequestHandler(BaseHTTPRequestHandler):
         character = self.database.get_character(user_id)
         location = self._query().get("location", ["tavern"])[0]
         offers = social.offers_for(character["id"])
-        if location in ("backyard", "awakening_altar"):
+        if location == "backyard":
             offers += social.public_offers(location, character["id"])
         self._send(200, {
             "offers": offers,
@@ -331,6 +331,10 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                 available = {card.key: card for card in load_cards()}
                 if any(key not in available for key in cards):
                     raise ValueError("Колода содержит неизвестную карту")
+                character_type = character.get("type", "warrior")
+                for key in cards:
+                    if is_mage_card(available[key]) != (character_type == "mage"):
+                        raise ValueError("Колода содержит карты чужого класса")
                 for key, card in available.items():
                     if key in cards and card.effect_data.get("ultimate"):
                         element = card.effect_data.get("element")
