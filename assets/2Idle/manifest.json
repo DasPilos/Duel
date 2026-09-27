@@ -1,0 +1,133 @@
+{
+  "version": 1,
+  "type": "sprite-direction-animation",
+  "fps": 8,
+  "frameOrder": [
+    1,
+    2,
+    3,
+    4
+  ],
+  "items": [
+    {
+      "recordId": "a485207419969fd7c3a471dce4cba880ef4264d43824a2e174a4d4ea21e3cf1f",
+      "batchId": "1837b355-dab8-4821-b54b-fde9048d21a2",
+      "motion": "idle",
+      "direction": "N",
+      "frameCount": 4,
+      "frameOrder": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "status": "completed",
+      "included": true
+    },
+    {
+      "recordId": "e096cbc973259bfc8e0dec8a8462a8337ac3a2e4c7fd9759bd9bf981e2c7bfd4",
+      "batchId": "1837b355-dab8-4821-b54b-fde9048d21a2",
+      "motion": "idle",
+      "direction": "NE",
+      "frameCount": 4,
+      "frameOrder": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "status": "completed",
+      "included": true
+    },
+    {
+      "recordId": "325f835133580625672fb9eafa5793a980754dafaf5d3f70dadffacb834dd27b",
+      "batchId": "1837b355-dab8-4821-b54b-fde9048d21a2",
+      "motion": "idle",
+      "direction": "E",
+      "frameCount": 4,
+      "frameOrder": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "status": "completed",
+      "included": true
+    },
+    {
+      "recordId": "e5c4ec27f704bf736a638a261b6e68258b09c5bad683a5f1dd0442feeb95510f",
+      "batchId": "1837b355-dab8-4821-b54b-fde9048d21a2",
+      "motion": "idle",
+      "direction": "SE",
+      "frameCount": 4,
+      "frameOrder": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "status": "completed",
+      "included": true
+    },
+    {
+      "recordId": "022c5ee3a143f6f8cf2cfd5c95f56e03fff22891750a81d6a5b307528436c586",
+      "batchId": "1837b355-dab8-4821-b54b-fde9048d21a2",
+      "motion": "idle",
+      "direction": "S",
+      "frameCount": 4,
+      "frameOrder": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "status": "completed",
+      "included": true
+    },
+    {
+      "recordId": "2175aedce2c2fdf01c3a69f4612efe7def38b1662b517b780895d4986609fb56",
+      "batchId": "1837b355-dab8-4821-b54b-fde9048d21a2",
+      "motion": "idle",
+      "direction": "SW",
+      "frameCount": 4,
+      "frameOrder": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "status": "completed",
+      "included": true
+    },
+    {
+      "recordId": "9f318bbd6ce873e002d34a179943963d57e33dc26de35cdf31637c5ebaf544ee",
+      "batchId": "1837b355-dab8-4821-b54b-fde9048d21a2",
+      "motion": "idle",
+      "direction": "W",
+      "frameCount": 4,
+      "frameOrder": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "status": "completed",
+      "included": true
+    },
+    {
+      "recordId": "85babc2466e6c720c5420efb7087f74c9f970cb1c769152290b00744d4597004",
+      "batchId": "1837b355-dab8-4821-b54b-fde9048d21a2",
+      "motion": "idle",
+      "direction": "NW",
+      "frameCount": 4,
+      "frameOrder": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "status": "completed",
+      "included": true
+    }
+  ]
+}

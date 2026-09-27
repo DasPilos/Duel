@@ -46,7 +46,7 @@ class TavernScene:
         self.navigate = None
         # Горячие зоны привязаны к фону таверны, а не к размерам чата.
         self.tavern_hotspots = (
-            ("Выход на улицу", 160, 400, 130, 300, None),
+            ("Выход на улицу", 160, 400, 130, 300, "city"),
             ("Главный зал", 944, 373, 126, 141, None),
             ("Комната отдыха", 1160, 443, 69, 85, "character_room"),
             ("Задний двор", 1560, 390, 55, 153, "backyard"),
@@ -91,7 +91,14 @@ class TavernScene:
                 except ServerError as error:
                     self.tavern_shop.show_error(str(error))
             return
-        if self.profile_overlay.collection_panel.is_open or self.profile_overlay.deck_panel.is_open:
+        if self.profile_overlay.collection_panel.is_open:
+            # Коллекция модальная: клики (включая «ЗАКРЫТЬ») идут только в неё
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                self.profile_overlay.handle_click(event.pos)
+            elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                self.profile_overlay.collection_panel.close()
+            return
+        if self.profile_overlay.deck_panel.is_open:
             return
         if self.chat.handle_event(event):
             return
@@ -120,12 +127,6 @@ class TavernScene:
                 self.profile_overlay.open(self.session.character, None)
                 return
 
-            # Обработка клика по кнопке карты
-            if self.map_button.collidepoint(event.pos):
-                self.navigate = "world_map"
-                self.finished = True
-                return
-            
             action, profile = self.profile_overlay.handle_click(event.pos)
             if action == "delete_deck":
                 try:
@@ -139,9 +140,6 @@ class TavernScene:
                 return
             if action == "stat_change":
                 self._save_profile_card(profile)
-                return
-            if action == "backpack":
-                # TODO: обработать клик по рюкзаку
                 return
             if action in ("handled", "close"):
                 return
@@ -212,9 +210,6 @@ class TavernScene:
         inv_rect = inv_text.get_rect(center=self.inventory_button.center)
         screen.blit(inv_text, inv_rect)
 
-        # Кнопка перехода на карту мира
-        draw_button(screen, self.map_button, "🗺️ КАРТА", self.small_font, color=(50, 100, 150))
-        
         # Если открыто через инвентарь (counterpart is None), показываем только левую панель
         show_player_only = self.profile_overlay.counterpart is None
         self.profile_overlay.draw(screen, opponent=self.session.character, show_player_only=show_player_only)

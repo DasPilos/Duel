@@ -4,7 +4,6 @@ from core import settings
 from ui.character_card import CharacterCard
 from ui.mage_card import MageCard
 from ui.hud import draw_button
-from ui.backpack_panel import BackpackPanel
 from ui.collection_panel import CollectionPanel
 from ui.deck_selection_panel import DeckSelectionPanel
 
@@ -45,8 +44,8 @@ class CharacterProfileOverlay:
             )
             self.slot_buttons.append(button)
         
-        # Панель рюкзака
-        self.backpack_panel = BackpackPanel()
+        # Окно инвентаря глобальное (main.py): кнопка лишь просит его открыть
+        self.inventory_requested = False
         self.collection_panel = CollectionPanel()
         self.deck_panel = DeckSelectionPanel(action_font, action_font, collection_loader)
         self.selected_deck = None
@@ -69,7 +68,6 @@ class CharacterProfileOverlay:
         self.counterpart = dict(counterpart) if isinstance(counterpart, dict) else counterpart
 
     def close(self):
-        self.backpack_panel.close()
         self.collection_panel.close()
         self.deck_panel.close()
         self.profile = None
@@ -146,24 +144,14 @@ class CharacterProfileOverlay:
                 return "deck_selected", selected
             return "handled", None
 
-        # Обработка клика по рюкзаку (приоритет выше всего)
-        if self.backpack_panel.is_open:
-            cell_index = self.backpack_panel.handle_click(position)
-            if cell_index is not None:
-                return f"backpack_cell_{cell_index}", None
-            # Если рюкзак был закрыт кликом вне панели, возвращаем handled
-            if not self.backpack_panel.is_open:
-                return "handled", None
-            return "handled", None
-        
         if self.is_open and self.close_button.collidepoint(position):
             self.close()
             return "close", None
         
         # Обработка клика по кнопке рюкзака
         if self.is_open and self.backpack_button.collidepoint(position):
-            self.backpack_panel.toggle()
-            return "backpack", None
+            self.inventory_requested = True
+            return "handled", None
         
         # Обработка клика по слотам (1-9)
         for i, button in enumerate(self.slot_buttons):
@@ -236,8 +224,6 @@ class CharacterProfileOverlay:
                 label = "КОЛЛЕКЦИЯ" if i == 0 else str(i + 1)
                 draw_button(screen, button, label, self.action_font, color=(210, 100, 90))
             draw_button(screen, self.deck_button, "КОЛОДА", self.action_font, color=(90, 120, 190))
-            # Рюкзак (над всем остальным)
-            self.backpack_panel.draw(screen)
             self.collection_panel.draw(screen)
             self.deck_panel.draw(screen)
             return
@@ -269,7 +255,5 @@ class CharacterProfileOverlay:
             label = "КОЛЛЕКЦИЯ" if i == 0 else str(i + 1)
             draw_button(screen, button, label, self.action_font, color=(210, 100, 90))
         draw_button(screen, self.deck_button, "КОЛОДА", self.action_font, color=(90, 120, 190))
-        # Рюкзак (над всем остальным)
-        self.backpack_panel.draw(screen)
         self.collection_panel.draw(screen)
         self.deck_panel.draw(screen)

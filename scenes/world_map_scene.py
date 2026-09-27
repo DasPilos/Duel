@@ -1,123 +1,929 @@
+from pathlib import Path
+import math
+import random
 import pygame
 from core import settings
 from ui.hud import draw_button
 
 
+# Фразы при попытке взаимодействия с расстояния больше 1 тайла
+TOO_FAR_PHRASES = [
+    "Слишком далеко",
+    "Мне не достать",
+    "Нужно подойти ближе",
+    "Это далеко",
+    "Не дотянуться",
+    "Сначала надо подойти",
+    "Слишком большое расстояние",
+    "Я не достаю отсюда",
+    "Надо подойти вплотную",
+    "Туда отсюда не достать",
+]
+
+
+# Направления в виде битовых флагов для автотайлинга дороги (классика HoMM3)
+DIR_N = 1
+DIR_E = 2
+DIR_S = 4
+DIR_W = 8
+
+NEIGHBOR_OFFSETS = {
+    DIR_N: (0, -1),
+    DIR_E: (1, 0),
+    DIR_S: (0, 1),
+    DIR_W: (-1, 0),
+}
+
+
+def walk_grid_line(gx1, gy1, gx2, gy2):
+    """
+    Ортогональный обход клеток сетки (supercover line): каждый шаг двигается
+    только по ОДНОЙ оси за раз, поэтому соседние клетки всегда соединены гранью
+    (N/E/S/W), а не углом. Это обязательное условие для автотайлинга по битовой маске.
+    """
+    cells = [(gx1, gy1)]
+    x, y = gx1, gy1
+    dx = gx2 - gx1
+    dy = gy2 - gy1
+    sx = 1 if dx > 0 else -1 if dx < 0 else 0
+    sy = 1 if dy > 0 else -1 if dy < 0 else 0
+    adx, ady = abs(dx), abs(dy)
+    err = adx - ady
+
+    while x != gx2 or y != gy2:
+        e2 = err * 2
+        moved = False
+        if e2 > -ady and x != gx2:
+            err -= ady
+            x += sx
+            cells.append((x, y))
+            moved = True
+        if e2 < adx and y != gy2:
+            err += adx
+            y += sy
+            cells.append((x, y))
+            moved = True
+        if not moved:
+            break
+
+    return cells
+
+
 class WorldMapScene:
     """
-    Сцена глобальной карты 6000x4000.
-    Центр мира: (0, 0).
-    Размер сетки: 50x50 пикселей.
-    Координаты тайлов отображаются от центра: 1/1, -1/1, 1/-1, -1/-1 и т.д.
+    Сцена глобальной карты.
+    Тайл: 32x32 пикселя.
+    Размер карты: 512 тайлов по ширине (16384 px) x 256 тайлов по высоте (8192 px).
+    Координатная сетка начинается с левого верхнего угла: (0, 0) = [0, 0].
     """
 
-    def __init__(self, session):
+    def __init__(self, session, spawn_gate=None, spawn_pos=None):
         self.session = session
         self.finished = False
         self.cancelled = False
         self.navigate = None
+        self.city_gate = None
 
-        # Размеры мира
-        self.world_w = 6000
-        self.world_h = 4000
-        self.tile_size = 50
+        # Размеры сетки: 512 по X, 256 по Y
+        self.grid_w = 512
+        self.grid_h = 256
+        self.tile_size = 32
+        self.world_w = self.grid_w * self.tile_size  # 16384 px
+        self.world_h = self.grid_h * self.tile_size  # 8192 px
 
-        # Границы мира в координатах от центра
-        self.min_world_x = -self.world_w // 2  # -3000
-        self.max_world_x = self.world_w // 2   # 3000
-        self.min_world_y = -self.world_h // 2  # -2000
-        self.max_world_y = self.world_h // 2   # 2000
+        # Фиксированный масштаб (1.0x)
+        self.zoom = 1.0
 
-        # Камера (координаты центра экрана в мировых координатах)
-        # Стартуем с видом на Замок Света (-2000, -1000)
-        self.camera_x = -1975.0
-        self.camera_y = -975.0
+        # Границы мира: левый верхний угол (0, 0), правый нижний (world_w, world_h)
+        self.min_world_x = 0
+        self.max_world_x = self.world_w
+        self.min_world_y = 0
+        self.max_world_y = self.world_h
 
-        # Перетаскивание карты мышью
+        # Точки появления при выходе из ворот города Радбург:
+        gate_spawns = {
+            "east": (75 * self.tile_size + 16, 53 * self.tile_size + 16, "e"),
+            "main": (75 * self.tile_size + 16, 53 * self.tile_size + 16, "e"),
+            "north": (67 * self.tile_size + 16, 45 * self.tile_size + 16, "n"),
+            "south": (67 * self.tile_size + 16, 61 * self.tile_size + 16, "s"),
+            "west": (59 * self.tile_size + 16, 53 * self.tile_size + 16, "w"),
+        }
+
+        if spawn_pos is not None:
+            self.player_x = float(spawn_pos[0])
+            self.player_y = float(spawn_pos[1])
+            self.player_direction = "s"
+        elif spawn_gate in gate_spawns:
+            sp = gate_spawns[spawn_gate]
+            self.player_x = float(sp[0])
+            self.player_y = float(sp[1])
+            self.player_direction = sp[2]
+        else:
+            # Базовый старт игрока (по центру карты или в свободной точке)
+            self.player_x = float(self.world_w // 2)
+            self.player_y = float(self.world_h // 2)
+            self.player_direction = "s"
+
+        self.player_target = None
+        self.player_speed = 220.0
+        self.player_state = "idle"
+        self.player_anim_timer = 0.0
+        self.click_effect = None
+
+        # Камера центрируется на игроке
+        self.camera_x = self.player_x
+        self.camera_y = self.player_y
+        self.camera_follow_player = True
+
+        # Скролл карты перетаскиванием (drag)
         self.dragging = False
         self.drag_start_mouse = (0, 0)
         self.drag_start_camera = (0.0, 0.0)
 
         # Шрифты
         self.font = pygame.font.SysFont(settings.FONT_NAME, 20)
+        self.small_font = pygame.font.SysFont(settings.FONT_NAME, 16)
         self.grid_font = pygame.font.SysFont(settings.FONT_NAME, 11)
+        self.badge_font = pygame.font.SysFont(settings.FONT_NAME, 13, bold=True)
         self.large_font = pygame.font.SysFont(settings.FONT_NAME, 24, bold=True)
 
         # UI элементы
-        self.back_button = pygame.Rect(20, 20, 180, 45)
-        self.center_button = pygame.Rect(210, 20, 160, 45)
-        self.light_castle_button = pygame.Rect(380, 20, 160, 45)
-        self.dark_castle_button = pygame.Rect(550, 20, 160, 45)
+        self.player_pos_button = pygame.Rect(20, 20, 160, 45)
 
-    def world_to_screen(self, wx, wy):
-        """Преобразование мировых координат (относительно центра 0,0) в экранные пиксели."""
-        sx = int(wx - self.camera_x + settings.WIDTH / 2)
-        sy = int(wy - self.camera_y + settings.HEIGHT / 2)
+        # Переключатель отображения тонкой сетки (клавиша G)
+        self.show_grid = False
+
+        # Интерактивные сущности, наведение (hover) и активное состояние (ЛКМ)
+        self.hovered_entity = None
+        self.active_entity = None
+        self.drag_moved = False
+        self.active_window_rect = pygame.Rect(settings.WIDTH - 390, settings.HEIGHT - 255, 365, 215)
+        self.active_close_button = pygame.Rect(self.active_window_rect.right - 36, self.active_window_rect.top + 10, 26, 26)
+        self.active_action_button = pygame.Rect(self.active_window_rect.left + 16, self.active_window_rect.bottom - 48, self.active_window_rect.width - 32, 34)
+        self.action_notice = None
+        self.action_notice_timer = 0.0
+
+        # Модальное окно управления Пшеничной фермой
+        self.farm_menu_open = False
+        self.farm_modal_rect = pygame.Rect(settings.WIDTH // 2 - 340, settings.HEIGHT // 2 - 320, 680, 640)
+        self.farm_close_button = pygame.Rect(self.farm_modal_rect.right - 44, self.farm_modal_rect.top + 12, 32, 32)
+        self.farm_upgrade_box_rect = pygame.Rect(self.farm_modal_rect.left + 20, self.farm_modal_rect.bottom - 130, 280, 110)
+        self.farm_upgrade_button = pygame.Rect(self.farm_upgrade_box_rect.left + 14, self.farm_upgrade_box_rect.bottom - 38, self.farm_upgrade_box_rect.width - 28, 28)
+
+        # Всплывающие сообщения в игровом мире
+        self.floating_messages = []
+        self.last_too_far_phrase = None
+
+        # Начальные тестовые интерактивные объекты:
+        # 1. Хижина лесника: размер 10х10 тайлов (320х320 px)
+        forester_gx, forester_gy = 33, 104
+        forester_px = forester_gx * self.tile_size
+        forester_py = forester_gy * self.tile_size
+        forester_w = 10 * self.tile_size
+        forester_h = 10 * self.tile_size
+
+        # 2. Город Радбург (Город Света): размер 15х15 тайлов (480х480 px)
+        # Левый нижний тайл: 60х60 -> левый верхний тайл: gx=60, gy = 60 - 15 + 1 = 46
+        castle_w_tiles = 15
+        castle_h_tiles = 15
+        castle_gx = 60
+        castle_gy = 60 - castle_h_tiles + 1  # 46 (диапазон X: 60..74, Y: 46..60)
+        castle_px = castle_gx * self.tile_size  # 1920 px
+        castle_py = castle_gy * self.tile_size  # 1472 px
+        castle_w_px = castle_w_tiles * self.tile_size  # 480 px
+        castle_h_px = castle_h_tiles * self.tile_size  # 480 px
+
+        # 4 входа в город Радбург:
+        # 1. Главные (восточные) ворота: 74/52, 74/53, 74/54
+        # 2. Южные ворота: 67/60
+        # 3. Северные ворота: 67/46 (внешний тайл подхода 67/45)
+        # 4. Западные ворота: 60/53
+        castle_entrances = [
+            {"id": "east", "name": "Главные ворота", "tiles": [(74, 52), (74, 53), (74, 54)], "approach_pos": (75 * self.tile_size + 16, 53 * self.tile_size + 16)},
+            {"id": "south", "name": "Южные ворота", "tiles": [(67, 60)], "approach_pos": (67 * self.tile_size + 16, 61 * self.tile_size + 16)},
+            {"id": "north", "name": "Северные ворота", "tiles": [(67, 46)], "approach_pos": (67 * self.tile_size + 16, 45 * self.tile_size + 16)},
+            {"id": "west", "name": "Западные ворота", "tiles": [(60, 53)], "approach_pos": (59 * self.tile_size + 16, 53 * self.tile_size + 16)},
+        ]
+
+        # Непроходимые стены периметра замка с 4 проемами для ворот:
+        # Северная стена: тайлы Y=46, X: 60..74 кроме X=67
+        # Южная стена: тайлы Y=60, X: 60..74 кроме X=67
+        # Западная стена: тайлы X=60, Y: 46..60 кроме Y=53
+        # Восточная стена: тайлы X=74, Y: 46..60 кроме Y=52, 53, 54
+        # Внутренний двор и донжон: тайлы внутри крепости
+        castle_solids = [
+            # Внутренний массив крепости / донжон (X: 62..72, Y: 48..58)
+            pygame.Rect((castle_gx + 2) * self.tile_size, (castle_gy + 2) * self.tile_size, 11 * self.tile_size, 11 * self.tile_size),
+            # Северная стена: левая часть (X: 60..66) и правая часть (X: 68..74)
+            pygame.Rect(castle_px, castle_py, 7 * self.tile_size, self.tile_size),
+            pygame.Rect(castle_px + 8 * self.tile_size, castle_py, 7 * self.tile_size, self.tile_size),
+            # Южная стена: левая часть (X: 60..66) и правая часть (X: 68..74)
+            pygame.Rect(castle_px, castle_py + 14 * self.tile_size, 7 * self.tile_size, self.tile_size),
+            pygame.Rect(castle_px + 8 * self.tile_size, castle_py + 14 * self.tile_size, 7 * self.tile_size, self.tile_size),
+            # Западная стена: верхняя часть (Y: 46..52) и нижняя часть (Y: 54..60)
+            pygame.Rect(castle_px, castle_py, self.tile_size, 7 * self.tile_size),
+            pygame.Rect(castle_px, castle_py + 8 * self.tile_size, self.tile_size, 7 * self.tile_size),
+            # Восточная стена: верхняя часть (Y: 46..51) и нижняя часть (Y: 55..60)
+            pygame.Rect(castle_px + 14 * self.tile_size, castle_py, self.tile_size, 6 * self.tile_size),
+            pygame.Rect(castle_px + 14 * self.tile_size, castle_py + 9 * self.tile_size, self.tile_size, 6 * self.tile_size),
+        ]
+
+        # 3. Пшеничная ферма: размер 12х12 тайлов (384х384 px), вход по центру нижней стороны (тайл 20/30)
+        farm_w_tiles = 12
+        farm_h_tiles = 12
+        farm_gx = 20 - 6  # 14 (левый край, вход в 7-м столбце от края)
+        farm_gy = 30 - farm_h_tiles + 1  # 19 (верхний край, вход на нижнем ряду Y=30)
+        farm_px = farm_gx * self.tile_size
+        farm_py = farm_gy * self.tile_size
+        farm_w_px = farm_w_tiles * self.tile_size
+        farm_h_px = farm_h_tiles * self.tile_size
+        farm_door_gx, farm_door_gy = 20, 30
+
+        # Непроходимое поле (11 верхних рядов) + нижний ряд-изгородь с проемом ворот на тайле 20/30
+        farm_solids = [
+            pygame.Rect(farm_px, farm_py, farm_w_px, (farm_h_tiles - 1) * self.tile_size),
+            pygame.Rect(farm_px, farm_py + (farm_h_tiles - 1) * self.tile_size, 6 * self.tile_size, self.tile_size),
+            pygame.Rect(farm_px + 7 * self.tile_size, farm_py + (farm_h_tiles - 1) * self.tile_size, 5 * self.tile_size, self.tile_size),
+        ]
+
+        self.objects = [
+            {
+                "id": "forester_hut",
+                "name": "Хижина лесника",
+                "type": "Строение 10х10",
+                "tile_x": forester_gx,
+                "tile_y": forester_gy,
+                "tile_w": 10,
+                "tile_h": 10,
+                "x": forester_px + forester_w // 2,
+                "y": forester_py + forester_h // 2,
+                "radius": 140,
+                "entrance_tile": (forester_gx + 5, forester_gy + 9),
+                "approach_pos": (forester_px + 5 * self.tile_size + 16, forester_py + 10 * self.tile_size + 16),
+                "desc": "Усадьба лесника в чаще леса. Бревна, дрова, инструменты и рабочая телега.",
+                "icon": "🌲",
+                "solid_rects": [
+                    pygame.Rect(forester_px + 24, forester_py + 64, 272, 160),
+                    pygame.Rect(forester_px + 16, forester_py + 224, 88, 64),
+                    pygame.Rect(forester_px + 216, forester_py + 224, 88, 64),
+                ],
+            },
+            {
+                "id": "town_radburg",
+                "name": "Город Радбург",
+                "type": "Город Света (15х15)",
+                "is_placeholder": True,
+                "tile_x": castle_gx,
+                "tile_y": castle_gy,
+                "tile_w": castle_w_tiles,
+                "tile_h": castle_h_tiles,
+                "origin_desc": "Левый нижний тайл: [60, 60]",
+                "x": castle_px + castle_w_px // 2,
+                "y": castle_py + castle_h_px // 2,
+                "radius": 230,
+                "entrances": castle_entrances,
+                "desc": "Радбург — священный Город Света. Размер 15х15 тайлов (X: 60..74, Y: 46..60). 4 ворот: Главные (восток), Южные, Северные, Западные.",
+                "icon": "🏛️",
+                "solid_rects": castle_solids,
+            },
+            {
+                "id": "wheat_farm",
+                "name": "Пшеничная ферма",
+                "type": "Строение 12х12",
+                "tile_x": farm_gx,
+                "tile_y": farm_gy,
+                "tile_w": farm_w_tiles,
+                "tile_h": farm_h_tiles,
+                "origin_desc": "Вход на тайле [20, 30], размер 12х12 (X: 14..25, Y: 19..30)",
+                "x": farm_px + farm_w_px // 2,
+                "y": farm_py + farm_h_px // 2,
+                "radius": 190,
+                "entrance_tile": (farm_door_gx, farm_door_gy),
+                "approach_pos": (farm_door_gx * self.tile_size + 16, (farm_door_gy + 1) * self.tile_size + 16),
+                "desc": "Пшеничная ферма 12х12 тайлов. Золотые поля снабжают Радбург зерном и хлебом.",
+                "icon": "🌾",
+                "level": 1,
+                "warehouse_level": 1,
+                # Статус рабочих и склада — заглушка до появления реальной экономики/найма
+                "worker_present": False,
+                "worker_en_route": False,
+                "worker_arrival_seconds": None,
+                "storage_current": 0,
+                "solid_rects": farm_solids,
+            },
+        ]
+
+        # Ресурсы игрока (заглушка до появления полноценной системы склада/экономики)
+        self.player_resources = {"stone": 0, "wood": 0}
+
+        # Узкая грунтовая дорога (1 тайл в ширину) от фермы до западных ворот Радбурга
+        self.road_tiles = self._build_road_tiles([
+            (20, 30), (20, 46), (8, 46), (8, 53), (23, 53), (23, 60), (50, 60), (51, 53), (60, 53),
+        ])
+        # Время в пути повозки по этой дороге при базовой скорости (1 тайл = 60 секунд)
+        self.road_travel_seconds = len(self.road_tiles) * settings.CART_ROAD_SECONDS_PER_TILE
+
+        # Анимация строения лесника 10х10 тайлов (3 кадра анимации дыма из assets/forester's1.png)
+        self.forester_frames = []
+        self._load_forester_sprite()
+
+        # Загрузка 8-направленных спрайтов idle (из assets/2Idle/) и бега (из assets/3run/)
+        self.player_directional_frames = {}
+        self.player_run_directional_frames = {}
+        self._load_player_directional_sprites()
+
+    def _build_road_tiles(self, waypoints):
+        """Строит набор тайлов узкой дороги (1 тайл в ширину) по ломаной линии путевых точек.
+
+        Отрезки между соседними точками должны идти строго по горизонтали или вертикали;
+        для точек, не лежащих на одной оси, путь сначала идёт по горизонтали, затем по вертикали.
+        """
+        tiles = set()
+
+        def add_horizontal(y, x1, x2):
+            lo, hi = sorted((x1, x2))
+            for x in range(lo, hi + 1):
+                tiles.add((x, y))
+
+        def add_vertical(x, y1, y2):
+            lo, hi = sorted((y1, y2))
+            for y in range(lo, hi + 1):
+                tiles.add((x, y))
+
+        for (x1, y1), (x2, y2) in zip(waypoints, waypoints[1:]):
+            if x1 == x2:
+                add_vertical(x1, y1, y2)
+            elif y1 == y2:
+                add_horizontal(y1, x1, x2)
+            else:
+                add_horizontal(y1, x1, x2)
+                add_vertical(x2, y1, y2)
+
+        return tiles
+
+    @staticmethod
+    def cart_travel_seconds(tile_count):
+        """Время в пути повозки по грунтовой дороге для заданного числа тайлов (базовая скорость: 1 тайл = 60 сек)."""
+        return tile_count * settings.CART_ROAD_SECONDS_PER_TILE
+
+    def _load_forester_sprite(self):
+        """
+        Нарезает и масштабирует 3 кадра анимации дыма хижины лесника под размер 10х10 тайлов (320х320 px).
+        Спрайтшит содержит 3 фазы дыма из трубы.
+        """
+        forester_path = Path(__file__).resolve().parent.parent / "assets" / "forester's1.png"
+        if forester_path.is_file():
+            try:
+                sheet = pygame.image.load(str(forester_path)).convert_alpha()
+                target_size = (10 * self.tile_size, 10 * self.tile_size)
+                # Точные смещения для 3 кадров с идеальным выравниванием домика и трубы
+                frame_w, frame_h = 238, 330
+                shifts = [-240, 0, 239]
+                self.forester_frames = []
+                for shift in shifts:
+                    frame_surf = pygame.Surface((frame_w, frame_h), pygame.SRCALPHA)
+                    frame_surf.blit(sheet, (0, 0), pygame.Rect(237 + shift, 85, frame_w, frame_h))
+                    scaled_frame = pygame.transform.smoothscale(frame_surf, target_size)
+                    self.forester_frames.append(scaled_frame)
+            except Exception as e:
+                print(f"Ошибка загрузки спрайта лесника: {e}")
+
+    def _load_player_directional_sprites(self):
+        """
+        Загружает 8-направленные спрайты:
+        1. Idle (assets/2Idle/) - по 4 кадра стойки на месте
+        2. Run (assets/3run/) - по 6 кадров полноценного бега
+        """
+        target_h = 56
+        directions = ["n", "ne", "e", "se", "s", "sw", "w", "nw"]
+
+        # 1. Idle спрайты
+        idle_dir = Path(__file__).resolve().parent.parent / "assets" / "2Idle"
+        if idle_dir.is_dir():
+            for d in directions:
+                d_folder = idle_dir / d
+                if not d_folder.is_dir():
+                    continue
+                frame_files = sorted([
+                    f for f in d_folder.glob("*.png")
+                    if not f.name.endswith("apng.png") and not f.name.endswith("spritesheet.png")
+                ])
+                if not frame_files:
+                    continue
+                sample = pygame.image.load(str(frame_files[0])).convert_alpha()
+                crop_rect = sample.get_bounding_rect()
+                if crop_rect.height <= 0:
+                    continue
+                ratio = target_h / float(crop_rect.height)
+                target_w = max(1, int(crop_rect.width * ratio))
+                frames = []
+                for ff in frame_files:
+                    try:
+                        raw = pygame.image.load(str(ff)).convert_alpha()
+                        cropped = raw.subsurface(crop_rect).copy()
+                        scaled = pygame.transform.smoothscale(cropped, (target_w, target_h))
+                        frames.append(scaled)
+                    except Exception as e:
+                        print(f"[WorldMapScene] Error loading idle {ff}: {e}")
+                if frames:
+                    self.player_directional_frames[d] = frames
+
+        # 2. Run спрайты (бег)
+        run_dir = Path(__file__).resolve().parent.parent / "assets" / "3run"
+        if run_dir.is_dir():
+            for d in directions:
+                d_folder = run_dir / d
+                if not d_folder.is_dir():
+                    continue
+                frame_files = sorted([
+                    f for f in d_folder.glob("*.png")
+                    if not f.name.endswith("apng.png") and not f.name.endswith("spritesheet.png")
+                ])
+                if not frame_files:
+                    continue
+                sample = pygame.image.load(str(frame_files[0])).convert_alpha()
+                crop_rect = sample.get_bounding_rect()
+                if crop_rect.height <= 0:
+                    continue
+                ratio = target_h / float(crop_rect.height)
+                target_w = max(1, int(crop_rect.width * ratio))
+                frames = []
+                for ff in frame_files:
+                    try:
+                        raw = pygame.image.load(str(ff)).convert_alpha()
+                        cropped = raw.subsurface(crop_rect).copy()
+                        scaled = pygame.transform.smoothscale(cropped, (target_w, target_h))
+                        frames.append(scaled)
+                    except Exception as e:
+                        print(f"[WorldMapScene] Error loading run {ff}: {e}")
+                if frames:
+                    self.player_run_directional_frames[d] = frames
+
+    @staticmethod
+    def _vector_to_direction(dx, dy):
+        """Определяет одно из 8 направлений (n, ne, e, se, s, sw, w, nw) по вектору движения."""
+        angle = math.degrees(math.atan2(dy, dx))  # 0 вправо (E), 90 вниз (S), -90 вверх (N)
+        if -22.5 <= angle < 22.5:
+            return "e"
+        elif 22.5 <= angle < 67.5:
+            return "se"
+        elif 67.5 <= angle < 112.5:
+            return "s"
+        elif 112.5 <= angle < 157.5:
+            return "sw"
+        elif angle >= 157.5 or angle < -157.5:
+            return "w"
+        elif -157.5 <= angle < -112.5:
+            return "nw"
+        elif -112.5 <= angle < -67.5:
+            return "n"
+        else:
+            return "ne"
+
+    # ------------------------------------------------------------------
+    # Камера: строго плоская top-down проекция
+    # ------------------------------------------------------------------
+
+    def world_to_screen(self, wx, wy, z=0):
+        """
+        Преобразование мировых координат в экранные пиксели.
+        Плоскость земли строго плоская (как в оригинальных Героях 3).
+        Параметр z поднимает объект вертикально вверх по экрану (для стен/крыш зданий).
+        """
+        sx = int((wx - self.camera_x) * self.zoom + settings.WIDTH / 2)
+        sy = int((wy - self.camera_y - z) * self.zoom + settings.HEIGHT / 2)
         return sx, sy
 
     def screen_to_world(self, sx, sy):
         """Преобразование экранных пикселей в мировые координаты."""
-        wx = (sx - settings.WIDTH / 2) + self.camera_x
-        wy = (sy - settings.HEIGHT / 2) + self.camera_y
+        wx = (sx - settings.WIDTH / 2) / self.zoom + self.camera_x
+        wy = (sy - settings.HEIGHT / 2) / self.zoom + self.camera_y
         return wx, wy
 
     def _clamp_camera(self):
-        """Удержание камеры в пределах мира."""
-        half_screen_w = settings.WIDTH / 2
-        half_screen_h = settings.HEIGHT / 2
+        """Удержание камеры в пределах мира с учетом текущего зума."""
+        half_screen_w = (settings.WIDTH / 2) / self.zoom
+        half_screen_h = (settings.HEIGHT / 2) / self.zoom
         self.camera_x = max(self.min_world_x + half_screen_w, min(self.max_world_x - half_screen_w, self.camera_x))
         self.camera_y = max(self.min_world_y + half_screen_h, min(self.max_world_y - half_screen_h, self.camera_y))
 
+    def _find_entity_at(self, screen_pos):
+        """Находит интерактивную сущность (персонажа или объект карты) под экранными координатами курсора."""
+        # 1. Проверяем персонажа игрока
+        psx, psy = self.world_to_screen(self.player_x, self.player_y)
+        player_rect = pygame.Rect(psx - 22, psy - 58, 44, 62)
+        if player_rect.collidepoint(screen_pos):
+            char_name = getattr(self.session, "character", {}).get("name", "Герой") if hasattr(self.session, "character") else "Герой"
+            status_str = "Бежит" if self.player_state == "walk" else "В покое"
+            return {
+                "id": "player",
+                "name": char_name,
+                "type": "Игровой персонаж",
+                "x": self.player_x,
+                "y": self.player_y,
+                "radius": 22,
+                "desc": f"Ваш главный герой. Статус: {status_str}. Управляется кликом ПКМ.",
+                "icon": "👤",
+            }
+
+        # 2. Проверяем объекты из self.objects (сверху вниз)
+        for obj in reversed(self.objects):
+            if obj.get("tile_w", 1) > 1:
+                # Многоклеточный объект (например, лагерь 4х4)
+                top_left_x = obj["tile_x"] * self.tile_size
+                top_left_y = obj["tile_y"] * self.tile_size
+                tw = obj["tile_w"] * self.tile_size
+                th = obj["tile_h"] * self.tile_size
+                sx, sy = self.world_to_screen(top_left_x, top_left_y)
+                # Расширяем вверх на 22px для учета крыши/флага
+                obj_rect = pygame.Rect(sx, sy - 22, tw, th + 22)
+                if obj_rect.collidepoint(screen_pos):
+                    return obj
+            else:
+                # Одноклеточный объект (например, сундук 1х1)
+                ox, oy = obj["x"], obj["y"]
+                sx, sy = self.world_to_screen(ox, oy)
+                r = obj.get("radius", 20)
+                if math.hypot(screen_pos[0] - sx, screen_pos[1] - sy) <= r + 6:
+                    return obj
+
+        return None
+
+    def _is_within_one_tile(self, entity):
+        """
+        Проверяет, находится ли персонаж не дальше 1 тайла от места взаимодействия объекта.
+        Для сундука (1x1) - соседние 8 тайлов вокруг сундука (max(|dx|, |dy|) <= 1).
+        Для лагеря (4x4) - не дальше 1 тайла от входа (средний нижний тайл).
+        Для замка с несколькими входами - не дальше 1 тайла от любого из 4 ворот.
+        """
+        if not entity:
+            return False
+        if entity.get("id") == "player":
+            return True
+
+        pgx = int(self.player_x // self.tile_size)
+        pgy = int(self.player_y // self.tile_size)
+
+        # Объект с несколькими входами (например, замок с 4 воротами)
+        entrances = entity.get("entrances")
+        if entrances:
+            for ent_info in entrances:
+                for (egx, egy) in ent_info.get("tiles", []):
+                    if max(abs(pgx - egx), abs(pgy - egy)) <= 1:
+                        return True
+            return False
+
+        entrance = entity.get("entrance_tile")
+        if entrance:
+            egx, egy = entrance
+            # Игрок может стоять на тайле прямо перед входом (egy + 1) или на тайле входа / рядом с ним
+            d1 = max(abs(pgx - egx), abs(pgy - (egy + 1)))
+            d2 = max(abs(pgx - egx), abs(pgy - egy))
+            return min(d1, d2) <= 1
+        else:
+            # Для объектов 1x1 или занимающих область
+            tgx = entity.get("tile_x", int(entity.get("x", 0) // self.tile_size))
+            tgy = entity.get("tile_y", int(entity.get("y", 0) // self.tile_size))
+            tw = entity.get("tile_w", 1)
+            th = entity.get("tile_h", 1)
+
+            dx = 0
+            if pgx < tgx:
+                dx = tgx - pgx
+            elif pgx >= tgx + tw:
+                dx = pgx - (tgx + tw - 1)
+
+            dy = 0
+            if pgy < tgy:
+                dy = tgy - pgy
+            elif pgy >= tgy + th:
+                dy = pgy - (tgy + th - 1)
+
+            return max(dx, dy) <= 1
+
+    def _on_too_far(self, entity):
+        """Срабатывает при попытке взаимодействия с расстояния больше 1 тайла."""
+        available = [p for p in TOO_FAR_PHRASES if p != self.last_too_far_phrase]
+        phrase = random.choice(available) if available else TOO_FAR_PHRASES[0]
+        self.last_too_far_phrase = phrase
+
+        # Всплывающее диалоговое сообщение над персонажем в игровом мире
+        self._add_floating_message(phrase, self.player_x, self.player_y - 34, (255, 110, 90))
+        self.action_notice = phrase
+        self.action_notice_timer = 2.2
+
+    def _get_entity_approach_target(self, entity):
+        """Возвращает точку входа/подхода к объекту, в которую персонаж может подойти вплотную."""
+        # Для замка с несколькими входами выбираем ближайший вход к текущей позиции персонажа
+        if entity.get("entrances"):
+            best_pos = None
+            min_dist = float("inf")
+            for ent_info in entity["entrances"]:
+                ap = ent_info.get("approach_pos")
+                if ap:
+                    d = math.hypot(ap[0] - self.player_x, ap[1] - self.player_y)
+                    if d < min_dist:
+                        min_dist = d
+                        best_pos = ap
+            if best_pos:
+                return best_pos
+
+        if entity.get("approach_pos"):
+            return entity["approach_pos"]
+
+        ex = entity.get("x", self.player_x)
+        ey = entity.get("y", self.player_y)
+        dx = ex - self.player_x
+        dy = ey - self.player_y
+        dist = math.hypot(dx, dy)
+        if dist > 0:
+            stop_dist = entity.get("radius", 24) + 12
+            return (ex - (dx / dist) * stop_dist, ey - (dy / dist) * stop_dist)
+        return (ex, ey)
+
+    def _trigger_active_action(self):
+        """Обрабатывает нажатие кнопки действия в активном окне объекта."""
+        if not self.active_entity:
+            return
+
+        eid = self.active_entity.get("id")
+        if eid == "player":
+            self.camera_x = self.player_x
+            self.camera_y = self.player_y
+            self.camera_follow_player = True
+            self._clamp_camera()
+            self._add_floating_message("Камера сфокусирована", self.player_x, self.player_y - 30, (100, 220, 255))
+            self.action_notice = "Камера сфокусирована!"
+            self.action_notice_timer = 2.0
+            return
+
+        # 1. Слишком далеко -> фраза и отказ во взаимодействии (персонаж не бежит сам)
+        if not self._is_within_one_tile(self.active_entity):
+            self._on_too_far(self.active_entity)
+            return
+
+        if eid == "forester_hut":
+            self._add_floating_message("Лесник: 'Береги лес, путник!'", self.active_entity["x"], self.active_entity["y"] - 140, (120, 255, 150))
+            self.action_notice = "Лесник приветствует вас."
+            self.action_notice_timer = 2.5
+        elif eid == "wheat_farm":
+            self.farm_menu_open = True
+            return
+        elif eid in ("town_radburg", "main_castle"):
+            gate = self._get_nearest_gate(self.active_entity)
+            self.navigate = "city"
+            self.city_gate = gate
+            self.finished = True
+            return
+        else:
+            self.action_notice = "Взаимодействие выполнено!"
+            self.action_notice_timer = 2.0
+
+    def _get_nearest_gate(self, entity):
+        """Определяет ближайшие к персонажу ворота города."""
+        best_gate = "east"
+        min_dist = float("inf")
+        for ent_info in entity.get("entrances", []):
+            ap = ent_info.get("approach_pos")
+            if ap:
+                d = math.hypot(ap[0] - self.player_x, ap[1] - self.player_y)
+                if d < min_dist:
+                    min_dist = d
+                    best_gate = ent_info.get("id", "east")
+        return best_gate
+
+    def _add_floating_message(self, text, wx, wy, color=(255, 220, 80)):
+        """Добавляет всплывающее сообщение в игровом мире над объектом/персонажем."""
+        self.floating_messages.append({
+            "text": text,
+            "world_x": float(wx),
+            "world_y": float(wy),
+            "timer": 1.9,
+            "max_timer": 1.9,
+            "color": color,
+        })
+
+    def _check_collision(self, px, py):
+        """
+        Проверяет коллизию ног персонажа с границами карты и твердыми препятствиями (зданиями, сундуками).
+        Персонаж не может проходить сквозь твердые объекты.
+        """
+        if px - 10 < self.min_world_x or px + 10 > self.max_world_x:
+            return True
+        if py - 6 < self.min_world_y or py + 6 > self.max_world_y:
+            return True
+
+        feet_rect = pygame.Rect(int(px - 10), int(py - 6), 20, 10)
+        for obj in self.objects:
+            for s_rect in obj.get("solid_rects", []):
+                if feet_rect.colliderect(s_rect):
+                    return True
+        return False
+
     def handle_event(self, event):
+        # Модальное окно фермы поглощает остальные взаимодействия с картой
+        if self.farm_menu_open:
+            if event.type == pygame.KEYDOWN:
+                if event.key in (pygame.K_ESCAPE, pygame.K_RETURN, pygame.K_SPACE):
+                    self.farm_menu_open = False
+                    return
+            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                if self.farm_close_button.collidepoint(event.pos):
+                    self.farm_menu_open = False
+                    return
+                if self.farm_upgrade_button.collidepoint(event.pos):
+                    farm = next((o for o in self.objects if o["id"] == "wheat_farm"), None)
+                    if farm is not None:
+                        self._try_upgrade_farm(farm)
+                    return
+            return
+
         if event.type == pygame.KEYDOWN:
             if event.key == pygame.K_ESCAPE:
-                self.cancelled = True
-                self.finished = True
+                if self.active_entity is not None:
+                    self.active_entity = None
+                return
+            if event.key == pygame.K_g:
+                self.show_grid = not self.show_grid
+                return
+            if event.key == pygame.K_SPACE:
+                # Центрировать камеру на персонаже
+                self.camera_x = self.player_x
+                self.camera_y = self.player_y
+                self.camera_follow_player = True
+                self._clamp_camera()
                 return
 
-        # Нажатие мыши
+        # Нажатие кнопок мыши
         if event.type == pygame.MOUSEBUTTONDOWN:
+            # ЛКМ: клик по кнопкам HUD, выбор/активация объекта или перетаскивание карты
             if event.button == 1:
-                # Кнопки верхнего меню
-                if self.back_button.collidepoint(event.pos):
-                    self.finished = True
-                    return
-                if self.center_button.collidepoint(event.pos):
-                    self.camera_x = 0.0
-                    self.camera_y = 0.0
-                    return
-                if self.light_castle_button.collidepoint(event.pos):
-                    self.camera_x = -1975.0
-                    self.camera_y = -975.0
-                    return
-                if self.dark_castle_button.collidepoint(event.pos):
-                    self.camera_x = 1975.0
-                    self.camera_y = 975.0
+                # 1. Верхний HUD
+                if self.player_pos_button.collidepoint(event.pos):
+                    self.camera_x = self.player_x
+                    self.camera_y = self.player_y
+                    self.camera_follow_player = True
+                    self._clamp_camera()
                     return
 
-                # Захват карты для драга
+                # 2. Клик внутри активного окна (если открыто)
+                if self.active_entity is not None and self.active_window_rect.collidepoint(event.pos):
+                    if self.active_close_button.collidepoint(event.pos):
+                        self.active_entity = None
+                        return
+                    if self.active_action_button.collidepoint(event.pos):
+                        self._trigger_active_action()
+                        return
+                    return  # Поглощаем клик по телу окна
+
+                # 3. Клик по интерактивному объекту или персонажу -> ДЕЛАЕМ АКТИВНЫМ (персонаж НЕ бежит)
+                clicked_entity = self._find_entity_at(event.pos)
+                if clicked_entity is not None:
+                    self.active_entity = clicked_entity
+                    self.action_notice = None
+                    self.dragging = False
+                    return
+
+                # 4. Клик по пустой земле -> подготовка к драгу
                 self.dragging = True
                 self.drag_start_mouse = event.pos
                 self.drag_start_camera = (self.camera_x, self.camera_y)
+                self.drag_moved = False
+                self.camera_follow_player = False
+
+            # ПКМ (как в Dota/RTS/Diablo): отправить персонажа в точку клика
+            elif event.button == 3:
+                clicked_entity = self._find_entity_at(event.pos)
+                if clicked_entity is not None and clicked_entity.get("id") != "player":
+                    # Клик ПКМ по объекту -> подойти к объекту и упереться перед ним
+                    target = self._get_entity_approach_target(clicked_entity)
+                    tx, ty = target
+                else:
+                    wx, wy = self.screen_to_world(event.pos[0], event.pos[1])
+                    tx = max(self.min_world_x + 16, min(self.max_world_x - 16, wx))
+                    ty = max(self.min_world_y + 16, min(self.max_world_y - 16, wy))
+
+                self.player_target = (tx, ty)
+                self.player_state = "walk"
+                dx = tx - self.player_x
+                dy = ty - self.player_y
+                if dx != 0 or dy != 0:
+                    self.player_direction = self._vector_to_direction(dx, dy)
+                self.player_facing_right = (dx >= 0)
+                self.camera_follow_player = True
+                self.click_effect = {"x": tx, "y": ty, "timer": 0.35}
 
         elif event.type == pygame.MOUSEBUTTONUP:
             if event.button == 1:
+                if self.dragging and not self.drag_moved:
+                    # Короткий клик на пустое место без движения мыши -> сбросить активность
+                    self.active_entity = None
                 self.dragging = False
 
         elif event.type == pygame.MOUSEMOTION:
             if self.dragging:
                 dx = event.pos[0] - self.drag_start_mouse[0]
                 dy = event.pos[1] - self.drag_start_mouse[1]
-                self.camera_x = self.drag_start_camera[0] - dx
-                self.camera_y = self.drag_start_camera[1] - dy
-                self._clamp_camera()
+                if abs(dx) > 4 or abs(dy) > 4:
+                    self.drag_moved = True
+                    self.camera_x = self.drag_start_camera[0] - (dx / self.zoom)
+                    self.camera_y = self.drag_start_camera[1] - (dy / self.zoom)
+                    self.camera_follow_player = False
+                    self._clamp_camera()
 
     def update(self, dt):
-        # Передвижение стрелками / WASD
+        # 1. Движение персонажа к целевой точке (Dota-стиль) с проверкой коллизий
+        if self.player_target is not None:
+            tx, ty = self.player_target
+            dx = tx - self.player_x
+            dy = ty - self.player_y
+            dist = math.hypot(dx, dy)
+            step = self.player_speed * dt
+
+            if dist <= step or dist < 2.0:
+                self.player_x = tx
+                self.player_y = ty
+                self.player_target = None
+                self.player_state = "idle"
+            else:
+                vx = (dx / dist) * step
+                vy = (dy / dist) * step
+
+                moved_x = False
+                moved_y = False
+
+                if vx != 0:
+                    new_x = self.player_x + vx
+                    if not self._check_collision(new_x, self.player_y):
+                        self.player_x = new_x
+                        moved_x = True
+
+                if vy != 0:
+                    new_y = self.player_y + vy
+                    if not self._check_collision(self.player_x, new_y):
+                        self.player_y = new_y
+                        moved_y = True
+
+                if not moved_x and not moved_y:
+                    # Персонаж уперся в объект и остановился перед ним
+                    self.player_target = None
+                    self.player_state = "idle"
+                else:
+                    self.player_state = "walk"
+                    self.player_direction = self._vector_to_direction(dx, dy)
+                    self.player_facing_right = (dx >= 0)
+
+            # Плавное следование камеры за персонажем (если включено)
+            if self.camera_follow_player:
+                self.camera_x += (self.player_x - self.camera_x) * min(1.0, 8.0 * dt)
+                self.camera_y += (self.player_y - self.camera_y) * min(1.0, 8.0 * dt)
+
+        # Проверка наступления персонажа на ворота города Радбург на глобальной карте
+        pgx = int(self.player_x // self.tile_size)
+        pgy = int(self.player_y // self.tile_size)
+        for obj in self.objects:
+            if obj.get("id") in ("town_radburg", "main_castle"):
+                for ent_info in obj.get("entrances", []):
+                    if (pgx, pgy) in ent_info.get("tiles", []):
+                        self.navigate = "city"
+                        self.city_gate = ent_info.get("id", "east")
+                        self.finished = True
+                        return
+
+        # 2. Анимационный таймер персонажа
+        self.player_anim_timer += dt
+
+        # 3. Эффект клика ПКМ (расходящийся круг)
+        if self.click_effect is not None:
+            self.click_effect["timer"] -= dt
+            if self.click_effect["timer"] <= 0:
+                self.click_effect = None
+
+        # 4. Обновление плавающих сообщений
+        for msg in self.floating_messages[:]:
+            msg["timer"] -= dt
+            msg["world_y"] -= 20.0 * dt
+            if msg["timer"] <= 0:
+                self.floating_messages.remove(msg)
+
+        # 5. Определение сущности под курсором мыши (hover)
+        m_pos = pygame.mouse.get_pos()
+        if self.farm_menu_open or m_pos[1] <= 75 or (self.active_entity and self.active_window_rect.collidepoint(m_pos)):
+            self.hovered_entity = None
+        else:
+            self.hovered_entity = self._find_entity_at(m_pos)
+
+        # 6. Таймер уведомления о действии
+        if self.action_notice_timer > 0:
+            self.action_notice_timer -= dt
+            if self.action_notice_timer <= 0:
+                self.action_notice = None
+
+        # 7. Скролл карты стрелками / WASD
         keys = pygame.key.get_pressed()
-        speed = 800.0 * dt
+        speed = 850.0 * dt
         if keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT]:
-            speed *= 2.0
+            speed *= 2.2
 
         moved = False
         if keys[pygame.K_a] or keys[pygame.K_LEFT]:
@@ -134,22 +940,26 @@ class WorldMapScene:
             moved = True
 
         if moved:
+            self.camera_follow_player = False
             self._clamp_camera()
+        elif self.camera_follow_player:
+            self._clamp_camera()
+
+    # ------------------------------------------------------------------
+    # Отрисовка
+    # ------------------------------------------------------------------
 
     def draw(self, screen):
         screen.fill((20, 24, 28))
 
-        # Вычисляем видимый диапазон мира
         top_left_wx, top_left_wy = self.screen_to_world(0, 0)
         bot_right_wx, bot_right_wy = self.screen_to_world(settings.WIDTH, settings.HEIGHT)
 
-        # Выравниваем границы видимых тайлов по сетке 50x50
         start_gx = int(top_left_wx // self.tile_size) - 1
-        end_gx = int(bot_right_wx // self.tile_size) + 1
+        end_gx = int(bot_right_wx // self.tile_size) + 2
         start_gy = int(top_left_wy // self.tile_size) - 1
-        end_gy = int(bot_right_wy // self.tile_size) + 1
+        end_gy = int(bot_right_wy // self.tile_size) + 2
 
-        # Ограничиваем пределами мира
         min_gx = self.min_world_x // self.tile_size
         max_gx = self.max_world_x // self.tile_size
         min_gy = self.min_world_y // self.tile_size
@@ -163,95 +973,807 @@ class WorldMapScene:
         mouse_pos = pygame.mouse.get_pos()
         hover_wx, hover_wy = self.screen_to_world(mouse_pos[0], mouse_pos[1])
 
-        # Отрисовка ячеек сетки
+        # 1. Базовая земля (чистая плоская заливка top-down, без искажений)
+        half_gy = self.grid_h // 2
         for gy in range(start_gy, end_gy):
             for gx in range(start_gx, end_gx):
                 tile_wx = gx * self.tile_size
                 tile_wy = gy * self.tile_size
                 sx, sy = self.world_to_screen(tile_wx, tile_wy)
+                sx2, sy2 = self.world_to_screen(tile_wx + self.tile_size, tile_wy + self.tile_size)
 
-                rect = pygame.Rect(sx, sy, self.tile_size, self.tile_size)
+                rect = pygame.Rect(sx, sy, sx2 - sx + 1, sy2 - sy + 1)
 
-                # Вычисляем координаты ячейки от центра 0,0:
-                # Вправо от 0 -> 1, 2, 3; Влево от 0 -> -1, -2, -3
-                coord_x = gx + 1 if gx >= 0 else gx
-                # Вниз от 0 -> 1, 2, 3; Вверх от 0 -> -1, -2, -3
-                coord_y = gy + 1 if gy >= 0 else gy
+                if gy < half_gy:
+                    # Северная половина карты (Свет) - приглушенная зеленая трава
+                    cell_color = (28, 42, 32) if (gx + gy) % 2 == 0 else (31, 46, 35)
+                else:
+                    # Южная половина карты (Тьма) - каменистая пустошь
+                    cell_color = (36, 32, 34) if (gx + gy) % 2 == 0 else (40, 35, 38)
 
-                # Фоновая подложка клетки
-                cell_color = (25, 30, 35) if (gx + gy) % 2 == 0 else (28, 34, 40)
-                
-                # Подсветка зоны Замка Света (5x5 клеток вокруг центра -40/-20)
-                if -42 <= gx < -37 and -22 <= gy < -17:
-                    cell_color = (35, 55, 75)
-                # Подсветка зоны Цитадели Тьмы (5x5 клеток вокруг центра +40/+20)
-                elif 37 <= gx < 42 and 17 <= gy < 22:
-                    cell_color = (75, 35, 45)
+                if (gx, gy) in self.road_tiles:
+                    # Узкая грунтовая дорога (1 тайл): протоптанная земляная колея
+                    cell_color = (120, 96, 60) if (gx + gy) % 2 == 0 else (128, 103, 65)
 
                 pygame.draw.rect(screen, cell_color, rect)
-                pygame.draw.rect(screen, (45, 52, 60), rect, 1)
 
-                # Координатная надпись формата: 1/1, -1/1, 1/-1, -1/-1
-                coord_text = f"{coord_x}/{coord_y}"
-                text_surf = self.grid_font.render(coord_text, True, (120, 135, 150))
-                text_rect = text_surf.get_rect(center=rect.center)
-                screen.blit(text_surf, text_rect)
+                if (gx, gy) in self.road_tiles:
+                    pygame.draw.line(screen, (95, 74, 44), rect.topleft, rect.topright, 1)
+                    pygame.draw.line(screen, (95, 74, 44), rect.bottomleft, rect.bottomright, 1)
 
-        # Выделение центральных осей (X = 0 и Y = 0)
-        axis_x, _ = self.world_to_screen(0, 0)
-        _, axis_y = self.world_to_screen(0, 0)
+                if self.show_grid:
+                    pygame.draw.rect(screen, (45, 52, 60), rect, 1)
 
-        # Ось Y (по центру X=0)
-        if 0 <= axis_x <= settings.WIDTH:
-            pygame.draw.line(screen, (220, 200, 80), (axis_x, 0), (axis_x, settings.HEIGHT), 2)
-        # Ось X (по центру Y=0)
-        if 0 <= axis_y <= settings.HEIGHT:
-            pygame.draw.line(screen, (220, 200, 80), (0, axis_y), (settings.WIDTH, axis_y), 2)
+        # 2. Интерактивные объекты карты
+        self._draw_objects(screen)
 
-        # Отрисовка маркеров ключевых объектов (5x5 тайлов = 250x250 px)
-        self._draw_marker(screen, -1975, -975, "ЗАМОК СВЕТА 5x5 (-2000, -1000)", (80, 180, 255), 5 * self.tile_size)
-        self._draw_marker(screen, 1975, 975, "ЦИТАДЕЛЬ ТЬМЫ 5x5 (+2000, +1000)", (255, 80, 80), 5 * self.tile_size)
-        self._draw_marker(screen, 0, 0, "ЦЕНТР МИРА (0, 0)", (255, 220, 50), 50)
+        # 3. Игровой персонаж и эффекты клика (Dota-стиль)
+        self._draw_click_effect(screen)
+        self._draw_player_character(screen)
 
-        # Верхняя панель управления и подсказок
+        # 4. Всплывающие сообщения в мире ("Слишком далеко" и т.д.)
+        self._draw_floating_messages(screen)
+
+        # 5. Всплывающее окно активного объекта (ЛКМ)
+        self._draw_active_window(screen)
+
+        # 6. Всплывающее окно при наведении курсора (hover tooltip)
+        self._draw_hover_popup(screen, mouse_pos)
+
+        # 7. Верхний HUD и подсказки
+        self._draw_hud(screen, hover_wx, hover_wy)
+
+        # 8. Модальное окно управления фермой
+        if self.farm_menu_open:
+            self._draw_farm_modal(screen)
+
+    def _draw_badge(self, screen, cx, bottom_y, text, border_color):
+        """Вспомогательный метод для аккуратной плашки с текстом над объектом."""
+        surf = self.badge_font.render(text, True, (240, 240, 240))
+        bg = surf.get_rect(midbottom=(cx, bottom_y)).inflate(10, 4)
+        if -50 <= bg.centerx <= settings.WIDTH + 50 and -50 <= bg.centery <= settings.HEIGHT + 50:
+            pygame.draw.rect(screen, (12, 14, 18, 220), bg, border_radius=3)
+            pygame.draw.rect(screen, border_color, bg, 1, border_radius=3)
+            screen.blit(surf, surf.get_rect(center=bg.center))
+
+    def _draw_objects(self, screen):
+        """Отрисовывает интерактивные объекты карты из self.objects."""
+        pulse = 1.0 + 0.12 * math.sin(self.player_anim_timer * 6.0)
+
+        for obj in self.objects:
+            if obj.get("id") == "forester_hut":
+                # Хижина лесника 10х10 тайлов (320х320 px)
+                top_left_x = obj["tile_x"] * self.tile_size
+                top_left_y = obj["tile_y"] * self.tile_size
+                sx, sy = self.world_to_screen(top_left_x, top_left_y)
+                obj_w = obj["tile_w"] * self.tile_size
+                obj_h = obj["tile_h"] * self.tile_size
+                forester_rect = pygame.Rect(sx, sy, obj_w, obj_h)
+
+                if not (-obj_w <= sx <= settings.WIDTH + obj_w and -obj_h <= sy <= settings.HEIGHT + obj_h):
+                    continue
+
+                is_active = self.active_entity and self.active_entity.get("id") == obj["id"]
+                is_hovered = self.hovered_entity and self.hovered_entity.get("id") == obj["id"]
+
+                # Мягкая тень под строением
+                pygame.draw.ellipse(screen, (16, 24, 16, 170), (sx + 20, sy + 180, obj_w - 40, 120))
+
+                # Отрисовка анимированного спрайта хижины лесника (дым из трубы)
+                if self.forester_frames:
+                    # 3 кадра анимации дыма, смена кадра каждые 0.35 секунды (~3 FPS)
+                    frame_idx = int(self.player_anim_timer / 0.35) % len(self.forester_frames)
+                    current_frame = self.forester_frames[frame_idx]
+                    screen.blit(current_frame, (sx, sy))
+                else:
+                    pygame.draw.rect(screen, (42, 60, 42), forester_rect, border_radius=6)
+
+                # Подсветка активного / наведенного
+                if is_active:
+                    pygame.draw.rect(screen, (255, 215, 60), forester_rect, 2, border_radius=6)
+                elif is_hovered:
+                    pygame.draw.rect(screen, (80, 200, 255), forester_rect, 2, border_radius=6)
+
+                # Бейдж названия над строением
+                badge_color = (255, 215, 60) if is_active else (100, 200, 255) if is_hovered else (200, 190, 160)
+                self._draw_badge(screen, forester_rect.centerx, sy - 10, f"🌲 {obj['name']} [10x10]", badge_color)
+
+            elif obj.get("id") == "wheat_farm":
+                # Пшеничная ферма 12х12 тайлов (384х384 px), вход по центру нижней стороны (тайл 20/30)
+                top_left_x = obj["tile_x"] * self.tile_size
+                top_left_y = obj["tile_y"] * self.tile_size
+                sx, sy = self.world_to_screen(top_left_x, top_left_y)
+                obj_w = obj["tile_w"] * self.tile_size
+                obj_h = obj["tile_h"] * self.tile_size
+                farm_rect = pygame.Rect(sx, sy, obj_w, obj_h)
+
+                if not (-obj_w <= sx <= settings.WIDTH + obj_w and -obj_h <= sy <= settings.HEIGHT + obj_h):
+                    continue
+
+                is_active = self.active_entity and self.active_entity.get("id") == obj["id"]
+                is_hovered = self.hovered_entity and self.hovered_entity.get("id") == obj["id"]
+
+                # Тень под полем
+                pygame.draw.ellipse(screen, (30, 26, 12, 170), (sx + 16, sy + obj_h - 20, obj_w - 32, 34))
+
+                f_surf = pygame.Surface((obj_w, obj_h), pygame.SRCALPHA)
+
+                # Золотое пшеничное поле с бороздами
+                pygame.draw.rect(f_surf, (168, 132, 46, 235), (0, 0, obj_w, obj_h), border_radius=6)
+                for row_y in range(10, obj_h - 10, 18):
+                    pygame.draw.line(f_surf, (140, 106, 34), (10, row_y), (obj_w - 10, row_y), 2)
+                for col_x in range(16, obj_w - 10, 24):
+                    for row_y in range(6, obj_h - 10, 18):
+                        pygame.draw.line(f_surf, (220, 185, 90), (col_x, row_y), (col_x - 4, row_y + 10), 2)
+
+                # Изгородь по периметру поля
+                pygame.draw.rect(f_surf, (110, 78, 45), (0, 0, obj_w, obj_h), width=4, border_radius=6)
+
+                # Ворота-проем внизу по центру (тайл 20/30, локально: 6-й столбец от края)
+                gate_local_x = (obj["entrance_tile"][0] - obj["tile_x"]) * self.tile_size
+                gate_rect = pygame.Rect(gate_local_x, obj_h - 14, self.tile_size, 14)
+                pygame.draw.rect(f_surf, (90, 62, 34), gate_rect)
+                pygame.draw.line(f_surf, (200, 160, 80), (gate_rect.left, gate_rect.top), (gate_rect.left, gate_rect.bottom), 3)
+                pygame.draw.line(f_surf, (200, 160, 80), (gate_rect.right, gate_rect.top), (gate_rect.right, gate_rect.bottom), 3)
+
+                # Пугало в центре поля
+                scare_x, scare_y = obj_w // 2 - 30, obj_h // 2
+                pygame.draw.line(f_surf, (90, 65, 40), (scare_x, scare_y - 26), (scare_x, scare_y + 6), 3)
+                pygame.draw.line(f_surf, (90, 65, 40), (scare_x - 12, scare_y - 14), (scare_x + 12, scare_y - 14), 3)
+                pygame.draw.circle(f_surf, (210, 180, 140), (scare_x, scare_y - 32), 6)
+
+                screen.blit(f_surf, (sx, sy))
+
+                door_lbl = self.grid_font.render("ВХОД", True, (255, 225, 130))
+                screen.blit(door_lbl, door_lbl.get_rect(midtop=(sx + gate_local_x + self.tile_size // 2, sy + obj_h + 2)))
+
+                # Подсветка активного / наведенного
+                if is_active:
+                    pygame.draw.rect(screen, (255, 215, 60), farm_rect, 2, border_radius=6)
+                elif is_hovered:
+                    pygame.draw.rect(screen, (80, 200, 255), farm_rect, 2, border_radius=6)
+
+                badge_color = (255, 215, 60) if is_active else (100, 200, 255) if is_hovered else (220, 195, 140)
+                self._draw_badge(screen, farm_rect.centerx, sy - 10, f"🌾 {obj['name']} [12x12]", badge_color)
+
+            elif obj.get("id") in ("town_radburg", "main_castle") or obj.get("is_placeholder"):
+                # Заглушка города (например, Город Радбург 15х15 тайлов, 480х480 px)
+                top_left_x = obj["tile_x"] * self.tile_size
+                top_left_y = obj["tile_y"] * self.tile_size
+                sx, sy = self.world_to_screen(top_left_x, top_left_y)
+                obj_w = obj["tile_w"] * self.tile_size
+                obj_h = obj["tile_h"] * self.tile_size
+                castle_rect = pygame.Rect(sx, sy, obj_w, obj_h)
+
+                if not (-obj_w <= sx <= settings.WIDTH + obj_w and -obj_h <= sy <= settings.HEIGHT + obj_h):
+                    continue
+
+                is_active = self.active_entity and self.active_entity.get("id") == obj["id"]
+                is_hovered = self.hovered_entity and self.hovered_entity.get("id") == obj["id"]
+
+                # Мягкая тень под замком
+                pygame.draw.ellipse(screen, (15, 20, 26, 190), (sx + 20, sy + obj_h - 70, obj_w - 40, 90))
+
+                # Поверхность заглушки здания
+                ph_surf = pygame.Surface((obj_w, obj_h), pygame.SRCALPHA)
+
+                # 1. Основное каменное основание крепости
+                pygame.draw.rect(ph_surf, (35, 42, 52, 225), (0, 0, obj_w, obj_h), border_radius=10)
+
+                # 2. Внутренняя сетка тайлов здания (для наглядной оценки размеров и разметки)
+                for gx in range(obj["tile_w"] + 1):
+                    x_line = gx * self.tile_size
+                    line_col = (75, 95, 120, 160) if gx % 5 == 0 else (50, 65, 80, 100)
+                    line_w = 2 if gx % 5 == 0 else 1
+                    pygame.draw.line(ph_surf, line_col, (x_line, 0), (x_line, obj_h), line_w)
+
+                for gy in range(obj["tile_h"] + 1):
+                    y_line = gy * self.tile_size
+                    line_col = (75, 95, 120, 160) if gy % 5 == 0 else (50, 65, 80, 100)
+                    line_w = 2 if gy % 5 == 0 else 1
+                    pygame.draw.line(ph_surf, line_col, (0, y_line), (obj_w, y_line), line_w)
+
+                # 3. Четыре угловые бастионные башни (каждая по 3х3 тайла = 96х96 px)
+                tower_size = 3 * self.tile_size
+                towers = [
+                    (0, 0),
+                    (obj_w - tower_size, 0),
+                    (0, obj_h - tower_size),
+                    (obj_w - tower_size, obj_h - tower_size),
+                ]
+                for tx, ty in towers:
+                    t_rect = pygame.Rect(tx, ty, tower_size, tower_size)
+                    pygame.draw.rect(ph_surf, (45, 55, 68, 245), t_rect, border_radius=4)
+                    pygame.draw.rect(ph_surf, (85, 105, 130), t_rect, 2, border_radius=4)
+                    for bx in range(tx + 4, tx + tower_size - 8, 16):
+                        pygame.draw.rect(ph_surf, (25, 32, 40), (bx, ty + 2, 8, 6))
+
+                # 4. Центральная цитадель / донжон (5х5 тайлов = 160х160 px)
+                keep_size = 5 * self.tile_size
+                keep_x = (obj_w - keep_size) // 2
+                keep_y = (obj_h - keep_size) // 2
+                keep_rect = pygame.Rect(keep_x, keep_y, keep_size, keep_size)
+                pygame.draw.rect(ph_surf, (40, 50, 62, 245), keep_rect, border_radius=6)
+                pygame.draw.rect(ph_surf, (110, 135, 165), keep_rect, 2, border_radius=6)
+
+                # 5. Отрисовка 4 ворот замка (Главные, Южные, Северные, Западные)
+                # 1) Главные ворота (Восточные): 74/52, 74/53, 74/54 -> локально: x = 14*32, y = (52-46)*32 = 6*32 = 192, h = 3*32 = 96
+                gw_e = self.tile_size
+                gh_e = 3 * self.tile_size
+                gx_e = 14 * self.tile_size
+                gy_e = 6 * self.tile_size
+                rect_e = pygame.Rect(gx_e, gy_e, gw_e, gh_e)
+                pygame.draw.rect(ph_surf, (22, 26, 34), rect_e, border_radius=3)
+                pygame.draw.rect(ph_surf, (255, 215, 80), rect_e, 2, border_radius=3)
+                lbl_e = self.grid_font.render("ГЛАВНЫЕ", True, (255, 220, 100))
+                lbl_e_sub = self.grid_font.render("ВОРОТА", True, (255, 220, 100))
+                ph_surf.blit(lbl_e, lbl_e.get_rect(center=(gx_e + gw_e // 2, gy_e + gh_e // 2 - 8)))
+                ph_surf.blit(lbl_e_sub, lbl_e_sub.get_rect(center=(gx_e + gw_e // 2, gy_e + gh_e // 2 + 8)))
+                # Факелы у главных ворот
+                pygame.draw.circle(ph_surf, (255, 160, 30), (gx_e - 4, gy_e + 10), 4)
+                pygame.draw.circle(ph_surf, (255, 160, 30), (gx_e - 4, gy_e + gh_e - 10), 4)
+
+                # 2) Южные ворота: 67/60 -> локально: x = (67-60)*32 = 224, y = 14*32 = 448
+                gw_s = self.tile_size
+                gh_s = self.tile_size
+                gx_s = 7 * self.tile_size
+                gy_s = 14 * self.tile_size
+                rect_s = pygame.Rect(gx_s, gy_s, gw_s, gh_s)
+                pygame.draw.rect(ph_surf, (22, 26, 34), rect_s, border_radius=3)
+                pygame.draw.rect(ph_surf, (140, 190, 240), rect_s, 2, border_radius=3)
+                lbl_s = self.grid_font.render("ЮЖНЫЕ", True, (160, 210, 255))
+                ph_surf.blit(lbl_s, lbl_s.get_rect(center=rect_s.center))
+
+                # 3) Северные ворота: 67/46 -> локально: x = (67-60)*32 = 224, y = 0
+                gx_n = 7 * self.tile_size
+                gy_n = 0
+                rect_n = pygame.Rect(gx_n, gy_n, gw_s, gh_s)
+                pygame.draw.rect(ph_surf, (22, 26, 34), rect_n, border_radius=3)
+                pygame.draw.rect(ph_surf, (140, 190, 240), rect_n, 2, border_radius=3)
+                lbl_n = self.grid_font.render("СЕВЕР", True, (160, 210, 255))
+                ph_surf.blit(lbl_n, lbl_n.get_rect(center=rect_n.center))
+
+                # 4) Западные ворота: 60/53 -> локально: x = 0, y = (53-46)*32 = 224
+                gx_w = 0
+                gy_w = 7 * self.tile_size
+                rect_w = pygame.Rect(gx_w, gy_w, gw_s, gh_s)
+                pygame.draw.rect(ph_surf, (22, 26, 34), rect_w, border_radius=3)
+                pygame.draw.rect(ph_surf, (140, 190, 240), rect_w, 2, border_radius=3)
+                lbl_w = self.grid_font.render("ЗАПАД", True, (160, 210, 255))
+                ph_surf.blit(lbl_w, lbl_w.get_rect(center=rect_w.center))
+
+                # 6. Информационные надписи внутри цитадели
+                title_surf = self.large_font.render("ГОРОД РАДБУРГ", True, (255, 220, 100))
+                ph_surf.blit(title_surf, title_surf.get_rect(center=(obj_w // 2, keep_y + 30)))
+
+                sub_surf = self.badge_font.render(f"[ГОРОД СВЕТА • {obj['tile_w']} x {obj['tile_h']} ТАЙЛОВ]", True, (130, 200, 255))
+                ph_surf.blit(sub_surf, sub_surf.get_rect(center=(obj_w // 2, keep_y + 54)))
+
+                origin_text = obj.get("origin_desc", f"Левый нижний: [{obj['tile_x']}, {obj['tile_y'] + obj['tile_h'] - 1}]")
+                origin_surf = self.small_font.render(origin_text, True, (240, 240, 240))
+                ph_surf.blit(origin_surf, origin_surf.get_rect(center=(obj_w // 2, keep_y + 76)))
+
+                coord_surf = self.grid_font.render(f"Сетка: X [{obj['tile_x']}..{obj['tile_x'] + obj['tile_w'] - 1}], Y [{obj['tile_y']}..{obj['tile_y'] + obj['tile_h'] - 1}]", True, (180, 195, 210))
+                ph_surf.blit(coord_surf, coord_surf.get_rect(center=(obj_w // 2, keep_y + 96)))
+
+                entrances_lbl = self.grid_font.render("ВХОДЫ: Восток(3т) | Юг(1т) | Север(1т) | Запад(1т)", True, (255, 230, 140))
+                ph_surf.blit(entrances_lbl, entrances_lbl.get_rect(center=(obj_w // 2, keep_y + 116)))
+
+                status_surf = self.grid_font.render("[ СТОЛИЦА СВЕТА • ЗАГЛУШКА ]", True, (200, 170, 120))
+                ph_surf.blit(status_surf, status_surf.get_rect(center=(obj_w // 2, keep_y + 134)))
+
+                # Рисуем поверхность заглушки на экран
+                screen.blit(ph_surf, (sx, sy))
+
+                # Внешняя рамка и подсветка
+                if is_active:
+                    pulse = 1.0 + 0.04 * math.sin(self.player_anim_timer * 6.0)
+                    glow_w = int(obj_w * pulse)
+                    glow_h = int(obj_h * pulse)
+                    glow_x = castle_rect.centerx - glow_w // 2
+                    glow_y = castle_rect.centery - glow_h // 2
+                    pygame.draw.rect(screen, (255, 215, 60), (glow_x, glow_y, glow_w, glow_h), 3, border_radius=12)
+                elif is_hovered:
+                    pygame.draw.rect(screen, (80, 200, 255), castle_rect.inflate(8, 8), 2, border_radius=12)
+                else:
+                    pygame.draw.rect(screen, (100, 125, 155), castle_rect, 2, border_radius=10)
+
+                # Бейдж названия над замком
+                badge_color = (255, 215, 60) if is_active else (100, 200, 255) if is_hovered else (220, 200, 160)
+                self._draw_badge(screen, castle_rect.centerx, sy - 12, f"🏛️ {obj['name']} [15x15]", badge_color)
+
+    def _draw_floating_messages(self, screen):
+        """Отрисовывает всплывающие сообщения в мире ('Слишком далеко' и т.д.)."""
+        for msg in self.floating_messages:
+            sx, sy = self.world_to_screen(msg["world_x"], msg["world_y"])
+            if not (-120 <= sx <= settings.WIDTH + 120 and -60 <= sy <= settings.HEIGHT + 60):
+                continue
+            progress = max(0.0, min(1.0, msg["timer"] / msg["max_timer"]))
+            alpha = int(255 * min(1.0, progress * 2.0))
+
+            text_surf = self.small_font.render(msg["text"], True, msg["color"])
+            bg_rect = text_surf.get_rect(center=(sx, sy)).inflate(16, 8)
+
+            popup = pygame.Surface((bg_rect.width, bg_rect.height), pygame.SRCALPHA)
+            pygame.draw.rect(popup, (15, 18, 24, int(220 * (alpha / 255.0))), (0, 0, bg_rect.width, bg_rect.height), border_radius=5)
+            r, g, b = msg["color"][:3]
+            pygame.draw.rect(popup, (r, g, b, alpha), (0, 0, bg_rect.width, bg_rect.height), 1, border_radius=5)
+            popup.blit(text_surf, (8, 4))
+            screen.blit(popup, bg_rect.topleft)
+
+    def _draw_hover_popup(self, screen, mouse_pos):
+        """Отрисовывает всплывающее окно (tooltip) при наведении курсора на объект."""
+        if self.hovered_entity is None:
+            return
+
+        if self.active_entity and self.active_entity.get("id") == self.hovered_entity.get("id"):
+            return
+
+        ent = self.hovered_entity
+        mx, my = mouse_pos
+
+        box_w = 300
+        box_h = 115
+        box_x = mx + 16
+        box_y = my + 16
+
+        if box_x + box_w > settings.WIDTH - 12:
+            box_x = mx - box_w - 12
+        if box_y + box_h > settings.HEIGHT - 12:
+            box_y = my - box_h - 12
+        if box_y < 80:
+            box_y = 80
+
+        popup_surf = pygame.Surface((box_w, box_h), pygame.SRCALPHA)
+        pygame.draw.rect(popup_surf, (18, 24, 32, 235), (0, 0, box_w, box_h), border_radius=6)
+        pygame.draw.rect(popup_surf, (80, 190, 255, 255), (0, 0, box_w, box_h), width=2, border_radius=6)
+        screen.blit(popup_surf, (box_x, box_y))
+
+        icon = ent.get("icon", "📍")
+        name = ent.get("name", "Объект")
+        title_surf = self.small_font.render(f"{icon} {name}", True, (255, 230, 140))
+        screen.blit(title_surf, (box_x + 12, box_y + 10))
+
+        type_str = ent.get("type", "Объект")
+        type_surf = self.grid_font.render(f"[{type_str}]", True, (130, 200, 255))
+        screen.blit(type_surf, (box_x + 12, box_y + 32))
+
+        gx = ent.get("tile_x", int(ent.get("x", 0) // self.tile_size))
+        gy = ent.get("tile_y", int(ent.get("y", 0) // self.tile_size))
+        coord_surf = self.grid_font.render(f"Тайл: [{gx}, {gy}]", True, (170, 180, 190))
+        screen.blit(coord_surf, (box_x + box_w - coord_surf.get_width() - 12, box_y + 32))
+
+        desc = ent.get("desc", "")
+        if len(desc) > 44:
+            desc = desc[:41] + "..."
+        desc_surf = self.grid_font.render(desc, True, (200, 210, 220))
+        screen.blit(desc_surf, (box_x + 12, box_y + 54))
+
+        # Статус дистанции
+        in_range = self._is_within_one_tile(ent)
+        if ent.get("id") == "player":
+            status_text = "● Персонаж готов к управлению"
+            status_col = (100, 220, 255)
+        elif in_range:
+            status_text = "● Рядом (дистанция <= 1 тайл)"
+            status_col = (80, 255, 120)
+        else:
+            status_text = "○ Слишком далеко (кликните, чтобы подойти)"
+            status_col = (255, 160, 90)
+        range_surf = self.grid_font.render(status_text, True, status_col)
+        screen.blit(range_surf, (box_x + 12, box_y + 74))
+
+        hint_surf = self.grid_font.render("🖱️ ЛКМ - сделать активным", True, (140, 255, 180))
+        screen.blit(hint_surf, (box_x + 12, box_y + 92))
+
+    def _draw_active_window(self, screen):
+        """Отрисовывает окно активного объекта (выбранного по ЛКМ)."""
+        if self.active_entity is None or self.farm_menu_open:
+            return
+
+        ent = self.active_entity
+        rect = self.active_window_rect
+
+        win_surf = pygame.Surface((rect.width, rect.height), pygame.SRCALPHA)
+        pygame.draw.rect(win_surf, (15, 20, 28, 245), (0, 0, rect.width, rect.height), border_radius=8)
+        pygame.draw.rect(win_surf, (220, 185, 60, 255), (0, 0, rect.width, rect.height), width=2, border_radius=8)
+        screen.blit(win_surf, rect.topleft)
+
+        icon = ent.get("icon", "📍")
+        name = ent.get("name", "Объект")
+        title_surf = self.font.render(f"{icon} {name}", True, (255, 225, 120))
+        screen.blit(title_surf, (rect.left + 14, rect.top + 12))
+
+        status_surf = self.badge_font.render("● АКТИВЕН", True, (80, 255, 120))
+        screen.blit(status_surf, (rect.left + 14, rect.top + 40))
+
+        m_pos = pygame.mouse.get_pos()
+        close_hover = self.active_close_button.collidepoint(m_pos)
+        c_bg = (180, 50, 50) if close_hover else (45, 30, 35)
+        pygame.draw.rect(screen, c_bg, self.active_close_button, border_radius=4)
+        pygame.draw.rect(screen, (220, 100, 100), self.active_close_button, width=1, border_radius=4)
+        x_surf = self.small_font.render("✕", True, (255, 255, 255))
+        screen.blit(x_surf, x_surf.get_rect(center=self.active_close_button.center))
+
+        pygame.draw.line(screen, (50, 65, 80), (rect.left + 14, rect.top + 62), (rect.right - 14, rect.top + 62), 1)
+
+        gx = int(ent.get("x", 0) // self.tile_size)
+        gy = int(ent.get("y", 0) // self.tile_size)
+
+        # Статус дистанции до объекта в активном окне
+        in_range = self._is_within_one_tile(ent)
+        if ent.get("id") == "player":
+            range_info = "● Ваш персонаж"
+            range_col = (100, 220, 255)
+        elif in_range:
+            range_info = "● В радиусе действия (<= 1 тайл)"
+            range_col = (80, 255, 120)
+        else:
+            range_info = "○ Слишком далеко"
+            range_col = (160, 160, 160)
+
+        r_surf = self.grid_font.render(f"Тип: {ent.get('type', 'Объект')} | {range_info}", True, range_col)
+        screen.blit(r_surf, (rect.left + 14, rect.top + 72))
+
+        desc = ent.get("desc", "")
+        if len(desc) > 42:
+            line1 = desc[:42]
+            line2 = desc[42:84]
+            d1_surf = self.grid_font.render(line1, True, (210, 215, 220))
+            d2_surf = self.grid_font.render(line2, True, (210, 215, 220))
+            screen.blit(d1_surf, (rect.left + 14, rect.top + 92))
+            screen.blit(d2_surf, (rect.left + 14, rect.top + 108))
+        else:
+            d_surf = self.grid_font.render(desc, True, (210, 215, 220))
+            screen.blit(d_surf, (rect.left + 14, rect.top + 96))
+
+        if self.action_notice:
+            not_surf = self.small_font.render(self.action_notice, True, (255, 120, 100))
+            not_rect = not_surf.get_rect(center=self.active_action_button.center)
+            pygame.draw.rect(screen, (40, 25, 25), self.active_action_button, border_radius=4)
+            pygame.draw.rect(screen, (200, 80, 70), self.active_action_button, width=1, border_radius=4)
+            screen.blit(not_surf, not_rect)
+        else:
+            if ent.get("id") == "player":
+                action_label = "ФОКУС КАМЕРЫ"
+            elif ent.get("id") == "forester_hut":
+                action_label = "ПОГОВОРИТЬ С ЛЕСНИКОМ"
+            elif ent.get("id") == "wheat_farm":
+                action_label = "ОТКРЫТЬ ФЕРМУ"
+            elif ent.get("id") in ("town_radburg", "main_castle"):
+                action_label = "ВОЙТИ В ГОРОД"
+            else:
+                action_label = "ВЗАИМОДЕЙСТВОВАТЬ"
+
+            btn_hover = self.active_action_button.collidepoint(m_pos)
+            if ent.get("id") == "player" or in_range:
+                # В зоне действия - активная синяя кнопка
+                btn_col = (70, 120, 180) if btn_hover else (45, 80, 130)
+                text_col = (255, 255, 255)
+            else:
+                # Вне зоны действия - серая неактивная кнопка
+                btn_col = (75, 75, 80) if btn_hover else (55, 55, 60)
+                text_col = (170, 170, 175)
+
+            draw_button(screen, self.active_action_button, action_label, self.small_font, color=btn_col, text_color=text_col)
+
+    @staticmethod
+    def _farm_level_info(level):
+        """Бонус производства (%) и максимум рабочих для заданного уровня фермы."""
+        table = {1: (0, 1), 2: (20, 2), 3: (40, 3), 4: (50, 5), 5: (70, 7)}
+        return table.get(level, table[1])
+
+    def _farm_production_desc(self, level):
+        bonus, max_workers = self._farm_level_info(level)
+        if bonus:
+            base_line = f"50 (+{bonus}% за улучшение) пшеницы за 120 мин"
+        else:
+            base_line = "50 пшеницы за 120 мин (при наличии рабочего)"
+        return f"{base_line}, +30 пшеницы за каждого доп. рабочего. Максимум рабочих: {max_workers}."
+
+    @staticmethod
+    def _farm_warehouse_capacity(level):
+        table = {1: 300, 2: 500, 3: 700, 4: 1000, 5: 1500}
+        return table.get(level, table[1])
+
+    @staticmethod
+    def _farm_upgrade_requirements(level):
+        """Требования (ресурсы + время) для улучшения фермы с указанного уровня до следующего (None на максимуме)."""
+        table = {
+            1: {"stone": 1000, "wood": 1000, "time_seconds": 2 * 3600},
+            2: {"stone": 2000, "wood": 2000, "time_seconds": 4 * 3600},
+            3: {"stone": 3500, "wood": 3500, "time_seconds": 8 * 3600},
+            4: {"stone": 5000, "wood": 5000, "time_seconds": 16 * 3600},
+        }
+        return table.get(level)
+
+    @staticmethod
+    def _format_duration(seconds):
+        seconds = int(seconds)
+        hours, rem = divmod(seconds, 3600)
+        minutes = rem // 60
+        if hours > 0:
+            return f"{hours} ч {minutes} мин"
+        return f"{minutes} мин"
+
+    def _farm_status(self, farm):
+        """Возвращает (статус, цвет статуса, доп.сообщение, цвет доп.сообщения)."""
+        capacity = self._farm_warehouse_capacity(farm.get("warehouse_level", 1))
+        if farm.get("storage_current", 0) >= capacity:
+            return "Склад переполнен", (240, 90, 80), None, None
+
+        if farm.get("worker_present"):
+            return "Работает", (110, 230, 120), None, None
+
+        if farm.get("worker_en_route") and farm.get("worker_arrival_seconds") is not None:
+            arrival = self._format_duration(farm["worker_arrival_seconds"])
+            return "Нет рабочих", (240, 210, 90), f"Рабочий прибудет через {arrival}", (200, 220, 255)
+
+        return "Нет рабочих", (240, 210, 90), "Нет назначений", (240, 90, 80)
+
+    def _try_upgrade_farm(self, farm):
+        """Пытается улучшить ферму, если хватает ресурсов (время постройки улучшения пока не симулируется)."""
+        req = self._farm_upgrade_requirements(farm.get("level", 1))
+        if req is None:
+            return
+        if (self.player_resources.get("stone", 0) >= req["stone"]
+                and self.player_resources.get("wood", 0) >= req["wood"]):
+            self.player_resources["stone"] -= req["stone"]
+            self.player_resources["wood"] -= req["wood"]
+            farm["level"] = farm.get("level", 1) + 1
+
+    @staticmethod
+    def _wrap_text_lines(font, text, max_width):
+        words = text.split(" ")
+        lines = []
+        current = ""
+        for word in words:
+            trial = f"{current} {word}".strip()
+            if font.size(trial)[0] <= max_width or not current:
+                current = trial
+            else:
+                lines.append(current)
+                current = word
+        if current:
+            lines.append(current)
+        return lines
+
+    def _draw_farm_modal(self, screen):
+        """Отрисовывает меню управления Пшеничной фермой: статус, уровень производства и склад."""
+        farm = next((o for o in self.objects if o["id"] == "wheat_farm"), None)
+        if farm is None:
+            return
+
+        overlay = pygame.Surface((settings.WIDTH, settings.HEIGHT), pygame.SRCALPHA)
+        overlay.fill((8, 12, 18, 215))
+        screen.blit(overlay, (0, 0))
+
+        rect = self.farm_modal_rect
+        modal_surf = pygame.Surface((rect.width, rect.height), pygame.SRCALPHA)
+        pygame.draw.rect(modal_surf, (24, 26, 18, 250), (0, 0, rect.width, rect.height), border_radius=12)
+        pygame.draw.rect(modal_surf, (220, 185, 70), (0, 0, rect.width, rect.height), width=2, border_radius=12)
+        screen.blit(modal_surf, rect.topleft)
+
+        level = farm.get("level", 1)
+        wh_level = farm.get("warehouse_level", 1)
+        m_pos = pygame.mouse.get_pos()
+        text_width = rect.width - 48
+
+        # Заголовок: название фермы + цветной статус в скобках
+        status_text, status_col, extra_text, extra_col = self._farm_status(farm)
+        x = rect.left + 24
+        y = rect.top + 16
+        prefix_surf = self.large_font.render(f"🌾 {farm['name']} (", True, (255, 225, 130))
+        screen.blit(prefix_surf, (x, y))
+        x += prefix_surf.get_width()
+        status_surf = self.large_font.render(status_text, True, status_col)
+        screen.blit(status_surf, (x, y))
+        x += status_surf.get_width()
+        suffix_surf = self.large_font.render(")", True, (255, 225, 130))
+        screen.blit(suffix_surf, (x, y))
+
+        # Кнопка закрытия справа сверху (1 тайл = 32х32)
+        c_hover = self.farm_close_button.collidepoint(m_pos)
+        pygame.draw.rect(screen, (160, 45, 45) if c_hover else (45, 30, 35), self.farm_close_button, border_radius=4)
+        pygame.draw.rect(screen, (220, 100, 100), self.farm_close_button, 1, border_radius=4)
+        x_surf = self.font.render("✕", True, (255, 255, 255))
+        screen.blit(x_surf, x_surf.get_rect(center=self.farm_close_button.center))
+
+        # Доп. сообщение о назначении рабочего (только когда рабочих на ферме нет)
+        curr_y = rect.top + 50
+        if extra_text:
+            extra_surf = self.small_font.render(extra_text, True, extra_col)
+            screen.blit(extra_surf, (rect.left + 24, curr_y))
+        curr_y += 26
+
+        pygame.draw.line(screen, (100, 90, 55), (rect.left + 22, curr_y), (rect.right - 22, curr_y), 1)
+        curr_y += 14
+
+        # Текущий уровень фермы и её производительность
+        lvl_title = self.font.render(f"Уровень {level}", True, (255, 225, 130))
+        screen.blit(lvl_title, (rect.left + 24, curr_y))
+        curr_y += 24
+        for line in self._wrap_text_lines(self.small_font, self._farm_production_desc(level), text_width):
+            line_surf = self.small_font.render(line, True, (210, 210, 195))
+            screen.blit(line_surf, (rect.left + 34, curr_y))
+            curr_y += 20
+        curr_y += 8
+
+        # Следующий уровень: требования на улучшение и описание бонуса
+        req = self._farm_upgrade_requirements(level)
+        if req is not None:
+            next_title = self.font.render(f"Уровень {level + 1}", True, (195, 195, 175))
+            screen.blit(next_title, (rect.left + 24, curr_y))
+            req_line = f"— для улучшения: камень {req['stone']}, брёвна {req['wood']} • время {self._format_duration(req['time_seconds'])}"
+            req_surf = self.grid_font.render(req_line, True, (170, 190, 210))
+            screen.blit(req_surf, (rect.left + 30 + next_title.get_width(), curr_y + 6))
+            curr_y += 22
+            next_desc = "После улучшения: " + self._farm_production_desc(level + 1)
+            for line in self._wrap_text_lines(self.grid_font, next_desc, text_width):
+                line_surf = self.grid_font.render(line, True, (175, 178, 165))
+                screen.blit(line_surf, (rect.left + 34, curr_y))
+                curr_y += 17
+        else:
+            max_surf = self.font.render("Ферма достигла максимального уровня", True, (195, 195, 175))
+            screen.blit(max_surf, (rect.left + 24, curr_y))
+            curr_y += 22
+
+        curr_y += 14
+        pygame.draw.line(screen, (100, 90, 55), (rect.left + 22, curr_y), (rect.right - 22, curr_y), 1)
+        curr_y += 14
+
+        # Отдельное улучшение "Склад" под улучшением самой фермы
+        wh_title = self.font.render(f"📦 Склад фермы — Уровень {wh_level}", True, (160, 210, 255))
+        screen.blit(wh_title, (rect.left + 24, curr_y))
+        curr_y += 28
+
+        for lvl, capacity in ((1, 300), (2, 500), (3, 700), (4, 1000), (5, 1500)):
+            is_current = lvl == wh_level
+            row_col = (180, 225, 255) if is_current else (190, 195, 200)
+            marker = "▶" if is_current else " "
+            row = self.small_font.render(f"{marker} Уровень {lvl}: хранит {capacity} пшеницы", True, row_col)
+            screen.blit(row, (rect.left + 34, curr_y))
+            curr_y += 22
+
+        # Отдельная рамка в нижнем левом углу: требования к улучшению фермы + кнопка
+        box = self.farm_upgrade_box_rect
+        pygame.draw.rect(screen, (20, 24, 16), box, border_radius=8)
+        pygame.draw.rect(screen, (150, 130, 70), box, 1, border_radius=8)
+        box_title = self.small_font.render("Требования улучшения", True, (255, 225, 150))
+        screen.blit(box_title, (box.left + 10, box.top + 8))
+
+        if req is not None:
+            stone_have = self.player_resources.get("stone", 0)
+            wood_have = self.player_resources.get("wood", 0)
+            stone_col = (140, 230, 140) if stone_have >= req["stone"] else (230, 120, 110)
+            wood_col = (140, 230, 140) if wood_have >= req["wood"] else (230, 120, 110)
+            stone_line = self.grid_font.render(f"🪨 Камень: {stone_have}/{req['stone']}", True, stone_col)
+            wood_line = self.grid_font.render(f"🌲 Брёвна: {wood_have}/{req['wood']}", True, wood_col)
+            screen.blit(stone_line, (box.left + 10, box.top + 32))
+            screen.blit(wood_line, (box.left + 10, box.top + 50))
+
+            can_upgrade = stone_have >= req["stone"] and wood_have >= req["wood"]
+            btn = self.farm_upgrade_button
+            btn_hover = can_upgrade and btn.collidepoint(m_pos)
+            if can_upgrade:
+                btn_col = (110, 180, 110) if btn_hover else (80, 140, 85)
+                text_col = (255, 255, 255)
+            else:
+                btn_col = (55, 55, 60)
+                text_col = (150, 150, 155)
+            draw_button(screen, btn, "УЛУЧШИТЬ", self.small_font, color=btn_col, text_color=text_col)
+        else:
+            max_line = self.grid_font.render("Достигнут максимальный уровень", True, (200, 200, 200))
+            screen.blit(max_line, (box.left + 10, box.top + 40))
+
+    def _draw_click_effect(self, screen):
+        """Отрисовывает расходящийся маркер клика ПКМ (Dota-стиль)."""
+        if self.click_effect is None:
+            return
+
+        cx, cy = self.world_to_screen(self.click_effect["x"], self.click_effect["y"])
+        progress = 1.0 - (self.click_effect["timer"] / 0.35)
+        radius = int(8 + progress * 16)
+        alpha_val = max(0, int(255 * (1.0 - progress)))
+
+        ring = pygame.Surface((radius * 2 + 4, radius * 2 + 4), pygame.SRCALPHA)
+        pygame.draw.circle(ring, (80, 255, 120, alpha_val), (radius + 2, radius + 2), radius, 2)
+        screen.blit(ring, (cx - radius - 2, cy - radius - 2))
+
+    def _draw_player_character(self, screen):
+        """
+        Отрисовывает персонажа:
+        - В движении (walk): 8-направленный бег (assets/3run/), 6 кадров по направлению движения.
+        - В покое (idle): 8-направленная стойка с дыханием (assets/2Idle/), 4 кадра.
+        - Процедурный чиби-воин как фолбэк при отсутствии файлов.
+        """
+        sx, sy = self.world_to_screen(self.player_x, self.player_y)
+
+        # Тень под ногами
+        pygame.draw.ellipse(screen, (10, 12, 16, 170), (sx - 14, sy - 4, 28, 10))
+
+        # Подсветка персонажа если активен или под курсором
+        is_player_active = self.active_entity and self.active_entity.get("id") == "player"
+        is_player_hovered = self.hovered_entity and self.hovered_entity.get("id") == "player"
+        if is_player_active:
+            pulse = 1.0 + 0.12 * math.sin(self.player_anim_timer * 6.0)
+            p_ring_r = int(22 * pulse)
+            p_ring_surf = pygame.Surface((p_ring_r * 2 + 6, p_ring_r * 2 + 6), pygame.SRCALPHA)
+            pygame.draw.circle(p_ring_surf, (255, 215, 60, 220), (p_ring_r + 3, p_ring_r + 3), p_ring_r, 2)
+            screen.blit(p_ring_surf, (sx - p_ring_r - 3, sy - p_ring_r - 3))
+        elif is_player_hovered:
+            pygame.draw.circle(screen, (80, 200, 255), (sx, sy), 22, 2)
+
+        # Выбираем активный набор кадров (бег или покой)
+        if self.player_state == "walk" and self.player_run_directional_frames:
+            frames_dict = self.player_run_directional_frames
+            anim_fps = 10.0  # Энергичный бег (10 кадров/сек)
+        else:
+            frames_dict = self.player_directional_frames
+            anim_fps = 4.0   # Спокойное дыхание на месте (4 кадра/сек)
+
+        direction_frames = frames_dict.get(self.player_direction)
+        if not direction_frames and frames_dict:
+            direction_frames = next(iter(frames_dict.values()))
+
+        if direction_frames:
+            frame_idx = int(self.player_anim_timer * anim_fps) % len(direction_frames)
+            frame_surf = direction_frames[frame_idx]
+
+            # Ноги персонажа касаются земли в точке (sx, sy)
+            frame_rect = frame_surf.get_rect(midbottom=(sx, sy))
+            screen.blit(frame_surf, frame_rect)
+            name_y = frame_rect.top - 4
+        else:
+            # Процедурный чиби-воин (фолбэк)
+            bob_y = int(math.sin(self.player_anim_timer * 14.0) * 2.5) if self.player_state == "walk" else int(math.sin(self.player_anim_timer * 4.0))
+            cy = sy + bob_y
+            facing = 1 if self.player_facing_right else -1
+
+            cape_points = [(sx - 5 * facing, cy - 4), (sx - 12 * facing, cy + 8), (sx - 4 * facing, cy + 9)]
+            pygame.draw.polygon(screen, (34, 110, 55), cape_points)
+
+            body_rect = pygame.Rect(sx - 6, cy - 6, 12, 13)
+            pygame.draw.rect(screen, (85, 115, 145), body_rect, border_radius=2)
+            pygame.draw.rect(screen, (40, 60, 80), body_rect, 1, border_radius=2)
+
+            leg_offset = int(math.sin(self.player_anim_timer * 14.0) * 2) if self.player_state == "walk" else 0
+            pygame.draw.rect(screen, (50, 65, 80), (sx - 5, cy + 7 - leg_offset, 4, 5))
+            pygame.draw.rect(screen, (50, 65, 80), (sx + 1, cy + 7 + leg_offset, 4, 5))
+
+            pygame.draw.circle(screen, (220, 195, 160), (sx, cy - 11), 6)
+            pygame.draw.rect(screen, (215, 180, 75), (sx - 6, cy - 17, 12, 7), border_radius=2)
+            pygame.draw.line(screen, (40, 160, 70), (sx - 2 * facing, cy - 17), (sx - 6 * facing, cy - 22), 2)
+            name_y = cy - 23
+
+        # Маркер имени игрока над головой
+        char_name = getattr(self.session, "character", {}).get("name", "Герой") if hasattr(self.session, "character") else "Герой"
+        name_surf = self.grid_font.render(char_name, True, (255, 235, 150))
+        n_rect = name_surf.get_rect(midbottom=(sx, name_y))
+        bg = n_rect.inflate(8, 2)
+        pygame.draw.rect(screen, (15, 18, 24, 210), bg, border_radius=3)
+        pygame.draw.rect(screen, (180, 150, 60), bg, 1, border_radius=3)
+        screen.blit(name_surf, n_rect)
+
+    def _draw_hud(self, screen, hover_wx, hover_wy):
+        """Верхняя панель управления и подсказок."""
         hud_bg = pygame.Rect(0, 0, settings.WIDTH, 75)
         pygame.draw.rect(screen, (15, 18, 22), hud_bg)
         pygame.draw.line(screen, (60, 70, 85), (0, 75), (settings.WIDTH, 75), 2)
 
-        draw_button(screen, self.back_button, "В ТАВЕРНУ", self.font, color=(160, 70, 70))
-        draw_button(screen, self.center_button, "ЦЕНТР (0, 0)", self.font, color=(70, 110, 150))
-        draw_button(screen, self.light_castle_button, "ЗАМОК СВЕТА", self.font, color=(60, 120, 180))
-        draw_button(screen, self.dark_castle_button, "ЦИТАДЕЛЬ ТЬМЫ", self.font, color=(180, 60, 60))
+        draw_button(screen, self.player_pos_button, "К ГЕРОЮ", self.font, color=(60, 120, 180))
 
-        # Индикатор позиции камеры и курсора
         hover_gx = int(hover_wx // self.tile_size)
         hover_gy = int(hover_wy // self.tile_size)
-        hover_cx = hover_gx + 1 if hover_gx >= 0 else hover_gx
-        hover_cy = hover_gy + 1 if hover_gy >= 0 else hover_gy
 
-        info_str = f"Камера: X={int(self.camera_x)}, Y={int(self.camera_y)} | Курсор: WX={int(hover_wx)}, WY={int(hover_wy)} | Квадрат: {hover_cx}/{hover_cy}"
+        info_str = f"Карта: 512x256 (32px) | Персонаж: X={int(self.player_x)}, Y={int(self.player_y)} | Тайл: [{hover_gx}, {hover_gy}]"
         info_surf = self.font.render(info_str, True, (240, 240, 240))
-        screen.blit(info_surf, (730, 27))
+        screen.blit(info_surf, (640, 27))
 
-        hint_str = "Управление: Перетаскивание мышью (ЛКМ) | Стрелки / WASD (+Shift для ускорения)"
-        hint_surf = self.grid_font.render(hint_str, True, (160, 170, 180))
+        hint_str = "ЛКМ - активировать объект | Наведение - всплывающее окно | ПКМ - бежать | Drag ЛКМ - скролл | G - Сетка"
+        hint_surf = self.small_font.render(hint_str, True, (160, 170, 180))
         screen.blit(hint_surf, (20, settings.HEIGHT - 25))
-
-    def _draw_marker(self, screen, wx, wy, title, color, size_px):
-        """Отрисовывает рамку объекта и подпись."""
-        sx, sy = self.world_to_screen(wx - size_px // 2, wy - size_px // 2)
-        obj_rect = pygame.Rect(sx, sy, size_px, size_px)
-        
-        # Рисуем рамку
-        pygame.draw.rect(screen, color, obj_rect, 3, border_radius=4)
-        
-        # Подпись
-        title_surf = self.font.render(title, True, color)
-        t_rect = title_surf.get_rect(midbottom=(obj_rect.centerx, obj_rect.top - 6))
-        bg_rect = t_rect.inflate(12, 6)
-        pygame.draw.rect(screen, (10, 12, 16), bg_rect, border_radius=4)
-        pygame.draw.rect(screen, color, bg_rect, 1, border_radius=4)
-        screen.blit(title_surf, t_rect)
 
     def close(self):
         pass
+

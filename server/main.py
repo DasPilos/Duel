@@ -245,8 +245,8 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                if character is None:
                    self._send(404, {"error": "Персонаж не найден"})
                else:
-                   inventory = self.items_database.get_inventory(character_id)
-                   self._send(200, {"inventory": inventory})
+                   self.items_database.ensure_starter_kit(character_id)
+                   self._send(200, self.items_database.get_inventory_state(character_id))
                return
             
             if path.startswith("/api/equipment/"):
@@ -613,53 +613,26 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                 return
             
             # ============= API ИНВЕНТАРЯ (действия) =============
-            if path == "/api/inventory/use":
-               token = self._token()
-               user_id = self.database.user_id_by_token(token)
+            # Каждое действие отвечает новым состоянием рюкзака и экипировки
+            if path in ("/api/inventory/move", "/api/inventory/use", "/api/inventory/drop",
+                        "/api/equipment/equip", "/api/equipment/unequip"):
+               user_id = self.database.user_id_by_token(self._token())
                character_id = int(body.get("character_id", 0))
-               character = self.database.get_character(user_id, character_id)
-               if character is None:
+               if self.database.get_character(user_id, character_id) is None:
                    raise ValueError("Персонаж не найден")
-               item_id = int(body.get("item_id", 0))
-               result = self.items_database.use_item(character_id, item_id)
-               self._send(200, {"used": result})
-               return
-            
-            if path == "/api/inventory/drop":
-               token = self._token()
-               user_id = self.database.user_id_by_token(token)
-               character_id = int(body.get("character_id", 0))
-               character = self.database.get_character(user_id, character_id)
-               if character is None:
-                   raise ValueError("Персонаж не найден")
-               item_id = int(body.get("item_id", 0))
-               self.items_database.remove_from_inventory(character_id, item_id)
-               self._send(200, {"dropped": True})
-               return
-            
-            if path == "/api/equipment/equip":
-               token = self._token()
-               user_id = self.database.user_id_by_token(token)
-               character_id = int(body.get("character_id", 0))
-               character = self.database.get_character(user_id, character_id)
-               if character is None:
-                   raise ValueError("Персонаж не найден")
-               item_id = int(body.get("item_id", 0))
-               slot = str(body.get("slot", "")).strip()
-               self.items_database.equip_item(character_id, item_id, slot)
-               self._send(200, {"equipped": True})
-               return
-            
-            if path == "/api/equipment/unequip":
-               token = self._token()
-               user_id = self.database.user_id_by_token(token)
-               character_id = int(body.get("character_id", 0))
-               character = self.database.get_character(user_id, character_id)
-               if character is None:
-                   raise ValueError("Персонаж не найден")
-               slot = str(body.get("slot", "")).strip()
-               self.items_database.unequip_item(character_id, slot)
-               self._send(200, {"unequipped": True})
+               response = {}
+               if path == "/api/inventory/move":
+                   self.items_database.move_item(character_id, body["from_slot"], body["to_slot"])
+               elif path == "/api/inventory/use":
+                   response["character"] = self.items_database.use_item(user_id, character_id, body["slot_index"])
+               elif path == "/api/inventory/drop":
+                   self.items_database.drop_from_slot(character_id, body["slot_index"])
+               elif path == "/api/equipment/equip":
+                   self.items_database.equip_item(character_id, body["slot_index"], body.get("slot"))
+               else:
+                   self.items_database.unequip_item(character_id, str(body["slot"]), body.get("target_slot"))
+               response.update(self.items_database.get_inventory_state(character_id))
+               self._send(200, response)
                return
             
             if path == "/api/character/buy_drink":

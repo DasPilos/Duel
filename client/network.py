@@ -181,8 +181,8 @@ class GameClient:
     # ================== ИНВЕНТАРЬ И ЭКИПИРОВКА ==================
     
     def get_inventory(self, character_id):
-        """Получить инвентарь персонажа"""
-        return self._request("GET", f"/api/inventory/{character_id}", authenticated=True)["inventory"]
+        """Рюкзак, экипировка и бонусы: {"inventory", "equipment", "bonuses", "capacity"}"""
+        return self._request("GET", f"/api/inventory/{character_id}", authenticated=True)
     
     def get_equipment(self, character_id):
         """Получить экипировку персонажа"""
@@ -227,18 +227,25 @@ class GameClient:
             authenticated=True,
         )["reward"]
     
-    def use_item(self, character_id, item_id):
-        """Использовать предмет"""
-        return self._request("POST", "/api/inventory/use", {"character_id": character_id, "item_id": item_id}, authenticated=True)
-    
-    def drop_item(self, character_id, item_id):
-        """Выбросить предмет"""
-        return self._request("POST", "/api/inventory/drop", {"character_id": character_id, "item_id": item_id}, authenticated=True)
-    
-    def equip_item(self, character_id, item_id, slot):
-        """Надеть предмет экипировки"""
-        return self._request("POST", "/api/equipment/equip", {"character_id": character_id, "item_id": item_id, "slot": slot}, authenticated=True)
-    
-    def unequip_item(self, character_id, slot):
-        """Снять предмет экипировки"""
-        return self._request("POST", "/api/equipment/unequip", {"character_id": character_id, "slot": slot}, authenticated=True)
+    # Действия с инвентарём возвращают новое состояние (как get_inventory);
+    # use_item дополнительно возвращает обновлённого персонажа в "character".
+
+    def move_item(self, character_id, from_slot, to_slot):
+        """Переложить предмет в другую ячейку рюкзака"""
+        return self._request("POST", "/api/inventory/move", {"character_id": character_id, "from_slot": from_slot, "to_slot": to_slot}, authenticated=True)
+
+    def use_item(self, character_id, slot_index):
+        """Использовать предмет из ячейки"""
+        return self._request("POST", "/api/inventory/use", {"character_id": character_id, "slot_index": slot_index}, authenticated=True)
+
+    def drop_item(self, character_id, slot_index):
+        """Выбросить предмет из ячейки"""
+        return self._request("POST", "/api/inventory/drop", {"character_id": character_id, "slot_index": slot_index}, authenticated=True)
+
+    def equip_item(self, character_id, slot_index, slot=None):
+        """Надеть предмет из ячейки рюкзака (slot — проверка целевого слота куклы)"""
+        return self._request("POST", "/api/equipment/equip", {"character_id": character_id, "slot_index": slot_index, "slot": slot}, authenticated=True)
+
+    def unequip_item(self, character_id, slot, target_slot=None):
+        """Снять предмет в рюкзак (в target_slot, если он свободен)"""
+        return self._request("POST", "/api/equipment/unequip", {"character_id": character_id, "slot": slot, "target_slot": target_slot}, authenticated=True)

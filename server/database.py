@@ -783,6 +783,7 @@ class Database:
                     "effect": inv_row["effect"],
                 }
             character["inventory"] = inventory
+            character["equipment_bonuses"] = self.equipment_bonuses(connection, row["id"])
 
             return character
 
@@ -792,9 +793,30 @@ class Database:
                 "SELECT * FROM characters WHERE id = ?",
                 (int(character_id),),
             ).fetchone()
-        if row is None:
-            return None
-        return {"user_id": row["user_id"], "character": self._character_payload(row)}
+            if row is None:
+                return None
+            character = self._character_payload(row)
+            character["equipment_bonuses"] = self.equipment_bonuses(connection, row["id"])
+        return {"user_id": row["user_id"], "character": character}
+
+    @staticmethod
+    def equipment_bonuses(connection, character_id):
+        """Суммарные бонусы к статам от надетых предметов: {"strength": 2, ...}"""
+        try:
+            rows = connection.execute(
+                """SELECT c.bonuses_json FROM character_equipment e
+                   JOIN items_catalog c ON c.id = e.item_id
+                   WHERE e.character_id = ?""",
+                (character_id,),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            # Таблицы предметов создаёт ItemsDatabase; без неё бонусов нет
+            return {}
+        bonuses = {}
+        for row in rows:
+            for stat, value in json.loads(row["bonuses_json"] or "{}").items():
+                bonuses[stat] = bonuses.get(stat, 0) + int(value)
+        return bonuses
 
     @staticmethod
     def _has_active_session(connection, user_id, now):

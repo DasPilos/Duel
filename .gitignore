@@ -3,6 +3,7 @@ __pycache__/
 .venv/
 server_data.sqlite3
 battle_archive/
+debug_*.png
 
 # Development workspace separation
 # Dev1 (City/Warrior system) - in main branch
@@ -19,4 +20,6 @@ battle_archive/
 !scenes/academy/
 !core/character/mage.py
 !core/cards/magic_card.py
-!core/stats/mage_stats.py
+!core/stats/mage_stats.py*.log
+debug_out.txt
+full_project_code.txt
