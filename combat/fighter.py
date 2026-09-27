@@ -32,6 +32,8 @@ class Fighter:
         self.temporary_stat_modifiers = {
             stat_name: 0 for stat_name in self.STAT_NAMES
         }
+        # Бонусы надетых предметов (не сохраняются в базовые stats)
+        self.equipment_stat_modifiers = {}
         self.temporary_critical_chance_modifier = 0
         self.temporary_dodge_chance_modifier = 0
 
@@ -71,7 +73,9 @@ class Fighter:
     def _effective_stat(self, stat_name):
         return max(
             0,
-            self.stats[stat_name] + self.temporary_stat_modifiers[stat_name],
+            self.stats[stat_name]
+            + self.temporary_stat_modifiers[stat_name]
+            + self.equipment_stat_modifiers.get(stat_name, 0),
         )
 
     def adjust_temporary_stat(self, stat_name, amount):

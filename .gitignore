@@ -20,4 +20,6 @@ debug_*.png
 !scenes/academy/
 !core/character/mage.py
 !core/cards/magic_card.py
-!core/stats/mage_stats.py
+!core/stats/mage_stats.py*.log
+debug_out.txt
+full_project_code.txt

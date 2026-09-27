@@ -105,11 +105,20 @@ class DuelScene:
             fighter.stats.setdefault(stat_name, default)
         fighter.stat_points = profile.get("stat_points", 0)
         fighter.character_id = profile.get("id", profile.get("character_id"))
+        fighter.equipment_stat_modifiers = {
+            stat_name: int(value)
+            for stat_name, value in profile.get("equipment_bonuses", {}).items()
+            if stat_name in fighter.STAT_NAMES
+        }
         fighter.recalculate_parameters()
         if profile.get("type") == "mage":
             fighter.max_hp = 50 + fighter.stats["endurance"] * 10
             fighter.max_mp = 40 + fighter.stats["intellect"] * 5
-        fighter.hp = min(profile.get("hp", fighter.max_hp), fighter.max_hp)
+        hp = profile.get("hp", fighter.max_hp)
+        if hp >= profile.get("max_hp", hp):
+            # Полное здоровье остаётся полным и с бонусом выносливости от экипировки
+            hp = fighter.max_hp
+        fighter.hp = min(hp, fighter.max_hp)
         fighter.mp = min(profile.get("mp", fighter.max_mp), fighter.max_mp)
 
     def save_online_character(self):
@@ -299,8 +308,6 @@ class DuelScene:
 
         if self.profile_overlay.is_open:
             action, _ = self.profile_overlay.handle_click(event.pos)
-            if action == "backpack":
-                return True
             if action == "close":
                 return True
             if action is not None:
@@ -314,9 +321,6 @@ class DuelScene:
             return True
 
         action, _ = self.profile_overlay.handle_click(event.pos)
-        if action == "backpack":
-            # TODO: обработать клик по рюкзаку
-            return True
         return action is not None
 
     def update(self, dt):

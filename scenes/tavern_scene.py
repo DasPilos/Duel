@@ -92,7 +92,14 @@ class TavernScene:
                 except ServerError as error:
                     self.tavern_shop.show_error(str(error))
             return
-        if self.profile_overlay.collection_panel.is_open or self.profile_overlay.deck_panel.is_open:
+        if self.profile_overlay.collection_panel.is_open:
+            # Коллекция модальная: клики (включая «ЗАКРЫТЬ») идут только в неё
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                self.profile_overlay.handle_click(event.pos)
+            elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                self.profile_overlay.collection_panel.close()
+            return
+        if self.profile_overlay.deck_panel.is_open:
             return
         if self.chat.handle_event(event):
             return
@@ -138,9 +145,6 @@ class TavernScene:
                 return
             if action == "stat_change":
                 self._save_profile_card(profile)
-                return
-            if action == "backpack":
-                # TODO: обработать клик по рюкзаку
                 return
             if action in ("handled", "close"):
                 return

@@ -148,9 +148,7 @@ class WorldMapScene:
         self.large_font = pygame.font.SysFont(settings.FONT_NAME, 24, bold=True)
 
         # UI элементы
-        self.back_button = pygame.Rect(20, 20, 150, 45)
-        self.center_button = pygame.Rect(180, 20, 150, 45)
-        self.player_pos_button = pygame.Rect(340, 20, 160, 45)
+        self.player_pos_button = pygame.Rect(20, 20, 160, 45)
 
         # Переключатель отображения тонкой сетки (клавиша G)
         self.show_grid = False
@@ -165,29 +163,26 @@ class WorldMapScene:
         self.action_notice = None
         self.action_notice_timer = 0.0
 
+        # Модальное окно управления Пшеничной фермой
+        self.farm_menu_open = False
+        self.farm_modal_rect = pygame.Rect(settings.WIDTH // 2 - 340, settings.HEIGHT // 2 - 320, 680, 640)
+        self.farm_close_button = pygame.Rect(self.farm_modal_rect.right - 44, self.farm_modal_rect.top + 12, 32, 32)
+        self.farm_upgrade_box_rect = pygame.Rect(self.farm_modal_rect.left + 20, self.farm_modal_rect.bottom - 130, 280, 110)
+        self.farm_upgrade_button = pygame.Rect(self.farm_upgrade_box_rect.left + 14, self.farm_upgrade_box_rect.bottom - 38, self.farm_upgrade_box_rect.width - 28, 28)
+
         # Всплывающие сообщения в игровом мире
         self.floating_messages = []
         self.last_too_far_phrase = None
 
         # Начальные тестовые интерактивные объекты:
-        # 1. Походный военный лагерь: размер 4х4 тайла (128х128 px), вход — средний нижний тайл
-        camp_gx, camp_gy = 260, 124
-        camp_px = camp_gx * self.tile_size
-        camp_py = camp_gy * self.tile_size
-
-        # 2. Древний сундук: размер 1х1 тайл (32х32 px)
-        chest_gx, chest_gy = 252, 128
-        chest_px = chest_gx * self.tile_size
-        chest_py = chest_gy * self.tile_size
-
-        # 3. Хижина лесника: размер 10х10 тайлов (320х320 px)
+        # 1. Хижина лесника: размер 10х10 тайлов (320х320 px)
         forester_gx, forester_gy = 33, 104
         forester_px = forester_gx * self.tile_size
         forester_py = forester_gy * self.tile_size
         forester_w = 10 * self.tile_size
         forester_h = 10 * self.tile_size
 
-        # 4. Город Радбург (Город Света): размер 15х15 тайлов (480х480 px)
+        # 2. Город Радбург (Город Света): размер 15х15 тайлов (480х480 px)
         # Левый нижний тайл: 60х60 -> левый верхний тайл: gx=60, gy = 60 - 15 + 1 = 46
         castle_w_tiles = 15
         castle_h_tiles = 15
@@ -233,47 +228,25 @@ class WorldMapScene:
             pygame.Rect(castle_px + 14 * self.tile_size, castle_py + 9 * self.tile_size, self.tile_size, 6 * self.tile_size),
         ]
 
+        # 3. Пшеничная ферма: размер 12х12 тайлов (384х384 px), вход по центру нижней стороны (тайл 20/30)
+        farm_w_tiles = 12
+        farm_h_tiles = 12
+        farm_gx = 20 - 6  # 14 (левый край, вход в 7-м столбце от края)
+        farm_gy = 30 - farm_h_tiles + 1  # 19 (верхний край, вход на нижнем ряду Y=30)
+        farm_px = farm_gx * self.tile_size
+        farm_py = farm_gy * self.tile_size
+        farm_w_px = farm_w_tiles * self.tile_size
+        farm_h_px = farm_h_tiles * self.tile_size
+        farm_door_gx, farm_door_gy = 20, 30
+
+        # Непроходимое поле (11 верхних рядов) + нижний ряд-изгородь с проемом ворот на тайле 20/30
+        farm_solids = [
+            pygame.Rect(farm_px, farm_py, farm_w_px, (farm_h_tiles - 1) * self.tile_size),
+            pygame.Rect(farm_px, farm_py + (farm_h_tiles - 1) * self.tile_size, 6 * self.tile_size, self.tile_size),
+            pygame.Rect(farm_px + 7 * self.tile_size, farm_py + (farm_h_tiles - 1) * self.tile_size, 5 * self.tile_size, self.tile_size),
+        ]
+
         self.objects = [
-            {
-                "id": "camp_1",
-                "name": "Походный лагерь",
-                "type": "Строение 4х4",
-                "tile_x": camp_gx,
-                "tile_y": camp_gy,
-                "tile_w": 4,
-                "tile_h": 4,
-                "x": camp_px + 64,
-                "y": camp_py + 64,
-                "radius": 56,
-                "entrance_tile": (camp_gx + 1, camp_gy + 3),
-                "approach_pos": (camp_px + 48, camp_py + 128 + 14),
-                "desc": "Военный лагерь 4х4 тайла. Вход расположен по центру снизу. Непроходим для сквозного прохода.",
-                "icon": "⛺",
-                "solid_rects": [
-                    pygame.Rect(camp_px, camp_py, 128, 96),          # верхние 3 ряда палатки
-                    pygame.Rect(camp_px, camp_py + 96, 32, 32),      # левый нижний угол
-                    pygame.Rect(camp_px + 64, camp_py + 96, 64, 32), # правые нижние тайлы
-                ],
-            },
-            {
-                "id": "chest_1",
-                "name": "Древний сундук",
-                "type": "Трофей 1х1",
-                "tile_x": chest_gx,
-                "tile_y": chest_gy,
-                "tile_w": 1,
-                "tile_h": 1,
-                "x": chest_px + 16,
-                "y": chest_py + 16,
-                "radius": 18,
-                "approach_pos": (chest_px + 16, chest_py + 44),
-                "desc": "Древний кованый сундук 1х1 тайл. Заперт на крепкий замок.",
-                "icon": "📦",
-                "opened": False,
-                "solid_rects": [
-                    pygame.Rect(chest_px + 2, chest_py + 4, 28, 24)
-                ],
-            },
             {
                 "id": "forester_hut",
                 "name": "Хижина лесника",
@@ -313,7 +286,42 @@ class WorldMapScene:
                 "icon": "🏛️",
                 "solid_rects": castle_solids,
             },
+            {
+                "id": "wheat_farm",
+                "name": "Пшеничная ферма",
+                "type": "Строение 12х12",
+                "tile_x": farm_gx,
+                "tile_y": farm_gy,
+                "tile_w": farm_w_tiles,
+                "tile_h": farm_h_tiles,
+                "origin_desc": "Вход на тайле [20, 30], размер 12х12 (X: 14..25, Y: 19..30)",
+                "x": farm_px + farm_w_px // 2,
+                "y": farm_py + farm_h_px // 2,
+                "radius": 190,
+                "entrance_tile": (farm_door_gx, farm_door_gy),
+                "approach_pos": (farm_door_gx * self.tile_size + 16, (farm_door_gy + 1) * self.tile_size + 16),
+                "desc": "Пшеничная ферма 12х12 тайлов. Золотые поля снабжают Радбург зерном и хлебом.",
+                "icon": "🌾",
+                "level": 1,
+                "warehouse_level": 1,
+                # Статус рабочих и склада — заглушка до появления реальной экономики/найма
+                "worker_present": False,
+                "worker_en_route": False,
+                "worker_arrival_seconds": None,
+                "storage_current": 0,
+                "solid_rects": farm_solids,
+            },
         ]
+
+        # Ресурсы игрока (заглушка до появления полноценной системы склада/экономики)
+        self.player_resources = {"stone": 0, "wood": 0}
+
+        # Узкая грунтовая дорога (1 тайл в ширину) от фермы до западных ворот Радбурга
+        self.road_tiles = self._build_road_tiles([
+            (20, 30), (20, 46), (8, 46), (8, 53), (23, 53), (23, 60), (50, 60), (51, 53), (60, 53),
+        ])
+        # Время в пути повозки по этой дороге при базовой скорости (1 тайл = 60 секунд)
+        self.road_travel_seconds = len(self.road_tiles) * settings.CART_ROAD_SECONDS_PER_TILE
 
         # Анимация строения лесника 10х10 тайлов (3 кадра анимации дыма из assets/forester's1.png)
         self.forester_frames = []
@@ -323,6 +331,40 @@ class WorldMapScene:
         self.player_directional_frames = {}
         self.player_run_directional_frames = {}
         self._load_player_directional_sprites()
+
+    def _build_road_tiles(self, waypoints):
+        """Строит набор тайлов узкой дороги (1 тайл в ширину) по ломаной линии путевых точек.
+
+        Отрезки между соседними точками должны идти строго по горизонтали или вертикали;
+        для точек, не лежащих на одной оси, путь сначала идёт по горизонтали, затем по вертикали.
+        """
+        tiles = set()
+
+        def add_horizontal(y, x1, x2):
+            lo, hi = sorted((x1, x2))
+            for x in range(lo, hi + 1):
+                tiles.add((x, y))
+
+        def add_vertical(x, y1, y2):
+            lo, hi = sorted((y1, y2))
+            for y in range(lo, hi + 1):
+                tiles.add((x, y))
+
+        for (x1, y1), (x2, y2) in zip(waypoints, waypoints[1:]):
+            if x1 == x2:
+                add_vertical(x1, y1, y2)
+            elif y1 == y2:
+                add_horizontal(y1, x1, x2)
+            else:
+                add_horizontal(y1, x1, x2)
+                add_vertical(x2, y1, y2)
+
+        return tiles
+
+    @staticmethod
+    def cart_travel_seconds(tile_count):
+        """Время в пути повозки по грунтовой дороге для заданного числа тайлов (базовая скорость: 1 тайл = 60 сек)."""
+        return tile_count * settings.CART_ROAD_SECONDS_PER_TILE
 
     def _load_forester_sprite(self):
         """
@@ -620,25 +662,13 @@ class WorldMapScene:
             self._on_too_far(self.active_entity)
             return
 
-        if eid == "camp_1":
-            self._add_floating_message("Привал совершен! Силы восстановлены", self.player_x, self.player_y - 30, (100, 255, 140))
-            self.action_notice = "Привал совершен! Силы восстановлены."
-            self.action_notice_timer = 2.5
-        elif eid == "chest_1":
-            if not self.active_entity.get("opened"):
-                self.active_entity["opened"] = True
-                self.active_entity["desc"] = "Кованый сундук распахнут. Внутри мерцают золотые монеты и самоцветы."
-                self._add_floating_message("Сундук открыт! +15 монет", self.active_entity["x"], self.active_entity["y"] - 24, (255, 220, 60))
-                self.action_notice = "Сундук открыт! Получено 15 монет."
-                self.action_notice_timer = 3.0
-            else:
-                self._add_floating_message("Сундук уже пуст", self.active_entity["x"], self.active_entity["y"] - 24, (200, 200, 200))
-                self.action_notice = "Сундук уже пуст."
-                self.action_notice_timer = 2.0
-        elif eid == "forester_hut":
+        if eid == "forester_hut":
             self._add_floating_message("Лесник: 'Береги лес, путник!'", self.active_entity["x"], self.active_entity["y"] - 140, (120, 255, 150))
             self.action_notice = "Лесник приветствует вас."
             self.action_notice_timer = 2.5
+        elif eid == "wheat_farm":
+            self.farm_menu_open = True
+            return
         elif eid in ("town_radburg", "main_castle"):
             gate = self._get_nearest_gate(self.active_entity)
             self.navigate = "city"
@@ -691,13 +721,27 @@ class WorldMapScene:
         return False
 
     def handle_event(self, event):
+        # Модальное окно фермы поглощает остальные взаимодействия с картой
+        if self.farm_menu_open:
+            if event.type == pygame.KEYDOWN:
+                if event.key in (pygame.K_ESCAPE, pygame.K_RETURN, pygame.K_SPACE):
+                    self.farm_menu_open = False
+                    return
+            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                if self.farm_close_button.collidepoint(event.pos):
+                    self.farm_menu_open = False
+                    return
+                if self.farm_upgrade_button.collidepoint(event.pos):
+                    farm = next((o for o in self.objects if o["id"] == "wheat_farm"), None)
+                    if farm is not None:
+                        self._try_upgrade_farm(farm)
+                    return
+            return
+
         if event.type == pygame.KEYDOWN:
             if event.key == pygame.K_ESCAPE:
                 if self.active_entity is not None:
                     self.active_entity = None
-                    return
-                self.cancelled = True
-                self.finished = True
                 return
             if event.key == pygame.K_g:
                 self.show_grid = not self.show_grid
@@ -715,15 +759,6 @@ class WorldMapScene:
             # ЛКМ: клик по кнопкам HUD, выбор/активация объекта или перетаскивание карты
             if event.button == 1:
                 # 1. Верхний HUD
-                if self.back_button.collidepoint(event.pos):
-                    self.finished = True
-                    return
-                if self.center_button.collidepoint(event.pos):
-                    self.camera_x = float(self.world_w // 2)
-                    self.camera_y = float(self.world_h // 2)
-                    self.camera_follow_player = False
-                    self._clamp_camera()
-                    return
                 if self.player_pos_button.collidepoint(event.pos):
                     self.camera_x = self.player_x
                     self.camera_y = self.player_y
@@ -873,7 +908,7 @@ class WorldMapScene:
 
         # 5. Определение сущности под курсором мыши (hover)
         m_pos = pygame.mouse.get_pos()
-        if m_pos[1] <= 75 or (self.active_entity and self.active_window_rect.collidepoint(m_pos)):
+        if self.farm_menu_open or m_pos[1] <= 75 or (self.active_entity and self.active_window_rect.collidepoint(m_pos)):
             self.hovered_entity = None
         else:
             self.hovered_entity = self._find_entity_at(m_pos)
@@ -956,7 +991,15 @@ class WorldMapScene:
                     # Южная половина карты (Тьма) - каменистая пустошь
                     cell_color = (36, 32, 34) if (gx + gy) % 2 == 0 else (40, 35, 38)
 
+                if (gx, gy) in self.road_tiles:
+                    # Узкая грунтовая дорога (1 тайл): протоптанная земляная колея
+                    cell_color = (120, 96, 60) if (gx + gy) % 2 == 0 else (128, 103, 65)
+
                 pygame.draw.rect(screen, cell_color, rect)
+
+                if (gx, gy) in self.road_tiles:
+                    pygame.draw.line(screen, (95, 74, 44), rect.topleft, rect.topright, 1)
+                    pygame.draw.line(screen, (95, 74, 44), rect.bottomleft, rect.bottomright, 1)
 
                 if self.show_grid:
                     pygame.draw.rect(screen, (45, 52, 60), rect, 1)
@@ -980,6 +1023,10 @@ class WorldMapScene:
         # 7. Верхний HUD и подсказки
         self._draw_hud(screen, hover_wx, hover_wy)
 
+        # 8. Модальное окно управления фермой
+        if self.farm_menu_open:
+            self._draw_farm_modal(screen)
+
     def _draw_badge(self, screen, cx, bottom_y, text, border_color):
         """Вспомогательный метод для аккуратной плашки с текстом над объектом."""
         surf = self.badge_font.render(text, True, (240, 240, 240))
@@ -994,138 +1041,7 @@ class WorldMapScene:
         pulse = 1.0 + 0.12 * math.sin(self.player_anim_timer * 6.0)
 
         for obj in self.objects:
-            if obj.get("id") == "camp_1":
-                # Военный походный лагерь 4х4 тайла (128х128 px)
-                top_left_x = obj["tile_x"] * self.tile_size
-                top_left_y = obj["tile_y"] * self.tile_size
-                sx, sy = self.world_to_screen(top_left_x, top_left_y)
-                camp_rect = pygame.Rect(sx, sy, 128, 128)
-
-                if not (-140 <= sx <= settings.WIDTH + 140 and -140 <= sy <= settings.HEIGHT + 140):
-                    continue
-
-                is_active = self.active_entity and self.active_entity.get("id") == obj["id"]
-                is_hovered = self.hovered_entity and self.hovered_entity.get("id") == obj["id"]
-
-                # Тень и расчищенная площадка лагеря
-                pygame.draw.ellipse(screen, (35, 30, 22, 210), camp_rect.inflate(18, 12))
-                pygame.draw.rect(screen, (55, 46, 32), camp_rect, border_radius=8)
-                pygame.draw.rect(screen, (80, 68, 48), camp_rect, 2, border_radius=8)
-
-                # Шатер лагеря (тяжелое военное полотно)
-                tent_rect = pygame.Rect(camp_rect.left + 10, camp_rect.top + 8, camp_rect.width - 20, camp_rect.height - 24)
-                tent_peak = (camp_rect.centerx, camp_rect.top - 18)
-
-                roof_poly = [
-                    tent_peak,
-                    (tent_rect.right, tent_rect.top + 24),
-                    (tent_rect.right, tent_rect.bottom - 10),
-                    (tent_rect.left, tent_rect.bottom - 10),
-                    (tent_rect.left, tent_rect.top + 24),
-                ]
-                pygame.draw.polygon(screen, (185, 145, 95), roof_poly)
-                pygame.draw.polygon(screen, (140, 105, 65), roof_poly, 2)
-                pygame.draw.line(screen, (140, 105, 65), tent_peak, (tent_rect.centerx, tent_rect.bottom - 10), 2)
-
-                # Флагшток и знамя на вершине
-                pygame.draw.line(screen, (60, 45, 30), tent_peak, (tent_peak[0], tent_peak[1] - 16), 2)
-                pygame.draw.polygon(screen, (220, 60, 60), [
-                    (tent_peak[0], tent_peak[1] - 16),
-                    (tent_peak[0] + 16, tent_peak[1] - 11),
-                    (tent_peak[0], tent_peak[1] - 6),
-                ])
-
-                # Вход в шатер на среднем нижнем тайле (ширина 28, высота 34)
-                entry_left = camp_rect.left + 34
-                entry_top = camp_rect.bottom - 36
-                entry_rect = pygame.Rect(entry_left, entry_top, 28, 34)
-                pygame.draw.polygon(screen, (30, 20, 15), [
-                    (entry_rect.centerx, entry_rect.top),
-                    (entry_rect.left, entry_rect.bottom),
-                    (entry_rect.right, entry_rect.bottom),
-                ])
-                # Теплый свет фонаря внутри входа
-                pygame.draw.circle(screen, (255, 170, 50, 180), (entry_rect.centerx, entry_rect.bottom - 10), 8)
-                pygame.draw.circle(screen, (255, 230, 100), (entry_rect.centerx, entry_rect.bottom - 10), 3)
-
-                # Маркер ВХОД
-                entry_badge = self.grid_font.render("ВХОД", True, (255, 220, 100))
-                eb_rect = entry_badge.get_rect(midtop=(entry_rect.centerx, entry_rect.bottom + 2))
-                pygame.draw.rect(screen, (15, 18, 24, 210), eb_rect.inflate(6, 2), border_radius=2)
-                screen.blit(entry_badge, eb_rect)
-
-                # Костер рядом с шатром
-                fire_x = camp_rect.right - 24
-                fire_y = camp_rect.bottom - 20
-                pygame.draw.circle(screen, (35, 30, 25), (fire_x, fire_y), 9)
-                pygame.draw.circle(screen, (255, 120, 30), (fire_x, fire_y - 2), 5)
-                pygame.draw.circle(screen, (255, 230, 80), (fire_x, fire_y - 3), 3)
-
-                # Подсветка активного / наведенного
-                if is_active:
-                    ring_r = int(66 * pulse)
-                    ring_surf = pygame.Surface((ring_r * 2 + 6, ring_r * 2 + 6), pygame.SRCALPHA)
-                    pygame.draw.circle(ring_surf, (255, 215, 60, 220), (ring_r + 3, ring_r + 3), ring_r, 2)
-                    screen.blit(ring_surf, (camp_rect.centerx - ring_r - 3, camp_rect.centery - ring_r - 3))
-                elif is_hovered:
-                    pygame.draw.rect(screen, (80, 200, 255), camp_rect.inflate(8, 8), 2, border_radius=10)
-
-                # Бейдж названия над лагерем
-                badge_color = (255, 215, 60) if is_active else (100, 200, 255) if is_hovered else (200, 190, 160)
-                self._draw_badge(screen, camp_rect.centerx, tent_peak[1] - 22, f"⛺ {obj['name']} [4x4]", badge_color)
-
-            elif obj.get("id") == "chest_1":
-                # Сундук 1х1 тайл (32х32 px)
-                top_left_x = obj["tile_x"] * self.tile_size
-                top_left_y = obj["tile_y"] * self.tile_size
-                sx, sy = self.world_to_screen(top_left_x + 16, top_left_y + 16)
-                chest_rect = pygame.Rect(sx - 14, sy - 10, 28, 20)
-
-                if not (-50 <= sx <= settings.WIDTH + 50 and -50 <= sy <= settings.HEIGHT + 50):
-                    continue
-
-                is_active = self.active_entity and self.active_entity.get("id") == obj["id"]
-                is_hovered = self.hovered_entity and self.hovered_entity.get("id") == obj["id"]
-
-                # Тень
-                pygame.draw.ellipse(screen, (10, 14, 18, 170), (sx - 15, sy + 7, 30, 8))
-
-                # Тело сундука
-                pygame.draw.rect(screen, (120, 80, 45), chest_rect, border_radius=3)
-                pygame.draw.rect(screen, (60, 40, 20), chest_rect, 2, border_radius=3)
-                pygame.draw.line(screen, (180, 170, 160), (chest_rect.left + 6, chest_rect.top), (chest_rect.left + 6, chest_rect.bottom), 2)
-                pygame.draw.line(screen, (180, 170, 160), (chest_rect.right - 7, chest_rect.top), (chest_rect.right - 7, chest_rect.bottom), 2)
-
-                if obj.get("opened"):
-                    # Откинутая назад крышка
-                    lid_poly = [
-                        (chest_rect.left - 2, chest_rect.top - 8),
-                        (chest_rect.right + 2, chest_rect.top - 8),
-                        (chest_rect.right, chest_rect.top + 2),
-                        (chest_rect.left, chest_rect.top + 2),
-                    ]
-                    pygame.draw.polygon(screen, (90, 60, 35), lid_poly)
-                    pygame.draw.polygon(screen, (60, 40, 20), lid_poly, 1)
-                    # Сияние сокровищ внутри (золото и рубин)
-                    pygame.draw.circle(screen, (255, 215, 0), (sx - 4, sy - 3), 3)
-                    pygame.draw.circle(screen, (255, 230, 80), (sx + 3, sy - 4), 3)
-                    pygame.draw.polygon(screen, (230, 40, 60), [(sx, sy - 6), (sx - 3, sy - 2), (sx, sy), (sx + 3, sy - 2)])
-                else:
-                    # Запертый замок
-                    pygame.draw.circle(screen, (240, 200, 70), (sx, sy - 1), 3)
-                    pygame.draw.line(screen, (240, 200, 70), (sx, sy - 1), (sx, sy + 3), 2)
-
-                # Подсветка
-                if is_active:
-                    pygame.draw.circle(screen, (255, 215, 60), (sx, sy), 22, 2)
-                elif is_hovered:
-                    pygame.draw.circle(screen, (80, 200, 255), (sx, sy), 22, 2)
-
-                badge_status = " [Открыт]" if obj.get("opened") else " [Заперт]"
-                badge_color = (255, 215, 60) if is_active else (100, 200, 255) if is_hovered else (200, 190, 160)
-                self._draw_badge(screen, sx, sy - 22, f"📦 {obj['name']}{badge_status}", badge_color)
-
-            elif obj.get("id") == "forester_hut":
+            if obj.get("id") == "forester_hut":
                 # Хижина лесника 10х10 тайлов (320х320 px)
                 top_left_x = obj["tile_x"] * self.tile_size
                 top_left_y = obj["tile_y"] * self.tile_size
@@ -1161,6 +1077,64 @@ class WorldMapScene:
                 # Бейдж названия над строением
                 badge_color = (255, 215, 60) if is_active else (100, 200, 255) if is_hovered else (200, 190, 160)
                 self._draw_badge(screen, forester_rect.centerx, sy - 10, f"🌲 {obj['name']} [10x10]", badge_color)
+
+            elif obj.get("id") == "wheat_farm":
+                # Пшеничная ферма 12х12 тайлов (384х384 px), вход по центру нижней стороны (тайл 20/30)
+                top_left_x = obj["tile_x"] * self.tile_size
+                top_left_y = obj["tile_y"] * self.tile_size
+                sx, sy = self.world_to_screen(top_left_x, top_left_y)
+                obj_w = obj["tile_w"] * self.tile_size
+                obj_h = obj["tile_h"] * self.tile_size
+                farm_rect = pygame.Rect(sx, sy, obj_w, obj_h)
+
+                if not (-obj_w <= sx <= settings.WIDTH + obj_w and -obj_h <= sy <= settings.HEIGHT + obj_h):
+                    continue
+
+                is_active = self.active_entity and self.active_entity.get("id") == obj["id"]
+                is_hovered = self.hovered_entity and self.hovered_entity.get("id") == obj["id"]
+
+                # Тень под полем
+                pygame.draw.ellipse(screen, (30, 26, 12, 170), (sx + 16, sy + obj_h - 20, obj_w - 32, 34))
+
+                f_surf = pygame.Surface((obj_w, obj_h), pygame.SRCALPHA)
+
+                # Золотое пшеничное поле с бороздами
+                pygame.draw.rect(f_surf, (168, 132, 46, 235), (0, 0, obj_w, obj_h), border_radius=6)
+                for row_y in range(10, obj_h - 10, 18):
+                    pygame.draw.line(f_surf, (140, 106, 34), (10, row_y), (obj_w - 10, row_y), 2)
+                for col_x in range(16, obj_w - 10, 24):
+                    for row_y in range(6, obj_h - 10, 18):
+                        pygame.draw.line(f_surf, (220, 185, 90), (col_x, row_y), (col_x - 4, row_y + 10), 2)
+
+                # Изгородь по периметру поля
+                pygame.draw.rect(f_surf, (110, 78, 45), (0, 0, obj_w, obj_h), width=4, border_radius=6)
+
+                # Ворота-проем внизу по центру (тайл 20/30, локально: 6-й столбец от края)
+                gate_local_x = (obj["entrance_tile"][0] - obj["tile_x"]) * self.tile_size
+                gate_rect = pygame.Rect(gate_local_x, obj_h - 14, self.tile_size, 14)
+                pygame.draw.rect(f_surf, (90, 62, 34), gate_rect)
+                pygame.draw.line(f_surf, (200, 160, 80), (gate_rect.left, gate_rect.top), (gate_rect.left, gate_rect.bottom), 3)
+                pygame.draw.line(f_surf, (200, 160, 80), (gate_rect.right, gate_rect.top), (gate_rect.right, gate_rect.bottom), 3)
+
+                # Пугало в центре поля
+                scare_x, scare_y = obj_w // 2 - 30, obj_h // 2
+                pygame.draw.line(f_surf, (90, 65, 40), (scare_x, scare_y - 26), (scare_x, scare_y + 6), 3)
+                pygame.draw.line(f_surf, (90, 65, 40), (scare_x - 12, scare_y - 14), (scare_x + 12, scare_y - 14), 3)
+                pygame.draw.circle(f_surf, (210, 180, 140), (scare_x, scare_y - 32), 6)
+
+                screen.blit(f_surf, (sx, sy))
+
+                door_lbl = self.grid_font.render("ВХОД", True, (255, 225, 130))
+                screen.blit(door_lbl, door_lbl.get_rect(midtop=(sx + gate_local_x + self.tile_size // 2, sy + obj_h + 2)))
+
+                # Подсветка активного / наведенного
+                if is_active:
+                    pygame.draw.rect(screen, (255, 215, 60), farm_rect, 2, border_radius=6)
+                elif is_hovered:
+                    pygame.draw.rect(screen, (80, 200, 255), farm_rect, 2, border_radius=6)
+
+                badge_color = (255, 215, 60) if is_active else (100, 200, 255) if is_hovered else (220, 195, 140)
+                self._draw_badge(screen, farm_rect.centerx, sy - 10, f"🌾 {obj['name']} [12x12]", badge_color)
 
             elif obj.get("id") in ("town_radburg", "main_castle") or obj.get("is_placeholder"):
                 # Заглушка города (например, Город Радбург 15х15 тайлов, 480х480 px)
@@ -1394,7 +1368,7 @@ class WorldMapScene:
 
     def _draw_active_window(self, screen):
         """Отрисовывает окно активного объекта (выбранного по ЛКМ)."""
-        if self.active_entity is None:
+        if self.active_entity is None or self.farm_menu_open:
             return
 
         ent = self.active_entity
@@ -1462,12 +1436,10 @@ class WorldMapScene:
         else:
             if ent.get("id") == "player":
                 action_label = "ФОКУС КАМЕРЫ"
-            elif ent.get("id") == "chest_1":
-                action_label = "ОСМОТРЕТЬ" if ent.get("opened") else "ОТКРЫТЬ СУНДУК"
-            elif ent.get("id") == "camp_1":
-                action_label = "СДЕЛАТЬ ПРИВАЛ"
             elif ent.get("id") == "forester_hut":
                 action_label = "ПОГОВОРИТЬ С ЛЕСНИКОМ"
+            elif ent.get("id") == "wheat_farm":
+                action_label = "ОТКРЫТЬ ФЕРМУ"
             elif ent.get("id") in ("town_radburg", "main_castle"):
                 action_label = "ВОЙТИ В ГОРОД"
             else:
@@ -1484,6 +1456,215 @@ class WorldMapScene:
                 text_col = (170, 170, 175)
 
             draw_button(screen, self.active_action_button, action_label, self.small_font, color=btn_col, text_color=text_col)
+
+    @staticmethod
+    def _farm_level_info(level):
+        """Бонус производства (%) и максимум рабочих для заданного уровня фермы."""
+        table = {1: (0, 1), 2: (20, 2), 3: (40, 3), 4: (50, 5), 5: (70, 7)}
+        return table.get(level, table[1])
+
+    def _farm_production_desc(self, level):
+        bonus, max_workers = self._farm_level_info(level)
+        if bonus:
+            base_line = f"50 (+{bonus}% за улучшение) пшеницы за 120 мин"
+        else:
+            base_line = "50 пшеницы за 120 мин (при наличии рабочего)"
+        return f"{base_line}, +30 пшеницы за каждого доп. рабочего. Максимум рабочих: {max_workers}."
+
+    @staticmethod
+    def _farm_warehouse_capacity(level):
+        table = {1: 300, 2: 500, 3: 700, 4: 1000, 5: 1500}
+        return table.get(level, table[1])
+
+    @staticmethod
+    def _farm_upgrade_requirements(level):
+        """Требования (ресурсы + время) для улучшения фермы с указанного уровня до следующего (None на максимуме)."""
+        table = {
+            1: {"stone": 1000, "wood": 1000, "time_seconds": 2 * 3600},
+            2: {"stone": 2000, "wood": 2000, "time_seconds": 4 * 3600},
+            3: {"stone": 3500, "wood": 3500, "time_seconds": 8 * 3600},
+            4: {"stone": 5000, "wood": 5000, "time_seconds": 16 * 3600},
+        }
+        return table.get(level)
+
+    @staticmethod
+    def _format_duration(seconds):
+        seconds = int(seconds)
+        hours, rem = divmod(seconds, 3600)
+        minutes = rem // 60
+        if hours > 0:
+            return f"{hours} ч {minutes} мин"
+        return f"{minutes} мин"
+
+    def _farm_status(self, farm):
+        """Возвращает (статус, цвет статуса, доп.сообщение, цвет доп.сообщения)."""
+        capacity = self._farm_warehouse_capacity(farm.get("warehouse_level", 1))
+        if farm.get("storage_current", 0) >= capacity:
+            return "Склад переполнен", (240, 90, 80), None, None
+
+        if farm.get("worker_present"):
+            return "Работает", (110, 230, 120), None, None
+
+        if farm.get("worker_en_route") and farm.get("worker_arrival_seconds") is not None:
+            arrival = self._format_duration(farm["worker_arrival_seconds"])
+            return "Нет рабочих", (240, 210, 90), f"Рабочий прибудет через {arrival}", (200, 220, 255)
+
+        return "Нет рабочих", (240, 210, 90), "Нет назначений", (240, 90, 80)
+
+    def _try_upgrade_farm(self, farm):
+        """Пытается улучшить ферму, если хватает ресурсов (время постройки улучшения пока не симулируется)."""
+        req = self._farm_upgrade_requirements(farm.get("level", 1))
+        if req is None:
+            return
+        if (self.player_resources.get("stone", 0) >= req["stone"]
+                and self.player_resources.get("wood", 0) >= req["wood"]):
+            self.player_resources["stone"] -= req["stone"]
+            self.player_resources["wood"] -= req["wood"]
+            farm["level"] = farm.get("level", 1) + 1
+
+    @staticmethod
+    def _wrap_text_lines(font, text, max_width):
+        words = text.split(" ")
+        lines = []
+        current = ""
+        for word in words:
+            trial = f"{current} {word}".strip()
+            if font.size(trial)[0] <= max_width or not current:
+                current = trial
+            else:
+                lines.append(current)
+                current = word
+        if current:
+            lines.append(current)
+        return lines
+
+    def _draw_farm_modal(self, screen):
+        """Отрисовывает меню управления Пшеничной фермой: статус, уровень производства и склад."""
+        farm = next((o for o in self.objects if o["id"] == "wheat_farm"), None)
+        if farm is None:
+            return
+
+        overlay = pygame.Surface((settings.WIDTH, settings.HEIGHT), pygame.SRCALPHA)
+        overlay.fill((8, 12, 18, 215))
+        screen.blit(overlay, (0, 0))
+
+        rect = self.farm_modal_rect
+        modal_surf = pygame.Surface((rect.width, rect.height), pygame.SRCALPHA)
+        pygame.draw.rect(modal_surf, (24, 26, 18, 250), (0, 0, rect.width, rect.height), border_radius=12)
+        pygame.draw.rect(modal_surf, (220, 185, 70), (0, 0, rect.width, rect.height), width=2, border_radius=12)
+        screen.blit(modal_surf, rect.topleft)
+
+        level = farm.get("level", 1)
+        wh_level = farm.get("warehouse_level", 1)
+        m_pos = pygame.mouse.get_pos()
+        text_width = rect.width - 48
+
+        # Заголовок: название фермы + цветной статус в скобках
+        status_text, status_col, extra_text, extra_col = self._farm_status(farm)
+        x = rect.left + 24
+        y = rect.top + 16
+        prefix_surf = self.large_font.render(f"🌾 {farm['name']} (", True, (255, 225, 130))
+        screen.blit(prefix_surf, (x, y))
+        x += prefix_surf.get_width()
+        status_surf = self.large_font.render(status_text, True, status_col)
+        screen.blit(status_surf, (x, y))
+        x += status_surf.get_width()
+        suffix_surf = self.large_font.render(")", True, (255, 225, 130))
+        screen.blit(suffix_surf, (x, y))
+
+        # Кнопка закрытия справа сверху (1 тайл = 32х32)
+        c_hover = self.farm_close_button.collidepoint(m_pos)
+        pygame.draw.rect(screen, (160, 45, 45) if c_hover else (45, 30, 35), self.farm_close_button, border_radius=4)
+        pygame.draw.rect(screen, (220, 100, 100), self.farm_close_button, 1, border_radius=4)
+        x_surf = self.font.render("✕", True, (255, 255, 255))
+        screen.blit(x_surf, x_surf.get_rect(center=self.farm_close_button.center))
+
+        # Доп. сообщение о назначении рабочего (только когда рабочих на ферме нет)
+        curr_y = rect.top + 50
+        if extra_text:
+            extra_surf = self.small_font.render(extra_text, True, extra_col)
+            screen.blit(extra_surf, (rect.left + 24, curr_y))
+        curr_y += 26
+
+        pygame.draw.line(screen, (100, 90, 55), (rect.left + 22, curr_y), (rect.right - 22, curr_y), 1)
+        curr_y += 14
+
+        # Текущий уровень фермы и её производительность
+        lvl_title = self.font.render(f"Уровень {level}", True, (255, 225, 130))
+        screen.blit(lvl_title, (rect.left + 24, curr_y))
+        curr_y += 24
+        for line in self._wrap_text_lines(self.small_font, self._farm_production_desc(level), text_width):
+            line_surf = self.small_font.render(line, True, (210, 210, 195))
+            screen.blit(line_surf, (rect.left + 34, curr_y))
+            curr_y += 20
+        curr_y += 8
+
+        # Следующий уровень: требования на улучшение и описание бонуса
+        req = self._farm_upgrade_requirements(level)
+        if req is not None:
+            next_title = self.font.render(f"Уровень {level + 1}", True, (195, 195, 175))
+            screen.blit(next_title, (rect.left + 24, curr_y))
+            req_line = f"— для улучшения: камень {req['stone']}, брёвна {req['wood']} • время {self._format_duration(req['time_seconds'])}"
+            req_surf = self.grid_font.render(req_line, True, (170, 190, 210))
+            screen.blit(req_surf, (rect.left + 30 + next_title.get_width(), curr_y + 6))
+            curr_y += 22
+            next_desc = "После улучшения: " + self._farm_production_desc(level + 1)
+            for line in self._wrap_text_lines(self.grid_font, next_desc, text_width):
+                line_surf = self.grid_font.render(line, True, (175, 178, 165))
+                screen.blit(line_surf, (rect.left + 34, curr_y))
+                curr_y += 17
+        else:
+            max_surf = self.font.render("Ферма достигла максимального уровня", True, (195, 195, 175))
+            screen.blit(max_surf, (rect.left + 24, curr_y))
+            curr_y += 22
+
+        curr_y += 14
+        pygame.draw.line(screen, (100, 90, 55), (rect.left + 22, curr_y), (rect.right - 22, curr_y), 1)
+        curr_y += 14
+
+        # Отдельное улучшение "Склад" под улучшением самой фермы
+        wh_title = self.font.render(f"📦 Склад фермы — Уровень {wh_level}", True, (160, 210, 255))
+        screen.blit(wh_title, (rect.left + 24, curr_y))
+        curr_y += 28
+
+        for lvl, capacity in ((1, 300), (2, 500), (3, 700), (4, 1000), (5, 1500)):
+            is_current = lvl == wh_level
+            row_col = (180, 225, 255) if is_current else (190, 195, 200)
+            marker = "▶" if is_current else " "
+            row = self.small_font.render(f"{marker} Уровень {lvl}: хранит {capacity} пшеницы", True, row_col)
+            screen.blit(row, (rect.left + 34, curr_y))
+            curr_y += 22
+
+        # Отдельная рамка в нижнем левом углу: требования к улучшению фермы + кнопка
+        box = self.farm_upgrade_box_rect
+        pygame.draw.rect(screen, (20, 24, 16), box, border_radius=8)
+        pygame.draw.rect(screen, (150, 130, 70), box, 1, border_radius=8)
+        box_title = self.small_font.render("Требования улучшения", True, (255, 225, 150))
+        screen.blit(box_title, (box.left + 10, box.top + 8))
+
+        if req is not None:
+            stone_have = self.player_resources.get("stone", 0)
+            wood_have = self.player_resources.get("wood", 0)
+            stone_col = (140, 230, 140) if stone_have >= req["stone"] else (230, 120, 110)
+            wood_col = (140, 230, 140) if wood_have >= req["wood"] else (230, 120, 110)
+            stone_line = self.grid_font.render(f"🪨 Камень: {stone_have}/{req['stone']}", True, stone_col)
+            wood_line = self.grid_font.render(f"🌲 Брёвна: {wood_have}/{req['wood']}", True, wood_col)
+            screen.blit(stone_line, (box.left + 10, box.top + 32))
+            screen.blit(wood_line, (box.left + 10, box.top + 50))
+
+            can_upgrade = stone_have >= req["stone"] and wood_have >= req["wood"]
+            btn = self.farm_upgrade_button
+            btn_hover = can_upgrade and btn.collidepoint(m_pos)
+            if can_upgrade:
+                btn_col = (110, 180, 110) if btn_hover else (80, 140, 85)
+                text_col = (255, 255, 255)
+            else:
+                btn_col = (55, 55, 60)
+                text_col = (150, 150, 155)
+            draw_button(screen, btn, "УЛУЧШИТЬ", self.small_font, color=btn_col, text_color=text_col)
+        else:
+            max_line = self.grid_font.render("Достигнут максимальный уровень", True, (200, 200, 200))
+            screen.blit(max_line, (box.left + 10, box.top + 40))
 
     def _draw_click_effect(self, screen):
         """Отрисовывает расходящийся маркер клика ПКМ (Dota-стиль)."""
@@ -1580,8 +1761,6 @@ class WorldMapScene:
         pygame.draw.rect(screen, (15, 18, 22), hud_bg)
         pygame.draw.line(screen, (60, 70, 85), (0, 75), (settings.WIDTH, 75), 2)
 
-        draw_button(screen, self.back_button, "В ТАВЕРНУ", self.font, color=(160, 70, 70))
-        draw_button(screen, self.center_button, "ЦЕНТР КАРТЫ", self.font, color=(70, 110, 150))
         draw_button(screen, self.player_pos_button, "К ГЕРОЮ", self.font, color=(60, 120, 180))
 
         hover_gx = int(hover_wx // self.tile_size)

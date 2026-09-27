@@ -8,6 +8,7 @@ from pathlib import Path
 from core import settings
 from ui.music import play_tavern_music, stop_tavern_music
 from ui.character_profile_overlay import CharacterProfileOverlay
+from ui.inventory_window import SLOT_LABELS
 
 
 class CharacterRoom:
@@ -104,9 +105,6 @@ class CharacterRoom:
             if action == "stat_change":
                 # Сохраняем изменения карточки персонажа
                 self.session.character.update(profile)
-                return
-            if action == "backpack":
-                # TODO: обработать клик по рюкзаку
                 return
             if action in ("handled", "close"):
                 return
@@ -230,20 +228,11 @@ class CharacterRoom:
             screen.blit(empty_text, (50, 220))
             return
 
-        # Показываем надетое
-        slots = [
-            ("head", "👑 Голова"),
-            ("chest", "🛡️ Тело"),
-            ("hands", "🤝 Руки"),
-            ("legs", "👖 Ноги"),
-            ("main_hand", "⚔️ Оружие (основное)"),
-            ("ring1", "💍 Кольцо 1"),
-        ]
-
+        # Показываем надетое (управление — в окне инвентаря, клавиша I)
         start_x = 50
         start_y = 220
 
-        for i, (slot_key, slot_label) in enumerate(slots):
+        for i, (slot_key, slot_label) in enumerate(SLOT_LABELS.items()):
             y = start_y + i * 60
 
             slot_text = self.font.render(slot_label, True, (200, 200, 200))
@@ -252,7 +241,7 @@ class CharacterRoom:
             if slot_key in self.equipment_data:
                 equipment = self.equipment_data[slot_key]
                 item_text = self.small_font.render(
-                    f"{equipment.get('icon', '📦')} {equipment['name']} ({equipment.get('rarity', 'common')})",
+                    f"{equipment['name']} ({equipment.get('rarity', 'common')})",
                     True,
                     (150, 200, 255)
                 )

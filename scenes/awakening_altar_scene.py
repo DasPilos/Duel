@@ -136,9 +136,6 @@ class AwakeningAltarScene:
             if action == "stat_change":
                 self._save_profile_card(profile)
                 return
-            if action == "backpack":
-                # TODO: обработать клик по рюкзаку
-                return
             if action in ("handled", "close"):
                 return
             
