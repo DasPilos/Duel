@@ -3,7 +3,7 @@ import random
 import re
 
 from combat.card_database import load_cards
-from combat.mechanics import get_critical_chance, get_dodge_chance
+from combat.mechanics import get_critical_chance, get_critical_damage_multiplier, get_dodge_chance
 from combat.progression import apply_xp, battle_xp
 
 
@@ -63,7 +63,6 @@ class CardBattle:
         self.discard = []
         self.enemy_discard = []
         self.draw_choices = {"player": [], "enemy": []}
-        self.burned_this_turn = {"player": False, "enemy": False}
         self.mage_mode = False
         self.mage_statuses = {"player": [], "enemy": []}
         self.mage_clouds = {"player": [], "enemy": []}
@@ -198,25 +197,11 @@ class CardBattle:
         if self.turn or any(len(self.hands[side]) < self.STARTING_PICK_LIMIT for side in self.hands):
             raise ValueError("Каждый боец должен выбрать минимум три карты")
         if self.dual_table:
-            stronger_side = self._stronger_side("agility")
-            if not self.starting_bonus_awarded and stronger_side is not None:
-                table = self._table_for(stronger_side)
-                if table:
-                    bonus_card = table.pop(self.rng.randrange(len(table)))
-                    self.hands[stronger_side].append(bonus_card)
-                    self.starting_bonus_awarded = True
-                    self.starting_bonus_side = stronger_side
             self.deck.extend(self.table)
             self.table.clear()
             self.enemy_deck.extend(self.enemy_table)
             self.enemy_table.clear()
         else:
-            stronger_side = self._stronger_side("agility")
-            if not self.starting_bonus_awarded and stronger_side is not None and self.table:
-                bonus_card = self.table.pop(self.rng.randrange(len(self.table)))
-                self.hands[stronger_side].append(bonus_card)
-                self.starting_bonus_awarded = True
-                self.starting_bonus_side = stronger_side
             self.deck.extend(card for card in self.table if card.key not in self.starting_reserved_keys)
             self.table.clear()
         self.starting_reserved_keys.clear()
@@ -313,38 +298,10 @@ class CardBattle:
         return False
 
     def take_draft_bonus_card(self):
-        if self.dual_table:
-            if not self.current_draft_complete() or self.draft_bonus_awarded:
-                return None
-            stronger_side = self._stronger_side("agility")
-            if (
-                stronger_side is None
-                or len(self.hands[stronger_side]) >= self.MAX_HAND_SIZE
-            ):
-                self.draft_bonus_awarded = True
-                return None
-            table = self._table_for(stronger_side)
-            if not table:
-                return None
-            bonus_card = table.pop(self.rng.randrange(len(table)))
-            self.draft_bonus_awarded = True
-            return stronger_side, bonus_card
-        if (
-            not self.current_draft_complete()
-            or self.draft_bonus_awarded
-            or not self.table
-        ):
-            return None
-        stronger_side = self._stronger_side("agility")
-        if (
-            stronger_side is None
-            or len(self.hands[stronger_side]) >= self.MAX_HAND_SIZE
-        ):
-            self.draft_bonus_awarded = True
-            return None
-        bonus_card = self.table.pop(self.rng.randrange(len(self.table)))
+        # Стартовый бонус за более высокую характеристику убран — обе стороны получают
+        # одинаковые карты без сравнения статов друг с другом.
         self.draft_bonus_awarded = True
-        return stronger_side, bonus_card
+        return None
 
     def finish_redraft(self):
         if self.draft_mode != "redraft" or not self.current_draft_complete():
@@ -383,8 +340,8 @@ class CardBattle:
         self.burned_this_turn = {"player": False, "enemy": False}
         if self.mage_mode:
             for fighter in (self.player, self.enemy):
-                intellect = int(fighter.stats.get("intellect", 0))
-                fighter.mp = min(fighter.max_mp, fighter.mp + 8 + intellect // 2)
+                wisdom = int(fighter.stats.get("wisdom", 0))
+                fighter.mp = min(fighter.max_mp, fighter.mp + 8 + wisdom // 2)
             self._resolve_mage_end_turn_effects()
             self.mage_stuns = {side: max(0, turns - 1) for side, turns in self.mage_stuns.items()}
             self.mage_freeze = {side: max(0, turns - 1) for side, turns in self.mage_freeze.items()}
@@ -564,7 +521,16 @@ class CardBattle:
 
     @staticmethod
     def _mage_stat(fighter, name):
-        return int(getattr(fighter, "stats", {}).get(name, 0))
+        # Базовое значение + бонус надетых предметов (как показывает карточка)
+        return (
+            int(getattr(fighter, "stats", {}).get(name, 0))
+            + int(getattr(fighter, "equipment_stat_modifiers", {}).get(name, 0))
+        )
+
+    def _weapon_roll(self, fighter):
+        """Урон надетого оружия для одного удара/заклинания (0 без оружия)"""
+        roll = getattr(fighter, "roll_weapon_damage", None)
+        return roll(self.rng) if roll else 0
 
     def _add_mage_status(self, side, name, duration, stacks=1):
         statuses = self.mage_statuses[side]
@@ -581,7 +547,8 @@ class CardBattle:
                 if status["name"] in ("огонь", "вода"):
                     status["remaining"] = max(0, status["remaining"] - 1)
         elif element == "электро" and "огонь" in names:
-            reaction_damage = int(event.get("damage", 0) * (1.3 + self._mage_stat(self.player if target_side == "enemy" else self.enemy, "harmony") / 100))
+            harmony = self._mage_stat(self.player if target_side == "enemy" else self.enemy, "harmony")
+            reaction_damage = int(event.get("damage", 0) * (1.3 + harmony / 100)) + harmony
             target = self.enemy if target_side == "enemy" else self.player
             target.take_damage(reaction_damage)
             event["damage"] += reaction_damage
@@ -645,7 +612,7 @@ class CardBattle:
             return False
         used = {stat: sum(item.costs[stat] for item in self.selected[side]) for stat in STAT_NAMES}
         enough_points = all(self.action_points[side][stat] - used[stat] >= cost for stat, cost in card.costs.items())
-        mana_cost = int(card.effect_data.get("mana_cost", 0)) if self.mage_mode else 0
+        mana_cost = card.mana_cost if self.mage_mode else 0
         fighter = self.player if side == "player" else self.enemy
         return enough_points and int(getattr(fighter, "mp", 0)) >= mana_cost
 
@@ -983,7 +950,7 @@ class CardBattle:
             return event
 
         if card.effect_type.startswith("mage_"):
-            mana_cost = int(data.get("mana_cost", 0))
+            mana_cost = card.mana_cost
             if attacker.mp < mana_cost:
                 event["effect_text"] = "НЕДОСТАТОЧНО МАНЫ"
                 return event
@@ -1039,7 +1006,7 @@ class CardBattle:
                 status = data.get("status")
                 if status:
                     target_side = "enemy" if side == "player" else "player"
-                    damage = int(data.get("damage", 0)) + wisdom
+                    damage = int(data.get("damage", 0)) + wisdom + self._weapon_roll(attacker)
                     event["damage"] = damage
                     event["hits"] = int(bool(damage))
                     self._queue_mage_effect(
@@ -1066,8 +1033,9 @@ class CardBattle:
                 target_side = "enemy" if side == "player" else "player"
                 direct_damage = int(data.get("damage", 0))
                 if direct_damage:
-                    self._mage_take_damage(target_side, direct_damage + wisdom)
-                    event["damage"] = direct_damage + wisdom
+                    direct_damage += wisdom + self._weapon_roll(attacker)
+                    self._mage_take_damage(target_side, direct_damage)
+                    event["damage"] = direct_damage
                     event["hits"] = 1
                 # The counter is consumed at the next turn boundary, so one
                 # turn of paralysis must survive the boundary itself.
@@ -1087,7 +1055,7 @@ class CardBattle:
             if card.effect_type in ("mage_area_damage", "mage_area_damage_status"):
                 target_side = "enemy" if side == "player" else "player"
                 damage = int(data.get("damage", 0))
-                damage += wisdom * int(data.get("wisdom_damage", 1))
+                damage += wisdom * int(data.get("wisdom_damage", 1)) + self._weapon_roll(attacker)
                 damage += intellect * int(data.get("intellect_damage", 0))
                 self._mage_take_damage(target_side, damage)
                 event["damage"] = damage
@@ -1152,7 +1120,9 @@ class CardBattle:
                 return event
             direct_damage = int(data.get("damage", 0))
             if direct_damage:
-                damage = math.floor((direct_damage + wisdom) * getattr(attacker, "mage_damage_bonus_ratio", 1))
+                damage = math.floor(
+                    (direct_damage + wisdom + self._weapon_roll(attacker)) * getattr(attacker, "mage_damage_bonus_ratio", 1)
+                )
                 self._mage_take_damage("enemy" if side == "player" else "player", damage)
                 event["damage"] = damage
                 event["hits"] = 1
@@ -1174,14 +1144,14 @@ class CardBattle:
                 event["dodged"] = True
                 continue
             event["hits"] += 1
-            damage = roll_dice(data["dice"], self.rng) + attacker.strength * 2
+            damage = roll_dice(data["dice"], self.rng) + attacker.strength + self._weapon_roll(attacker)
             critical_chance = get_critical_chance(attacker, defender)
             critical_chance += getattr(attacker, "card_critical_bonus", 0) + data.get("critical_bonus", 0)
             critical_chance += attacker.temporary_critical_chance_modifier
             critical_chance = max(0, critical_chance)
             if getattr(attacker, "card_critical_bonus", 0) >= 100 or self.rng.random() * 100 < critical_chance:
                 event["critical"] = True
-                damage = math.ceil(damage * 1.5)
+                damage = math.ceil(damage * get_critical_damage_multiplier(attacker))
                 damage = math.ceil(damage * data.get("critical_multiplier", 1))
                 damage += data.get("critical_bonus_damage", 0)
             total_damage += damage
@@ -1191,7 +1161,6 @@ class CardBattle:
         if reduction:
             total_damage = max(0, total_damage - reduction)
             defender.card_damage_reduce = 0
-        total_damage = max(0, total_damage - math.floor(defender.endurance * 0.5))
         defender.take_damage(total_damage)
         if card.effect_type == "damage_stat_debuff" and event["hits"] > 0:
             stat_name = data["stat"]

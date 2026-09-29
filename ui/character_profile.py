@@ -1,13 +1,16 @@
 from types import SimpleNamespace
 
 from combat.character_stats import adjust_stats, calculate_max_hp, is_debug_unlimited, minimum_endurance
-from combat.mechanics import get_critical_chance, get_dodge_chance
+from combat.mechanics import get_critical_chance, get_dodge_chance, weapon_damage_range
 
 
 DEFAULT_STATS = {
     "strength": 5,
     "agility": 5,
     "intuition": 5,
+    "wisdom": 5,
+    "intellect": 5,
+    "harmony": 5,
     "endurance": 5,
 }
 
@@ -33,6 +36,8 @@ def normalize_character_profile(profile, *, title=None, kind="player"):
             "silver": getattr(data, "silver", 0),
             "gold": getattr(data, "gold", 0),
             "inventory": dict(getattr(data, "inventory", {})),
+            "equipment": dict(getattr(data, "equipment", {})),
+            "equipment_bonuses": dict(getattr(data, "equipment_stat_modifiers", {})),
             "kind": kind,
         }
     elif isinstance(data, dict):
@@ -53,6 +58,8 @@ def normalize_character_profile(profile, *, title=None, kind="player"):
             "silver": int(data.get("silver", 0)),
             "gold": int(data.get("gold", 0)),
             "inventory": dict(data.get("inventory", {})),
+            "equipment": dict(data.get("equipment", {})),
+            "equipment_bonuses": dict(data.get("equipment_bonuses", {})),
             "kind": kind,
         }
     else:
@@ -73,6 +80,8 @@ def normalize_character_profile(profile, *, title=None, kind="player"):
             "silver": 0,
             "gold": 0,
             "inventory": {},
+            "equipment": {},
+            "equipment_bonuses": {},
             "kind": kind,
         }
 
@@ -85,6 +94,15 @@ def normalize_character_profile(profile, *, title=None, kind="player"):
         profile_dict["stats"] = dict(DEFAULT_STATS)
 
     return profile_dict
+
+
+def effective_stats(profile):
+    """Характеристики с учётом бонусов надетых предметов — то, что показывает карточка."""
+    stats = dict(profile.get("stats", {}))
+    for stat_name, value in (profile.get("equipment_bonuses") or {}).items():
+        if stat_name in stats:
+            stats[stat_name] = int(stats[stat_name]) + int(value)
+    return stats
 
 
 def profile_from_fighter(fighter):
@@ -101,6 +119,8 @@ def profile_from_fighter(fighter):
         "max_mp": getattr(fighter, "max_mp", 0),
         "stats": getattr(fighter, "stats", {}),
         "stat_points": getattr(fighter, "stat_points", 0),
+        "equipment": dict(getattr(fighter, "equipment", {})),
+        "equipment_bonuses": dict(getattr(fighter, "equipment_stat_modifiers", {})),
     }
 
 
@@ -138,23 +158,50 @@ def adjust_profile_level(profile, delta):
     return True
 
 
-def derived_values(profile, opponent):
-    """Возвращает значения боя для отображения в карточке персонажа."""
-    if opponent is None:
-        return {"Урон": "--", "Уворот": "--", "Крит": "--", "HP": profile["max_hp"]}
+# Блок характеристик — один для ВСЕХ классов: (стат, подпись, показатель напротив или None).
+# Меняется здесь — меняется на карточках всех персонажей.
+STAT_ROWS = (
+    ("strength", "Сила", "Урон"),
+    ("agility", "Ловкость", "Уворот"),
+    ("intuition", "Интуиция", "Крит"),
+    ("wisdom", "Мудрость", "Маг Урон"),
+    ("intellect", "Интеллект", None),
+    ("harmony", "Гармония", None),
+    ("endurance", "Выносливость", None),
+)
 
-    opponent = normalize_character_profile(opponent)
-    fighter_stats = profile.get("stats", {})
-    enemy_stats = opponent.get("stats", {})
-    required = ("strength", "agility", "intuition", "endurance")
-    if not (all(k in fighter_stats for k in required) and all(k in enemy_stats for k in required)):
-        return {"Урон": "--", "Уворот": "--", "Крит": "--", "HP": profile["max_hp"]}
+# Цвета показателей напротив характеристик
+DERIVED_COLORS = {
+    "Урон": (255, 255, 255),
+    "Уворот": (150, 220, 255),
+    "Крит": (255, 90, 90),
+    "Маг Урон": (180, 100, 240),
+    "HP": (110, 235, 120),
+}
 
-    fighter = SimpleNamespace(**fighter_stats)
-    enemy = SimpleNamespace(**enemy_stats)
+
+def _damage_text(base, weapon):
+    """Урон от стата + урон оружия (от–до): одно число или «мин-макс»"""
+    base = max(1, int(base))
+    if weapon is None:
+        return base
+    if weapon[0] == weapon[1]:
+        return base + weapon[0]
+    return f"{base + weapon[0]}-{base + weapon[1]}"
+
+
+def derived_values(profile):
+    """Собственные боевые показатели персонажа — без сравнения с соперником.
+
+    Урон = сила + урон оружия, Маг Урон = мудрость + урон оружия (от–до).
+    Уворот — от своей ловкости, крит — базовый шанс. Одинаково для всех классов."""
+    stats = effective_stats(profile)
+    weapon = weapon_damage_range(profile.get("equipment"))
+    own = SimpleNamespace(agility=int(stats.get("agility", 0)))
     return {
-        "Урон": max(1, int(fighter.strength * 2 - enemy.endurance * 0.5)),
-        "Уворот": f"{int(get_dodge_chance(enemy, fighter))}%",
-        "Крит": f"{int(get_critical_chance(fighter, enemy))}%",
+        "Урон": _damage_text(stats.get("strength", 0), weapon),
+        "Уворот": f"{int(get_dodge_chance(None, own))}%",
+        "Крит": f"{int(get_critical_chance(None, None))}%",
+        "Маг Урон": _damage_text(stats.get("wisdom", 0), weapon),
         "HP": profile["max_hp"],
     }

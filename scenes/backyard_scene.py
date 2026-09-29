@@ -128,10 +128,7 @@ class BackyardScene:
                     self._join_group_battle(offer)
                     return
         if event.type == pygame.KEYDOWN:
-            if event.key in (pygame.K_RETURN, pygame.K_b):
-                if self.chat.duel_accepted is not None:
-                    self.finished = True
-            elif event.key == pygame.K_ESCAPE:
+            if event.key == pygame.K_ESCAPE:
                 self.cancelled = True
                 self.finished = True
 
@@ -296,17 +293,20 @@ class BackyardScene:
         target = self.application_popup
         if target is None:
             return
+        if self.selected_application_id is None:
+            # Своя собственная заявка в списке — вызывать себя нельзя
+            return
         if self.chat.my_application is not None:
             self.error = "Пока активна ваша заявка, бросить вызов нельзя"
             return
         try:
-            result = self.session.offer_duel("backyard", target.get("character_id"))
-            if result.get("accepted"):
-                self.opponent = target
-                self.finished = True
-            else:
-                self.error = "Вызов отправлен сопернику"
+            # Принимаем существующую заявку соперника напрямую, а не создаём отдельный вызов —
+            # иначе её всё ещё может перехватить бот, пока новый вызов ожидает ответа.
+            self.session.respond_duel_offer(self.selected_application_id, True)
+            self.opponent = target
+            self.finished = True
             self.application_popup = None
+            self.selected_application_id = None
         except ServerError as error:
             self.error = str(error)
 

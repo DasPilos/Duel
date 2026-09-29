@@ -23,11 +23,12 @@ class CharacterStatTests(unittest.TestCase):
         profile = normalize_character_profile(profile_from_fighter(fighter))
 
         self.assertEqual(profile["stats"], fighter.stats)
-        self.assertEqual(derived_values(profile, fighter), {
-            "Урон": 4,
+        self.assertEqual(derived_values(profile), {
+            "Урон": 3,
             "Уворот": "6%",
-            "Крит": "6%",
-            "HP": 40,
+            "Крит": "5%",
+            "Маг Урон": 3,
+            "HP": 30,
         })
 
     def test_endurance_cannot_increase_manually(self):
@@ -123,7 +124,7 @@ class CharacterStatTests(unittest.TestCase):
             })
             _, plus = overlay.player_card._stat_control_rects(
                 overlay.player_frame,
-                overlay.player_frame.bottom - 92,
+                CharacterCard._stat_row_y(overlay.player_frame, 0),
             )
 
             action, profile = overlay.handle_click(plus.center)
@@ -330,7 +331,7 @@ class CharacterStatTests(unittest.TestCase):
             scene.draw(pygame.Surface((1920, 1080)))
             _, plus = scene.profile_overlay.player_card._stat_control_rects(
                 scene.profile_overlay.player_frame,
-                scene.profile_overlay.player_frame.bottom - 92,
+                CharacterCard._stat_row_y(scene.profile_overlay.player_frame, 0),
             )
 
             scene.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, {"button": 1, "pos": plus.center}))
@@ -343,34 +344,28 @@ class CharacterStatTests(unittest.TestCase):
         finally:
             pygame.quit()
 
-    def test_derived_values_cross_class_does_not_crash(self):
+    def test_derived_values_are_own_and_include_weapon_damage(self):
         warrior = {
             "name": "Воин",
             "type": "warrior",
             "level": 1,
             "max_hp": 40,
             "stats": {"strength": 5, "agility": 5, "intuition": 5, "endurance": 5},
+            "equipment_bonuses": {"strength": 1},
+            "equipment": {"weapon": {"equip_slot": "weapon", "effects": {"damage": [5, 7]}}},
         }
         mage = {
             "name": "Маг",
             "type": "mage",
             "level": 1,
             "max_hp": 90,
-            "stats": {"wisdom": 3, "intellect": 3, "harmony": 3, "endurance": 4},
+            "stats": {"wisdom": 3, "intellect": 3, "harmony": 3, "endurance": 4, "agility": 3},
         }
 
-        self.assertEqual(derived_values(warrior, mage), {
-            "Урон": "--",
-            "Уворот": "--",
-            "Крит": "--",
-            "HP": 40,
-        })
-        self.assertEqual(derived_values(mage, warrior), {
-            "Урон": "--",
-            "Уворот": "--",
-            "Крит": "--",
-            "HP": 90,
-        })
+        # Урон = сила 5 + 1 от предмета + меч 5–7
+        self.assertEqual(derived_values(warrior), {"Урон": "11-13", "Уворот": "10%", "Крит": "5%", "Маг Урон": "6-8", "HP": 40})
+        # Показатели одинаковы для всех классов: маг урон идёт от мудрости
+        self.assertEqual(derived_values(mage), {"Урон": 1, "Уворот": "6%", "Крит": "5%", "Маг Урон": 3, "HP": 90})
 
     def test_character_comparison_draw_cross_class_does_not_crash(self):
         from ui.character_comparison import CharacterComparison

@@ -90,7 +90,14 @@ def own_public_offer(sender_id, location):
     if not candidates:
         return None
     candidates.sort(key=lambda offer: offer["created_at"], reverse=True)
-    return copy.deepcopy(candidates[0])
+    offer = candidates[0]
+    result = copy.deepcopy(offer)
+    if offer["status"] == "accepted":
+        # Отдаём принятую заявку владельцу один раз, иначе бой будет запускаться заново
+        # при каждом повторном входе в локацию, пока запись не истечёт сама по себе.
+        offer["status"] = "delivered"
+        offer["delivered_at"] = time.time()
+    return result
 
 
 def close_public_offer(offer_id, status, now=None):

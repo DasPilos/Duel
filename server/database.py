@@ -6,7 +6,14 @@ import sqlite3
 import time
 from contextlib import contextmanager
 
-from combat.character_stats import calculate_max_hp
+from combat.character_stats import (
+    BASE_STAT_VALUE,
+    MIN_STAT_VALUE,
+    STARTING_STAT_POINTS,
+    calculate_max_hp,
+    calculate_max_mana,
+    minimum_endurance,
+)
 from core.currency import Currency
 from server import config
 
@@ -191,30 +198,36 @@ class Database:
             self._initialize_drinks(connection)
             
             self._migrate_characters(connection)
-            self._normalize_mage_characters(connection)
+            self._normalize_character_stats(connection)
 
     @staticmethod
-    def _normalize_mage_characters(connection):
-        """Repair legacy mage stats without changing warrior records."""
+    def _normalize_character_stats(connection):
+        """Fill in any missing stats so every character (warrior or mage) has all 7."""
         rows = connection.execute(
-            "SELECT id, level, hp, stats_json FROM characters WHERE type = 'mage'"
+            "SELECT id, level, hp, mp, stats_json FROM characters"
         ).fetchall()
         for row in rows:
             stored = json.loads(row["stats_json"] or "{}")
+            level = row["level"]
             stats = {
-                "wisdom": max(3, int(stored.get("wisdom", 3))),
-                "intellect": max(3, int(stored.get("intellect", 3))),
-                "harmony": max(3, int(stored.get("harmony", 3))),
-                "endurance": max(4, int(stored.get("endurance", 4))),
+                "strength": max(MIN_STAT_VALUE, int(stored.get("strength", BASE_STAT_VALUE))),
+                "agility": max(MIN_STAT_VALUE, int(stored.get("agility", BASE_STAT_VALUE))),
+                "intuition": max(MIN_STAT_VALUE, int(stored.get("intuition", BASE_STAT_VALUE))),
+                "wisdom": max(MIN_STAT_VALUE, int(stored.get("wisdom", BASE_STAT_VALUE))),
+                "intellect": max(MIN_STAT_VALUE, int(stored.get("intellect", BASE_STAT_VALUE))),
+                "harmony": max(MIN_STAT_VALUE, int(stored.get("harmony", BASE_STAT_VALUE))),
+                "endurance": max(minimum_endurance(level), int(stored.get("endurance", minimum_endurance(level)))),
             }
-            max_hp = 50 + stats["endurance"] * 10
-            max_mp = 40 + stats["intellect"] * 5
+            if stats == stored:
+                continue
+            max_hp = calculate_max_hp(level, stats["endurance"])
+            max_mp = calculate_max_mana(stats["intellect"])
             connection.execute(
                 """UPDATE characters
                    SET stats_json = ?, max_hp = ?, hp = MIN(hp, ?),
-                      mp = MIN(mp, ?), max_mp = ?, stat_points = MIN(stat_points, 4)
+                      mp = MIN(mp, ?), max_mp = ?
                    WHERE id = ?""",
-                  (json.dumps(stats), max_hp, max_hp, max_mp, max_mp, row["id"]),
+                (json.dumps(stats), max_hp, max_hp, row["mp"], max_mp, row["id"]),
             )
     
     @staticmethod
@@ -391,25 +404,20 @@ class Database:
         
         now = time.time()
         
-        # Initialize stats based on profession
-        if profession_type == "warrior":
-            stats = {
-                "strength": 3,
-                "agility": 3,
-                "intuition": 3,
-                "endurance": 4,
-            }
-        else:  # mage
-            stats = {
-                "wisdom": 3,
-                "intellect": 3,
-                "harmony": 3,
-                "endurance": 4,
-            }
+        # Единый набор из 7 характеристик для всех персонажей независимо от профессии
+        stats = {
+            "strength": BASE_STAT_VALUE,
+            "agility": BASE_STAT_VALUE,
+            "intuition": BASE_STAT_VALUE,
+            "wisdom": BASE_STAT_VALUE,
+            "intellect": BASE_STAT_VALUE,
+            "harmony": BASE_STAT_VALUE,
+            "endurance": minimum_endurance(1),
+        }
         
-        max_hp = 50 + stats["endurance"] * 10 if profession_type == "mage" else calculate_max_hp(1, stats["endurance"])
-        max_mp = 40 + stats["intellect"] * 5 if profession_type == "mage" else 50
-        stat_points = 4 if profession_type == "mage" else 3
+        max_hp = calculate_max_hp(1, stats["endurance"])
+        max_mp = calculate_max_mana(stats["intellect"])
+        stat_points = STARTING_STAT_POINTS
         with self.connection() as connection:
             cursor = connection.execute(
                 """
@@ -542,6 +550,7 @@ class Database:
                         "effect": inv_row["effect"],
                     }
                 character["inventory"] = inventory
+                character["equipment"] = self.equipped_items(connection, row["id"])
                 characters.append(character)
 
             return characters
@@ -617,9 +626,10 @@ class Database:
                                     AND chat_messages.created_at >= ?
                   AND chat_messages.deleted_at IS NULL
                   AND (chat_messages.recipient_character_id IS NULL
-                       OR chat_messages.recipient_character_id = ?)
+                       OR chat_messages.recipient_character_id = ?
+                       OR chat_messages.sender_character_id = ?)
             """
-            params = [location, cutoff, str(character_id)]
+            params = [location, cutoff, str(character_id), character_id]
             if before_id is not None:
                 query += " AND chat_messages.id < ?"
                 params.append(int(before_id))
@@ -746,6 +756,8 @@ class Database:
                 )
                 for row in rows
             ]
+            for opponent in players:
+                opponent["equipment"] = self.equipped_items(connection, opponent["id"])
         for opponent in players:
             opponent["kind"] = "player"
         return get_bot_opponents() + players
@@ -784,6 +796,7 @@ class Database:
                 }
             character["inventory"] = inventory
             character["equipment_bonuses"] = self.equipment_bonuses(connection, row["id"])
+            character["equipment"] = self.equipped_items(connection, row["id"])
 
             return character
 
@@ -797,7 +810,27 @@ class Database:
                 return None
             character = self._character_payload(row)
             character["equipment_bonuses"] = self.equipment_bonuses(connection, row["id"])
+            character["equipment"] = self.equipped_items(connection, row["id"])
         return {"user_id": row["user_id"], "character": character}
+
+    @staticmethod
+    def equipped_items(connection, character_id):
+        """Надетые предметы: {слот: предмет}. Отдаются вместе с любым персонажем,
+        чтобы слоты на карточке были заполнены у всех, независимо от класса."""
+        from server.items_database import _ITEM_COLUMNS, _item_payload
+
+        try:
+            rows = connection.execute(
+                f"""SELECT e.slot, e.item_id, {_ITEM_COLUMNS}
+                    FROM character_equipment e
+                    JOIN items_catalog c ON c.id = e.item_id
+                    WHERE e.character_id = ?""",
+                (character_id,),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            # Таблицы предметов создаёт ItemsDatabase; без неё экипировки нет
+            return {}
+        return {row["slot"]: _item_payload(row) for row in rows}
 
     @staticmethod
     def equipment_bonuses(connection, character_id):
@@ -874,18 +907,22 @@ class Database:
             "silver": currency.silver,
             "gold": currency.gold,
         }
-        if current.get("type") == "mage":
-            updated["stats"] = {
-                "wisdom": max(2, int(updated["stats"].get("wisdom", 2))),
-                "intellect": max(2, int(updated["stats"].get("intellect", 2))),
-                "harmony": max(2, int(updated["stats"].get("harmony", 2))),
-                "endurance": max(2, int(updated["stats"].get("endurance", 2))),
-            }
-            updated["max_hp"] = 50 + updated["stats"]["endurance"] * 10
-            updated["hp"] = min(updated["hp"], updated["max_hp"])
-            updated["max_mp"] = 40 + updated["stats"]["intellect"] * 5
-            updated["mp"] = min(updated["mp"], updated["max_mp"])
-            updated["stat_points"] = min(updated["stat_points"], 4)
+        # Единая проверка характеристик для всех типов персонажей (5 стартовых + 3 за уровень)
+        level = updated["level"]
+        raw_stats = updated["stats"] if isinstance(updated["stats"], dict) else {}
+        updated["stats"] = {
+            "strength": max(MIN_STAT_VALUE, int(raw_stats.get("strength", BASE_STAT_VALUE))),
+            "agility": max(MIN_STAT_VALUE, int(raw_stats.get("agility", BASE_STAT_VALUE))),
+            "intuition": max(MIN_STAT_VALUE, int(raw_stats.get("intuition", BASE_STAT_VALUE))),
+            "wisdom": max(MIN_STAT_VALUE, int(raw_stats.get("wisdom", BASE_STAT_VALUE))),
+            "intellect": max(MIN_STAT_VALUE, int(raw_stats.get("intellect", BASE_STAT_VALUE))),
+            "harmony": max(MIN_STAT_VALUE, int(raw_stats.get("harmony", BASE_STAT_VALUE))),
+            "endurance": max(minimum_endurance(level), int(raw_stats.get("endurance", minimum_endurance(level)))),
+        }
+        updated["max_hp"] = calculate_max_hp(level, updated["stats"]["endurance"])
+        updated["hp"] = min(updated["hp"], updated["max_hp"])
+        updated["max_mp"] = calculate_max_mana(updated["stats"]["intellect"])
+        updated["mp"] = min(updated["mp"], updated["max_mp"])
         self.validate_character_name(updated["name"])
         self._validate_character(updated)
         with self.connection() as connection:
@@ -1019,9 +1056,8 @@ class Database:
         row_dict = dict(row)
         stats = json.loads(row["stats_json"])
         character_type = row["type"] if "type" in row.keys() else "warrior"
-        is_mage = character_type == "mage"
-        max_hp = 50 + stats["endurance"] * 10 if is_mage else calculate_max_hp(row["level"], stats["endurance"])
-        max_mp = 40 + stats["intellect"] * 5 if is_mage else row["max_mp"]
+        max_hp = calculate_max_hp(row["level"], stats.get("endurance", minimum_endurance(row["level"])))
+        max_mp = calculate_max_mana(stats.get("intellect", BASE_STAT_VALUE))
 
         # Нормализуем валюту
         currency = Currency(

@@ -192,7 +192,7 @@ class CharacterRoom:
 
         # Оверлей профиля
         show_player_only = self.profile_overlay.counterpart is None
-        self.profile_overlay.draw(screen, show_player_only=show_player_only)
+        self.profile_overlay.draw(screen, opponent=self.session.character, show_player_only=show_player_only)
 
     def _draw_tabs(self, screen):
         """Рисует вкладки"""

@@ -345,10 +345,7 @@ class DuelRenderer:
             self.scene.enemy,
             enemy_profile,
         )
-        player_derived = derived_values(
-            player_effective_profile,
-            enemy_effective_profile,
-        )
+        player_derived = derived_values(player_effective_profile)
         player_derived = self._apply_chance_modifiers(
             player_derived,
             self.scene.player,
@@ -370,10 +367,7 @@ class DuelRenderer:
         )
         
         # Правый верхний угол - Противник (красный)
-        enemy_derived = derived_values(
-            enemy_effective_profile,
-            player_effective_profile,
-        )
+        enemy_derived = derived_values(enemy_effective_profile)
         enemy_derived = self._apply_chance_modifiers(
             enemy_derived,
             self.scene.enemy,
@@ -732,11 +726,15 @@ class DuelRenderer:
 
     @staticmethod
     def _effective_profile_for_derived(fighter, profile):
+        # Статы бойца уже включают временные эффекты и бонусы предметов —
+        # бонусы не прибавляем второй раз
         effective_profile = dict(profile)
         effective_profile["stats"] = {
             stat_name: getattr(fighter, stat_name)
-            for stat_name in ("strength", "agility", "intuition", "endurance")
+            for stat_name in ("strength", "agility", "intuition", "wisdom", "endurance")
+            if hasattr(fighter, stat_name)
         }
+        effective_profile["equipment_bonuses"] = {}
         return effective_profile
 
     @staticmethod

@@ -44,7 +44,7 @@ try:
     assert 'strength' in stats, "Warrior should have 'strength' stat"
     assert 'agility' in stats, "Warrior should have 'agility' stat"
     assert 'intuition' in stats, "Warrior should have 'intuition' stat"
-    assert stats['endurance'] == 4, "Warrior endurance should be 4"
+    assert stats['endurance'] == 3, "Warrior endurance should start at 3"
     print("  [OK] Warrior stats validated")
     
     # Test 3: Create Mage
@@ -59,9 +59,9 @@ try:
     assert 'wisdom' in stats, "Mage should have 'wisdom' stat"
     assert 'intellect' in stats, "Mage should have 'intellect' stat"
     assert 'harmony' in stats, "Mage should have 'harmony' stat"
-    assert set(stats) == {'wisdom', 'intellect', 'harmony', 'endurance'}, "Mage should have only mage stats"
-    assert 'strength' not in stats, "Mage should NOT have 'strength' stat"
-    assert stats['endurance'] == 4, "Mage endurance should be 4"
+    # Единый набор из 7 статов для всех классов персонажей
+    assert set(stats) == {'strength', 'agility', 'intuition', 'wisdom', 'intellect', 'harmony', 'endurance'}, "Mage should have all 7 unified stats"
+    assert stats['endurance'] == 3, "Mage endurance should start at 3"
     print("  [OK] Mage stats validated")
     
     # Test 4: Both characters have separate funds

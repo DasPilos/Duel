@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from combat.fighter import Fighter
 from combat.progression import apply_xp, battle_xp, xp_to_next
 from combat.group_battle import is_afk_draw, split_balanced_teams, visible_group_targets
-from combat.mechanics import get_critical_chance
+from combat.mechanics import get_critical_chance, get_critical_damage_multiplier
 from scenes.duel_commentator import DuelCommentator
 
 
@@ -16,10 +16,13 @@ class TestFighter(unittest.TestCase):
             "strength": 3,
             "agility": 3,
             "intuition": 3,
-            "endurance": 4,
+            "wisdom": 3,
+            "intellect": 3,
+            "harmony": 3,
+            "endurance": 3,
         })
-        self.assertEqual(fighter.stat_points, 3)
-        self.assertEqual(fighter.max_hp, 40)
+        self.assertEqual(fighter.stat_points, 5)
+        self.assertEqual(fighter.max_hp, 30)
         self.assertEqual(fighter.hp, fighter.max_hp)
 
     def test_endurance_updates_max_and_current_hp(self):
@@ -28,7 +31,7 @@ class TestFighter(unittest.TestCase):
         self.assertFalse(fighter.add_stat("endurance"))
         self.assertTrue(fighter.add_stat("strength"))
         self.assertEqual(fighter.strength, 4)
-        self.assertEqual(fighter.stat_points, 2)
+        self.assertEqual(fighter.stat_points, 4)
 
     def test_stat_limits(self):
         fighter = Fighter("Тест")
@@ -39,7 +42,7 @@ class TestFighter(unittest.TestCase):
         self.assertTrue(fighter.remove_stat("strength"))
         self.assertEqual(fighter.strength, 3)
         self.assertFalse(fighter.remove_stat("strength"))
-        self.assertEqual(fighter.stat_points, 3)
+        self.assertEqual(fighter.stat_points, 5)
 
     def test_progression_thresholds_and_rewards(self):
         self.assertEqual(xp_to_next(1), 185)
@@ -60,19 +63,19 @@ class TestFighter(unittest.TestCase):
         self.assertEqual(fighter.hp, 15)
         self.assertEqual(fighter.level, 2)
 
-    def test_intuition_gives_five_crit_and_three_anti_crit(self):
+    def test_intuition_boosts_critical_damage_not_chance(self):
         attacker = Fighter("Атакующий")
         defender = Fighter("Защитник")
         attacker.stats["intuition"] = 6
         defender.stats["intuition"] = 5
 
-        self.assertEqual(get_critical_chance(attacker, defender), 15)
+        # Шанс крита фиксирован и не зависит от статов ни одной из сторон.
+        self.assertEqual(get_critical_chance(attacker, defender), 5.0)
+        defender.stats["intuition"] += 5
+        self.assertEqual(get_critical_chance(attacker, defender), 5.0)
 
-        attacker.stats["intuition"] += 1
-        self.assertEqual(get_critical_chance(attacker, defender), 20)
-
-        defender.stats["intuition"] += 1
-        self.assertEqual(get_critical_chance(attacker, defender), 17)
+        # А вот множитель урона крита растёт от своей интуиции на 5% за очко.
+        self.assertEqual(get_critical_damage_multiplier(attacker), 1.5 + 6 * 0.05)
 
     def test_group_battle_splits_participants_into_balanced_teams(self):
         participants = [

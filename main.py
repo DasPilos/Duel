@@ -15,6 +15,7 @@ from scenes.world_map_scene import WorldMapScene
 from scenes.city_scene import CityScene
 from scenes.title_scene import TitleScene
 from ui.scene_transition import SceneTransition
+from client.network import ServerError
 from ui.inventory_window import InventoryWindow
 
 
@@ -30,6 +31,19 @@ def inventory_session(scene):
     if session is None or not getattr(session, "character", None):
         return None
     return session
+
+
+def ensure_equipment_loaded(scene):
+    """Один раз подгружает надетые предметы, чтобы слоты на карточке профиля не были пустыми"""
+    overlay = getattr(scene, "profile_overlay", None)
+    session = inventory_session(scene)
+    if session is None or not getattr(overlay, "is_open", False) or "equipment" in session.character:
+        return
+    try:
+        state = session.client.get_inventory(session.character["id"])
+    except ServerError:
+        state = {}
+    session.character["equipment"] = dict(state.get("equipment", {}))
 
 
 def text_input_focused(scene):
@@ -139,6 +153,8 @@ def main():
                 overlay.inventory_requested = False
                 if inventory_session(scene) is not None:
                     inventory.open(inventory_session(scene))
+
+            ensure_equipment_loaded(scene)
 
             if transition.active and inventory.is_open:
                 inventory.close()

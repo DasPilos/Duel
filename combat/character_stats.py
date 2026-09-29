@@ -1,8 +1,11 @@
 BASE_STAT_VALUE = 3
-STARTING_ENDURANCE_VALUE = 4
+STARTING_ENDURANCE_VALUE = 3
 MIN_STAT_VALUE = 3
-STARTING_STAT_POINTS = 3
+STARTING_STAT_POINTS = 5
 ENDURANCE_HP_BONUS = 10
+MANA_PER_INTELLECT = 5
+# Все 7 характеристик персонажа: единая система для воинов и магов.
+STAT_NAMES = ("strength", "agility", "intuition", "wisdom", "intellect", "harmony", "endurance")
 # Тестовый персонаж без ограничений по статам/уровню — нужен для проверки игры на разных уровнях.
 DEBUG_UNLIMITED_CHARACTER_IDS = {2}
 DEBUG_UNLIMITED_STAT_POINTS = 999
@@ -33,6 +36,11 @@ def minimum_endurance(level):
 def calculate_max_hp(level, endurance):
     """Return the maximum health determined by level and endurance."""
     return ENDURANCE_HP_BONUS * int(endurance)
+
+
+def calculate_max_mana(intellect):
+    """Return the maximum mana pool determined by intellect."""
+    return MANA_PER_INTELLECT * int(intellect)
 
 
 def adjust_stats(stats, stat_points, hp, max_hp, level, stat_name, delta, character_id=None):

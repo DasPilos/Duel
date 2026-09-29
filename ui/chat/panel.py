@@ -295,7 +295,17 @@ class ChatPanel:
 
     def _visible_messages(self):
         if self.channel == "Общий":
-            return self.messages
+            return [message for message in self.messages if message.get("recipient_id") is None]
+        if self.channel == "Личные":
+            if self.private_target is None:
+                return []
+            own_id = str(self.session.character["id"]) if self.session.character else None
+            target_id = str(self.private_target.get("character_id"))
+            return [
+                message for message in self.messages
+                if message.get("recipient_id") is not None
+                and {str(message.get("sender_id")), str(message.get("recipient_id"))} == {own_id, target_id}
+            ]
         if self.channel == "Лог боя" and self.battle_source is not None:
             result = []
             for index, comment in enumerate(self.battle_source.comments):

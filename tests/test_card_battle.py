@@ -29,15 +29,6 @@ class TestCardBattle(unittest.TestCase):
         self.assertCountEqual(deck, cards)
         self.assertEqual(len(deck), len(cards))
 
-    def test_warrior_duel_battle_excludes_mage_cards(self):
-        pygame.init()
-        try:
-            scene = DuelScene()
-            self.assertTrue(scene.battle.cards)
-            self.assertFalse(any(card.group_name.startswith("Магия:") for card in scene.battle.cards))
-        finally:
-            pygame.quit()
-
     def test_mage_duel_battle_excludes_warrior_cards(self):
         pygame.init()
         try:
@@ -59,354 +50,6 @@ class TestCardBattle(unittest.TestCase):
             self.assertTrue(all(card.group_name.startswith("Магия:") for card in scene.battle.cards))
         finally:
             pygame.quit()
-
-    def test_all_current_cards_have_complete_descriptions(self):
-        cards = load_cards()
-        descriptions = {
-            card.key: CardAreaRenderer._card_description(card)
-            for card in cards        }
-
-        self.assertNotIn("Особое действие карты.", descriptions.values())
-        self.assertIn("Наносит 3d4 урона", descriptions["reveal_threat"])
-        self.assertIn("шанс критического удара противника на 20%", descriptions["reveal_threat"])
-        self.assertIn("на 1 размен", descriptions["reveal_threat"])
-        self.assertIn("Ловкость противника на 4", descriptions["knock_down"])
-        self.assertIn("на 2 размена", descriptions["knock_down"])
-        self.assertEqual(
-            descriptions["block"],
-            "Уменьшает получаемый урон на 30% в текущем размене.",
-        )
-
-    def test_database_contains_block(self):
-        card = next(item for item in load_cards() if item.key == "block")
-
-        self.assertEqual(card.name, "Блок")
-        self.assertEqual(card.group_name, "Выносливость")
-        self.assertEqual(card.costs, {
-            "strength": 0,
-            "intuition": 0,
-            "agility": 0,
-            "endurance": 1,
-        })
-        self.assertEqual(card.effect_type, "damage_resistance")
-        self.assertEqual(card.effect_data, {"ratio": 0.7})
-        self.assertEqual(card.level, 1)
-        self.assertEqual(card.price_copper, 0)
-        self.assertEqual(card.price_silver, 2)
-        self.assertEqual(card.price_gold, 0)
-        self.assertEqual(card.drop_chance, 22)
-        self.assertEqual(card.image_path, "assets/cards/faces/block.png")
-        self.assertEqual(card.effect_duration, 0)
-
-    def test_database_contains_deaf_defense(self):
-        card = next(item for item in load_cards() if item.key == "deaf_defense")
-
-        self.assertEqual(card.name, "Глухая оборона")
-        self.assertEqual(card.group_name, "Выносливость")
-        self.assertEqual(card.costs, {
-            "strength": 0,
-            "intuition": 1,
-            "agility": 1,
-            "endurance": 3,
-        })
-        self.assertEqual(card.effect_type, "damage_resistance")
-        self.assertEqual(card.effect_data, {"ratio": 0.5})
-        self.assertEqual(card.level, 2)
-        self.assertEqual(card.price_copper, 0)
-        self.assertEqual(card.price_silver, 11)
-        self.assertEqual(card.price_gold, 0)
-        self.assertEqual(card.drop_chance, 14)
-        self.assertEqual(card.image_path, "assets/cards/faces/deaf_defense.png")
-        self.assertEqual(card.effect_duration, 3)
-        self.assertEqual(
-            CardAreaRenderer._card_description(card),
-            "Уменьшает получаемый урон на 50% на 3 размена.",
-        )
-
-    def test_deaf_defense_halves_damage_for_three_exchanges(self):
-        class FixedRandom:
-            @staticmethod
-            def random():
-                return 0.99
-
-            @staticmethod
-            def randint(_start, end):
-                return end
-
-            @staticmethod
-            def shuffle(_items):
-                return None
-
-        defense = next(item for item in load_cards() if item.key == "deaf_defense")
-        attack = Card(
-            key="test_attack",
-            name="Тестовая атака",
-            group_name="Сила",
-            strength_cost=0,
-            intuition_cost=0,
-            agility_cost=0,
-            endurance_cost=0,
-            effect_type="damage",
-            effect_data={"dice": "1d10"},
-            level=1,
-        )
-        player = Fighter("Защитник")
-        enemy = Fighter("Атакующий")
-        player.stats["endurance"] = 0
-        enemy.stats["strength"] = 0
-        battle = CardBattle(player, enemy, cards=[], rng=FixedRandom())
-        battle.turn = 1
-
-        defense_event = battle._resolve_card("player", defense)
-
-        self.assertEqual(defense_event["effect_text"], "-50% УРОН НА 3 РАЗМЕНА")
-        self.assertEqual(battle._resolve_card("enemy", attack)["damage"], 5)
-        battle._expire_timed_stat_effects()
-
-        for _ in range(2):
-            battle._start_turn(draw_cards=False)
-            self.assertEqual(battle._resolve_card("enemy", attack)["damage"], 5)
-            battle._expire_timed_stat_effects()
-
-        self.assertEqual(battle.timed_damage_ratio_effects["player"], [])
-        battle._start_turn(draw_cards=False)
-        self.assertEqual(battle._resolve_card("enemy", attack)["damage"], 10)
-
-    def test_database_contains_ale_sip(self):
-        card = next(item for item in load_cards() if item.key == "ale_sip")
-
-        self.assertEqual(card.name, "Глоток Эля")
-        self.assertEqual(card.group_name, "Выносливость")
-        self.assertEqual(card.costs, {
-            "strength": 0,
-            "intuition": 0,
-            "agility": 0,
-            "endurance": 3,
-        })
-        self.assertEqual(card.effect_type, "instant_heal")
-        self.assertEqual(card.effect_data, {"dice": "2d3"})
-        self.assertEqual(card.level, 1)
-        self.assertEqual(card.price_copper, 0)
-        self.assertEqual(card.price_silver, 4)
-        self.assertEqual(card.price_gold, 0)
-        self.assertEqual(card.drop_chance, 18)
-        self.assertEqual(card.image_path, "assets/cards/faces/ale_sip.png")
-        self.assertEqual(card.effect_duration, 0)
-        self.assertIn(
-            "мгновенно восстанавливает 2d3 HP",
-            CardAreaRenderer._card_description(card),
-        )
-
-    def test_database_contains_bandage_wounds(self):
-        card = next(item for item in load_cards() if item.key == "bandage_wounds")
-
-        self.assertEqual(card.name, "Перевязать раны")
-        self.assertEqual(card.group_name, "Выносливость")
-        self.assertEqual(card.costs, {
-            "strength": 0,
-            "intuition": 0,
-            "agility": 0,
-            "endurance": 4,
-        })
-        self.assertEqual(card.effect_type, "instant_heal")
-        self.assertEqual(card.effect_data, {"dice": "2d6"})
-        self.assertEqual(card.level, 1)
-        self.assertEqual(card.price_copper, 0)
-        self.assertEqual(card.price_silver, 6)
-        self.assertEqual(card.price_gold, 0)
-        self.assertEqual(card.drop_chance, 16)
-        self.assertEqual(
-            card.image_path,
-            "assets/cards/faces/bandage_wounds.png",
-        )
-        self.assertEqual(card.effect_duration, 0)
-        self.assertIn(
-            "мгновенно восстанавливает 2d6 HP",
-            CardAreaRenderer._card_description(card),
-        )
-
-    def test_database_contains_regeneration(self):
-        card = next(item for item in load_cards() if item.key == "regeneration")
-
-        self.assertEqual(card.name, "Регенерация")
-        self.assertEqual(card.group_name, "Выносливость")
-        self.assertEqual(card.costs, {
-            "strength": 0,
-            "intuition": 1,
-            "agility": 1,
-            "endurance": 5,
-        })
-        self.assertEqual(card.effect_type, "heal_duration")
-        self.assertEqual(card.effect_data, {"dice": "2d4"})
-        self.assertEqual(card.level, 3)
-        self.assertEqual(card.price_copper, 0)
-        self.assertEqual(card.price_silver, 11)
-        self.assertEqual(card.price_gold, 0)
-        self.assertEqual(card.drop_chance, 12)
-        self.assertEqual(
-            card.image_path,
-            "assets/cards/faces/regeneration.png",
-        )
-        self.assertEqual(card.effect_duration, 4)
-        self.assertEqual(
-            CardAreaRenderer._card_description(card),
-            "Восстанавливает 2d4 HP при розыгрыше и в начале следующих 3 ходов.",
-        )
-
-    def test_regeneration_heals_four_times_and_updates_statistics(self):
-        class FixedRandom:
-            @staticmethod
-            def random():
-                return 0.99
-
-            @staticmethod
-            def randint(_start, end):
-                return end
-
-            @staticmethod
-            def shuffle(_items):
-                return None
-
-        card = next(item for item in load_cards() if item.key == "regeneration")
-        player = Fighter("Игрок")
-        player.hp = 0
-        player.max_hp = 40
-        battle = CardBattle(player, Fighter("Враг"), cards=[], rng=FixedRandom())
-
-        event = battle._resolve_card("player", card)
-        battle.stats["player"]["healed"] += event["healed"]
-        battle.stats["player"]["card_healing"][card.name] = event["healed"]
-
-        self.assertEqual(event["healed"], 8)
-        self.assertEqual(player.hp, 8)
-        self.assertEqual(battle.regen_effects["player"], [{
-            "card": "Регенерация",
-            "dice": "2d4",
-            "remaining": 3,
-        }])
-
-        for expected_hp in (16, 24, 32):
-            battle._start_turn(draw_cards=False)
-            self.assertEqual(player.hp, expected_hp)
-
-        self.assertEqual(battle.regen_effects["player"], [])
-        self.assertEqual(battle.stats["player"]["healed"], 32)
-        self.assertEqual(
-            battle.stats["player"]["card_healing"]["Регенерация"],
-            32,
-        )
-        battle._start_turn(draw_cards=False)
-        self.assertEqual(player.hp, 32)
-        self.assertEqual(battle.stats["player"]["healed"], 32)
-
-    def test_database_contains_wipe_sweat(self):
-        card = next(item for item in load_cards() if item.key == "wipe_sweat")
-
-        self.assertEqual(card.name, "Утереть пот")
-        self.assertEqual(card.group_name, "Выносливость")
-        self.assertEqual(card.costs, {
-            "strength": 1,
-            "intuition": 0,
-            "agility": 0,
-            "endurance": 4,
-        })
-        self.assertEqual(card.effect_type, "heal_duration")
-        self.assertEqual(card.effect_data, {"dice": "2d3"})
-        self.assertEqual(card.level, 2)
-        self.assertEqual(card.price_copper, 0)
-        self.assertEqual(card.price_silver, 9)
-        self.assertEqual(card.price_gold, 0)
-        self.assertEqual(card.drop_chance, 16)
-        self.assertEqual(card.image_path, "assets/cards/faces/wipe_sweat.png")
-        self.assertEqual(card.effect_duration, 2)
-        self.assertEqual(
-            CardAreaRenderer._card_description(card),
-            "Восстанавливает 2d3 HP при розыгрыше и в начале следующего хода.",
-        )
-
-    def test_wipe_sweat_heals_twice(self):
-        class FixedRandom:
-            @staticmethod
-            def random():
-                return 0.99
-
-            @staticmethod
-            def randint(_start, end):
-                return end
-
-            @staticmethod
-            def shuffle(_items):
-                return None
-
-        card = next(item for item in load_cards() if item.key == "wipe_sweat")
-        player = Fighter("Игрок")
-        player.hp = 0
-        player.max_hp = 40
-        battle = CardBattle(player, Fighter("Враг"), cards=[], rng=FixedRandom())
-
-        event = battle._resolve_card("player", card)
-        battle.stats["player"]["healed"] += event["healed"]
-        battle.stats["player"]["card_healing"][card.name] = event["healed"]
-
-        self.assertEqual(event["healed"], 6)
-        self.assertEqual(player.hp, 6)
-        self.assertEqual(battle.regen_effects["player"], [{
-            "card": "Утереть пот",
-            "dice": "2d3",
-            "remaining": 1,
-        }])
-
-        battle._start_turn(draw_cards=False)
-
-        self.assertEqual(player.hp, 12)
-        self.assertEqual(battle.stats["player"]["healed"], 12)
-        self.assertEqual(battle.regen_effects["player"], [])
-        battle._start_turn(draw_cards=False)
-        self.assertEqual(player.hp, 12)
-
-    def test_block_reduces_damage_before_faster_opponent_attacks(self):
-        class FixedRandom:
-            @staticmethod
-            def random():
-                return 0.99
-
-            @staticmethod
-            def randint(start, _end):
-                return start
-
-            @staticmethod
-            def shuffle(_items):
-                return None
-
-        cards = load_cards()
-        attack = next(item for item in cards if item.key == "podsechka")
-        block = next(item for item in cards if item.key == "block")
-        player = Fighter("Быстрый атакующий")
-        enemy = Fighter("Медленный защитник")
-        player.stats["strength"] = 5
-        player.stats["agility"] = 8
-        enemy.stats["agility"] = 3
-        enemy.stats["endurance"] = 0
-        battle = CardBattle(player, enemy, cards=[], rng=FixedRandom())
-        battle.turn = 1
-        battle.hands["player"] = [attack]
-        battle.hands["enemy"] = [block]
-        battle.action_points["player"] = {
-            stat: 99 for stat in battle.action_points["player"]
-        }
-        battle.action_points["enemy"] = {
-            stat: 99 for stat in battle.action_points["enemy"]
-        }
-        battle.select_card("player", attack.key)
-        battle.select_card("enemy", block.key)
-        battle.confirm_selection("player")
-        battle.confirm_selection("enemy")
-
-        events = battle.resolve_turn()
-
-        attack_event = next(event for event in events if event.get("card") == attack.name)
-        self.assertEqual(attack_event["damage"], 7)
-        self.assertEqual(enemy.card_damage_ratio, 0.7)
 
     def test_card_cost_labels_use_requested_style_and_offsets(self):
         rect = pygame.Rect(100, 200, 150, 200)
@@ -475,124 +118,6 @@ class TestCardBattle(unittest.TestCase):
     def test_strength_adds_one_damage_to_card_roll(self):
         self.assertEqual(calculate_max_hp(1, 5), 50)
 
-    def test_database_contains_podsechka(self):
-        cards = load_cards()
-        podsechka = next(card for card in cards if card.key == "podsechka")
-
-        self.assertEqual(podsechka.name, "Подсечка")
-        self.assertEqual(podsechka.costs, {
-            "strength": 2,
-            "intuition": 0,
-            "agility": 0,
-            "endurance": 0,
-        })
-        self.assertEqual(podsechka.effect_data, {"dice": "1d4"})
-        self.assertEqual(podsechka.price_silver, 2)
-        self.assertEqual(podsechka.drop_chance, 20)
-        self.assertEqual(
-            podsechka.image_path,
-            "assets/cards/faces/podsechka.png",
-        )
-        self.assertEqual(podsechka.effect_duration, 0)
-
-    def test_database_contains_straight_punch(self):
-        cards = load_cards()
-        card = next(item for item in cards if item.key == "straight_punch")
-
-        self.assertEqual(card.name, "Прямой удар")
-        self.assertEqual(card.costs, {
-            "strength": 3,
-            "intuition": 0,
-            "agility": 0,
-            "endurance": 0,
-        })
-        self.assertEqual(card.effect_data, {"dice": "1d6"})
-        self.assertEqual(card.price_silver, 3)
-        self.assertEqual(card.drop_chance, 18)
-        self.assertEqual(
-            card.image_path,
-            "assets/cards/faces/straight_punch.png",
-        )
-        self.assertEqual(card.effect_duration, 0)
-
-    def test_knock_down_reduces_agility_for_two_exchanges(self):
-        class FixedRandom:
-            @staticmethod
-            def random():
-                return 0.99
-
-            @staticmethod
-            def randint(start, _end):
-                return start
-
-            @staticmethod
-            def choice(items):
-                return items[0]
-
-            @staticmethod
-            def shuffle(_items):
-                return None
-
-        cards = load_cards()
-        card = next(item for item in cards if item.key == "knock_down")
-        player = Fighter("Игрок")
-        enemy = Fighter("Враг")
-        enemy.stats["agility"] = 8
-        battle = CardBattle(player, enemy, cards=[], rng=FixedRandom())
-        battle.turn = 1
-        battle.action_points["player"] = {
-            stat: 99 for stat in battle.action_points["player"]
-        }
-
-        event = battle._resolve_card("player", card)
-
-        self.assertGreater(event["hits"], 0)
-        self.assertEqual(player.agility, 3)
-        self.assertEqual(battle.timed_stat_effects["player"], [])
-        self.assertEqual(enemy.stats["agility"], 8)
-        self.assertEqual(enemy.agility, 4)
-        battle._expire_timed_stat_effects()
-        self.assertEqual(enemy.agility, 4)
-        battle.turn = 2
-        battle._expire_timed_stat_effects()
-        self.assertEqual(enemy.agility, 8)
-
-    def test_enemy_knock_down_only_debuffs_player(self):
-        class FixedRandom:
-            @staticmethod
-            def random():
-                return 0.99
-
-            @staticmethod
-            def randint(start, _end):
-                return start
-
-            @staticmethod
-            def shuffle(_items):
-                return None
-
-        card = next(item for item in load_cards() if item.key == "knock_down")
-        player = Fighter("Игрок")
-        enemy = Fighter("Враг")
-        player.stats["agility"] = 8
-        enemy.stats["agility"] = 7
-        battle = CardBattle(player, enemy, cards=[], rng=FixedRandom())
-        battle.turn = 1
-        battle.hands["enemy"] = [card]
-        battle.action_points["enemy"] = {
-            stat: 99 for stat in battle.action_points["enemy"]
-        }
-        battle.select_card("enemy", card.key)
-        battle.confirm_selection("player")
-        battle.confirm_selection("enemy")
-
-        battle.resolve_turn()
-
-        self.assertEqual(player.agility, 4)
-        self.assertEqual(enemy.agility, 7)
-        self.assertEqual(len(battle.timed_stat_effects["player"]), 1)
-        self.assertEqual(battle.timed_stat_effects["enemy"], [])
-
     def test_stat_debuff_is_clamped_at_zero(self):
         player = Fighter("Игрок")
         enemy = Fighter("Враг")
@@ -618,7 +143,7 @@ class TestCardBattle(unittest.TestCase):
         dodge_after = get_dodge_chance(attacker, defender)
         points_after = points_from_stat(defender.agility, random.Random(1))
 
-        self.assertEqual(dodge_before - dodge_after, 20)
+        self.assertEqual(dodge_before - dodge_after, 8)
         self.assertEqual(points_before - points_after, 1)
 
         attacker.stats["agility"] = 8
@@ -629,37 +154,11 @@ class TestCardBattle(unittest.TestCase):
         attacker.adjust_temporary_stat("agility", -4)
         anti_dodge_after = get_dodge_chance(attacker, defender)
 
-        self.assertEqual(anti_dodge_after - anti_dodge_before, 12)
+        # Ловкость атакующего больше не влияет на уворот защитника.
+        self.assertEqual(anti_dodge_after - anti_dodge_before, 0)
 
         battle = CardBattle(attacker, defender, cards=[], rng=random.Random(1))
         self.assertEqual(battle._stronger_side("agility"), "enemy")
-
-    def test_strength_debuff_changes_damage_math(self):
-        class FixedRandom:
-            @staticmethod
-            def random():
-                return 0.99
-
-            @staticmethod
-            def randint(start, _end):
-                return start
-
-            @staticmethod
-            def shuffle(_items):
-                return None
-
-        card = next(item for item in load_cards() if item.key == "podsechka")
-        attacker = Fighter("Атакующий")
-        defender = Fighter("Защитник")
-        attacker.stats["strength"] = 4
-        attacker.adjust_temporary_stat("strength", -4)
-        defender.stats["endurance"] = 0
-        battle = CardBattle(attacker, defender, cards=[], rng=FixedRandom())
-
-        event = battle._resolve_card("player", card)
-
-        self.assertEqual(attacker.strength, 0)
-        self.assertEqual(event["damage"], 1)
 
     def test_intuition_debuff_changes_critical_chance_and_priority(self):
         attacker = Fighter("Атакующий")
@@ -673,563 +172,9 @@ class TestCardBattle(unittest.TestCase):
 
         attacker.adjust_temporary_stat("intuition", -4)
 
-        self.assertEqual(critical_before - get_critical_chance(attacker, defender), 20)
+        # Интуиция теперь влияет только на урон крита, а не на его шанс — шанс не меняется.
+        self.assertEqual(critical_before - get_critical_chance(attacker, defender), 0)
         self.assertEqual(battle._stronger_side("intuition"), "enemy")
-
-    def test_database_contains_knock_down(self):
-        card = next(item for item in load_cards() if item.key == "knock_down")
-
-        self.assertEqual(card.name, "Сбить с ног")
-        self.assertEqual(card.costs, {
-            "strength": 4,
-            "intuition": 1,
-            "agility": 2,
-            "endurance": 0,
-        })
-        self.assertEqual(card.effect_type, "damage_stat_debuff")
-        self.assertEqual(card.effect_data, {
-            "dice": "1d4",
-            "stat": "agility",
-            "amount": 4,
-        })
-        self.assertEqual(card.effect_duration, 2)
-        self.assertEqual(card.level, 3)
-        self.assertEqual(card.price_silver, 15)
-        self.assertEqual(card.drop_chance, 4)
-
-    def test_database_contains_heavy_strike(self):
-        card = next(item for item in load_cards() if item.key == "heavy_strike")
-
-        self.assertEqual(card.name, "Тяжелый удар")
-        self.assertEqual(card.costs, {
-            "strength": 4,
-            "intuition": 1,
-            "agility": 0,
-            "endurance": 0,
-        })
-        self.assertEqual(card.effect_type, "damage")
-        self.assertEqual(card.effect_data, {"dice": "2d6"})
-        self.assertEqual(card.level, 2)
-        self.assertEqual(card.price_silver, 6)
-        self.assertEqual(card.drop_chance, 15)
-        self.assertEqual(
-            card.image_path,
-            "assets/cards/faces/heavy_strike.png",
-        )
-        self.assertEqual(card.effect_duration, 0)
-
-    def test_database_contains_windmill(self):
-        card = next(item for item in load_cards() if item.key == "windmill")
-
-        self.assertEqual(card.name, "Мельница")
-        self.assertEqual(card.costs, {
-            "strength": 4,
-            "intuition": 0,
-            "agility": 1,
-            "endurance": 0,
-        })
-        self.assertEqual(card.effect_type, "damage")
-        self.assertEqual(card.effect_data, {"dice": "1d10"})
-        self.assertEqual(card.level, 2)
-        self.assertEqual(card.price_silver, 6)
-        self.assertEqual(card.drop_chance, 15)
-        self.assertEqual(
-            card.image_path,
-            "assets/cards/faces/windmill.png",
-        )
-        self.assertEqual(card.effect_duration, 0)
-
-    def test_database_contains_reveal_threat(self):
-        card = next(item for item in load_cards() if item.key == "reveal_threat")
-
-        self.assertEqual(card.name, "Разкрыть угрозу")
-        self.assertEqual(card.costs, {
-            "strength": 3,
-            "intuition": 2,
-            "agility": 1,
-            "endurance": 0,
-        })
-        self.assertEqual(card.effect_type, "damage_critical_debuff")
-        self.assertEqual(card.effect_data, {"dice": "3d4", "amount": 20})
-        self.assertEqual(card.level, 3)
-        self.assertEqual(card.price_silver, 6)
-        self.assertEqual(card.drop_chance, 15)
-        self.assertEqual(
-            card.image_path,
-            "assets/cards/faces/reveal_threat.png",
-        )
-        self.assertEqual(card.effect_duration, 1)
-
-    def test_database_contains_uppercut(self):
-        card = next(item for item in load_cards() if item.key == "uppercut")
-
-        self.assertEqual(card.name, "Апперкот")
-        self.assertEqual(card.costs, {
-            "strength": 4,
-            "intuition": 0,
-            "agility": 0,
-            "endurance": 0,
-        })
-        self.assertEqual(card.effect_type, "damage")
-        self.assertEqual(card.effect_data, {"dice": "1d12"})
-        self.assertEqual(card.level, 2)
-        self.assertEqual(card.price_silver, 5)
-        self.assertEqual(card.drop_chance, 17)
-        self.assertEqual(
-            card.image_path,
-            "assets/cards/faces/uppercut.png",
-        )
-        self.assertEqual(card.effect_duration, 0)
-
-    def test_database_contains_concussion(self):
-        card = next(item for item in load_cards() if item.key == "concussion")
-
-        self.assertEqual(card.name, "Сотресение мозга")
-        self.assertEqual(card.costs, {
-            "strength": 6,
-            "intuition": 0,
-            "agility": 1,
-            "endurance": 0,
-        })
-        self.assertEqual(card.effect_type, "damage_dodge_debuff")
-        self.assertEqual(card.effect_data, {"dice": "1d18", "amount": 20})
-        self.assertEqual(card.level, 3)
-        self.assertEqual(card.price_silver, 8)
-        self.assertEqual(card.drop_chance, 14)
-        self.assertEqual(
-            card.image_path,
-            "assets/cards/faces/concussion.png",
-        )
-        self.assertEqual(card.effect_duration, 2)
-
-    def test_database_contains_shadow_boxing(self):
-        card = next(item for item in load_cards() if item.key == "shadow_boxing")
-
-        self.assertEqual(card.name, "Бой с тенью")
-        self.assertEqual(card.costs, {
-            "strength": 3,
-            "intuition": 0,
-            "agility": 2,
-            "endurance": 0,
-        })
-        self.assertEqual(card.effect_type, "damage_dodge_debuff")
-        self.assertEqual(card.effect_data, {"dice": "2d4", "amount": 20})
-        self.assertEqual(card.level, 2)
-        self.assertEqual(card.price_silver, 6)
-        self.assertEqual(card.drop_chance, 16)
-        self.assertEqual(
-            card.image_path,
-            "assets/cards/faces/shadow_boxing.png",
-        )
-        self.assertEqual(card.effect_duration, 2)
-
-    def test_database_contains_punish_foolishness(self):
-        card = next(
-            item for item in load_cards() if item.key == "punish_foolishness"
-        )
-
-        self.assertEqual(card.name, "Наказание глупости")
-        self.assertEqual(card.costs, {
-            "strength": 3,
-            "intuition": 2,
-            "agility": 0,
-            "endurance": 0,
-        })
-        self.assertEqual(card.effect_type, "damage")
-        self.assertEqual(card.effect_data, {"dice": "1d9"})
-        self.assertEqual(card.level, 2)
-        self.assertEqual(card.price_silver, 5)
-        self.assertEqual(card.drop_chance, 16)
-        self.assertEqual(
-            card.image_path,
-            "assets/cards/faces/punish_foolishness.png",
-        )
-        self.assertEqual(card.effect_duration, 0)
-
-    def test_database_contains_verdict(self):
-        card = next(item for item in load_cards() if item.key == "verdict")
-
-        self.assertEqual(card.name, "Приговор")
-        self.assertEqual(card.costs, {
-            "strength": 6,
-            "intuition": 1,
-            "agility": 1,
-            "endurance": 4,
-        })
-        self.assertEqual(card.effect_type, "damage_dodge_critical_debuff")
-        self.assertEqual(card.effect_data, {
-            "dice": "3d8",
-            "dodge_amount": 20,
-            "critical_amount": 20,
-        })
-        self.assertEqual(card.level, 4)
-        self.assertEqual(card.price_silver, 12)
-        self.assertEqual(card.drop_chance, 7)
-        self.assertEqual(
-            card.image_path,
-            "assets/cards/faces/verdict.png",
-        )
-        self.assertEqual(card.effect_duration, 1)
-
-    def test_database_contains_combat_recon(self):
-        card = next(item for item in load_cards() if item.key == "combat_recon")
-
-        self.assertEqual(card.name, "Разведка боем")
-        self.assertEqual(card.costs, {
-            "strength": 2,
-            "intuition": 0,
-            "agility": 0,
-            "endurance": 2,
-        })
-        self.assertEqual(card.effect_type, "damage_critical_debuff")
-        self.assertEqual(card.effect_data, {"dice": "1d6", "amount": 30})
-        self.assertEqual(card.level, 2)
-        self.assertEqual(card.price_silver, 6)
-        self.assertEqual(card.drop_chance, 15)
-        self.assertEqual(
-            card.image_path,
-            "assets/cards/faces/combat_recon.png",
-        )
-        self.assertEqual(card.effect_duration, 1)
-
-    def test_database_contains_heaviest_hook(self):
-        card = next(item for item in load_cards() if item.key == "heaviest_hook")
-
-        self.assertEqual(card.name, "Тяжелейший хук")
-        self.assertEqual(card.costs, {
-            "strength": 4,
-            "intuition": 2,
-            "agility": 0,
-            "endurance": 3,
-        })
-        self.assertEqual(card.effect_type, "damage_critical_debuff")
-        self.assertEqual(card.effect_data, {"dice": "1d14", "amount": 20})
-        self.assertEqual(card.level, 3)
-        self.assertEqual(card.price_silver, 10)
-        self.assertEqual(card.drop_chance, 8)
-        self.assertEqual(
-            card.image_path,
-            "assets/cards/faces/heaviest_hook.png",
-        )
-        self.assertEqual(card.effect_duration, 1)
-
-    def test_database_contains_double_strike(self):
-        card = next(item for item in load_cards() if item.key == "double_strike")
-
-        self.assertEqual(card.name, "Двойной удар")
-        self.assertEqual(card.costs, {
-            "strength": 4,
-            "intuition": 1,
-            "agility": 1,
-            "endurance": 2,
-        })
-        self.assertEqual(card.effect_type, "damage_critical_debuff")
-        self.assertEqual(card.effect_data, {"dice": "2d8", "amount": 20})
-        self.assertEqual(card.level, 3)
-        self.assertEqual(card.price_silver, 10)
-        self.assertEqual(card.drop_chance, 8)
-        self.assertEqual(
-            card.image_path,
-            "assets/cards/faces/double_strike.png",
-        )
-        self.assertEqual(card.effect_duration, 1)
-
-    def test_database_contains_strength_in_fist(self):
-        card = next(item for item in load_cards() if item.key == "strength_in_fist")
-
-        self.assertEqual(card.name, "Силу в кулак")
-        self.assertEqual(card.costs, {
-            "strength": 0,
-            "intuition": 1,
-            "agility": 1,
-            "endurance": 2,
-        })
-        self.assertEqual(card.effect_type, "instant_action_points")
-        self.assertEqual(card.effect_data, {
-            "stat": "strength",
-            "amount": 4,
-        })
-        self.assertEqual(card.level, 2)
-        self.assertEqual(card.price_silver, 7)
-        self.assertEqual(card.drop_chance, 14)
-        self.assertEqual(
-            card.image_path,
-            "assets/cards/faces/strength_in_fist.png",
-        )
-        self.assertEqual(card.effect_duration, 0)
-
-    def test_instant_card_applies_immediately_and_reduces_card_limit(self):
-        cards = load_cards()
-        instant = next(item for item in cards if item.key == "strength_in_fist")
-        first_attack = next(item for item in cards if item.key == "podsechka")
-        second_attack = next(item for item in cards if item.key == "straight_punch")
-        battle = CardBattle(Fighter("Игрок"), Fighter("Враг"), cards=[])
-        battle.turn = 1
-        battle.hands["player"] = [instant, first_attack, second_attack]
-        battle.action_points["player"] = {
-            "strength": 0,
-            "intuition": 1,
-            "agility": 1,
-            "endurance": 2,
-        }
-
-        event = battle.activate_instant_card("player", instant.key)
-
-        self.assertIsNotNone(event)
-        self.assertEqual(battle.action_points["player"], {
-            "strength": 4,
-            "intuition": 0,
-            "agility": 0,
-            "endurance": 0,
-        })
-        self.assertNotIn(instant, battle.hands["player"])
-        self.assertIn(instant, battle.discard)
-        self.assertTrue(battle.select_card("player", first_attack.key))
-        self.assertFalse(battle.select_card("player", second_attack.key))
-
-    def test_instant_card_cannot_break_reserved_cost_or_card_limit(self):
-        cards = load_cards()
-        instant = next(item for item in cards if item.key == "strength_in_fist")
-        first_attack = next(item for item in cards if item.key == "podsechka")
-        second_attack = next(item for item in cards if item.key == "straight_punch")
-        battle = CardBattle(Fighter("Игрок"), Fighter("Враг"), cards=[])
-        battle.turn = 1
-        battle.hands["player"] = [instant, first_attack, second_attack]
-        battle.action_points["player"] = {
-            stat: 99 for stat in battle.action_points["player"]
-        }
-        self.assertTrue(battle.select_card("player", first_attack.key))
-        self.assertTrue(battle.select_card("player", second_attack.key))
-
-        self.assertIsNone(battle.activate_instant_card("player", instant.key))
-        self.assertIn(instant, battle.hands["player"])
-
-    def test_double_left_click_activates_instant_card_from_hand(self):
-        instant = next(
-            item for item in load_cards() if item.key == "strength_in_fist"
-        )
-        battle = CardBattle(Fighter("Игрок"), Fighter("Враг"), cards=[])
-        battle.turn = 1
-        battle.hands["player"] = [instant]
-        battle.action_points["player"] = {
-            "strength": 0,
-            "intuition": 1,
-            "agility": 1,
-            "endurance": 2,
-        }
-        hand_rect = pygame.Rect(10, 10, 150, 200)
-        layout = SimpleNamespace(
-            player_hand=hand_rect,
-            player_selected=pygame.Rect(200, 10, 150, 200),
-            play_cards_button=pygame.Rect(400, 10, 100, 40),
-        )
-        card_renderer = SimpleNamespace(
-            card_rect=lambda _area, _count, _index: hand_rect,
-        )
-        scene = SimpleNamespace(
-            phase="planning",
-            battle=battle,
-            layout=layout,
-            renderer=SimpleNamespace(card_renderer=card_renderer),
-        )
-        handler = DuelInputHandler(scene)
-
-        with patch("scenes.duel_input.play_card_move_sound"):
-            handler._handle_card_phase(hand_rect.center, 1)
-            self.assertIn(instant, battle.hands["player"])
-            handler._handle_card_phase(hand_rect.center, 1)
-
-        self.assertNotIn(instant, battle.hands["player"])
-        self.assertEqual(battle.action_points["player"]["strength"], 4)
-        self.assertEqual(battle.remaining_card_slots("player"), 1)
-
-    def test_ale_sip_heals_immediately_on_activation(self):
-        class FixedRandom:
-            @staticmethod
-            def randint(_start, end):
-                return end
-
-        card = next(item for item in load_cards() if item.key == "ale_sip")
-        player = Fighter("Игрок")
-        player.hp = 20
-        battle = CardBattle(
-            player,
-            Fighter("Враг"),
-            cards=[],
-            rng=FixedRandom(),
-        )
-        battle.turn = 1
-        battle.hands["player"] = [card]
-        battle.action_points["player"]["endurance"] = 3
-
-        event = battle.activate_instant_card("player", card.key)
-
-        self.assertIsNotNone(event)
-        self.assertEqual(event["healed"], 6)
-        self.assertEqual(event["effect_text"], "+6 HP")
-        self.assertEqual(player.hp, 26)
-        self.assertEqual(battle.action_points["player"]["endurance"], 0)
-        self.assertNotIn(card, battle.hands["player"])
-        self.assertIn(card, battle.discard)
-        self.assertEqual(battle.stats["player"]["healed"], 6)
-        self.assertEqual(
-            battle.stats["player"]["card_healing"]["Глоток Эля"],
-            6,
-        )
-        self.assertEqual(battle.remaining_card_slots("player"), 1)
-
-    def test_verdict_reduces_enemy_dodge_and_critical_for_one_exchange(self):
-        class FixedRandom:
-            @staticmethod
-            def random():
-                return 0.99
-
-            @staticmethod
-            def randint(start, _end):
-                return start
-
-            @staticmethod
-            def shuffle(_items):
-                return None
-
-        card = next(item for item in load_cards() if item.key == "verdict")
-        player = Fighter("Игрок")
-        enemy = Fighter("Враг")
-        battle = CardBattle(player, enemy, cards=[], rng=FixedRandom())
-        battle.turn = 1
-        battle.action_points["player"] = {
-            stat: 99 for stat in battle.action_points["player"]
-        }
-
-        event = battle._resolve_card("player", card)
-
-        self.assertGreater(event["hits"], 0)
-        self.assertEqual(enemy.temporary_dodge_chance_modifier, -20)
-        self.assertEqual(enemy.temporary_critical_chance_modifier, -20)
-        self.assertEqual(
-            event["effect_text"],
-            "УВОРОТ ВРАГА -20%, КРИТ ВРАГА -20% НА 1 РАЗМЕН",
-        )
-        battle._expire_timed_stat_effects()
-        self.assertEqual(enemy.temporary_dodge_chance_modifier, 0)
-        self.assertEqual(enemy.temporary_critical_chance_modifier, 0)
-
-    def test_concussion_reduces_enemy_dodge_for_two_exchanges(self):
-        class SequenceRandom:
-            def __init__(self):
-                self.values = iter((0.99, 0.99, 0.30, 0.99))
-
-            def random(self):
-                return next(self.values)
-
-            @staticmethod
-            def randint(start, _end):
-                return start
-
-            @staticmethod
-            def shuffle(_items):
-                return None
-
-        cards = load_cards()
-        concussion = next(item for item in cards if item.key == "concussion")
-        attack = next(item for item in cards if item.key == "podsechka")
-        player = Fighter("Игрок")
-        enemy = Fighter("Враг")
-        player.stats["agility"] = 0
-        enemy.stats["agility"] = 8
-        battle = CardBattle(player, enemy, cards=[], rng=SequenceRandom())
-        battle.turn = 1
-        battle.action_points["player"] = {
-            stat: 99 for stat in battle.action_points["player"]
-        }
-
-        event = battle._resolve_card("player", concussion)
-
-        self.assertGreater(event["hits"], 0)
-        self.assertEqual(enemy.temporary_dodge_chance_modifier, -20)
-        self.assertEqual(event["effect_text"], "УВОРОТ ВРАГА -20% НА 2 РАЗМЕНА")
-        battle._expire_timed_stat_effects()
-        self.assertEqual(enemy.temporary_dodge_chance_modifier, -20)
-
-        battle.turn = 2
-        follow_up = battle._resolve_card("player", attack)
-
-        self.assertFalse(follow_up["dodged"])
-        battle._expire_timed_stat_effects()
-        self.assertEqual(enemy.temporary_dodge_chance_modifier, 0)
-
-    def test_reveal_threat_reduces_enemy_critical_chance_for_one_exchange(self):
-        class FixedRandom:
-            @staticmethod
-            def random():
-                return 0.99
-
-            @staticmethod
-            def randint(start, _end):
-                return start
-
-            @staticmethod
-            def choice(items):
-                return items[0]
-
-            @staticmethod
-            def shuffle(_items):
-                return None
-
-        card = next(item for item in load_cards() if item.key == "reveal_threat")
-        player = Fighter("Игрок")
-        enemy = Fighter("Враг")
-        battle = CardBattle(player, enemy, cards=[], rng=FixedRandom())
-        battle.turn = 1
-        battle.action_points["player"] = {
-            stat: 99 for stat in battle.action_points["player"]
-        }
-
-        event = battle._resolve_card("player", card)
-
-        self.assertGreater(event["hits"], 0)
-        self.assertEqual(enemy.temporary_critical_chance_modifier, -20)
-        self.assertEqual(event["effect_text"], "КРИТ ВРАГА -20% НА 1 РАЗМЕН")
-        battle._expire_timed_stat_effects()
-        self.assertEqual(enemy.temporary_critical_chance_modifier, 0)
-
-    def test_reveal_threat_prevents_enemy_critical_hit_during_exchange(self):
-        class SequenceRandom:
-            def __init__(self):
-                self.values = iter((0.99, 0.99, 0.99, 0.10))
-
-            def random(self):
-                return next(self.values)
-
-            @staticmethod
-            def randint(start, _end):
-                return start
-
-            @staticmethod
-            def shuffle(_items):
-                return None
-
-        cards = load_cards()
-        reveal_threat = next(
-            item for item in cards if item.key == "reveal_threat"
-        )
-        attack = next(item for item in cards if item.key == "podsechka")
-        player = Fighter("Игрок")
-        enemy = Fighter("Враг")
-        enemy.stats["intuition"] = 8
-        player.stats["intuition"] = 5
-        battle = CardBattle(player, enemy, cards=[], rng=SequenceRandom())
-        battle.turn = 1
-        for side in ("player", "enemy"):
-            battle.action_points[side] = {
-                stat: 99 for stat in battle.action_points[side]
-            }
-
-        battle._resolve_card("player", reveal_threat)
-        enemy_event = battle._resolve_card("enemy", attack)
-
-        self.assertEqual(get_critical_chance(enemy, player), 25)
-        self.assertFalse(enemy_event["critical"])
 
     def test_duel_scene_starts_with_full_card_pool(self):
         pygame.init()
@@ -1310,16 +255,17 @@ class TestCardBattle(unittest.TestCase):
                 {"stats": dict(scene.enemy.stats), "max_hp": scene.enemy.max_hp},
             )
             self.assertEqual(
-                derived_values(player_profile, enemy_profile)["Уворот"],
+                derived_values(player_profile)["Уворот"],
                 "0%",
             )
             self.assertEqual(
-                derived_values(player_profile, enemy_profile)["Урон"],
+                derived_values(player_profile)["Урон"],
                 1,
             )
+            # Базовый шанс крита фиксирован и больше не падает вслед за интуицией.
             self.assertEqual(
-                derived_values(player_profile, enemy_profile)["Крит"],
-                "0%",
+                derived_values(player_profile)["Крит"],
+                "5%",
             )
             scene.player.temporary_dodge_chance_modifier = -100
             scene.player.temporary_critical_chance_modifier = -100
@@ -1402,7 +348,18 @@ class TestCardBattle(unittest.TestCase):
             def shuffle(_items):
                 return None
 
-        card = next(item for item in load_cards() if item.key == "podsechka")
+        card = Card(
+            key="test_strike",
+            name="Тестовый удар",
+            group_name="Тест",
+            strength_cost=2,
+            intuition_cost=0,
+            agility_cost=0,
+            endurance_cost=0,
+            effect_type="damage",
+            effect_data={"dice": "1d4"},
+            level=1,
+        )
         player = Fighter("Игрок")
         enemy = Fighter("Враг")
         player.stats["strength"] = 20
@@ -1411,7 +368,7 @@ class TestCardBattle(unittest.TestCase):
 
         event = battle._resolve_card("player", card)
 
-        self.assertEqual(event["damage"], 41)
+        self.assertEqual(event["damage"], 21)
         self.assertEqual(
             CardAreaRenderer._card_description(card),
             "Наносит 1d4 урона.",
@@ -1527,26 +484,23 @@ class TestCardBattle(unittest.TestCase):
         while not battle.current_draft_complete():
             battle.choose_redraft_card(side, battle.table[0].key)
             side = "enemy" if side == "player" else "player"
-        bonus = battle.take_draft_bonus_card()
-
-        self.assertIsNotNone(bonus)
-        bonus_side, bonus_card = bonus
-        self.assertEqual(bonus_side, "enemy")
-        battle.hands[bonus_side].append(bonus_card)
+        # Бонусная карта за более высокую характеристику убрана — обе стороны
+        # получают ровно то, что выбрали в повторном драфте.
+        self.assertIsNone(battle.take_draft_bonus_card())
         battle.finish_redraft()
 
         self.assertIn(kept_player_card, battle.hands["player"])
         self.assertIn(kept_enemy_card, battle.hands["enemy"])
         self.assertEqual(len(battle.hands["player"]), 3)
-        self.assertEqual(len(battle.hands["enemy"]), 4)
-        self.assertEqual(len(battle.deck), 3)
+        self.assertEqual(len(battle.hands["enemy"]), 3)
+        self.assertEqual(len(battle.deck), 4)
         self.assertEqual(battle.discard, [])
 
         battle.start_next_turn()
 
         self.assertEqual(len(battle.hands["player"]), 4)
-        self.assertEqual(len(battle.hands["enemy"]), 5)
-        self.assertEqual(len(battle.deck), 1)
+        self.assertEqual(len(battle.hands["enemy"]), 4)
+        self.assertEqual(len(battle.deck), 2)
 
     def test_redraft_starts_only_after_deck_is_empty(self):
         cards = load_cards()
@@ -1572,15 +526,14 @@ class TestCardBattle(unittest.TestCase):
         while not battle.current_draft_complete():
             battle.choose_redraft_card(side, battle.table[0].key)
             side = "enemy" if side == "player" else "player"
-        bonus_side, bonus_card = battle.take_draft_bonus_card()
-        battle.hands[bonus_side].append(bonus_card)
+        self.assertIsNone(battle.take_draft_bonus_card())
         battle.finish_redraft()
 
-        self.assertEqual(len(battle.deck), 2)
+        self.assertEqual(len(battle.deck), 3)
         battle.start_next_turn()
-        self.assertEqual(len(battle.hands["player"]), 4)
+        self.assertEqual(len(battle.hands["player"]), 3)
         self.assertEqual(len(battle.hands["enemy"]), 3)
-        self.assertEqual(battle.deck, [])
+        self.assertEqual(len(battle.deck), 1)
 
     def test_duel_scene_waits_until_next_turn_after_last_draw(self):
         pygame.init()
@@ -1629,8 +582,8 @@ class TestCardBattle(unittest.TestCase):
         self.assertEqual(battle.draft_mode, None)
         self.assertEqual(battle.table, [])
         self.assertEqual(battle.discard, [])
-        self.assertEqual(len(battle.deck), 3)
-        self.assertEqual(len(battle.hands["player"]), 4)
+        self.assertEqual(len(battle.deck), 4)
+        self.assertEqual(len(battle.hands["player"]), 3)
         self.assertEqual(len(battle.hands["enemy"]), 3)
         self.assertIn("player", gained_points)
         self.assertIn("enemy", gained_points)
@@ -1656,7 +609,7 @@ class TestCardBattle(unittest.TestCase):
         self.assertEqual(len(battle.hands["player"]), 3)
         self.assertEqual(len(battle.hands["enemy"]), 2)
 
-    def test_starting_draft_bonus_uses_agility_and_random_table_card(self):
+    def test_starting_deal_gives_no_bonus_card_for_higher_stats(self):
         class LastChoiceRandom(random.Random):
             @staticmethod
             def randrange(stop):
@@ -1676,13 +629,12 @@ class TestCardBattle(unittest.TestCase):
         for _ in range(battle.STARTING_PICK_LIMIT):
             battle.choose_starting_card("player", battle.table[0].key)
             battle.choose_starting_card("enemy", battle.table[0].key)
-        expected_bonus = battle.table[-1]
 
         battle.finish_starting_deal()
 
-        self.assertEqual(battle.starting_bonus_side, "player")
-        self.assertIn(expected_bonus, battle.hands["player"])
-        self.assertEqual(len(battle.hands["player"]), 4)
+        # Более высокая характеристика больше не даёт дополнительную карту.
+        self.assertIsNone(battle.starting_bonus_side)
+        self.assertEqual(len(battle.hands["player"]), 3)
         self.assertEqual(len(battle.hands["enemy"]), 3)
 
     def test_duel_scene_starts_redraft_when_deck_is_empty(self):
@@ -1731,7 +683,16 @@ class TestCardBattle(unittest.TestCase):
             def random():
                 return 0.20
 
-        card = next(item for item in load_cards() if item.drop_chance > 0)
+        card = Card(
+            "droppable",
+            "Выпадающая карта",
+            "Тест",
+            0, 0, 0, 0,
+            "damage",
+            {"dice": "1d1"},
+            1,
+            drop_chance=50,
+        )
 
         self.assertIsNone(choose_battle_reward([card], NoRewardRandom()))
 

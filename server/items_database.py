@@ -43,9 +43,9 @@ CATALOG = (
     (13, "Кристалл маны", "material", "rare", 0.2, 300, "Источник магической энергии", 0, None, None, "crystal", None),
 
     # Оружие и щиты
-    (20, "Железный меч", "equipment", "common", 2.0, 150, "Простой, но надёжный клинок", 0, None, {"strength": 1}, "right_hand_steel_sword", "weapon"),
-    (21, "Стальной меч", "equipment", "rare", 1.8, 350, "Клинок из закалённой стали", 0, None, {"strength": 2, "intuition": 1}, "right_hand_steel_sword", "weapon"),
-    (22, "Кинжал", "equipment", "common", 1.0, 100, "Лёгкое оружие для быстрых ударов", 0, None, {"agility": 1}, "right_hand_steel_sword", "weapon"),
+    (20, "Железный меч", "equipment", "common", 2.0, 150, "Простой, но надёжный клинок", 0, {"damage": [5, 7]}, {"strength": 1}, "right_hand_steel_sword", "weapon"),
+    (21, "Стальной меч", "equipment", "rare", 1.8, 350, "Клинок из закалённой стали", 0, {"damage": [7, 10]}, {"strength": 2, "intuition": 1}, "right_hand_steel_sword", "weapon"),
+    (22, "Кинжал", "equipment", "common", 1.0, 100, "Лёгкое оружие для быстрых ударов", 0, {"damage": [3, 5]}, {"agility": 1}, "right_hand_steel_sword", "weapon"),
     (38, "Круглый щит", "equipment", "common", 3.5, 180, "Деревянный щит с железной оковкой", 0, None, {"endurance": 2}, "left_hand_round_shield", "shield"),
 
     # Броня
@@ -522,16 +522,7 @@ class ItemsDatabase:
     def get_equipment(self, character_id: int) -> Dict[str, Dict]:
         """Получает экипировку персонажа: {slot: предмет}"""
         with self.db.connection() as connection:
-            rows = connection.execute(
-                f"""
-                SELECT e.slot, e.item_id, {_ITEM_COLUMNS}
-                FROM character_equipment e
-                JOIN items_catalog c ON e.item_id = c.id
-                WHERE e.character_id = ?
-                """,
-                (character_id,)
-            ).fetchall()
-            return {row["slot"]: _item_payload(row) for row in rows}
+            return self.db.equipped_items(connection, character_id)
 
     def get_stat_bonuses(self, character_id: int) -> Dict[str, int]:
         """Получает все бонусы к статам от экипировки"""

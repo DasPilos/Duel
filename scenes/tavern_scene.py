@@ -158,9 +158,7 @@ class TavernScene:
                 self.finished = True
                 return
         if event.type == pygame.KEYDOWN:
-            if event.key in (pygame.K_RETURN, pygame.K_b):
-                self.finished = True
-            elif event.key == pygame.K_ESCAPE:
+            if event.key == pygame.K_ESCAPE:
                 self.cancelled = True
                 self.finished = True
 

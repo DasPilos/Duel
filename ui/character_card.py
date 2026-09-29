@@ -8,11 +8,16 @@ from core import settings
 from ui.character_profile import (
     adjust_profile_level,
     adjust_profile_stat,
+    DERIVED_COLORS,
+    STAT_ROWS,
     derived_values,
+    effective_stats,
     normalize_character_profile,
     profile_from_fighter,
 )
 from ui.hud import draw_bar, draw_button, draw_text, FloatingText, update_and_draw_floating_texts
+from ui import equipment_slots
+from ui.inventory_window import IconCache
 from ui.sprite_loader import FighterSprite
 
 
@@ -21,11 +26,28 @@ class CharacterCard:
 
     CURRENCY_ICON_SIZE = 30
 
+    # Один экземпляр карточки на персонажа (по id), чтобы разные сцены не плодили
+    # несвязанные копии одной и той же карточки.
+    _REGISTRY = {}
+
+    @classmethod
+    def get_or_create(cls, character_id, sprite=None):
+        """Return the single persistent card for this character id, creating it if needed."""
+        if character_id is None:
+            return cls(sprite=sprite)
+        key = str(character_id)
+        card = cls._REGISTRY.get(key)
+        if not isinstance(card, cls):
+            card = cls(sprite=sprite)
+            cls._REGISTRY[key] = card
+        return card
+
     def __init__(self, sprite=None):
         self.title_font = pygame.font.SysFont(settings.FONT_NAME, settings.CHARACTER_CARD_NAME_FONT_SIZE)
         self.body_font = pygame.font.SysFont(settings.FONT_NAME, settings.CHARACTER_CARD_BODY_FONT_SIZE)
         self.small_font = pygame.font.SysFont(settings.FONT_NAME, settings.CHARACTER_CARD_SMALL_FONT_SIZE)
         self.sprite = sprite or FighterSprite()
+        self.icons = IconCache()
         currency_path = (
             Path(__file__).resolve().parent.parent
             / "assets"
@@ -67,6 +89,9 @@ class CharacterCard:
         self.state = normalize_character_profile(profile, title=title, kind=kind)
         # Инвентарь больше не отображается (напитки применяются сразу)
         self.inventory_data = []
+        character_id = self.state.get("character_id", self.state.get("id"))
+        if character_id is not None:
+            self._REGISTRY.setdefault(str(character_id), self)
         return self.state
 
     @property
@@ -76,8 +101,8 @@ class CharacterCard:
     @staticmethod
     def stat_control_at(frame, position):
         """Return the requested stat change for a click inside this card."""
-        for index, (stat_name, _, _) in enumerate(CharacterCard._STAT_NAMES):
-            row_y = frame.bottom - 92 + index * 20
+        for index, (stat_name, _, _) in enumerate(STAT_ROWS):
+            row_y = CharacterCard._stat_row_y(frame, index)
             minus, plus = CharacterCard._stat_control_rects(frame, row_y)
             if plus.collidepoint(position):
                 return stat_name, 1
@@ -117,9 +142,10 @@ class CharacterCard:
         border_color=(80, 180, 120),
         title=None,
         editable=False,
-        opponent=None,
         card_preview=None,
         show_tabs=False,  # Новый параметр для показа закладок
+        slot_highlight=None,  # слот, подсвечиваемый при перетаскивании предмета
+        dragged_slot=None,  # слот, предмет из которого сейчас перетаскивают
     ):
         if profile is not None:
             self.sync(profile, title=title, kind="player")
@@ -180,39 +206,34 @@ class CharacterCard:
             },
         )
 
-        stats_header_y = frame.bottom - 120
-        sprite_center_y = (mp_y + bar_height + stats_header_y) / 2
-        sprite_height = self.sprite.image.get_height() * settings.FIGHTER_SPRITE_SCALE if self.sprite.image is not None else 0
-        sprite_feet_y = int(sprite_center_y + sprite_height / 2)
-        self.sprite.draw(screen, frame.centerx, sprite_feet_y, scale=settings.FIGHTER_SPRITE_SCALE)
+        stats_header_y = self._stats_header_y(frame)
+        sprite_top = equipment_slots.draw_paperdoll(
+            screen, frame, self.sprite, self.icons, self.small_font,
+            normalized.get("equipment", {}), slot_highlight, dragged_slot,
+        )
         for floating_text in self.regen_floating_texts:
             floating_text.x = frame.centerx
-            floating_text.y = sprite_center_y - sprite_height / 2 - 12
+            floating_text.y = sprite_top - 12
         update_and_draw_floating_texts(screen, self.regen_floating_texts)
 
         draw_text(screen, self.small_font, "ХАРАКТЕРИСТИКИ", x, stats_header_y, border_color)
-        stats = normalized.get("stats", {})
+        stats = effective_stats(normalized)
         draw_text(screen, self.small_font, f"Свободные очки: {normalized['stat_points']}", x, stats_header_y - 22, (255, 220, 120))
-        derived = self._derived_values(normalized, opponent)
+        derived = derived_values(normalized)
         preview = self._card_preview(card_preview or [])
         derived_x = self._stat_text_right(frame) + settings.STAT_DERIVED_GAP + 50
-        stat_value_colors = {
-            "Урон": (255, 255, 255),
-            "Уворот": (150, 220, 255),
-            "Крит": (255, 90, 90),
-            "HP": (110, 235, 120),
-        }
-        for index, (key, label, derived_key) in enumerate(self._STAT_NAMES):
-            row_y = frame.bottom - 92 + index * 20
-            draw_text(screen, self.small_font, f"{label}: {stats.get(key, 0)}", x, row_y, (215, 220, 225))
-            draw_text(
-                screen,
-                self.small_font,
-                f"{derived_key}: {derived[derived_key]}{preview.get(derived_key, '')}",
-                derived_x,
-                row_y,
-                stat_value_colors.get(derived_key, (220, 70, 70)),
-            )
+        for index, (key, label, derived_key) in enumerate(STAT_ROWS):
+            row_y = self._stat_row_y(frame, index)
+            draw_text(screen, self.small_font, f"{label}: {stats.get(key, 0)}", x, row_y, (255, 255, 255))
+            if derived_key and derived_key in derived:
+                draw_text(
+                    screen,
+                    self.small_font,
+                    f"{derived_key}: {derived[derived_key]}{preview.get(derived_key, '')}",
+                    derived_x,
+                    row_y,
+                    DERIVED_COLORS.get(derived_key, (255, 255, 255)),
+                )
             if editable:
                 minus, plus = self._stat_control_rects(frame, row_y)
                 draw_button(
@@ -234,12 +255,16 @@ class CharacterCard:
                     text_color=(30, 32, 45),
                 )
 
-    _STAT_NAMES = (
-        ("strength", "Сила", "Урон"),
-        ("agility", "Ловкость", "Уворот"),
-        ("intuition", "Интуиция", "Крит"),
-        ("endurance", "Выносливость", "HP"),
-    )
+    STAT_ROW_HEIGHT = 20
+
+    @classmethod
+    def _stat_row_y(cls, frame, index):
+        count = len(STAT_ROWS)
+        return frame.bottom - 32 - (count - 1 - index) * cls.STAT_ROW_HEIGHT
+
+    @classmethod
+    def _stats_header_y(cls, frame):
+        return cls._stat_row_y(frame, 0) - 28
 
     @staticmethod
     def _stat_text_right(frame):
@@ -247,10 +272,6 @@ class CharacterCard:
             settings.FONT_NAME,
             settings.CHARACTER_CARD_SMALL_FONT_SIZE,
         ).size("Выносливость: 30")[0]
-
-    @staticmethod
-    def _derived_values(profile, opponent):
-        return derived_values(profile, opponent)
 
     @staticmethod
     def _card_preview(cards):

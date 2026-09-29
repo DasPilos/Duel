@@ -5,7 +5,9 @@ from combat.character_stats import (
     total_stat_points,
     adjust_stats,
     calculate_max_hp,
+    calculate_max_mana,
 )
+from combat.mechanics import weapon_damage_range
 from combat.progression import apply_xp
 
 
@@ -14,6 +16,9 @@ class Fighter:
         "strength": "Сила",
         "agility": "Ловкость",
         "intuition": "Интуиция",
+        "wisdom": "Мудрость",
+        "intellect": "Интеллект",
+        "harmony": "Гармония",
         "endurance": "Выносливость",
     }
 
@@ -22,11 +27,14 @@ class Fighter:
         self.level = level
         self.character_id = None
 
-        # Базовые характеристики
+        # Базовые характеристики — единый набор из 7 статов для всех персонажей
         self.stats = {
             "strength": BASE_STAT_VALUE,
             "agility": BASE_STAT_VALUE,
             "intuition": BASE_STAT_VALUE,
+            "wisdom": BASE_STAT_VALUE,
+            "intellect": BASE_STAT_VALUE,
+            "harmony": BASE_STAT_VALUE,
             "endurance": STARTING_ENDURANCE_VALUE + max(0, int(level) - 1),
         }
         self.temporary_stat_modifiers = {
@@ -34,6 +42,8 @@ class Fighter:
         }
         # Бонусы надетых предметов (не сохраняются в базовые stats)
         self.equipment_stat_modifiers = {}
+        # Надетые предметы {слот: предмет} — для слотов на карточке
+        self.equipment = {}
         self.temporary_critical_chance_modifier = 0
         self.temporary_dodge_chance_modifier = 0
 
@@ -43,9 +53,9 @@ class Fighter:
         if auto_allocate:
             self.random_allocate_points()
 
-        # Мана
-        self.mp = 50
-        self.max_mp = 50
+        # Мана определяется интеллектом
+        self.max_mp = calculate_max_mana(self.intellect)
+        self.mp = self.max_mp
 
         # Опыт
         self.xp = 0
@@ -67,6 +77,18 @@ class Fighter:
         return self._effective_stat("intuition")
 
     @property
+    def wisdom(self):
+        return self._effective_stat("wisdom")
+
+    @property
+    def intellect(self):
+        return self._effective_stat("intellect")
+
+    @property
+    def harmony(self):
+        return self._effective_stat("harmony")
+
+    @property
     def endurance(self):
         return self._effective_stat("endurance")
 
@@ -78,6 +100,16 @@ class Fighter:
             + self.equipment_stat_modifiers.get(stat_name, 0),
         )
 
+    @property
+    def weapon_damage(self):
+        """(мин, макс) урона надетого оружия или None"""
+        return weapon_damage_range(self.equipment)
+
+    def roll_weapon_damage(self, rng):
+        """Случайный урон оружия для одного удара (0 без оружия)"""
+        damage = self.weapon_damage
+        return rng.randint(*damage) if damage else 0
+
     def adjust_temporary_stat(self, stat_name, amount):
         if stat_name not in self.temporary_stat_modifiers:
             raise ValueError(f"Неизвестная характеристика: {stat_name}")
@@ -88,6 +120,9 @@ class Fighter:
         self.max_hp = calculate_max_hp(self.level, self.endurance)
         if hasattr(self, "hp"):
             self.hp = min(int(self.hp), self.max_hp)
+        self.max_mp = calculate_max_mana(self.intellect)
+        if hasattr(self, "mp"):
+            self.mp = min(int(self.mp), self.max_mp)
 
     def add_stat(self, stat_name):
         """Добавляет одно очко характеристики."""

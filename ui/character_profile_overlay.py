@@ -103,34 +103,26 @@ class CharacterProfileOverlay:
     def _is_mage(profile):
         return isinstance(profile, dict) and profile.get("type") == "mage"
 
-    @staticmethod
-    def _is_warrior(profile):
-        return isinstance(profile, dict) and profile.get("type", "warrior") == "warrior"
-
     def _card_for_profile(self, profile, current_card):
         card_type = MageCard if self._is_mage(profile) else CharacterCard
-        if not isinstance(current_card, card_type):
-            return card_type()
-        return current_card
+        # Точный тип: MageCard — наследник CharacterCard
+        if type(current_card) is card_type:
+            return current_card
+        character_id = None
+        if isinstance(profile, dict):
+            character_id = profile.get("character_id", profile.get("id"))
+        else:
+            character_id = getattr(profile, "character_id", getattr(profile, "id", None))
+        return card_type.get_or_create(character_id)
 
     @staticmethod
-    def _draw_card(card, screen, frame, *, border_color, editable, opponent=None, title=None, kind="player"):
-        if isinstance(card, MageCard):
-            card.draw(
-                screen,
-                frame,
-                border_color=border_color,
-                title=title,
-                editable=editable,
-            )
-            return
+    def _draw_card(card, screen, frame, *, border_color, editable, title=None, kind="player"):
         card.sync(card.state if card.state else {}, title=title, kind=kind)
         card.draw(
             screen,
             frame,
             border_color=border_color,
             editable=editable,
-            opponent=opponent if CharacterProfileOverlay._is_warrior(opponent) else None,
         )
 
     def handle_click(self, position):
@@ -207,14 +199,15 @@ class CharacterProfileOverlay:
         
         # Если show_player_only=True, показываем только левую панель (ТЕКУЩИЙ ИГРОК)
         if show_player_only:
-            self.player_card.sync(self.profile, title="ТЕКУЩИЙ ИГРОК", kind="player")
+            # opponent приходит свежим каждый кадр (например, session.character) — используем его,
+            # чтобы бонусы от экипировки и другие изменения сразу отражались на карточке.
+            self.player_card.sync(opponent if opponent is not None else self.profile, title="ТЕКУЩИЙ ИГРОК", kind="player")
             self._draw_card(
                 self.player_card,
                 screen,
                 self.player_frame,
                 border_color=(80, 180, 120),
                 editable=True,
-                opponent=None,
             )
             draw_button(screen, self.close_button, "ЗАКРЫТЬ", self.action_font, color=(70, 75, 90))
             # Кнопка рюкзака в верхнем правом углу
@@ -236,7 +229,6 @@ class CharacterProfileOverlay:
                 self.player_frame,
                 border_color=(80, 180, 120),
                 editable=True,
-                opponent=self.profile,
             )
         self.card.sync(self.profile, title="ПРОФИЛЬ ПЕРСОНАЖА", kind=self.profile.get("kind", "player"))
         self._draw_card(
@@ -245,7 +237,6 @@ class CharacterProfileOverlay:
             self.frame,
             border_color=(210, 100, 90),
             editable=False,
-            opponent=opponent,
         )
         draw_button(screen, self.close_button, "ЗАКРЫТЬ", self.action_font, color=(70, 75, 90))
         # Кнопка рюкзака в верхнем правом углу (слева на левой карточке)

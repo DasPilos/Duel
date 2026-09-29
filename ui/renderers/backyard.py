@@ -117,14 +117,18 @@ class BackyardRenderer:
             sender_label += " (новая)"
         sender_color = (255, 235, 150) if is_own_offer or is_new_offer else (230, 235, 225)
         draw_text(screen, scene.small_font, sender_label, row.x + 12, row.y + 8, sender_color)
-        draw_text(screen, scene.small_font, "Нажмите для просмотра", row.right - 190, row.y + 8, (175, 190, 170))
+        hint_text = "Нажмите для просмотра"
+        hint_width = scene.small_font.size(hint_text)[0]
+        draw_text(screen, scene.small_font, hint_text, row.right - hint_width - 12, row.y + 8, (175, 190, 170))
 
     def _draw_group_row(self, screen, row, offer):
         scene = self.scene
         pygame.draw.rect(screen, (40, 45, 55), row, border_radius=5)
         participants = len(offer.get("participants", []))
         draw_text(screen, scene.small_font, f"{offer.get('sender', 'Группа')} ({participants}/10)", row.x + 12, row.y + 8, (230, 235, 225))
-        draw_text(screen, scene.small_font, "Нажмите для участия", row.right - 190, row.y + 8, (175, 190, 170))
+        hint_text = "Нажмите для участия"
+        hint_width = scene.small_font.size(hint_text)[0]
+        draw_text(screen, scene.small_font, hint_text, row.right - hint_width - 12, row.y + 8, (175, 190, 170))
 
     def _draw_scrollbar(self, screen, list_rect, item_count, visible_rows, scroll):
         if item_count <= visible_rows:

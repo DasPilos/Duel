@@ -27,9 +27,7 @@ class DuelInputHandler:
                 setattr(self.scene, scroll_key, max(0, new_scroll))
                 return
             
-            if event.type == pygame.KEYDOWN and event.key in (pygame.K_RETURN, pygame.K_ESCAPE):
-                self.scene.return_to_tavern = True
-            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 and getattr(self.scene, "result_button", pygame.Rect(0, 0, 0, 0)).collidepoint(event.pos):
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 and getattr(self.scene, "result_button", pygame.Rect(0, 0, 0, 0)).collidepoint(event.pos):
                 self.scene.return_to_tavern = True
             return
         if event.type == pygame.KEYDOWN:

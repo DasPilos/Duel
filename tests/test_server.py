@@ -337,11 +337,17 @@ class ServerPersistenceTests(unittest.TestCase):
             client.login("botuser", "password")
             character = client.create_character("Равный боец")
             character.update({"level": 2})
+            character["stats"]["endurance"] = 4
+            character["max_hp"] = 40
+            character["hp"] = 40
             character = client.save_character(character)
             with self.assertRaises(ServerError):
                 client.offer_duel(character["id"], "backyard", "bot_brawler")
 
             character.update({"level": 1})
+            character["stats"]["endurance"] = 3
+            character["max_hp"] = 30
+            character["hp"] = 30
             character = client.save_character(character)
             result = client.offer_duel(character["id"], "backyard", "bot_brawler")
 

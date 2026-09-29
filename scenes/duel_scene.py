@@ -2,6 +2,7 @@ import pygame
 import time
 
 from combat.fighter import Fighter
+from combat.character_stats import BASE_STAT_VALUE
 from combat.card_battle import CardBattle
 from combat.card_database import cards_for_type, is_mage_card, load_cards
 from core import settings
@@ -99,10 +100,10 @@ class DuelScene:
         fighter.level = profile["level"]
         fighter.xp = profile.get("xp", 0)
         fighter.stats = dict(profile["stats"])
-        # The shared battlefield renderer still reads warrior-derived fields;
-        # keep those compatibility values out of the persisted mage profile.
-        for stat_name, default in (("strength", 0), ("agility", 0), ("intuition", 0)):
-            fighter.stats.setdefault(stat_name, default)
+        # Единый набор из 7 статов для всех персонажей — подстраховка для старых
+        # сохранений, где часть характеристик ещё не была сохранена.
+        for stat_name in fighter.STAT_NAMES:
+            fighter.stats.setdefault(stat_name, BASE_STAT_VALUE)
         fighter.stat_points = profile.get("stat_points", 0)
         fighter.character_id = profile.get("id", profile.get("character_id"))
         fighter.equipment_stat_modifiers = {
@@ -110,10 +111,8 @@ class DuelScene:
             for stat_name, value in profile.get("equipment_bonuses", {}).items()
             if stat_name in fighter.STAT_NAMES
         }
+        fighter.equipment = dict(profile.get("equipment", {}))
         fighter.recalculate_parameters()
-        if profile.get("type") == "mage":
-            fighter.max_hp = 50 + fighter.stats["endurance"] * 10
-            fighter.max_mp = 40 + fighter.stats["intellect"] * 5
         hp = profile.get("hp", fighter.max_hp)
         if hp >= profile.get("max_hp", hp):
             # Полное здоровье остаётся полным и с бонусом выносливости от экипировки
@@ -209,7 +208,9 @@ class DuelScene:
             self._apply_fighter_profile(self.enemy, self.opponent_profile)
         battle_cards = None
         selected_deck = getattr(self.online_session, "selected_deck", None)
-        character_type = self.online_character.get("type") if self.online_character else "warrior"
+        # Физические карты воина убраны из игры — по умолчанию (в т.ч. в оффлайн-режиме
+        # без online_character) бой ведётся на магических картах.
+        character_type = self.online_character.get("type") if self.online_character else "mage"
         if character_type == "mage" and selected_deck:
             card_keys = selected_deck.get("cards", {})
             if isinstance(card_keys, dict):
@@ -222,6 +223,8 @@ class DuelScene:
             # field, so they'd be trivially "free" inside a warrior's stat-cost draft).
             battle_cards = cards_for_type(character_type)
         self.battle = CardBattle(self.player, self.enemy, cards=battle_cards)
+        if character_type == "mage":
+            self.battle.mage_mode = True
         self.attack_zone = None
         self.defense_zones = set()
 
