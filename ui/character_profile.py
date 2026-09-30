@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 
 from combat.character_stats import adjust_stats, calculate_max_hp, is_debug_unlimited, minimum_endurance
-from combat.mechanics import get_critical_chance, get_dodge_chance, weapon_damage_range
+from combat.mechanics import get_critical_chance, get_dodge_chance, get_critical_damage_multiplier, weapon_damage_range
 
 
 DEFAULT_STATS = {
@@ -197,11 +197,17 @@ def derived_values(profile):
     Уворот — от своей ловкости, крит — базовый шанс. Одинаково для всех классов."""
     stats = effective_stats(profile)
     weapon = weapon_damage_range(profile.get("equipment"))
-    own = SimpleNamespace(agility=int(stats.get("agility", 0)))
+    own = SimpleNamespace(agility=int(stats.get("agility", 0)), intuition=int(stats.get("intuition", 0)))
+
+    # Рассчитать крит урон
+    crit_chance = int(get_critical_chance(None, None))
+    crit_multiplier = get_critical_damage_multiplier(own)
+    crit_damage = int(crit_multiplier * 100)
+
     return {
         "Урон": _damage_text(stats.get("strength", 0), weapon),
         "Уворот": f"{int(get_dodge_chance(None, own))}%",
-        "Крит": f"{int(get_critical_chance(None, None))}%",
+        "Крит": f"{crit_chance}% × {crit_damage}%",
         "Маг Урон": _damage_text(stats.get("wisdom", 0), weapon),
         "HP": profile["max_hp"],
     }

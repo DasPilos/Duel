@@ -560,7 +560,8 @@ def _regenerate_bots(now):
 
 
 def _fighter_from_profile(profile):
-    fighter = Fighter(profile["name"], profile["level"])
+    profession_type = profile.get("type", "warrior")
+    fighter = Fighter(profile["name"], profile["level"], profession_type=profession_type)
     fighter.xp = profile["xp"]
     fighter.stats = copy.deepcopy(profile["stats"])
     fighter.stat_points = profile["stat_points"]
