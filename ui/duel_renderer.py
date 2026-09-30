@@ -767,18 +767,20 @@ class DuelRenderer:
             if hasattr(fighter, stat_name)
         }
         effective_profile["equipment_bonuses"] = {}
+        effective_profile["type"] = getattr(fighter, "profession_type", profile.get("type", "warrior"))
         return effective_profile
 
     @staticmethod
     def _apply_chance_modifiers(derived, fighter):
         adjusted = dict(derived)
-        dodge = int(str(adjusted["Уворот"]).rstrip("%"))
-        critical = int(str(adjusted["Крит"]).rstrip("%"))
+        dodge = int(str(adjusted["Уворот"]).split("%")[0])
+        critical_chance, _, critical_damage = str(adjusted["Крит"]).partition("%")
+        critical = int(critical_chance)
         adjusted["Уворот"] = (
             f"{max(0, dodge + fighter.temporary_dodge_chance_modifier)}%"
         )
         adjusted["Крит"] = (
-            f"{max(0, critical + fighter.temporary_critical_chance_modifier)}%"
+            f"{max(0, critical + fighter.temporary_critical_chance_modifier)}%{critical_damage}"
         )
         return adjusted
 

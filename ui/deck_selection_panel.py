@@ -58,9 +58,13 @@ class DeckSelectionPanel:
             self.creating = True
             self.name = ""
             self.error = ""
-            self.collection = list(self.card_loader() if self.card_loader else [])
+            from combat.card_database import cards_for_type
+            class_keys = {card.key for card in cards_for_type(self.character_type)}
+            self.collection = [
+                card for card in (self.card_loader() if self.card_loader else [])
+                if card.get("key", card.get("card_key")) in class_keys
+            ]
             if not self.collection:
-                from combat.card_database import cards_for_type
                 self.collection = [
                     {"key": card.key, "name": card.name, "quantity": 1}
                     for card in cards_for_type(self.character_type)

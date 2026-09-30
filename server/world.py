@@ -9,7 +9,7 @@ from combat.card_battle import CardBattle
 from combat.battle_archive import record_battle
 from combat.character_stats import BASE_STAT_VALUE, minimum_endurance, total_stat_points
 from combat.fighter import Fighter
-from combat.card_database import load_cards
+from combat.card_database import cards_for_type, is_mage_profession
 
 # Вне таверны (задний двор) боты лечатся 10 минут до полного хп, в таверне — вдвое быстрее.
 BOT_FULL_REGEN_SECONDS = 600
@@ -485,6 +485,7 @@ def _resolve_bot_battle(attacker_id, defender_id, now):
     battle_cards = _get_cards_for_profession(attacker_profession)
 
     battle = CardBattle(attacker_fighter, defender_fighter, cards=battle_cards)
+    battle.mage_mode = is_mage_profession(attacker_profession)
     while len(battle.hands["player"]) < battle.STARTING_PICK_LIMIT:
         side = battle.draft_first_side()
         card = battle.table[random.randrange(len(battle.table))]
@@ -572,10 +573,6 @@ def _fighter_from_profile(profile):
     fighter.stats = copy.deepcopy(profile["stats"])
     fighter.stat_points = profile["stat_points"]
 
-    # Применить бонусы класса (это переопределит то что установлено в __init__)
-    if profession_type == "archer":
-        fighter.temporary_dodge_chance_modifier = 10  # +10% уворота для лучника
-
     fighter.recalculate_parameters()
     fighter.hp = min(int(profile["hp"]), fighter.max_hp)
     fighter.mp = profile["mp"]
@@ -584,21 +581,7 @@ def _fighter_from_profile(profile):
 
 
 def _get_cards_for_profession(profession_type):
-    """Вернуть карты для конкретной профессии."""
-    all_cards = load_cards()
-
-    # Определить какие карты может использовать класс
-    profession_to_keys = {
-        "warrior": ["warrior", "mage"],
-        "archer": ["archer", "mage"],
-        "assassin": ["assassin", "mage"],
-        "battle_mage": ["mage"],
-        "support_mage": ["mage"],
-        "harmonist": ["mage"],
-    }
-
-    allowed_prefixes = profession_to_keys.get(profession_type, ["mage"])
-    return [card for card in all_cards if any(card.key.startswith(prefix) for prefix in allowed_prefixes)]
+    return cards_for_type(profession_type)
 
 
 def _store_fighter(opponent_id, fighter, now):

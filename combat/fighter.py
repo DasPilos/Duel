@@ -59,9 +59,6 @@ class Fighter:
         self.temporary_critical_chance_modifier = 0
         self.temporary_dodge_chance_modifier = 0
 
-        # Базовые бонусы класса
-        if profession_type == "archer":
-            self.temporary_dodge_chance_modifier += 10  # +10% уворота для лучника
 
         # Очки для распределения
         self.stat_points = total_stat_points(level)
@@ -149,6 +146,14 @@ class Fighter:
             self.unique_resource_max = calculate_max_unique_resource(self.profession_type, self.level, self.intellect)
             if hasattr(self, "unique_resource_current"):
                 self.unique_resource_current = min(int(self.unique_resource_current), self.unique_resource_max)
+
+    def set_profession(self, profession_type):
+        if not is_valid_profession(profession_type):
+            profession_type = "warrior"
+        self.profession_type = profession_type
+        self.unique_resource_type = get_profession_data(profession_type)["unique_resource"]
+        self.unique_resource_max = calculate_max_unique_resource(profession_type, self.level, self.intellect)
+        self.unique_resource_current = self.unique_resource_max
 
     def spend_unique_resource(self, amount):
         """Потратить уникальный ресурс (ярость, меткость, концентрация, мана)."""

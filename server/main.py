@@ -12,7 +12,7 @@ from server.items_database import ItemsDatabase
 from server import social
 from server.world import run_bot_battle_tick
 from combat.anticheat import score_match
-from combat.card_database import card_to_dict, choose_battle_reward, is_mage_card, load_cards
+from combat.card_database import card_allowed_for_type, card_to_dict, choose_battle_reward, load_cards
 
 
 class GameRequestHandler(BaseHTTPRequestHandler):
@@ -333,7 +333,7 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                     raise ValueError("Колода содержит неизвестную карту")
                 character_type = character.get("type", "warrior")
                 for key in cards:
-                    if is_mage_card(available[key]) != (character_type == "mage"):
+                    if not card_allowed_for_type(available[key], character_type):
                         raise ValueError("Колода содержит карты чужого класса")
                 for key, card in available.items():
                     if key in cards and card.effect_data.get("ultimate"):
@@ -463,9 +463,10 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                 if not isinstance(eligible_keys, list) or len(eligible_keys) > 100:
                     raise ValueError("Некорректный список карт боя")
                 eligible_key_set = {str(key) for key in eligible_keys}
+                character_type = character.get("type", "warrior")
                 eligible_cards = [
                     card for card in load_cards()
-                    if card.key in eligible_key_set
+                    if card.key in eligible_key_set and card_allowed_for_type(card, character_type)
                 ]
                 reward = choose_battle_reward(eligible_cards)
                 if reward is None:

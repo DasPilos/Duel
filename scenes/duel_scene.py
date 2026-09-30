@@ -4,7 +4,7 @@ import time
 from combat.fighter import Fighter
 from combat.character_stats import BASE_STAT_VALUE
 from combat.card_battle import CardBattle
-from combat.card_database import cards_for_type, is_mage_card, load_cards
+from combat.card_database import card_allowed_for_type, cards_for_type, is_mage_profession, load_cards
 from core import settings
 from ui.hud import FloatingText
 from ui.layout import DuelLayout
@@ -112,6 +112,7 @@ class DuelScene:
             if stat_name in fighter.STAT_NAMES
         }
         fighter.equipment = dict(profile.get("equipment", {}))
+        fighter.set_profession(profile.get("type", "warrior"))
         fighter.recalculate_parameters()
         hp = profile.get("hp", fighter.max_hp)
         if hp >= profile.get("max_hp", hp):
@@ -211,19 +212,21 @@ class DuelScene:
         # Физические карты воина убраны из игры — по умолчанию (в т.ч. в оффлайн-режиме
         # без online_character) бой ведётся на магических картах.
         character_type = self.online_character.get("type") if self.online_character else "mage"
-        if character_type == "mage" and selected_deck:
+        if selected_deck:
             card_keys = selected_deck.get("cards", {})
             if isinstance(card_keys, dict):
                 card_keys = card_keys.keys()
             allowed = set(card_keys or ())
-            # is_mage_card guards against a corrupted/legacy deck smuggling in warrior cards.
-            battle_cards = [card for card in load_cards() if card.key in allowed and is_mage_card(card)]
+            battle_cards = [
+                card for card in load_cards()
+                if card.key in allowed and card_allowed_for_type(card, character_type)
+            ] or None
         if battle_cards is None:
             # Warrior and mage card pools never mix (mage cards cost 0 in every stat
             # field, so they'd be trivially "free" inside a warrior's stat-cost draft).
             battle_cards = cards_for_type(character_type)
         self.battle = CardBattle(self.player, self.enemy, cards=battle_cards)
-        if character_type == "mage":
+        if is_mage_profession(character_type):
             self.battle.mage_mode = True
         self.attack_zone = None
         self.defense_zones = set()

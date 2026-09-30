@@ -22,7 +22,7 @@ def normalize_character_profile(profile, *, title=None, kind="player"):
         profile_dict = {
             "id": getattr(data, "id", getattr(data, "character_id", None)),
             "character_id": getattr(data, "character_id", getattr(data, "id", None)),
-            "type": getattr(data, "type", "warrior"),
+            "type": getattr(data, "type", getattr(data, "profession_type", "warrior")),
             "name": getattr(data, "name", "Персонаж"),
             "level": getattr(data, "level", 1),
             "xp": getattr(data, "xp", 0),
@@ -197,7 +197,11 @@ def derived_values(profile):
     Уворот — от своей ловкости, крит — базовый шанс. Одинаково для всех классов."""
     stats = effective_stats(profile)
     weapon = weapon_damage_range(profile.get("equipment"))
-    own = SimpleNamespace(agility=int(stats.get("agility", 0)), intuition=int(stats.get("intuition", 0)))
+    own = SimpleNamespace(
+        agility=int(stats.get("agility", 0)),
+        intuition=int(stats.get("intuition", 0)),
+        profession_type=profile.get("type", "warrior"),
+    )
 
     # Рассчитать крит урон
     crit_chance = int(get_critical_chance(None, None))

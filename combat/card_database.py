@@ -307,12 +307,21 @@ def initialize_database(path=DATABASE_PATH):
             connection.execute(
                 "ALTER TABLE cards ADD COLUMN mana_cost INTEGER NOT NULL DEFAULT 0"
             )
+        if "resource_type" not in columns:
+            connection.execute(
+                "ALTER TABLE cards ADD COLUMN resource_type TEXT NOT NULL DEFAULT 'action_points'"
+            )
+        if "resource_cost" not in columns:
+            connection.execute(
+                "ALTER TABLE cards ADD COLUMN resource_cost INTEGER NOT NULL DEFAULT 0"
+            )
         connection.executemany(
             """INSERT INTO cards
             (key, name, group_name, strength_cost, intuition_cost, agility_cost,
              endurance_cost, effect_type, effect_data, level, price_copper,
-             price_silver, price_gold, drop_chance, image_path, effect_duration, mana_cost)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             price_silver, price_gold, drop_chance, image_path, effect_duration, mana_cost,
+             resource_type, resource_cost)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(key) DO UPDATE SET
                 name = excluded.name,
                 group_name = excluded.group_name,
@@ -330,6 +339,8 @@ def initialize_database(path=DATABASE_PATH):
                 image_path = excluded.image_path,
                 effect_duration = excluded.effect_duration,
                 mana_cost = excluded.mana_cost,
+                resource_type = excluded.resource_type,
+                resource_cost = excluded.resource_cost,
                 enabled = 1""",
             [
                 (
@@ -350,6 +361,8 @@ def initialize_database(path=DATABASE_PATH):
                     card.image_path,
                     card.effect_duration,
                     card.mana_cost,
+                    card.resource_type,
+                    card.resource_cost,
                 )
                 for card in BASE_CARDS
             ],
@@ -371,16 +384,33 @@ def load_cards(path=DATABASE_PATH):
             """SELECT key, name, group_name, strength_cost, intuition_cost,
                       agility_cost, endurance_cost, effect_type, effect_data,
                       level, price_copper, price_silver, price_gold, drop_chance,
-                      image_path, effect_duration, mana_cost
+                      image_path, effect_duration, mana_cost,
+                      resource_type, resource_cost
                FROM cards
                WHERE enabled = 1
                ORDER BY rowid"""
         ).fetchall()
     return [
         Card(
-            *row[:8],
-            json.loads(row[8]),
-            *row[9:],
+            key=row[0],
+            name=row[1],
+            group_name=row[2],
+            strength_cost=row[3],
+            intuition_cost=row[4],
+            agility_cost=row[5],
+            endurance_cost=row[6],
+            effect_type=row[7],
+            effect_data=json.loads(row[8]),
+            level=row[9],
+            price_copper=row[10],
+            price_silver=row[11],
+            price_gold=row[12],
+            drop_chance=row[13],
+            image_path=row[14],
+            effect_duration=row[15],
+            mana_cost=row[16],
+            resource_type=row[17],
+            resource_cost=row[18],
         )
         for row in rows
     ]
@@ -393,13 +423,28 @@ def is_mage_card(card):
     return card.group_name.startswith(MAGE_GROUP_PREFIX)
 
 
+MAGE_PROFESSIONS = ("mage", "battle_mage", "support_mage", "harmonist")
+CLASS_GROUP_PREFIXES = {
+    "warrior": "Боец:",
+    "archer": "Лучник:",
+    "assassin": "Асасин:",
+}
+
+
+def is_mage_profession(character_type):
+    return character_type in MAGE_PROFESSIONS
+
+
+def card_allowed_for_type(card, character_type):
+    if is_mage_profession(character_type):
+        return is_mage_card(card)
+    prefix = CLASS_GROUP_PREFIXES.get(character_type, CLASS_GROUP_PREFIXES["warrior"])
+    return card.group_name.startswith(prefix)
+
+
 def cards_for_type(character_type, path=DATABASE_PATH):
-    """Cards eligible for a character's class, so warrior and mage pools never mix
-    (mage cards cost 0 in every stat field, so they'd be "free" in a warrior's draft)."""
-    cards = load_cards(path)
-    if character_type == "mage":
-        return [card for card in cards if is_mage_card(card)]
-    return [card for card in cards if not is_mage_card(card)]
+    """Карты, доступные классу: у каждого класса свой набор, чужие карты не смешиваются."""
+    return [card for card in load_cards(path) if card_allowed_for_type(card, character_type)]
 
 
 def card_to_dict(card):
