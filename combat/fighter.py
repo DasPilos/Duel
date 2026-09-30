@@ -2,10 +2,16 @@ from combat.character_stats import (
     BASE_STAT_VALUE,
     STARTING_ENDURANCE_VALUE,
     STARTING_STAT_POINTS,
+    PROFESSIONS,
+    UNIQUE_RESOURCE_RECOVERY,
+    UNIQUE_RESOURCE_GAIN,
     total_stat_points,
     adjust_stats,
     calculate_max_hp,
     calculate_max_mana,
+    calculate_max_unique_resource,
+    get_profession_data,
+    is_valid_profession,
 )
 from combat.mechanics import weapon_damage_range
 from combat.progression import apply_xp
@@ -22,10 +28,16 @@ class Fighter:
         "endurance": "Выносливость",
     }
 
-    def __init__(self, name, level=1, auto_allocate=False):
+    def __init__(self, name, level=1, profession_type="warrior", auto_allocate=False):
         self.name = name
         self.level = level
         self.character_id = None
+
+        # Профессия персонажа (6 классов)
+        if not is_valid_profession(profession_type):
+            profession_type = "warrior"  # Default to warrior
+        self.profession_type = profession_type
+        profession_data = get_profession_data(profession_type)
 
         # Базовые характеристики — единый набор из 7 статов для всех персонажей
         self.stats = {
@@ -53,7 +65,12 @@ class Fighter:
         if auto_allocate:
             self.random_allocate_points()
 
-        # Мана определяется интеллектом
+        # Уникальный ресурс (ярость, меткость, концентрация или мана)
+        self.unique_resource_type = profession_data["unique_resource"]
+        self.unique_resource_max = calculate_max_unique_resource(profession_type, level, self.intellect)
+        self.unique_resource_current = self.unique_resource_max
+
+        # Мана для всех классов (но для магов это main ресурс, для остального минимальная)
         self.max_mp = calculate_max_mana(self.intellect)
         self.mp = self.max_mp
 
@@ -123,6 +140,30 @@ class Fighter:
         self.max_mp = calculate_max_mana(self.intellect)
         if hasattr(self, "mp"):
             self.mp = min(int(self.mp), self.max_mp)
+        # Пересчитать максимум уникального ресурса
+        if hasattr(self, "profession_type"):
+            self.unique_resource_max = calculate_max_unique_resource(self.profession_type, self.level, self.intellect)
+            if hasattr(self, "unique_resource_current"):
+                self.unique_resource_current = min(int(self.unique_resource_current), self.unique_resource_max)
+
+    def spend_unique_resource(self, amount):
+        """Потратить уникальный ресурс (ярость, меткость, концентрация, мана)."""
+        amount = int(amount)
+        if self.unique_resource_current >= amount:
+            self.unique_resource_current -= amount
+            return True
+        return False
+
+    def gain_unique_resource(self, amount):
+        """Получить уникальный ресурс."""
+        amount = int(amount)
+        self.unique_resource_current = min(self.unique_resource_current + amount, self.unique_resource_max)
+
+    def recover_unique_resource(self, level):
+        """Восстановить уникальный ресурс в конце хода (для ярости, меткости, концентрации)."""
+        if self.unique_resource_type in UNIQUE_RESOURCE_RECOVERY:
+            recovery = UNIQUE_RESOURCE_RECOVERY[self.unique_resource_type]
+            self.gain_unique_resource(recovery)
 
     def add_stat(self, stat_name):
         """Добавляет одно очко характеристики."""

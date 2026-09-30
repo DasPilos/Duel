@@ -587,6 +587,38 @@ class DuelRenderer:
             (60, 140, 220)
         )
 
+        # Уникальный ресурс (ярость, меткость, концентрация) ниже MP
+        if hasattr(fighter, "unique_resource_type") and fighter.unique_resource_type != "mana":
+            unique_y = y + 130
+            resource_name = fighter.unique_resource_type.upper()[:3]  # RAG, ACC, CON
+            resource_colors = {
+                "rage": (200, 100, 80),  # Красный для ярости
+                "accuracy": (100, 180, 240),  # Синий для меткости
+                "concentration": (180, 120, 200),  # Фиолетовый для концентрации
+            }
+            color = resource_colors.get(fighter.unique_resource_type, (180, 180, 180))
+            self._draw_resource_bar(
+                screen,
+                inner_x,
+                unique_y,
+                bar_width,
+                bar_height,
+                resource_name,
+                int(getattr(fighter, "unique_resource_current", 0)),
+                int(getattr(fighter, "unique_resource_max", 1)),
+                color
+            )
+
+        # Отображение статусов элементов в режиме магов
+        if getattr(self.scene, "mage_battle", False):
+            side = "player" if fighter is self.scene.player else "enemy"
+            statuses = self.scene.battle.mage_statuses.get(side, [])
+            if statuses:
+                status_y = y + 150
+                status_text = ", ".join(s["name"].upper() for s in statuses if s["remaining"] > 0)[:40]
+                if status_text:
+                    draw_text(screen, self.scene.small_font, f"Статусы: {status_text}", inner_x, status_y, (220, 200, 100))
+
     def _stats_frame_geometry(self, side, screen_width):
         margin = 10
         default_width = 310

@@ -338,17 +338,28 @@ class CardBattle:
     def _start_turn(self, draw_cards=True):
         self.turn += 1
         self.burned_this_turn = {"player": False, "enemy": False}
-        if self.mage_mode:
-            for fighter in (self.player, self.enemy):
-                wisdom = int(fighter.stats.get("wisdom", 0))
-                fighter.mp = min(fighter.max_mp, fighter.mp + 8 + wisdom // 2)
-            self._resolve_mage_end_turn_effects()
-            self.mage_stuns = {side: max(0, turns - 1) for side, turns in self.mage_stuns.items()}
-            self.mage_freeze = {side: max(0, turns - 1) for side, turns in self.mage_freeze.items()}
-            for side, bonuses in self.mage_damage_bonuses.items():
-                for bonus in bonuses:
-                    bonus["remaining"] -= 1
-                self.mage_damage_bonuses[side] = [bonus for bonus in bonuses if bonus["remaining"] > 0]
+
+        # Восстановить ману и уникальные ресурсы в начале хода
+        for fighter in (self.player, self.enemy):
+            # Восстановить ман (для всех классов)
+            wisdom = int(fighter.stats.get("wisdom", 0))
+            fighter.mp = min(fighter.max_mp, fighter.mp + 8 + wisdom // 2)
+
+            # Восстановить уникальный ресурс (ярость, меткость, концентрация) для не-магов
+            if hasattr(fighter, "recover_unique_resource"):
+                if hasattr(fighter, "unique_resource_type") and fighter.unique_resource_type != "mana":
+                    fighter.recover_unique_resource(fighter.level)
+
+        # Обработать эффекты статусов в конце хода
+        self._process_status_turn_effects()
+        self._remove_expired_statuses()
+        self._resolve_mage_end_turn_effects()
+        self.mage_stuns = {side: max(0, turns - 1) for side, turns in self.mage_stuns.items()}
+        self.mage_freeze = {side: max(0, turns - 1) for side, turns in self.mage_freeze.items()}
+        for side, bonuses in self.mage_damage_bonuses.items():
+            for bonus in bonuses:
+                bonus["remaining"] -= 1
+            self.mage_damage_bonuses[side] = [bonus for bonus in bonuses if bonus["remaining"] > 0]
         if draw_cards:
             self.draw_next_turn_card("player")
             self.draw_next_turn_card("enemy")
@@ -454,7 +465,13 @@ class CardBattle:
             self.mage_golems[target_side] = [item for item in golems if int(item.get("hp", 0)) > 0]
             return
         fighter = self.player if target_side == "player" else self.enemy
-        fighter.take_damage(max(0, int(amount)))
+        actual_damage = max(0, int(amount))
+        fighter.take_damage(actual_damage)
+
+        # Защитник получает урон - получает ярость (для бойца)
+        if actual_damage > 0:
+            self._fighter_took_damage(target_side, actual_damage)
+
         if original_amount and amount > 0:
             attacker_side = "enemy" if target_side == "player" else "player"
             for blessing in self.mage_reactive_blessings.get(target_side, []):
@@ -539,32 +556,41 @@ class CardBattle:
         statuses.append({"name": name, "remaining": max(1, int(duration)), "stacks": max(1, int(stacks))})
 
     def _apply_mage_status_reaction(self, target_side, element, event):
+        """Применить реакцию элементов и обновить эффект события."""
         statuses = self.mage_statuses[target_side]
         names = {status["name"] for status in statuses}
-        if element == "огонь" and "вода" in names:
-            event["damage"] = int(event["damage"] * 0.5)
-            for status in statuses:
-                if status["name"] in ("огонь", "вода"):
-                    status["remaining"] = max(0, status["remaining"] - 1)
-        elif element == "электро" and "огонь" in names:
-            harmony = self._mage_stat(self.player if target_side == "enemy" else self.enemy, "harmony")
-            reaction_damage = int(event.get("damage", 0) * (1.3 + harmony / 100)) + harmony
-            target = self.enemy if target_side == "enemy" else self.player
-            target.take_damage(reaction_damage)
-            event["damage"] += reaction_damage
-            self.mage_statuses[target_side] = [status for status in statuses if status["name"] not in ("огонь", "электро")]
-            event["effect_text"] = "РЕАКЦИЯ: ОГОНЬ + ЭЛЕКТРИЧЕСТВО"
-        elif element == "холод" and "огонь" in names:
-            event["damage"] = int(event.get("damage", 0) * 0.2)
-            self.mage_statuses[target_side] = [status for status in statuses if status["name"] not in ("огонь", "холод")]
-        elif element == "холод" and "вода" in names:
-            self.mage_freeze[target_side] = max(self.mage_freeze.get(target_side, 0), 2)
-        elif element == "холод" and "электро" in names:
-            event["damage"] = int(event.get("damage", 0) * 0.3)
-            self.mage_statuses[target_side] = [status for status in statuses if status["name"] not in ("холод", "электро")]
-        elif element == "электро" and "вода" in names:
-            event["damage"] = int(event.get("damage", 0) * 1.1)
-            self.mage_statuses[target_side] = [status for status in statuses if status["name"] != "электро"]
+
+        # Проверить какая реакция произойдет
+        reaction_type, affected = self._check_element_reaction(target_side, element)
+
+        if reaction_type is None:
+            return
+
+        # Получить базовый урон для расчетов реакции
+        base_damage = event.get("damage", 0)
+
+        # Применить эффект реакции
+        reaction_damage = self._apply_reaction_effect(target_side, reaction_type, base_damage)
+
+        # Обновить урон в события
+        event["damage"] = max(event["damage"], reaction_damage)
+
+        # Снять статусы согласно реакции
+        for status in statuses[:]:
+            if status["name"] in affected:
+                statuses.remove(status)
+
+        # Добавить текст реакции в событие
+        reaction_names = {
+            "fire_water": "ОГОНЬ + ВОДА",
+            "fire_cold": "ОГОНЬ + ХОЛОД",
+            "fire_electric": "ОГОНЬ + ЭЛЕКТРО",
+            "water_electric": "ВОДА + ЭЛЕКТРО",
+            "water_cold": "ВОДА + ХОЛОД",
+            "electric_cold": "ЭЛЕКТРО + ХОЛОД",
+            "air_any": "ВОЗДУХ",
+        }
+        event["effect_text"] = f"РЕАКЦИЯ: {reaction_names.get(reaction_type, 'РЕАКЦИЯ')}"
 
     def select_card(self, side, card_key):
         self._validate_side(side)
@@ -588,33 +614,59 @@ class CardBattle:
         return False
 
     def can_play(self, side, card):
+        """Проверить может ли персонаж применить карту (старая система для action points)."""
         self._validate_side(side)
         return all(self.action_points[side][stat] >= cost for stat, cost in card.costs.items())
 
     def can_select(self, side, card):
+        """Проверить может ли персонаж выбрать и применить эту карту."""
         self._validate_side(side)
+        fighter = self.player if side == "player" else self.enemy
+
+        # Проверить статусы: стан и заморозка
         if self.mage_mode and self.mage_stuns.get(side, 0) > 0:
             return False
         if self.mage_mode and self.mage_freeze.get(side, 0) > 0:
             used_cards = self._cards_used_this_exchange(side)
             if used_cards >= 1:
                 return False
+
+        # Проверить ульт-карты
         is_ultimate = bool(card.effect_data.get("ultimate"))
         selected_ultimate = any(item.effect_data.get("ultimate") for item in self.selected[side])
         if self.mage_mode and is_ultimate and (self._cards_used_this_exchange(side) > 0 or self.ultimate_played[side]):
             return False
         if self.mage_mode and selected_ultimate:
             return False
+
+        # Проверить количество карт
         if (
             card.effect_type.startswith("instant_")
             or self._cards_used_this_exchange(side) >= self.MAX_PLAYED_CARDS
         ):
             return False
-        used = {stat: sum(item.costs[stat] for item in self.selected[side]) for stat in STAT_NAMES}
-        enough_points = all(self.action_points[side][stat] - used[stat] >= cost for stat, cost in card.costs.items())
-        mana_cost = card.mana_cost if self.mage_mode else 0
-        fighter = self.player if side == "player" else self.enemy
-        return enough_points and int(getattr(fighter, "mp", 0)) >= mana_cost
+
+        # Проверить ресурсы в зависимости от типа карты
+        # Если карта использует старую систему action points
+        if card.resource_type == "action_points":
+            used = {stat: sum(item.costs[stat] for item in self.selected[side]) for stat in STAT_NAMES}
+            enough_points = all(self.action_points[side][stat] - used[stat] >= cost for stat, cost in card.costs.items())
+            if not enough_points:
+                return False
+
+        # Если карта использует уникальный ресурс (ярость, меткость, концентрация)
+        elif card.resource_type in ("rage", "accuracy", "concentration"):
+            if not hasattr(fighter, "unique_resource_current"):
+                return False
+            if fighter.unique_resource_current < card.resource_cost:
+                return False
+
+        # Если карта использует ман
+        elif card.resource_type == "mana":
+            if int(getattr(fighter, "mp", 0)) < card.resource_cost:
+                return False
+
+        return True
 
     def can_activate_instant(self, side, card):
         self._validate_side(side)
@@ -1142,6 +1194,9 @@ class CardBattle:
             dodge_chance = max(0, dodge_chance)
             if self.rng.random() * 100 < dodge_chance:
                 event["dodged"] = True
+                # Защитник успешно уворачивается - получает меткость (для лучника)
+                opposite_side = "enemy" if side == "player" else "player"
+                self._fighter_dodged(opposite_side)
                 continue
             event["hits"] += 1
             damage = roll_dice(data["dice"], self.rng) + attacker.strength + self._weapon_roll(attacker)
@@ -1151,6 +1206,8 @@ class CardBattle:
             critical_chance = max(0, critical_chance)
             if getattr(attacker, "card_critical_bonus", 0) >= 100 or self.rng.random() * 100 < critical_chance:
                 event["critical"] = True
+                # Атакующий наносит крит удар - получает концентрацию (для асасина)
+                self._fighter_critical_hit(side)
                 damage = math.ceil(damage * get_critical_damage_multiplier(attacker))
                 damage = math.ceil(damage * data.get("critical_multiplier", 1))
                 damage += data.get("critical_bonus_damage", 0)
@@ -1162,6 +1219,11 @@ class CardBattle:
             total_damage = max(0, total_damage - reduction)
             defender.card_damage_reduce = 0
         defender.take_damage(total_damage)
+
+        # Защитник получает урон - получает ярость (для бойца)
+        opposite_side = "enemy" if side == "player" else "player"
+        if total_damage > 0:
+            self._fighter_took_damage(opposite_side, total_damage)
         if card.effect_type == "damage_stat_debuff" and event["hits"] > 0:
             stat_name = data["stat"]
             amount = max(0, int(data["amount"]))
@@ -1220,7 +1282,10 @@ class CardBattle:
                 f"НА {duration} {exchange_label}"
             )
         if card.effect_type == "damage_recoil" and not event["critical"]:
-            attacker.take_damage(data["recoil"])
+            recoil_damage = data["recoil"]
+            attacker.take_damage(recoil_damage)
+            # Атакующий получает отскок урона - получает ярость (для бойца)
+            self._fighter_took_damage(side, recoil_damage)
         event["damage"] = total_damage
         return event
 
@@ -1311,8 +1376,265 @@ class CardBattle:
         return labels[stat_name]
 
     def _spend_points(self, side, card):
-        for stat, cost in card.costs.items():
-            self.action_points[side][stat] -= cost
+        """Потратить ресурсы для применения карты (зависит от типа карты)."""
+        fighter = self.player if side == "player" else self.enemy
+
+        # Старая система: action points
+        if card.resource_type == "action_points":
+            for stat, cost in card.costs.items():
+                self.action_points[side][stat] -= cost
+
+        # Новая система: уникальный ресурс (ярость, меткость, концентрация)
+        elif card.resource_type in ("rage", "accuracy", "concentration"):
+            if hasattr(fighter, "spend_unique_resource"):
+                fighter.spend_unique_resource(card.resource_cost)
+
+        # Новая система: мана
+        elif card.resource_type == "mana":
+            fighter.mp = max(0, fighter.mp - card.resource_cost)
+
+    def _gain_unique_resource(self, side, resource_type, amount):
+        """Дать персонажу уникальный ресурс (ярость, меткость, концентрация)."""
+        fighter = self.player if side == "player" else self.enemy
+        if hasattr(fighter, "gain_unique_resource") and hasattr(fighter, "unique_resource_type"):
+            if fighter.unique_resource_type == resource_type:
+                fighter.gain_unique_resource(amount)
+
+    def _fighter_took_damage(self, side, damage_amount):
+        """Вызвать когда персонаж получает урон (увеличивает ярость для бойца)."""
+        from combat.character_stats import UNIQUE_RESOURCE_GAIN
+
+        fighter = self.player if side == "player" else self.enemy
+        if not hasattr(fighter, "unique_resource_type"):
+            return
+
+        # При получении 10+ урона боец получает ярость
+        if fighter.unique_resource_type == "rage" and damage_amount >= 10:
+            gain_info = UNIQUE_RESOURCE_GAIN.get("rage", {}).get("on_damage_taken")
+            if gain_info:
+                base, level_bonus = gain_info
+                amount = base + (level_bonus * fighter.level)
+                self._gain_unique_resource(side, "rage", amount)
+
+    def _fighter_dodged(self, side):
+        """Вызвать когда персонаж успешно уворачивается (увеличивает меткость для лучника)."""
+        from combat.character_stats import UNIQUE_RESOURCE_GAIN
+
+        fighter = self.player if side == "player" else self.enemy
+        if not hasattr(fighter, "unique_resource_type"):
+            return
+
+        # При уворотеьь лучник получает меткость
+        if fighter.unique_resource_type == "accuracy":
+            gain_info = UNIQUE_RESOURCE_GAIN.get("accuracy", {}).get("on_dodge")
+            if gain_info:
+                base, level_bonus = gain_info
+                amount = base + (level_bonus * fighter.level)
+                self._gain_unique_resource(side, "accuracy", amount)
+
+    def _fighter_critical_hit(self, side):
+        """Вызвать когда персонаж наносит крит удар (увеличивает концентрацию для асасина)."""
+        from combat.character_stats import UNIQUE_RESOURCE_GAIN
+
+        fighter = self.player if side == "player" else self.enemy
+        if not hasattr(fighter, "unique_resource_type"):
+            return
+
+        # При крит ударе асасин получает концентрацию
+        if fighter.unique_resource_type == "concentration":
+            gain_info = UNIQUE_RESOURCE_GAIN.get("concentration", {}).get("on_critical")
+            if gain_info:
+                base, level_bonus = gain_info
+                amount = base + (level_bonus * fighter.level)
+                self._gain_unique_resource(side, "concentration", amount)
+
+    # ===== НОВАЯ СИСТЕМА ЭЛЕМЕНТОВ И РЕАКЦИЙ =====
+
+    def _check_element_reaction(self, side, new_element):
+        """
+        Проверить возможные реакции элементов и вернуть тип реакции.
+
+        Returns: (reaction_type, affected_elements) или (None, None)
+        """
+        if not self.mage_mode:
+            return None, None
+
+        # Получить существующие элементы
+        statuses = self.mage_statuses.get(side, [])
+        existing_elements = {s["name"] for s in statuses if s["name"] in ("огонь", "вода", "холод", "электро")}
+
+        # Проверить реакции (7 типов)
+        # 1. Огонь + Вода
+        if ("огонь" in existing_elements and new_element == "вода") or ("вода" in existing_elements and new_element == "огонь"):
+            return "fire_water", ["огонь", "вода"]
+
+        # 2. Огонь + Холод
+        if ("огонь" in existing_elements and new_element == "холод") or ("холод" in existing_elements and new_element == "огонь"):
+            return "fire_cold", ["огонь", "холод"]
+
+        # 3. Огонь + Электро
+        if ("огонь" in existing_elements and new_element == "электро") or ("электро" in existing_elements and new_element == "огонь"):
+            return "fire_electric", ["огонь", "электро"]
+
+        # 4. Вода + Электро
+        if ("вода" in existing_elements and new_element == "электро") or ("электро" in existing_elements and new_element == "вода"):
+            return "water_electric", ["электро"]  # Только электро снимается!
+
+        # 5. Вода + Холод
+        if ("вода" in existing_elements and new_element == "холод") or ("холод" in existing_elements and new_element == "вода"):
+            return "water_cold", []  # Статусы НЕ снимаются!
+
+        # 6. Электро + Холод
+        if ("электро" in existing_elements and new_element == "холод") or ("холод" in existing_elements and new_element == "электро"):
+            return "electric_cold", ["электро", "холод"]
+
+        # 7. Воздух + Любой элемент
+        if new_element == "воздух" or any(e == "воздух" for e in existing_elements):
+            return "air_any", []
+
+        return None, None
+
+    def _apply_status_effect(self, side, element, duration=1):
+        """
+        Применить постоянный статус (огонь, вода, холод, электро).
+        """
+        if not self.mage_mode:
+            return
+
+        # Электро заменяет электро (только 1 одновременно)
+        if element == "электро":
+            self.mage_statuses[side] = [s for s in self.mage_statuses.get(side, []) if s["name"] != "электро"]
+
+        # Добавить новый статус
+        new_status = {
+            "name": element,
+            "remaining": duration,
+            "stacks": 1 if element == "огонь" else 0,  # Только огонь может иметь стеки
+            "applied_turn": self.turn,
+        }
+
+        if side not in self.mage_statuses:
+            self.mage_statuses[side] = []
+
+        self.mage_statuses[side].append(new_status)
+
+    def _apply_reaction_effect(self, side, reaction_type, damage):
+        """Применить эффект реакции элементов."""
+        if not self.mage_mode:
+            return 0
+
+        opposite_side = "enemy" if side == "player" else "player"
+        attacker = self.player if side == "player" else self.enemy
+        reaction_damage = 0
+
+        # 1. Огонь + Вода → × 0.5 урона
+        if reaction_type == "fire_water":
+            reaction_damage = int(damage * 0.5)
+            self._mage_take_damage(opposite_side, reaction_damage)
+
+        # 2. Огонь + Холод → × 0.2 урона
+        elif reaction_type == "fire_cold":
+            reaction_damage = int(damage * 0.2)
+            self._mage_take_damage(opposite_side, reaction_damage)
+
+        # 3. Огонь + Электро → × (1.3 + гармония×1%) + ослепление
+        elif reaction_type == "fire_electric":
+            harmony = int(getattr(attacker, "harmony", 0))
+            multiplier = 1.3 + (harmony * 0.01)
+            reaction_damage = int(damage * multiplier) + harmony
+            self._mage_take_damage(opposite_side, reaction_damage)
+            if "blinding" not in [s["name"] for s in self.mage_statuses.get(opposite_side, [])]:
+                self.mage_statuses[opposite_side].append({
+                    "name": "blinding",
+                    "remaining": 1,
+                    "miss_chance": 20,
+                    "applied_turn": self.turn,
+                })
+
+        # 4. Вода + Электро → × (1.1 + гармония×1%) + 40% урона всем
+        elif reaction_type == "water_electric":
+            harmony = int(getattr(attacker, "harmony", 0))
+            multiplier = 1.1 + (harmony * 0.01)
+            reaction_damage = int(damage * multiplier)
+            self._mage_take_damage(opposite_side, reaction_damage)
+            aoe_damage = int(reaction_damage * 0.4)
+            if aoe_damage > 0:
+                self._mage_take_damage(opposite_side, aoe_damage)
+
+        # 5. Вода + Холод → заморозка (1 карта/ход) на 1 ход
+        elif reaction_type == "water_cold":
+            self.mage_freeze[opposite_side] = max(self.mage_freeze[opposite_side], 1)
+
+        # 6. Электро + Холод → 30% урона → щит + иммунитет
+        elif reaction_type == "electric_cold":
+            shield_amount = int(damage * 0.3)
+            self.mage_shields[opposite_side] += shield_amount
+            if "electric_cold_immunity" not in [s["name"] for s in self.mage_statuses.get(opposite_side, [])]:
+                self.mage_statuses[opposite_side].append({
+                    "name": "electric_cold_immunity",
+                    "remaining": 1,
+                    "applied_turn": self.turn,
+                })
+
+        # 7. Воздух + Любой → снять 1 ход статуса
+        elif reaction_type == "air_any":
+            if opposite_side in self.mage_statuses:
+                for status in self.mage_statuses[opposite_side]:
+                    if status["name"] not in ("воздух",):
+                        status["remaining"] = max(0, status["remaining"] - 1)
+
+        return reaction_damage
+
+    def _process_status_turn_effects(self):
+        """Обработать эффекты статусов в конце хода (урон от огня, стан от электро)."""
+        if not self.mage_mode:
+            return
+
+        for side in ("player", "enemy"):
+            statuses = self.mage_statuses.get(side, [])
+
+            for status in statuses[:]:
+                name = status["name"]
+
+                # Огонь: 2 HP за стек в конце хода
+                if name == "огонь" and status.get("stacks", 0) > 0:
+                    fire_damage = status["stacks"] * 2
+                    self._mage_take_damage(side, fire_damage)
+                    status["stacks"] = max(1, status["stacks"] - 1)
+
+                # Электро: стан после 3 ходов
+                elif name == "электро":
+                    applied_turn = status.get("applied_turn", 0)
+                    turns_active = self.turn - applied_turn
+                    if turns_active >= 3 and self.mage_stuns.get(side, 0) == 0:
+                        self.mage_stuns[side] = 1
+                        # Добавить иммунитет на 2 хода
+                        if "stun_immunity" not in [s["name"] for s in self.mage_statuses.get(side, [])]:
+                            self.mage_statuses[side].append({
+                                "name": "stun_immunity",
+                                "remaining": 2,
+                                "applied_turn": self.turn,
+                            })
+
+    def _remove_expired_statuses(self):
+        """Удалить статусы которые закончили свою длительность."""
+        if not self.mage_mode:
+            return
+
+        for side in ("player", "enemy"):
+            if side not in self.mage_statuses:
+                continue
+
+            # Уменьшить длительность и удалить если закончилась
+            expired = []
+            for i, status in enumerate(self.mage_statuses[side]):
+                status["remaining"] -= 1
+                if status["remaining"] <= 0:
+                    expired.append(i)
+
+            # Удалить в обратном порядке чтобы не нарушить индексы
+            for i in reversed(expired):
+                self.mage_statuses[side].pop(i)
 
     def _stronger_side(self, stat):
         player_value = getattr(self.player, stat)
