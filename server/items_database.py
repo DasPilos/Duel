@@ -10,6 +10,16 @@ from typing import List, Dict, Optional
 BACKPACK_SIZE = 50
 MAX_STACK = 99
 
+# Ограничение предметов по классам: архер может брать только эти предметы
+ARCHER_ALLOWED_ITEMS = {
+    1, 2, 3,    # Зелья
+    10, 11, 12, 13,  # Материалы
+    20, 21, 22,  # Оружие (мечи и кинжалы - быстрые)
+    33, 37,      # Броня (легкая)
+    40, 41, 42,  # Аксессуары
+    50, 51,      # Свитки
+}
+
 # Слоты куклы персонажа. Ключи совпадают с equip_slot в каталоге.
 EQUIPMENT_SLOTS = (
     "head", "ears", "neck", "back", "body", "hands",
@@ -462,6 +472,14 @@ class ItemsDatabase:
             if slot is not None and slot != item["equip_slot"]:
                 raise ValueError("Предмет не подходит для этого слота")
             slot = item["equip_slot"]
+
+            # Проверка класса: лучник может брать только разрешённые предметы
+            char_row = connection.execute(
+                "SELECT type FROM characters WHERE id = ?",
+                (character_id,),
+            ).fetchone()
+            if char_row and char_row["type"] == "archer" and item["id"] not in ARCHER_ALLOWED_ITEMS:
+                raise ValueError("Этот предмет недоступен для лучника")
 
             previous = connection.execute(
                 "SELECT item_id FROM character_equipment WHERE character_id = ? AND slot = ?",

@@ -59,6 +59,10 @@ class Fighter:
         self.temporary_critical_chance_modifier = 0
         self.temporary_dodge_chance_modifier = 0
 
+        # Базовые бонусы класса
+        if profession_type == "archer":
+            self.temporary_dodge_chance_modifier += 10  # +10% уворота для лучника
+
         # Очки для распределения
         self.stat_points = total_stat_points(level)
 
