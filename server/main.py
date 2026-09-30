@@ -354,8 +354,9 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                 name = str(body.get("name", "")).strip()
                 profession_type = str(body.get("profession_type", "warrior")).strip().lower()
                 self.database.validate_character_name(name)
-                if profession_type not in ["warrior", "mage"]:
-                    raise ValueError("Профессия должна быть 'warrior' или 'mage'")
+                valid_professions = ["warrior", "archer", "assassin", "battle_mage", "support_mage", "harmonist"]
+                if profession_type not in valid_professions:
+                    raise ValueError(f"Профессия должна быть одной из: {', '.join(valid_professions)}")
                 self._send(201, {"character": self.database.create_character(user_id, name, profession_type)})
                 return
             if path.startswith("/api/characters/") and path.endswith("/delete"):

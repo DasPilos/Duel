@@ -399,8 +399,9 @@ class Database:
 
     def create_character(self, user_id, name, profession_type="warrior"):
         self.validate_character_name(name)
-        if profession_type not in ["warrior", "mage"]:
-            raise ValueError("Профессия должна быть 'warrior' или 'mage'")
+        valid_professions = ["warrior", "archer", "assassin", "battle_mage", "support_mage", "harmonist"]
+        if profession_type not in valid_professions:
+            raise ValueError(f"Профессия должна быть одной из: {', '.join(valid_professions)}")
         
         now = time.time()
         
@@ -467,8 +468,9 @@ class Database:
 
     def update_character_profession(self, user_id, character_id, profession_type):
         """Update the profession marker without changing character stats."""
-        if profession_type not in ["warrior", "mage"]:
-            raise ValueError("Профессия должна быть 'warrior' или 'mage'")
+        valid_professions = ["warrior", "archer", "assassin", "battle_mage", "support_mage", "harmonist"]
+        if profession_type not in valid_professions:
+            raise ValueError(f"Профессия должна быть одной из: {', '.join(valid_professions)}")
         
         with self.connection() as connection:
             # Verify ownership
