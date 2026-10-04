@@ -81,7 +81,7 @@ CATALOG = (
     (22, "Кинжал", "equipment", "common", 1.0, 1000000, "Лёгкое оружие для быстрых ударов", 0, {"damage": [3, 5]}, {"agility": 1}, "right_hand_steel_sword", "weapon"),
     (23, "Дубина", "equipment", "common", 5.0, 500, "Требование: Сила: 6. HP +20", 0, {"requirements": {"strength": 6}, "damage": [3, 10]}, {"hp": 20}, "weapon_club", "weapon"),
     (24, "Простой лук", "equipment", "common", 1.0, 400, "Требование: Ловкость: 6. Сила +2. Уворот: +5%", 0, {"requirements": {"agility": 6}, "damage": [4, 8], "dodge": 5}, {"strength": 2, "dodge": 5}, "weapon_bow", "weapon"),
-    (25, "Деревянный посох", "equipment", "common", 2.0, 500, "Требование: Ловкость: 6, Интеллект: 4. MP +30", 0, {"requirements": {"agility": 6, "intellect": 4}, "damage": [1, 4]}, {"mp": 30}, "weapon_staff", "weapon"),
+    (25, "Деревянный посох", "equipment", "common", 2.0, 500, "Требование: Мудрость: 6, Интеллект: 4. MP +30", 0, {"requirements": {"wisdom": 6, "intellect": 4}, "damage": [1, 4]}, {"mp": 30}, "weapon_staff", "weapon"),
     (38, "Круглый щит", "equipment", "common", 3.5, 1800000, "Деревянный щит с железной оковкой", 0, None, {"endurance": 2}, "left_hand_round_shield", "shield"),
     (39, "Деревянный щит", "equipment", "common", 3.0, 300, "Требование: Сила: 4. HP +20. Блок: +5%", 0, {"requirements": {"strength": 4}, "damage": [0, 0], "block": 5}, {"hp": 20, "block": 5}, "shield_wooden", "shield"),
 

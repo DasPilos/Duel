@@ -1,3 +1,4 @@
+import json
 import unittest
 from core.forge_recipes import FORGE_RECIPES, RECIPE_BY_ITEM
 from server.database import Database
@@ -19,6 +20,18 @@ class ForgeItemsTest(unittest.TestCase):
         catalog_map = {item[0]: item for item in CATALOG}
         for item_id in (90, 91, 92, 93, 23, 24, 25, 39):
             self.assertIn(item_id, catalog_map, f"Item {item_id} missing from CATALOG")
+
+    def test_wooden_staff_requires_wisdom_and_intellect_in_catalog_and_database(self):
+        staff = next(item for item in CATALOG if item[0] == 25)
+        self.assertEqual(staff[6], "Требование: Мудрость: 6, Интеллект: 4. MP +30")
+        self.assertEqual(staff[8]["requirements"], {"wisdom": 6, "intellect": 4})
+
+        with self.db.connection() as connection:
+            row = connection.execute(
+                "SELECT description, effects_json FROM items_catalog WHERE id = 25"
+            ).fetchone()
+        self.assertEqual(row["description"], staff[6])
+        self.assertEqual(json.loads(row["effects_json"])["requirements"], staff[8]["requirements"])
 
     def test_item_recipes_and_durations(self):
         # 12 minutes = 720 sec
