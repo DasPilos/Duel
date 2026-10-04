@@ -1,0 +1,11 @@
+﻿python.exe : C:\Users\Dark 
+Seer\AppData\Local\Programs\Python\Python313\python.exe: can't open file 
+'E:\\python\\game\\scripts\\_probe_collections.py': [Errno 2] No such file or 
+directory
+строка:1 знак:1
++ & "C:\Users\Dark Seer\AppData\Local\Programs\Python\Python313\python. ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (C:\Users\Dark S...le or directory 
+   :String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
