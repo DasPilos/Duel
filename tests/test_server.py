@@ -1,7 +1,5 @@
-import tempfile
 import time
 import unittest
-from pathlib import Path
 from unittest.mock import patch
 
 from client.network import ServerError
@@ -11,18 +9,17 @@ from server.main import GameRequestHandler
 from server import social, world
 from client.state import ChatState
 from ui.chat.widgets import MessageList
-from tests.fixtures import running_server
+from tests.fixtures import create_test_database, drop_test_database, running_server
 from scenes.duel_scene import DuelScene
 import pygame
 
 
 class ServerPersistenceTests(unittest.TestCase):
     def setUp(self):
-        self.temp_dir = tempfile.TemporaryDirectory()
-        self.database = Database(Path(self.temp_dir.name) / "test.sqlite3")
+        self.database = create_test_database()
 
     def tearDown(self):
-        self.temp_dir.cleanup()
+        drop_test_database(self.database)
 
     def test_character_is_created_and_loaded(self):
         user = self.database.register("tester", "password")
@@ -70,13 +67,13 @@ class ServerPersistenceTests(unittest.TestCase):
 
     def test_client_receives_battle_card_in_collection(self):
         card = Card(
-            "reward_card",
-            "Наградная карта",
-            "Тест",
-            1, 0, 0, 0,
-            "damage",
-            {"dice": "1d4"},
-            1,
+            key="reward_card",
+            name="Наградная карта",
+            group_name="Боец: Тест",
+            resource_type="rage",
+            resource_cost=1,
+            effect_type="damage",
+            effect_data={"dice": "1d4"},
             drop_chance=100,
             image_path="assets/cards/faces/reward_card.png",
         )
@@ -108,7 +105,7 @@ class ServerPersistenceTests(unittest.TestCase):
         )
         with self.database.connection() as connection:
             connection.execute(
-                "UPDATE characters SET updated_at = ? WHERE id = ?",
+                "UPDATE characters SET updated_at = %s WHERE id = %s",
                 (time.time() - 600, character["id"]),
             )
 
@@ -117,14 +114,36 @@ class ServerPersistenceTests(unittest.TestCase):
 
         self.assertEqual(loaded["hp"], loaded["max_hp"])
 
-    def test_account_can_have_multiple_characters(self):
+    def test_account_has_one_character_per_world(self):
         user = self.database.register("tester", "password")
         first = self.database.create_character(user["id"], "Воин")
-        second = self.database.create_character(user["id"], "Маг")
+        with self.assertRaisesRegex(ValueError, "уже есть персонаж"):
+            self.database.create_character(user["id"], "Маг")
 
-        characters = self.database.get_characters(user["id"])
+        second_world = Database(self.database.dsn, schema=self.database.schema, world_id=2)
+        second = second_world.create_character(user["id"], "Маг")
 
-        self.assertEqual([first["id"], second["id"]], [item["id"] for item in characters])
+        self.assertEqual([first["id"]], [item["id"] for item in self.database.get_characters(user["id"])])
+        self.assertEqual([second["id"]], [item["id"] for item in second_world.get_characters(user["id"])])
+        self.assertIsNone(self.database.get_character(user["id"], second["id"]))
+
+    def test_character_name_is_unique_within_world_only(self):
+        first = self.database.register("first", "password")
+        second = self.database.register("second", "password")
+        self.database.create_character(first["id"], "Воин")
+        with self.assertRaisesRegex(ValueError, "имя уже занято"):
+            self.database.create_character(second["id"], "воин")
+
+        second_world = Database(self.database.dsn, schema=self.database.schema, world_id=2)
+        self.assertEqual(second_world.create_character(second["id"], "Воин")["name"], "Воин")
+
+    def test_session_is_bound_to_its_world(self):
+        self.database.register("traveller", "password")
+        token = self.database.login("traveller", "password")["token"]
+        second_world = Database(self.database.dsn, schema=self.database.schema, world_id=2)
+
+        with self.assertRaises(ValueError):
+            second_world.user_id_by_token(token)
 
     def test_character_name_is_limited_and_filtered(self):
         user = self.database.register("tester", "password")
@@ -256,7 +275,7 @@ class ServerPersistenceTests(unittest.TestCase):
         old_message = self.database.add_chat_message(character["id"], "tavern", "старое")
         with self.database.connection() as connection:
             connection.execute(
-                "UPDATE chat_messages SET created_at = ? WHERE id = ?",
+                "UPDATE chat_messages SET created_at = %s WHERE id = %s",
                 (time.time() - 48 * 60 * 60 - 1, old_message["id"]),
             )
         new_message = self.database.add_chat_message(character["id"], "tavern", "новое")
@@ -333,14 +352,15 @@ class ServerPersistenceTests(unittest.TestCase):
         world.update_bot("bot_brawler", 40)
         social.DUEL_OFFERS.clear()
         with running_server(self.database) as client:
-            client.register("botuser", "password")
+            user_id = client.register("botuser", "password")["user"]["id"]
             client.login("botuser", "password")
             character = client.create_character("Равный боец")
+            # Level is server-owned, so the test changes it on the server side.
             character.update({"level": 2})
             character["stats"]["endurance"] = 4
             character["max_hp"] = 40
             character["hp"] = 40
-            character = client.save_character(character)
+            character = self.database.save_character(user_id, character["id"], character)
             with self.assertRaises(ServerError):
                 client.offer_duel(character["id"], "backyard", "bot_brawler")
 
@@ -348,7 +368,7 @@ class ServerPersistenceTests(unittest.TestCase):
             character["stats"]["endurance"] = 3
             character["max_hp"] = 30
             character["hp"] = 30
-            character = client.save_character(character)
+            character = self.database.save_character(user_id, character["id"], character)
             result = client.offer_duel(character["id"], "backyard", "bot_brawler")
 
         self.assertTrue(result["accepted"])
@@ -360,13 +380,48 @@ class ServerPersistenceTests(unittest.TestCase):
             client.register("apiuser", "password")
             client.login("apiuser", "password")
             character = client.create_character("Сетевой воин")
-            character["xp"] = 30
+            with self.assertRaisesRegex(ServerError, "Опыт начисляется сервером"):
+                client.save_character({**character, "xp": 30})
+            character["zone"] = "backyard"
             saved = client.save_character(character)
             loaded = client.load_character()
             client.disconnect(loaded)
 
-        self.assertEqual(saved["xp"], 30)
+        self.assertEqual(saved["xp"], 0)
+        self.assertEqual(loaded["zone"], "backyard")
         self.assertEqual(loaded["name"], "Сетевой воин")
+
+    def test_battle_result_rewards_are_computed_by_server(self):
+        with running_server(self.database) as client:
+            client.register("fighter", "password")
+            client.login("fighter", "password")
+            character = client.create_character("Победитель боя")
+            result = client.report_battle_result(character["id"], "win", 1, 5, 0)
+            self.assertEqual(result["xp"], 20)
+            self.assertEqual(result["currency"], {"copper": 10, "silver": 0, "gold": 0})
+            self.assertEqual(result["character"]["xp"], character["xp"] + 20)
+            self.assertEqual(result["character"]["hp"], 5)
+            with self.assertRaisesRegex(ServerError, "уже засчитан"):
+                client.report_battle_result(character["id"], "win", 1, 5, 0)
+
+    def test_stat_points_can_be_spent_but_not_created(self):
+        with running_server(self.database) as client:
+            client.register("statuser", "password")
+            client.login("statuser", "password")
+            character = client.create_character("Распределитель")
+            points = character["stat_points"]
+            stats = dict(character["stats"])
+            stats["strength"] += points
+            saved = client.save_character({**character, "stats": stats, "stat_points": 0})
+            self.assertEqual(saved["stats"]["strength"], character["stats"]["strength"] + points)
+            self.assertEqual(saved["stat_points"], 0)
+
+            stats = dict(saved["stats"])
+            stats["agility"] += 1
+            with self.assertRaisesRegex(ServerError, "Характеристики изменяются сервером"):
+                client.save_character({**saved, "stats": stats})
+            with self.assertRaisesRegex(ServerError, "Характеристики изменяются сервером"):
+                client.save_character({**saved, "stat_points": 5})
 
     def test_client_can_create_duel_application(self):
         with running_server(self.database) as client:

@@ -1,11 +1,19 @@
 from pathlib import Path
 import math
+import time
 import pygame
 from core import settings
+from core.carry_weight import character_movement_speed_multiplier
+from core.currency import Currency
 from scenes.city.buildings import CityBuildingsMixin
 from scenes.city.rendering import CityRenderMixin
 from scenes.city.modals import CityModalsMixin
 from scenes.city.hud import CityHudMixin
+from ui.city_storage_window import CityStorageWindow
+from ui.stable_window import StableWindow
+from ui.character_profile_overlay import CharacterProfileOverlay
+from ui.chat import ChatPanel
+from ui.afk_presence import draw_afk_players
 
 
 class CityScene(CityBuildingsMixin, CityRenderMixin, CityModalsMixin, CityHudMixin):
@@ -43,8 +51,14 @@ class CityScene(CityBuildingsMixin, CityRenderMixin, CityModalsMixin, CityHudMix
       Выход из города осуществляется ИСКЛЮЧИТЕЛЬНО пешком через ворота.
     """
 
-    def __init__(self, session, gate="east"):
+    def __init__(self, session, gate="east", spawn_pos=None):
         self.session = session
+        refresh_carrying_state = getattr(session, "refresh_carrying_state", None)
+        if refresh_carrying_state is not None:
+            try:
+                refresh_carrying_state()
+            except Exception:
+                pass
         self.finished = False
         self.cancelled = False
         self.navigate = None
@@ -83,7 +97,7 @@ class CityScene(CityBuildingsMixin, CityRenderMixin, CityModalsMixin, CityHudMix
             "tavern": (54 * self.tile_size + 16, 15 * self.tile_size + 16, "w"),
         }
 
-        sp = spawn_map.get(gate, spawn_map["east"])
+        sp = spawn_pos if spawn_pos is not None else spawn_map.get(gate, spawn_map["east"])
         self.player_x = float(sp[0])
         self.player_y = float(sp[1])
         self.player_direction = sp[2]
@@ -111,6 +125,14 @@ class CityScene(CityBuildingsMixin, CityRenderMixin, CityModalsMixin, CityHudMix
         self.grid_font = pygame.font.SysFont(settings.FONT_NAME, 11)
         self.badge_font = pygame.font.SysFont(settings.FONT_NAME, 13, bold=True)
         self.large_font = pygame.font.SysFont(settings.FONT_NAME, 24, bold=True)
+        self.profile_overlay = CharacterProfileOverlay(
+            self.small_font,
+            collection_loader=getattr(self.session, "get_card_collection", None),
+            deck_loader=getattr(self.session, "get_decks", None),
+            deck_creator=getattr(self.session, "create_deck", None),
+        )
+        self.chat = (ChatPanel(session, "city", profile_overlay=self.profile_overlay)
+                     if hasattr(session, "social_snapshot") else None)
 
         # Переключатель отображения сетки
         self.show_grid = False
@@ -135,23 +157,40 @@ class CityScene(CityBuildingsMixin, CityRenderMixin, CityModalsMixin, CityHudMix
         self.castle_back_button = pygame.Rect(self.castle_modal_rect.centerx - 140, self.castle_modal_rect.bottom - 62, 280, 44)
         self.castle_close_button = pygame.Rect(self.castle_modal_rect.right - 42, self.castle_modal_rect.top + 14, 28, 28)
 
-        # Модальное окно заглушки Городского Амбара
+        # Городские хранилища (Амбар, Склад): состояние и улучшение на сервере
         self.barn_menu_open = False
-        self.barn_modal_rect = pygame.Rect(settings.WIDTH // 2 - 340, settings.HEIGHT // 2 - 250, 680, 500)
-        self.barn_back_button = pygame.Rect(self.barn_modal_rect.centerx - 140, self.barn_modal_rect.bottom - 62, 280, 44)
-        self.barn_close_button = pygame.Rect(self.barn_modal_rect.right - 42, self.barn_modal_rect.top + 14, 28, 28)
-
-        # Модальное окно заглушки Городского Склада
         self.warehouse_menu_open = False
-        self.warehouse_modal_rect = pygame.Rect(settings.WIDTH // 2 - 340, settings.HEIGHT // 2 - 250, 680, 500)
-        self.warehouse_back_button = pygame.Rect(self.warehouse_modal_rect.centerx - 140, self.warehouse_modal_rect.bottom - 62, 280, 44)
-        self.warehouse_close_button = pygame.Rect(self.warehouse_modal_rect.right - 42, self.warehouse_modal_rect.top + 14, 28, 28)
+        self.barn_window = CityStorageWindow(self, "barn")
+        self.warehouse_window = CityStorageWindow(self, "warehouse")
+
+        self.stable_window = StableWindow(self)
+        self.stable_menu_open = False
 
         # Модальное окно заглушки Городской Кузницы
         self.forge_menu_open = False
-        self.forge_modal_rect = pygame.Rect(settings.WIDTH // 2 - 340, settings.HEIGHT // 2 - 250, 680, 500)
+        self.forge_modal_rect = pygame.Rect((settings.WIDTH - 1600) // 2, (settings.HEIGHT - 900) // 2, 1600, 900)
         self.forge_back_button = pygame.Rect(self.forge_modal_rect.centerx - 140, self.forge_modal_rect.bottom - 62, 280, 44)
-        self.forge_close_button = pygame.Rect(self.forge_modal_rect.right - 42, self.forge_modal_rect.top + 14, 28, 28)
+        self.forge_close_button = pygame.Rect(self.forge_modal_rect.right - 48, self.forge_modal_rect.top + 15, 30, 30)
+        from core.forge_recipes import FORGE_TABS
+        forge_tab_labels = FORGE_TABS
+        forge_tab_gap = 8
+        forge_tab_width = (self.forge_modal_rect.width - 48 - forge_tab_gap * (len(forge_tab_labels) - 1)) // len(forge_tab_labels)
+        self.forge_tabs = {}
+        for index, (key, _label) in enumerate(forge_tab_labels):
+            left = self.forge_modal_rect.left + 24 + index * (forge_tab_width + forge_tab_gap)
+            width = (self.forge_modal_rect.right - 24 - left
+                     if index == len(forge_tab_labels) - 1 else forge_tab_width)
+            self.forge_tabs[key] = pygame.Rect(left, self.forge_modal_rect.top + 70, width, 34)
+        self.forge_tab_labels = dict(forge_tab_labels)
+        self.forge_tab = "weapons"
+        self.forge_scroll = 0
+        self.forge_action_buttons = []
+        self.forge_info_popup_item = None
+        self.forge_state = {"queue": [], "queue_count": 0, "queue_limit": 5, "queue_total_seconds": 0, "warehouse": []}
+        self.forge_player_materials = {}
+        self.forge_message = None
+        self.last_forge_refresh = 0.0
+        self.last_forge_tick = time.time()
 
         # Модальное окно заглушки Городской Мастерской
         self.workshop_menu_open = False
@@ -312,7 +351,8 @@ class CityScene(CityBuildingsMixin, CityRenderMixin, CityModalsMixin, CityHudMix
             if not (44 * self.tile_size <= py <= 56 * self.tile_size):
                 return True
         elif px <= self.min_world_x + 10:
-            # Западные ворота (Y: 47..52)
+            self.finished = False
+            self.cancelled = False
             if not (47 * self.tile_size <= py <= 53 * self.tile_size):
                 return True
 
@@ -446,11 +486,7 @@ class CityScene(CityBuildingsMixin, CityRenderMixin, CityModalsMixin, CityHudMix
 
         eid = self.active_entity.get("id")
         if eid == "player":
-            self.camera_x = self.player_x
-            self.camera_y = self.player_y
-            self.camera_follow_player = True
-            self._clamp_camera()
-            self._add_floating_message("Камера сфокусирована", self.player_x, self.player_y - 30, (100, 220, 255))
+            self.profile_overlay.open(self.session.character, None)
             return
 
         if eid == "main_castle":
@@ -469,21 +505,29 @@ class CityScene(CityBuildingsMixin, CityRenderMixin, CityModalsMixin, CityHudMix
             if not self._is_within_one_tile(self.active_entity):
                 self._add_floating_message("Подойдите к воротам амбара (тайл 16/40)", self.player_x, self.player_y - 34, (255, 120, 90))
                 return
-            self.barn_menu_open = True
+            self._open_barn()
             return
 
         if eid == "warehouse_building":
             if not self._is_within_one_tile(self.active_entity):
                 self._add_floating_message("Подойдите к воротам склада (тайл 16/23)", self.player_x, self.player_y - 34, (255, 120, 90))
                 return
-            self.warehouse_menu_open = True
+            self._open_warehouse()
+            return
+
+        if eid == "stable_building":
+            if not self._is_within_one_tile(self.active_entity):
+                self._add_floating_message("Подойдите к воротам конюшни (тайл 85/11)", self.player_x, self.player_y - 34, (255, 120, 90))
+                return
+            self.stable_window.open()
+            self.stable_menu_open = self.stable_window.is_open
             return
 
         if eid == "forge_building":
             if not self._is_within_one_tile(self.active_entity):
                 self._add_floating_message("Подойдите к дверям кузницы (тайл 23/28)", self.player_x, self.player_y - 34, (255, 120, 90))
                 return
-            self.forge_menu_open = True
+            self._open_forge()
             return
 
         if eid == "workshop_building":
@@ -542,15 +586,169 @@ class CityScene(CityBuildingsMixin, CityRenderMixin, CityModalsMixin, CityHudMix
             self.action_notice = "Здоровье полностью восстановлено!"
             self.action_notice_timer = 2.5
 
+    def _open_barn(self):
+        self.barn_window.open()
+        self.barn_menu_open = True
+
+    def _open_warehouse(self):
+        self.warehouse_window.open()
+        self.warehouse_menu_open = True
+
+    def _open_forge(self):
+        self.forge_menu_open = True
+        self.forge_scroll = 0
+        self.forge_info_popup_item = None
+        self._refresh_forge_state()
+        self.last_forge_refresh = time.time()
+        self.last_forge_tick = time.time()
+
+    def _refresh_forge_state(self):
+        if not hasattr(self, "session") or self.session is None:
+            return
+        try:
+            if hasattr(self.session, "get_forge_state"):
+                self.forge_state = self.session.get_forge_state()
+            elif hasattr(self.session, "client") and hasattr(self.session, "character") and self.session.character:
+                self.forge_state = self.session.client.get_forge_state(self.session.character["id"])
+        except Exception:
+            pass
+        self._refresh_player_inventory_materials()
+
+    def _refresh_player_inventory_materials(self):
+        self.forge_player_materials = {}
+        self.forge_player_copper = 0
+        if not hasattr(self, "session") or self.session is None:
+            return
+        try:
+            if hasattr(self.session, "character") and self.session.character:
+                char = self.session.character
+                self.forge_player_copper = Currency.to_copper(char.get("copper", 0), char.get("silver", 0), char.get("gold", 0))
+            if hasattr(self.session, "client") and hasattr(self.session, "character") and self.session.character:
+                inv_payload = self.session.client.get_inventory(self.session.character["id"])
+                self.session.character["carried_weight_kg"] = float(
+                    inv_payload.get("carried_weight_kg", 0)
+                )
+                items = inv_payload.get("inventory", [])
+                for it in items:
+                    m_id = it.get("item_id")
+                    qty = it.get("quantity", 0)
+                    self.forge_player_materials[m_id] = self.forge_player_materials.get(m_id, 0) + qty
+        except Exception:
+            pass
+
+    def _update_forge_timer(self):
+        now = time.time()
+        dt = now - getattr(self, "last_forge_tick", now)
+        self.last_forge_tick = now
+        if not getattr(self, "forge_menu_open", False):
+            return
+        if now - getattr(self, "last_forge_refresh", 0.0) >= 1.0:
+            self._refresh_forge_state()
+            self.last_forge_refresh = now
+        elif getattr(self, "forge_state", None):
+            queue = self.forge_state.get("queue", [])
+            if queue and queue[0].get("status") == "working":
+                curr_left = max(0.0, queue[0].get("seconds_left", 0) - dt)
+                queue[0]["seconds_left"] = curr_left
+                self.forge_state["queue_total_seconds"] = max(0, int(sum(q.get("seconds_left", 0) for q in queue)))
+
+    def _handle_forge_click(self, pos):
+        craft_buttons = [b for b in getattr(self, "forge_action_buttons", []) if b[0] in ("craft", "collect", "info_btn")]
+        for action_type, target_id, btn_rect, enabled in craft_buttons:
+            if btn_rect.collidepoint(pos):
+                if action_type == "info_btn":
+                    self.forge_info_popup_item = target_id
+                    return
+                if not enabled:
+                    return
+                if action_type == "craft":
+                    self.order_forge_item(target_id)
+                elif action_type == "collect":
+                    self.collect_forge_order(target_id)
+                return
+
+        card_clicks = [b for b in getattr(self, "forge_action_buttons", []) if b[0] == "card"]
+        for action_type, target_id, btn_rect, enabled in card_clicks:
+            if btn_rect.collidepoint(pos):
+                self.forge_info_popup_item = target_id
+                return
+
+    def _handle_forge_popup_click(self, pos):
+        popup_rect = getattr(self, "forge_popup_rect", None)
+        if popup_rect is None or not popup_rect.collidepoint(pos):
+            self.forge_info_popup_item = None
+            return True
+        close_btn = getattr(self, "forge_popup_close_btn", None)
+        cancel_btn = getattr(self, "forge_popup_cancel_btn", None)
+        craft_btn = getattr(self, "forge_popup_craft_btn", None)
+        if (close_btn and close_btn.collidepoint(pos)) or (cancel_btn and cancel_btn.collidepoint(pos)):
+            self.forge_info_popup_item = None
+            return True
+        if craft_btn and craft_btn.collidepoint(pos):
+            item_id = self.forge_info_popup_item
+            self.forge_info_popup_item = None
+            self.order_forge_item(item_id)
+            return True
+        return True
+
+    def order_forge_item(self, item_id):
+        if not hasattr(self, "session") or self.session is None:
+            return
+        try:
+            if hasattr(self.session, "order_forge_item"):
+                self.session.order_forge_item(item_id)
+            elif hasattr(self.session, "client") and hasattr(self.session, "character") and self.session.character:
+                self.session.client.order_forge_item(self.session.character["id"], item_id)
+            if hasattr(self.session, "client") and hasattr(self.session, "character") and self.session.character:
+                try:
+                    self.session.character = self.session.client.load_character(self.session.character["id"])
+                except Exception:
+                    pass
+            self._refresh_forge_state()
+            self.forge_message = ("Заказ принят в кузницу! Кузнец приступил к работе.", (120, 240, 120), time.time() + 4.0)
+        except Exception as err:
+            err_msg = getattr(err, "message", str(err))
+            self.forge_message = (f"Ошибка: {err_msg}", (255, 100, 90), time.time() + 4.0)
+
+    def collect_forge_order(self, order_id):
+        if not hasattr(self, "session") or self.session is None:
+            return
+        try:
+            if hasattr(self.session, "collect_forge_order"):
+                self.session.collect_forge_order(order_id)
+            elif hasattr(self.session, "client") and hasattr(self.session, "character") and self.session.character:
+                self.session.client.collect_forge_order(self.session.character["id"], order_id)
+            self._refresh_forge_state()
+            self.forge_message = ("Предмет успешно забран со склада в ваш рюкзак!", (120, 240, 120), time.time() + 4.0)
+        except Exception as err:
+            err_msg = getattr(err, "message", str(err))
+            self.forge_message = (f"Ошибка: {err_msg}", (255, 100, 90), time.time() + 4.0)
+
     def _any_modal_open(self):
         """True, если открыто хотя бы одно модальное окно здания."""
         return (
-            self.castle_menu_open or self.barn_menu_open or self.warehouse_menu_open or self.forge_menu_open
+            self.castle_menu_open or self.barn_menu_open or self.warehouse_menu_open or self.stable_menu_open or self.forge_menu_open
             or self.workshop_menu_open or self.barracks_menu_open or self.engineering_menu_open
             or self.university_menu_open or self.academy_menu_open or self.mage_school_menu_open
         )
 
     def handle_event(self, event):
+        if self.profile_overlay.is_open:
+            if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                self.profile_overlay.close()
+                return
+            if self.profile_overlay.handle_event(event):
+                return
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                action, profile = self.profile_overlay.handle_click(event.pos)
+                if action == "stat_change":
+                    self._save_profile_card(profile)
+                elif action == "deck_selected":
+                    self.session.selected_deck = profile
+                return
+        if self.chat is not None and self.chat.handle_event(event):
+            return
+
         # 1. Если открыто модальное меню замка
         if self.castle_menu_open:
             if event.type == pygame.KEYDOWN:
@@ -563,40 +761,54 @@ class CityScene(CityBuildingsMixin, CityRenderMixin, CityModalsMixin, CityHudMix
                     return
             return
 
-        # 2. Если открыто модальное меню амбара
+        # 2. Если открыто окно амбара
         if self.barn_menu_open:
-            if event.type == pygame.KEYDOWN:
-                if event.key in (pygame.K_ESCAPE, pygame.K_RETURN, pygame.K_SPACE):
-                    self.barn_menu_open = False
-                    return
-            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                if self.barn_back_button.collidepoint(event.pos) or self.barn_close_button.collidepoint(event.pos):
-                    self.barn_menu_open = False
-                    return
+            self.barn_window.handle_event(event)
+            self.barn_menu_open = self.barn_window.is_open
             return
 
-        # 3. Если открыто модальное меню склада
+        # 3. Если открыто окно склада
         if self.warehouse_menu_open:
-            if event.type == pygame.KEYDOWN:
-                if event.key in (pygame.K_ESCAPE, pygame.K_RETURN, pygame.K_SPACE):
-                    self.warehouse_menu_open = False
-                    return
-            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                if self.warehouse_back_button.collidepoint(event.pos) or self.warehouse_close_button.collidepoint(event.pos):
-                    self.warehouse_menu_open = False
-                    return
+            self.warehouse_window.handle_event(event)
+            self.warehouse_menu_open = self.warehouse_window.is_open
+            return
+
+        if self.stable_menu_open:
+            self.stable_window.handle_event(event)
+            self.stable_menu_open = self.stable_window.is_open
             return
 
         # 4. Если открыто модальное меню кузницы
         if self.forge_menu_open:
             if event.type == pygame.KEYDOWN:
                 if event.key in (pygame.K_ESCAPE, pygame.K_RETURN, pygame.K_SPACE):
-                    self.forge_menu_open = False
+                    if getattr(self, "forge_info_popup_item", None) is not None:
+                        self.forge_info_popup_item = None
+                    else:
+                        self.forge_menu_open = False
                     return
-            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                if self.forge_back_button.collidepoint(event.pos) or self.forge_close_button.collidepoint(event.pos):
-                    self.forge_menu_open = False
-                    return
+            elif event.type == pygame.MOUSEWHEEL:
+                if getattr(self, "forge_info_popup_item", None) is None:
+                    self.forge_scroll = max(0, self.forge_scroll - event.y * 36)
+                return
+            elif event.type == pygame.MOUSEBUTTONDOWN:
+                if event.button == 1:
+                    if getattr(self, "forge_info_popup_item", None) is not None:
+                        self._handle_forge_popup_click(event.pos)
+                        return
+                    if self.forge_back_button.collidepoint(event.pos) or self.forge_close_button.collidepoint(event.pos):
+                        self.forge_menu_open = False
+                        return
+                    for tab, button in self.forge_tabs.items():
+                        if button.collidepoint(event.pos):
+                            self.forge_tab = tab
+                            self.forge_scroll = 0
+                            return
+                    self._handle_forge_click(event.pos)
+                elif event.button == 4 and getattr(self, "forge_info_popup_item", None) is None:
+                    self.forge_scroll = max(0, self.forge_scroll - 36)
+                elif event.button == 5 and getattr(self, "forge_info_popup_item", None) is None:
+                    self.forge_scroll = self.forge_scroll + 36
             return
 
         # 5. Если открыто модальное меню мастерской
@@ -703,11 +915,14 @@ class CityScene(CityBuildingsMixin, CityRenderMixin, CityModalsMixin, CityHudMix
                     if clicked_entity.get("id") == "main_castle":
                         self.castle_menu_open = True
                     elif clicked_entity.get("id") == "barn_building":
-                        self.barn_menu_open = True
+                        self._open_barn()
                     elif clicked_entity.get("id") == "warehouse_building":
-                        self.warehouse_menu_open = True
+                        self._open_warehouse()
+                    elif clicked_entity.get("id") == "stable_building":
+                        self.stable_window.open()
+                        self.stable_menu_open = self.stable_window.is_open
                     elif clicked_entity.get("id") == "forge_building":
-                        self.forge_menu_open = True
+                        self._open_forge()
                     elif clicked_entity.get("id") == "workshop_building":
                         self.workshop_menu_open = True
                     elif clicked_entity.get("id") == "barracks_building":
@@ -763,14 +978,28 @@ class CityScene(CityBuildingsMixin, CityRenderMixin, CityModalsMixin, CityHudMix
                     self.camera_follow_player = False
                     self._clamp_camera()
 
+    def _save_profile_card(self, profile):
+        try:
+            saved_profile = self.session.save_character_profile(profile)
+        except Exception as error:
+            self.action_notice = str(error)
+            self.action_notice_timer = 2.0
+            return
+        if saved_profile is not None:
+            self.profile_overlay.update_profile(saved_profile)
+
     def update(self, dt):
+        if self.chat is not None:
+            self.chat.update(dt)
         # 1. Движение персонажа
         if self.player_target is not None:
             tx, ty = self.player_target
             dx = tx - self.player_x
             dy = ty - self.player_y
             dist = math.hypot(dx, dy)
-            step = self.player_speed * dt
+            step = self.player_speed * character_movement_speed_multiplier(
+                getattr(self.session, "character", None)
+            ) * dt
 
             if dist <= step or dist < 2.0:
                 self.player_x = tx
@@ -845,7 +1074,7 @@ class CityScene(CityBuildingsMixin, CityRenderMixin, CityModalsMixin, CityHudMix
 
         # 4. Вход в амбар при наступлении на дверь (тайл 16/40)
         if pgx == 16 and pgy == 40 and not self.barn_menu_open:
-            self.barn_menu_open = True
+            self._open_barn()
             self.player_target = None
             self.player_state = "idle"
             self.player_x = 17 * self.tile_size + 16
@@ -854,7 +1083,7 @@ class CityScene(CityBuildingsMixin, CityRenderMixin, CityModalsMixin, CityHudMix
 
         # 5. Вход на склад при наступлении на дверь (тайл 16/23)
         if pgx == 16 and pgy == 23 and not self.warehouse_menu_open:
-            self.warehouse_menu_open = True
+            self._open_warehouse()
             self.player_target = None
             self.player_state = "idle"
             self.player_x = 17 * self.tile_size + 16
@@ -863,7 +1092,7 @@ class CityScene(CityBuildingsMixin, CityRenderMixin, CityModalsMixin, CityHudMix
 
         # 6. Вход в кузницу при наступлении на дверь (тайл 23/28)
         if pgx == 23 and pgy == 28 and not self.forge_menu_open:
-            self.forge_menu_open = True
+            self._open_forge()
             self.player_target = None
             self.player_state = "idle"
             self.player_x = 22 * self.tile_size + 16
@@ -1010,6 +1239,7 @@ class CityScene(CityBuildingsMixin, CityRenderMixin, CityModalsMixin, CityHudMix
         # 4. Эффекты клика и персонаж
         self._draw_click_effect(screen)
         self._draw_player_character(screen)
+        draw_afk_players(self, screen, "city")
 
         # 5. Всплывающие сообщения
         self._draw_floating_messages(screen)
@@ -1026,14 +1256,18 @@ class CityScene(CityBuildingsMixin, CityRenderMixin, CityModalsMixin, CityHudMix
 
         # 9. Модальное окно заглушки Городского Амбара
         if self.barn_menu_open:
-            self._draw_barn_modal(screen)
+            self.barn_window.draw(screen)
 
         # 10. Модальное окно заглушки Городского Склада
         if self.warehouse_menu_open:
-            self._draw_warehouse_modal(screen)
+            self.warehouse_window.draw(screen)
+
+        if self.stable_menu_open:
+            self.stable_window.draw(screen)
 
         # 11. Модальное окно заглушки Городской Кузницы
         if self.forge_menu_open:
+            self._update_forge_timer()
             self._draw_forge_modal(screen)
 
         # 12. Модальное окно заглушки Городской Мастерской
@@ -1059,6 +1293,10 @@ class CityScene(CityBuildingsMixin, CityRenderMixin, CityModalsMixin, CityHudMix
         # 17. Модальное окно заглушки Школы стихий
         if self.mage_school_menu_open:
             self._draw_mage_school_modal(screen)
+
+        if self.chat is not None:
+            self.chat.draw(screen)
+        self.profile_overlay.draw(screen, opponent=self.session.character, show_player_only=True)
 
     def close(self):
         """Очистка ресурсов при закрытии сцены."""

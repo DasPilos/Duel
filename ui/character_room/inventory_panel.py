@@ -5,6 +5,8 @@
 import pygame
 from typing import List, Dict, Optional
 
+from ui.catalog_icons import draw_item_icon
+
 
 class InventoryPanel:
     """Панель для управления инвентарём (рюкзак - носит на себе)"""
@@ -104,9 +106,7 @@ class InventoryPanel:
             color = (150, 200, 255) if is_selected else (70, 90, 120)
             pygame.draw.rect(screen, color, rect, border_radius=8, width=2)
 
-            # Иконка предмета
-            icon_text = self.small_font.render(item.get("icon", "📦"), True, (255, 255, 255))
-            screen.blit(icon_text, (rect.x + 10, rect.y + 10))
+            draw_item_icon(screen, item, (rect.x + 8, rect.y + 8), 32)
 
             # Название предмета
             name_text = self.small_font.render(item["name"][:20], True, (220, 220, 220))

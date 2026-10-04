@@ -11,16 +11,19 @@ import pygame
 from core import settings
 
 
-# Колонки слотов вокруг спрайта: (ключ, подпись)
-LEFT_SLOTS = (("head", "Голова"), ("neck", "Шея"), ("back", "Плащ"), ("body", "Доспех"), ("belt", "Пояс"), ("legs", "Ноги"))
-RIGHT_SLOTS = (("ears", "Серьги"), ("hands", "Руки"), ("ring", "Кольцо"), ("weapon", "Оружие"), ("shield", "Щит"), ("feet", "Обувь"))
-SLOT_LABELS = dict(LEFT_SLOTS + RIGHT_SLOTS)
+# (ключ, подпись, колонка, ряд) вокруг спрайта
+SLOT_LAYOUT = (
+    ("ears", "Серьги", 0, 0), ("head", "Голова", 2, 0), ("neck", "Шея", 4, 0),
+    ("back", "Плащ", 0, 1), ("body", "Доспех", 2, 1), ("ring", "Кольцо", 4, 1),
+    ("hands", "Руки", 0, 2), ("shield", "П рука", 1, 2), ("belt", "Пояс", 2, 2),
+    ("weapon", "Л рука", 3, 2), ("ring_2", "Кольцо", 4, 2),
+    ("legs", "Ноги", 2, 3), ("feet", "Обувь", 2, 4),
+)
+SLOT_LABELS = {slot: label for slot, label, _, _ in SLOT_LAYOUT}
 
 SLOT_WIDTH = 66
 SLOT_HEIGHT = 62
-SLOT_GAP = 6
-COLUMN_PADDING = 6
-COLUMN_MARGIN = 8
+SLOT_OPACITY = 65
 
 # Вертикальная зона куклы на карточке: между полосой MP/валютой и блоком характеристик
 AREA_TOP_OFFSET = 151
@@ -45,16 +48,25 @@ def area_center_y(frame):
 
 
 def slot_rects(frame):
-    """Ячейки экипировки двумя колонками по бокам от спрайта: {слот: Rect}"""
+    """Позиции экипировки вокруг спрайта: {слот: Rect}."""
     frame = pygame.Rect(frame)
-    column_height = len(LEFT_SLOTS) * (SLOT_HEIGHT + SLOT_GAP) - SLOT_GAP
-    top = int(area_center_y(frame) - column_height / 2)
-    left_x = frame.x + COLUMN_MARGIN + COLUMN_PADDING
-    right_x = frame.right - COLUMN_MARGIN - COLUMN_PADDING - SLOT_WIDTH
+    scale = frame.width / 440
+    reference_column_centers = (48, 143, 220, 308, 389)
+    column_x = tuple(
+        round(frame.centerx + (center - 220) * scale - SLOT_WIDTH / 2)
+        for center in reference_column_centers
+    )
+    middle_row_top = int(area_center_y(frame) - 8)
+    row_top = (
+        middle_row_top - 172,
+        middle_row_top - 86,
+        middle_row_top,
+        middle_row_top + 86,
+        middle_row_top + 172,
+    )
     rects = {}
-    for column_x, slots in ((left_x, LEFT_SLOTS), (right_x, RIGHT_SLOTS)):
-        for index, (slot, _) in enumerate(slots):
-            rects[slot] = pygame.Rect(column_x, top + index * (SLOT_HEIGHT + SLOT_GAP), SLOT_WIDTH, SLOT_HEIGHT)
+    for slot, _, column, row in SLOT_LAYOUT:
+        rects[slot] = pygame.Rect(column_x[column], row_top[row], SLOT_WIDTH, SLOT_HEIGHT)
     return rects
 
 
@@ -79,16 +91,13 @@ def draw_paperdoll(screen, frame, sprite, icons, font, equipment, highlight=None
 def draw_slots(screen, frame, icons, font, equipment, highlight=None, dragged=None):
     rects = slot_rects(frame)
     equipment = equipment if isinstance(equipment, dict) else {}
-    for slots in (LEFT_SLOTS, RIGHT_SLOTS):
-        column = rects[slots[0][0]].unionall([rects[slot] for slot, _ in slots])
-        column = column.inflate(COLUMN_PADDING * 2, COLUMN_PADDING * 2)
-        backdrop = pygame.Surface(column.size, pygame.SRCALPHA)
-        backdrop.fill((20, 20, 26, 170))
-        screen.blit(backdrop, column.topleft)
     mouse = pygame.mouse.get_pos()
     for slot, rect in rects.items():
         item = equipment.get(slot)
-        pygame.draw.rect(screen, SLOT_HOVER if rect.collidepoint(mouse) else SLOT_BG, rect, border_radius=6)
+        color = SLOT_HOVER if rect.collidepoint(mouse) else SLOT_BG
+        background = pygame.Surface(rect.size, pygame.SRCALPHA)
+        background.fill((*color, round(255 * SLOT_OPACITY / 100)))
+        screen.blit(background, rect.topleft)
         border = RARITY_COLORS.get(item.get("rarity"), SLOT_BORDER) if item else SLOT_BORDER
         if slot == highlight:
             border = SLOT_HIGHLIGHT

@@ -180,6 +180,24 @@ class OnlineSession:
             "stat_points": fighter.stat_points,
         }
 
+    def report_battle_result(self, fighter, outcome, opponent_level, opponent=None):
+        """Опыт и деньги за бой начисляет сервер; боец синхронизируется с его ответом."""
+        opponent_id = (opponent or {}).get("character_id", (opponent or {}).get("id"))
+        if opponent_id is not None and not str(opponent_id).lstrip("-").isdigit():
+            opponent_id = None
+        result = self.client.report_battle_result(
+            self.character["id"], outcome, opponent_level, int(fighter.hp), int(fighter.mp),
+            opponent_id=opponent_id,
+            opponent_hp=(opponent or {}).get("hp"),
+            opponent_mp=(opponent or {}).get("mp"),
+        )
+        self.character = result["character"]
+        for field in ("level", "xp", "stat_points", "hp", "mp"):
+            setattr(fighter, field, self.character[field])
+        fighter.stats = dict(self.character["stats"])
+        fighter.recalculate_parameters()
+        return result
+
     def save_fighter(self, fighter):
         if self.character is None:
             return None
@@ -201,12 +219,14 @@ class OnlineSession:
         self.character = self.client.save_character(payload)
         return self.character
 
-    def disconnect(self, fighter=None):
+    def disconnect(self, fighter=None, character=None):
         if self.client.token is None:
             return
         if fighter is not None:
             self.save_fighter(fighter)
-        self.client.disconnect()
+        if character is not None and self.character is not None:
+            self.character.update(character)
+        self.client.disconnect(self.character)
         self.character = None
         self.user = None
     
@@ -271,6 +291,19 @@ class OnlineSession:
         
         return self.client.get(f"character/{self.character['id']}/inventory")
 
+    def refresh_carrying_state(self):
+        """Refresh carried weight and equipment from the authoritative inventory API."""
+        if self.character is None:
+            return None
+        try:
+            state = self.client.get_inventory(self.character["id"])
+        except ServerError:
+            return None
+        self.character["carried_weight_kg"] = float(state.get("carried_weight_kg", 0))
+        self.character["equipment"] = dict(state.get("equipment", {}))
+        self.character["equipment_bonuses"] = dict(state.get("bonuses", {}))
+        return self.character["carried_weight_kg"]
+
     def get_card_collection(self):
         if self.character is None:
             return []
@@ -308,3 +341,18 @@ class OnlineSession:
         if result:
             self.character = result
         return result
+
+    def get_forge_state(self):
+        if self.character is None:
+            return {"queue": [], "queue_count": 0, "queue_limit": 5, "queue_total_seconds": 0, "warehouse": []}
+        return self.client.get_forge_state(self.character["id"])
+
+    def order_forge_item(self, item_id):
+        if self.character is None:
+            return None
+        return self.client.order_forge_item(self.character["id"], item_id)
+
+    def collect_forge_order(self, order_id):
+        if self.character is None:
+            return None
+        return self.client.collect_forge_order(self.character["id"], order_id)

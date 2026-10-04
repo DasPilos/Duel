@@ -9,7 +9,7 @@ from combat.card_battle import CardBattle
 from combat.battle_archive import record_battle
 from combat.character_stats import BASE_STAT_VALUE, minimum_endurance, total_stat_points
 from combat.fighter import Fighter
-from combat.card_database import load_cards
+from combat.card_database import cards_for_type, is_mage_profession
 
 # Вне таверны (задний двор) боты лечатся 10 минут до полного хп, в таверне — вдвое быстрее.
 BOT_FULL_REGEN_SECONDS = 600
@@ -480,28 +480,27 @@ def _resolve_bot_battle(attacker_id, defender_id, now):
     attacker_fighter = _fighter_from_profile(attacker)
     defender_fighter = _fighter_from_profile(defender)
 
-    # Отфильтровать карты по классам обоих бойцов (должны быть одного класса)
-    attacker_profession = attacker.get("type", "warrior")
-    battle_cards = _get_cards_for_profession(attacker_profession)
-
-    battle = CardBattle(attacker_fighter, defender_fighter, cards=battle_cards)
+    # Каждый бот играет картами своего класса со своего стола
+    attacker_type = attacker.get("type", "warrior")
+    defender_type = defender.get("type", "warrior")
+    battle = CardBattle(
+        attacker_fighter,
+        defender_fighter,
+        cards=cards_for_type(attacker_type),
+        enemy_cards=cards_for_type(defender_type),
+    )
+    battle.mage_mode = is_mage_profession(attacker_type) or is_mage_profession(defender_type)
     while len(battle.hands["player"]) < battle.STARTING_PICK_LIMIT:
         side = battle.draft_first_side()
-        card = battle.table[random.randrange(len(battle.table))]
-        battle.choose_starting_card(side, card.key)
+        table = battle.table_for(side)
+        battle.choose_starting_card(side, table[random.randrange(len(table))].key)
         side = "enemy" if side == "player" else "player"
-        card = battle.table[random.randrange(len(battle.table))]
-        battle.choose_starting_card(side, card.key)
+        table = battle.table_for(side)
+        battle.choose_starting_card(side, table[random.randrange(len(table))].key)
     battle.finish_starting_deal()
-    # На каждый ход нужно давать бойцам новые карты и очки действий, иначе,
-    # когда у обеих сторон заканчиваются доступные по цене карты, ни одна из
-    # них не наносит урона и цикл проверки battle.is_over() зависает навсегда,
-    # блокируя фоновый поток планировщика ботов (бои на заднем дворе замирали).
+    # Верхний предел ходов: без него бой без урона может зависнуть и заблокировать поток ботов.
     while not battle.is_over() and battle.turn < MAX_BOT_BATTLE_TURNS:
         for side in ("player", "enemy"):
-            for card in list(battle.hands[side]):
-                if card.effect_type.startswith("instant_"):
-                    battle.activate_instant_card(side, card.key)
             for card in list(battle.hands[side]):
                 battle.select_card(side, card.key)
             battle.confirm_selection(side)
@@ -568,6 +567,7 @@ def _regenerate_bots(now):
 def _fighter_from_profile(profile):
     profession_type = profile.get("type", "warrior")
     fighter = Fighter(profile["name"], profile["level"], profession_type=profession_type)
+    fighter.set_profession(profession_type)
     fighter.xp = profile["xp"]
     fighter.stats = copy.deepcopy(profile["stats"])
     fighter.stat_points = profile["stat_points"]
@@ -581,24 +581,6 @@ def _fighter_from_profile(profile):
     fighter.mp = profile["mp"]
     fighter.max_mp = profile["max_mp"]
     return fighter
-
-
-def _get_cards_for_profession(profession_type):
-    """Вернуть карты для конкретной профессии."""
-    all_cards = load_cards()
-
-    # Определить какие карты может использовать класс
-    profession_to_keys = {
-        "warrior": ["warrior", "mage"],
-        "archer": ["archer", "mage"],
-        "assassin": ["assassin", "mage"],
-        "battle_mage": ["mage"],
-        "support_mage": ["mage"],
-        "harmonist": ["mage"],
-    }
-
-    allowed_prefixes = profession_to_keys.get(profession_type, ["mage"])
-    return [card for card in all_cards if any(card.key.startswith(prefix) for prefix in allowed_prefixes)]
 
 
 def _store_fighter(opponent_id, fighter, now):

@@ -1,6 +1,12 @@
 from types import SimpleNamespace
 
-from combat.character_stats import adjust_stats, calculate_max_hp, is_debug_unlimited, minimum_endurance
+from combat.character_stats import (
+    adjust_stats,
+    calculate_carry_capacity,
+    calculate_max_hp,
+    is_debug_unlimited,
+    minimum_endurance,
+)
 from combat.mechanics import get_critical_chance, get_dodge_chance, get_critical_damage_multiplier, weapon_damage_range
 
 
@@ -38,6 +44,7 @@ def normalize_character_profile(profile, *, title=None, kind="player"):
             "inventory": dict(getattr(data, "inventory", {})),
             "equipment": dict(getattr(data, "equipment", {})),
             "equipment_bonuses": dict(getattr(data, "equipment_stat_modifiers", {})),
+            "carried_weight_kg": getattr(data, "carried_weight_kg", 0),
             "kind": kind,
         }
     elif isinstance(data, dict):
@@ -60,6 +67,7 @@ def normalize_character_profile(profile, *, title=None, kind="player"):
             "inventory": dict(data.get("inventory", {})),
             "equipment": dict(data.get("equipment", {})),
             "equipment_bonuses": dict(data.get("equipment_bonuses", {})),
+            "carried_weight_kg": float(data.get("carried_weight_kg", 0)),
             "kind": kind,
         }
     else:
@@ -82,6 +90,7 @@ def normalize_character_profile(profile, *, title=None, kind="player"):
             "inventory": {},
             "equipment": {},
             "equipment_bonuses": {},
+            "carried_weight_kg": 0,
             "kind": kind,
         }
 
@@ -121,6 +130,7 @@ def profile_from_fighter(fighter):
         "stat_points": getattr(fighter, "stat_points", 0),
         "equipment": dict(getattr(fighter, "equipment", {})),
         "equipment_bonuses": dict(getattr(fighter, "equipment_stat_modifiers", {})),
+        "carried_weight_kg": float(getattr(fighter, "carried_weight_kg", 0)),
     }
 
 
@@ -167,7 +177,7 @@ STAT_ROWS = (
     ("wisdom", "Мудрость", "Маг Урон"),
     ("intellect", "Интеллект", None),
     ("harmony", "Гармония", None),
-    ("endurance", "Выносливость", None),
+    ("endurance", "Выносливость", "Грузоподъёмность"),
 )
 
 # Цвета показателей напротив характеристик
@@ -177,6 +187,7 @@ DERIVED_COLORS = {
     "Крит": (255, 90, 90),
     "Маг Урон": (180, 100, 240),
     "HP": (110, 235, 120),
+    "Грузоподъёмность": (220, 190, 120),
 }
 
 
@@ -197,7 +208,12 @@ def derived_values(profile):
     Уворот — от своей ловкости, крит — базовый шанс. Одинаково для всех классов."""
     stats = effective_stats(profile)
     weapon = weapon_damage_range(profile.get("equipment"))
-    own = SimpleNamespace(agility=int(stats.get("agility", 0)), intuition=int(stats.get("intuition", 0)))
+    equipment_bonuses = dict(profile.get("equipment_bonuses") or {})
+    own = SimpleNamespace(
+        agility=int(stats.get("agility", 0)),
+        intuition=int(stats.get("intuition", 0)),
+        equipment_stat_modifiers=equipment_bonuses,
+    )
 
     # Рассчитать крит урон
     crit_chance = int(get_critical_chance(None, None))
@@ -209,5 +225,8 @@ def derived_values(profile):
         "Уворот": f"{int(get_dodge_chance(None, own))}%",
         "Крит": f"{crit_chance}% × {crit_damage}%",
         "Маг Урон": _damage_text(stats.get("wisdom", 0), weapon),
-        "HP": profile["max_hp"],
+        "HP": profile["max_hp"] + int(equipment_bonuses.get("hp", 0)),
+        "Грузоподъёмность": calculate_carry_capacity(
+            stats.get("strength", 0), stats.get("endurance", 0)
+        ),
     }

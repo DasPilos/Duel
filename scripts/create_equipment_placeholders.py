@@ -113,6 +113,36 @@ def jewelry():
     save(rings, "rings_gold_rings")
 
 
+def materials():
+    colors = {
+        "material_wood": (126, 78, 42, 255),
+        "material_board": (177, 123, 66, 255),
+        "material_berry": (150, 45, 70, 255),
+        "material_wheat": (218, 178, 62, 255),
+        "material_flax": (130, 170, 105, 255),
+        "material_cotton": (235, 235, 220, 255),
+        "material_leather": (121, 72, 42, 255),
+        "material_meat": (175, 64, 55, 255),
+        "material_coal": (45, 48, 54, 255),
+        "material_stone": (125, 130, 138, 255),
+        "material_iron_ore": (126, 92, 78, 255),
+        "material_mithril_ore": (95, 150, 178, 255),
+        "material_obsidian_ore": (52, 42, 70, 255),
+        "material_iron": (145, 153, 166, 255),
+        "material_steel": (188, 202, 218, 255),
+        "material_tough_leather": (96, 56, 34, 255),
+        "material_thick_leather": (75, 43, 28, 255),
+        "material_cloth": (116, 135, 166, 255),
+        "material_stone_block": (155, 158, 164, 255),
+    }
+    for name, color in colors.items():
+        image = layer()
+        draw = ImageDraw.Draw(image)
+        draw.rounded_rectangle((290, 290, 734, 734), radius=42, fill=color, outline=(225, 190, 92, 255), width=12)
+        draw.line((350, 400, 674, 400), fill=(255, 255, 255, 90), width=10)
+        save(image, name)
+
+
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 helmet()
 cloak()
@@ -124,4 +154,5 @@ boots()
 sword()
 shield()
 jewelry()
+materials()
 print(f"created {len(list(OUTPUT_DIR.glob('*.png')))} placeholder layers in {OUTPUT_DIR}")

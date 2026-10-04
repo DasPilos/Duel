@@ -1,5 +1,6 @@
 import pygame
 
+from combat.card_database import is_mage_profession
 from core import settings
 from ui.character_card import CharacterCard
 from ui.mage_card import MageCard
@@ -28,7 +29,7 @@ class CharacterComparison:
         if not isinstance(profile, dict):
             return False
         # Все классы имеют одинаковые 7 статов — класс определяется только по type
-        return profile.get("type") == "mage"
+        return is_mage_profession(profile.get("type"))
 
     @classmethod
     def _card_for_profile(cls, profile, current_card):

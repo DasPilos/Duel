@@ -5,6 +5,8 @@
 import pygame
 from typing import Dict, Optional
 
+from ui.catalog_icons import draw_item_icon
+
 
 class EquipmentPanel:
     """Панель для управления экипировкой персонажа"""
@@ -87,8 +89,7 @@ class EquipmentPanel:
                 equipment = self.equipment[slot_key]
 
                 # Иконка и название надетого предмета
-                item_icon = self.small_font.render(equipment["icon"], True, (255, 255, 255))
-                screen.blit(item_icon, (self.start_x + 300, y + 10))
+                draw_item_icon(screen, equipment, (self.start_x + 292, y + 4), 32)
 
                 item_name = self.small_font.render(
                     f"{equipment['name']} ({equipment['rarity']})",
@@ -98,7 +99,8 @@ class EquipmentPanel:
                 screen.blit(item_name, (self.start_x + 330, y + 10))
 
                 # Бонусы
-                bonuses_list = [f"+{v} {k}" for k, v in equipment["bonuses"].items()]
+                stat_labels = {"strength": "Сила", "agility": "Ловкость", "intuition": "Интуиция", "endurance": "Выносливость", "wisdom": "Мудрость", "intellect": "Интеллект", "harmony": "Гармония", "hp": "HP", "mp": "MP", "dodge": "% Уворот", "block": "% Блок"}
+                bonuses_list = [f"+{v} {stat_labels.get(k, k)}" for k, v in equipment["bonuses"].items()]
                 bonuses_text = ", ".join(bonuses_list)
                 bonuses_surface = self.small_font.render(bonuses_text, True, (100, 200, 100))
                 screen.blit(bonuses_surface, (self.start_x + 330, y + 35))
@@ -123,7 +125,8 @@ class EquipmentPanel:
         screen.blit(total_text, (self.start_x, y))
 
         if total_bonuses:
-            bonuses_text = ", ".join([f"+{v} {k.replace('_', ' ')}" for k, v in total_bonuses.items()])
+            stat_labels = {"strength": "Сила", "agility": "Ловкость", "intuition": "Интуиция", "endurance": "Выносливость", "wisdom": "Мудрость", "intellect": "Интеллект", "harmony": "Гармония", "hp": "HP", "mp": "MP", "dodge": "% Уворот", "block": "% Блок"}
+            bonuses_text = ", ".join([f"+{v} {stat_labels.get(k, k.replace('_', ' '))}" for k, v in total_bonuses.items()])
             bonuses_surface = pygame.font.SysFont("arial", 20).render(bonuses_text, True, (100, 200, 100))
             screen.blit(bonuses_surface, (self.start_x, y + 30))
 

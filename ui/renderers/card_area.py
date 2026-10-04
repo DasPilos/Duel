@@ -3,24 +3,30 @@ from pathlib import Path
 
 import pygame
 
+from combat.physical_effects import describe_physical_card
 from core import settings
 from ui.hud import draw_button, draw_text
+
+RESOURCE_COST_LABELS = {
+    "mana": "маны",
+    "rage": "ярости",
+    "accuracy": "меткости",
+    "concentration": "концентр.",
+}
+RESOURCE_COST_COLORS = {
+    "mana": (100, 190, 255),
+    "rage": (240, 120, 95),
+    "accuracy": (130, 200, 250),
+    "concentration": (200, 140, 230),
+}
 
 
 class CardAreaRenderer:
     CARD_WIDTH = 150
     CARD_HEIGHT = 200
     GAP = 20
-    POINT_ICON_SIZE = 60
-    POINT_ICON_GAP = 20
-    CARD_COST_FONT_SIZE = 21
-    CARD_COST_COLOR = (0, 0, 0)
-    CARD_COST_GLOW_COLOR = (255, 255, 255)
-    CARD_COST_GLOW_RADIUS = 1
-    STRENGTH_COST_TOP_OFFSET = 9
-    ENDURANCE_COST_BOTTOM_OFFSET = 10
-    AGILITY_COST_LEFT_OFFSET = 12
-    INTUITION_COST_RIGHT_OFFSET = 12
+    DRAFT_COLUMNS = 5
+    CARD_LABEL_FONT_SIZE = 21
     TOOLTIP_TITLE_FONT_SIZE = settings.SMALL_FONT_SIZE + 4
 
     def __init__(self, scene, layout):
@@ -28,12 +34,13 @@ class CardAreaRenderer:
         self.layout = layout
         self.details_card = None
         self.details_close_rect = pygame.Rect(0, 0, 0, 0)
+        self._draft_slots = []
         if getattr(scene, "mage_battle", False):
             self.CARD_WIDTH = 110
             self.CARD_HEIGHT = 145
-        self.card_cost_font = pygame.font.SysFont(
+        self.card_label_font = pygame.font.SysFont(
             settings.FONT_NAME,
-            self.CARD_COST_FONT_SIZE,
+            self.CARD_LABEL_FONT_SIZE,
             bold=True,
         )
         self.tooltip_title_font = pygame.font.SysFont(
@@ -59,45 +66,6 @@ class CardAreaRenderer:
             self.card_back_image = pygame.transform.smoothscale(source, (self.CARD_WIDTH, self.CARD_HEIGHT))
         except (pygame.error, OSError):
             self.card_back_image = None
-        self.strength_number_images = {}
-        strength_number_path = Path(__file__).resolve().parent.parent.parent / "assets" / "cards" / "numbers" / "strength"
-        try:
-            for value in range(6):
-                image_path = strength_number_path / f"S{value}.png"
-                if image_path.exists():
-                    source = pygame.image.load(str(image_path)).convert_alpha()
-                    self.strength_number_images[value] = pygame.transform.smoothscale(
-                        source,
-                        (self.POINT_ICON_SIZE, self.POINT_ICON_SIZE),
-                    )
-        except (pygame.error, OSError):
-            self.strength_number_images = {}
-        self.endurance_number_images = {}
-        endurance_number_path = Path(__file__).resolve().parent.parent.parent / "assets" / "cards" / "numbers" / "endurance"
-        try:
-            for value in range(6):
-                image_path = endurance_number_path / f"V{value}.png"
-                if image_path.exists():
-                    source = pygame.image.load(str(image_path)).convert_alpha()
-                    self.endurance_number_images[value] = pygame.transform.smoothscale(
-                        source,
-                        (self.POINT_ICON_SIZE, self.POINT_ICON_SIZE),
-                    )
-        except (pygame.error, OSError):
-            self.endurance_number_images = {}
-        self.intuition_number_images = {}
-        intuition_number_path = Path(__file__).resolve().parent.parent.parent / "assets" / "cards" / "numbers" / "intuition"
-        try:
-            for value in range(6):
-                image_path = intuition_number_path / f"I{value}.png"
-                if image_path.exists():
-                    source = pygame.image.load(str(image_path)).convert_alpha()
-                    self.intuition_number_images[value] = pygame.transform.smoothscale(
-                        source,
-                        (self.POINT_ICON_SIZE, self.POINT_ICON_SIZE),
-                    )
-        except (pygame.error, OSError):
-            self.intuition_number_images = {}
         self.face_images = {}
         self.card_face_images = {}
         face_names = {
@@ -113,53 +81,40 @@ class CardAreaRenderer:
                 self.face_images[group_name] = pygame.transform.smoothscale(source, (self.CARD_WIDTH, self.CARD_HEIGHT))
             except (pygame.error, OSError):
                 pass
-        self.agility_number_images = {}
-        agility_number_path = Path(__file__).resolve().parent.parent.parent / "assets" / "cards" / "numbers" / "agility"
-        try:
-            for value in range(6):
-                image_path = agility_number_path / f"L{value}.png"
-                if image_path.exists():
-                    source = pygame.image.load(str(image_path)).convert_alpha()
-                    self.agility_number_images[value] = pygame.transform.smoothscale(
-                        source,
-                        (self.POINT_ICON_SIZE, self.POINT_ICON_SIZE),
-                    )
-        except (pygame.error, OSError):
-            self.agility_number_images = {}
+
+    def draft_slots(self):
+        """Карты драфта по неподвижным местам: взятая карта оставляет пустое место (None)."""
+        table = self.scene.battle.table
+        if any(card not in self._draft_slots for card in table):
+            # Новая раздача — раскладываем заново
+            self._draft_slots = list(table)
+        else:
+            self._draft_slots = [card if card in table else None for card in self._draft_slots]
+        return self._draft_slots
+
+    def draft_slot_rect(self, index):
+        """Фиксированное место карты драфта: два ряда по 5 карт полного размера."""
+        table = self.layout.card_table
+        columns = self.DRAFT_COLUMNS
+        total_width = columns * self.CARD_WIDTH + (columns - 1) * self.GAP
+        total_height = 2 * self.CARD_HEIGHT + self.GAP
+        left = table.centerx - total_width // 2
+        top = table.centery - total_height // 2
+        row, column = divmod(index, columns)
+        return pygame.Rect(
+            left + column * (self.CARD_WIDTH + self.GAP),
+            top + row * (self.CARD_HEIGHT + self.GAP),
+            self.CARD_WIDTH,
+            self.CARD_HEIGHT,
+        )
 
     def card_rect(self, area, count, index):
-        """Рисует карту в нужной позиции.
-        - Для зон с 5 карт (драфт): фиксированные 5 позиций
-        - Для руки и других: реальное центрирование по count
-        """
-        # Проверяем если это зона с фиксированными 5 карт (подсказка: если count == 5 и area внутри card_table)
-        # Это будет зона драфта
-        is_draft_area = (count == 5 and 
-                         area.x >= self.layout.card_table.x and 
-                         area.right <= self.layout.card_table.right)
-        
-        if is_draft_area:
-            # Драфт: всегда 5 позиций для фиксированного расположения
-            width = min(self.CARD_WIDTH, max(50, (area.width - self.GAP * 4) // 5))
-            total_width = width * 5 + self.GAP * 4
-            start_x = area.centerx - total_width // 2
-            height = min(self.CARD_HEIGHT, area.height)
-            return pygame.Rect(start_x + index * (width + self.GAP), area.y, width, height)
-        if area == self.layout.card_table and count > 5:
-            columns = 8
-            width = min(self.CARD_WIDTH, max(50, (area.width - self.GAP * (columns - 1)) // columns))
-            row = index // columns
-            column = index % columns
-            height = min(self.CARD_HEIGHT, max(50, (area.height - self.GAP * 2) // 3))
-            start_x = area.centerx - (width * columns + self.GAP * (columns - 1)) // 2
-            return pygame.Rect(start_x + column * (width + self.GAP), area.y + row * (height + self.GAP), width, height)
-        else:
-            # Рука, стол и другие: центрируем по реальному количеству карт
-            width = min(self.CARD_WIDTH, max(50, (area.width - self.GAP * max(0, count - 1)) // max(1, count)))
-            total_width = width * count + self.GAP * max(0, count - 1)
-            start_x = area.centerx - total_width // 2
-            height = min(self.CARD_HEIGHT, area.height)
-            return pygame.Rect(start_x + index * (width + self.GAP), area.y, width, height)
+        """Позиция карты в руке/зоне: карты центрируются по их количеству."""
+        width = min(self.CARD_WIDTH, max(50, (area.width - self.GAP * max(0, count - 1)) // max(1, count)))
+        total_width = width * count + self.GAP * max(0, count - 1)
+        start_x = area.centerx - total_width // 2
+        height = min(self.CARD_HEIGHT, area.height)
+        return pygame.Rect(start_x + index * (width + self.GAP), area.y, width, height)
 
     def draw(self, screen):
         battle = self.scene.battle
@@ -200,19 +155,21 @@ class CardAreaRenderer:
             if self.scene.phase == "draft_cleanup":
                 elapsed = time.monotonic() - self.scene.draft_cleanup_started
                 progress = min(1.0, max(0.0, elapsed / settings.DRAFT_CLEANUP_SECONDS))
-                for index, card in enumerate(battle.table):
-                    source_area = self.layout.card_table
-                    source = self.card_rect(source_area, len(battle.table), index)
+                for index, card in enumerate(self.draft_slots()):
+                    if card is None:
+                        continue
+                    source = self.draft_slot_rect(index)
                     center_x = int(source.centerx + (self.layout.deck_rect.centerx - source.centerx) * progress)
                     center_y = int(source.centery + (self.layout.deck_rect.centery - source.centery) * progress)
                     moving_area = pygame.Rect(center_x - self.CARD_WIDTH // 2, center_y - self.CARD_HEIGHT // 2, self.CARD_WIDTH, self.CARD_HEIGHT)
                     self._draw_cards(screen, [card], moving_area, [])
                 visible_table = []
-            row_area = self.layout.card_table
             if self.scene.phase == "draft_reveal":
-                self._draw_reveal_cards(screen, battle.table, elapsed, row_area)
-            else:
-                self._draw_cards(screen, visible_table, row_area, [])
+                self._draw_reveal_cards(screen, battle.table, elapsed)
+            elif visible_table:
+                for index, card in enumerate(self.draft_slots()):
+                    if card is not None:
+                        self._draw_card_in_rect(screen, card, self.draft_slot_rect(index))
             enemy_hand = list(battle.hands["enemy"])
             player_hand = list(battle.hands["player"])
             if self.scene.phase == "enemy_transfer" and self.scene.enemy_card_transfer is not None:
@@ -300,9 +257,6 @@ class CardAreaRenderer:
                 center_x = int(self.layout.deck_rect.centerx + (target.centerx - self.layout.deck_rect.centerx) * progress)
                 center_y = int(self.layout.deck_rect.centery + (target.centery - self.layout.deck_rect.centery) * progress)
                 self._draw_moving_card(screen, transfer["card"], center_x, center_y, progress)
-        if not getattr(self.scene, "mage_battle", False):
-            self._draw_points(screen, battle.action_points["player"], self.layout.player_points, "")
-            self._draw_points(screen, battle.action_points["enemy"], self.layout.enemy_points, "")
         self._draw_card_hover_tooltip(screen)
         self._draw_card_details(screen)
 
@@ -314,8 +268,12 @@ class CardAreaRenderer:
         mouse_pos = pygame.mouse.get_pos()
         candidates = []
         if self.scene.phase in ("intro_table", "intro_deck", "draft_reveal", "draft", "draft_transfer", "enemy_transfer", "draft_bonus_transfer", "draft_cleanup"):
-            if self.scene.phase not in ("intro_table", "intro_deck", "draft_reveal"):
-                candidates.append((self.layout.card_table, list(battle.table)))
+            if self.scene.phase not in ("intro_table", "intro_deck", "draft_reveal", "draft_cleanup"):
+                for index, card in enumerate(self.draft_slots()):
+                    rect = self.draft_slot_rect(index)
+                    if card is not None and rect.collidepoint(mouse_pos):
+                        self._draw_card_tooltip(screen, card, rect)
+                        return
         visible_hand = [card for card in battle.hands["player"] if card not in battle.selected["player"]]
         candidates.append((self.layout.player_hand, visible_hand))
         candidates.append((self.layout.player_selected, list(battle.selected["player"])))
@@ -367,18 +325,18 @@ class CardAreaRenderer:
         pygame.draw.rect(screen, (125, 60, 70), self.details_close_rect, border_radius=4)
         title = self.tooltip_title_font.render(card.name, True, (245, 225, 150))
         screen.blit(title, (panel.x + 18, panel.y + 18))
-        mana = font.render(f"Мана: {card.effect_data.get('mana_cost', 0)}", True, (100, 190, 255))
+        mana = font.render(f"Стоимость: {card.resource_cost} {RESOURCE_COST_LABELS.get(card.resource_type, '')}", True, (100, 190, 255))
         screen.blit(mana, (panel.x + 18, panel.y + 55))
         for index, line in enumerate(lines):
             screen.blit(font.render(line, True, (230, 230, 235)), (panel.x + 18, panel.y + 88 + index * 24))
 
-    def _draw_reveal_cards(self, screen, cards, elapsed, first_row):
+    def _draw_reveal_cards(self, screen, cards, elapsed):
         for index, card in enumerate(cards[:10]):
             start = settings.DRAFT_REVEAL_START_DELAY_SECONDS + index * settings.DRAFT_CARD_DELAY_SECONDS
             if elapsed < start:
                 continue
             progress = min(1.0, (elapsed - start) / settings.CARD_MOVE_SECONDS)
-            target = self.card_rect(first_row, len(cards), index)
+            target = self.draft_slot_rect(index)
             center_x = int(self.layout.deck_rect.centerx + (target.centerx - self.layout.deck_rect.centerx) * progress)
             center_y = int(self.layout.deck_rect.centery + (target.centery - self.layout.deck_rect.centery) * progress)
             self._draw_moving_card(screen, card, center_x, center_y, progress)
@@ -436,7 +394,7 @@ class CardAreaRenderer:
         pygame.draw.rect(screen, (190, 170, 110), rect, 2, border_radius=6)
         if rect.width < 20:
             return
-        self._draw_card_costs(screen, card, rect)
+        self._draw_card_label(screen, card, rect)
 
     def _card_face_image(self, card):
         image_path = getattr(card, "image_path", "")
@@ -471,7 +429,7 @@ class CardAreaRenderer:
         self._draw_pile_count(screen, rect, "СБРОС", count)
 
     def _draw_pile_count(self, screen, rect, title, count):
-        title_surface = self.card_cost_font.render(title, True, (245, 225, 160))
+        title_surface = self.card_label_font.render(title, True, (245, 225, 160))
         title_rect = title_surface.get_rect(midbottom=(rect.centerx, rect.top - 8))
         screen.blit(title_surface, title_rect)
 
@@ -484,72 +442,67 @@ class CardAreaRenderer:
         pygame.draw.rect(screen, (225, 200, 120), badge, 2, border_radius=8)
         screen.blit(count_surface, count_rect)
 
-    def _draw_points(self, screen, points, rect, title):
-        if title:
-            draw_text(screen, self.scene.small_font, title, rect.x, rect.y, (210, 210, 210))
-        labels = (
-            ("strength", settings.STRENGTH_COLOR, self.strength_number_images),
-            ("endurance", settings.ENDURANCE_COLOR, self.endurance_number_images),
-            ("agility", settings.AGILITY_COLOR, self.agility_number_images),
-            ("intuition", settings.INTUITION_COLOR, self.intuition_number_images),
-        )
-        total_width = (
-            len(labels) * self.POINT_ICON_SIZE
-            + (len(labels) - 1) * self.POINT_ICON_GAP
-        )
-        start_x = rect.centerx - total_width // 2
-        for index, (key, color, images) in enumerate(labels):
-            value = points[key]
-            image = images.get(value)
-            center = (
-                start_x
-                + index * (self.POINT_ICON_SIZE + self.POINT_ICON_GAP)
-                + self.POINT_ICON_SIZE // 2,
-                rect.centery,
-            )
-            if image is not None:
-                screen.blit(image, image.get_rect(center=center))
-            else:
-                text = self.point_font.render(str(value), True, color)
-                screen.blit(text, text.get_rect(center=center))
-
     def _draw_cards(self, screen, cards, area, selected, highlight_available=False):
         selected_keys = {card.key for card in selected}
         for index, card in enumerate(cards):
             rect = self.card_rect(area, len(cards), index)
-            is_selected = card.key in selected_keys
-            if card.effect_type.startswith("instant_"):
-                is_available = (
-                    highlight_available
-                    and self.scene.battle.can_activate_instant("player", card)
-                )
+            enemy_hidden = area == self.layout.enemy_hand or area == self.layout.enemy_selected
+            self._draw_card_in_rect(
+                screen,
+                card,
+                rect,
+                is_selected=card.key in selected_keys,
+                highlight_available=highlight_available,
+                enemy_hidden=enemy_hidden,
+            )
+
+    def _draw_card_in_rect(self, screen, card, rect, is_selected=False, highlight_available=False, enemy_hidden=False):
+        is_available = highlight_available and self.scene.battle.can_select("player", card)
+        if getattr(self.scene, "mage_battle", False):
+            if enemy_hidden:
+                self._draw_card_back(screen, rect)
             else:
-                is_available = (
-                    highlight_available
-                    and self.scene.battle.can_select("player", card)
-                )
-            if is_selected:
-                color = (55, 135, 80)
-            elif is_available:
-                color = (45, 105, 68)
+                self._draw_mage_card(screen, card, rect, is_selected, is_available)
+            return
+        if is_selected:
+            color = (55, 135, 80)
+        elif is_available:
+            color = (45, 105, 68)
+        else:
+            color = (48, 53, 70)
+        face_image = self._card_face_image(card)
+        if face_image is not None:
+            screen.blit(pygame.transform.smoothscale(face_image, rect.size), rect)
+        else:
+            pygame.draw.rect(screen, color, rect, border_radius=6)
+        pygame.draw.rect(screen, (190, 170, 110), rect, 2, border_radius=6)
+        self._draw_card_label(screen, card, rect)
+        if highlight_available:
+            self._draw_card_availability(screen, rect, is_available)
+
+    def _draw_card_label(self, screen, card, rect):
+        """Название сверху и стоимость в ресурсе класса снизу."""
+        font = self.scene.small_font
+        max_width = max(12, rect.width - 12)
+        words = card.name.split()
+        lines = []
+        current = ""
+        for word in words:
+            candidate = f"{current} {word}".strip()
+            if current and font.size(candidate)[0] > max_width:
+                lines.append(current)
+                current = word
             else:
-                color = (48, 53, 70)
-            if getattr(self.scene, "mage_battle", False):
-                enemy_hidden = area == self.layout.enemy_hand or area == self.layout.enemy_selected
-                if enemy_hidden:
-                    self._draw_card_back(screen, rect)
-                else:
-                    self._draw_mage_card(screen, card, rect, is_selected, is_available)
-                continue
-            face_image = self._card_face_image(card)
-            if face_image is not None:
-                screen.blit(pygame.transform.smoothscale(face_image, rect.size), rect)
-            else:
-                pygame.draw.rect(screen, color, rect, border_radius=6)
-            pygame.draw.rect(screen, (190, 170, 110), rect, 2, border_radius=6)
-            self._draw_card_costs(screen, card, rect)
-            if highlight_available:
-                self._draw_card_availability(screen, rect, is_available)
+                current = candidate
+        if current:
+            lines.append(current)
+        for line_index, line in enumerate(lines[:3]):
+            surface = font.render(line, True, (245, 235, 210))
+            screen.blit(surface, surface.get_rect(midtop=(rect.centerx, rect.y + 10 + line_index * font.get_linesize())))
+        cost = RESOURCE_COST_LABELS.get(card.resource_type)
+        if cost:
+            surface = font.render(f"{card.resource_cost} {cost}", True, RESOURCE_COST_COLORS.get(card.resource_type, (220, 220, 220)))
+            screen.blit(surface, surface.get_rect(midbottom=(rect.centerx, rect.bottom - 8)))
 
     def _draw_mage_card(self, screen, card, rect, selected, available):
         color = (55, 105, 80) if selected else (43, 35, 62) if available else (35, 29, 50)
@@ -565,7 +518,7 @@ class CardAreaRenderer:
             title_text = title_text.rstrip() + "..."
         title = font.render(title_text, True, (245, 225, 255))
         screen.blit(title, title.get_rect(midtop=(rect.centerx, rect.y + 10)))
-        cost = font.render(f"{card.effect_data.get('mana_cost', 0)} маны", True, (100, 190, 255))
+        cost = font.render(f"{card.resource_cost} маны", True, (100, 190, 255))
         screen.blit(cost, cost.get_rect(midbottom=(rect.centerx, rect.bottom - 8)))
 
     def _draw_card_availability(self, screen, rect, is_available):
@@ -633,7 +586,7 @@ class CardAreaRenderer:
     def _card_description(card):
         data = card.effect_data
         if card.group_name.startswith("Магия:"):
-            mana = data.get("mana_cost", 0)
+            mana = card.resource_cost
             element = data.get("element", "магии")
             descriptions = {
                 "mage_damage_status": f"Наносит {data.get('damage', 0)} прямого урона + Мудрость и накладывает {data.get('stacks', 1)} ур. статуса {data.get('status', 'магии')} на {data.get('status_duration', card.effect_duration or 1)} ход.",
@@ -659,152 +612,4 @@ class CardAreaRenderer:
                     parts.append("Снимает статусы и зависящие от них бафы.")
                 description = " ".join(parts) or "Магический эффект."
             return f"{description} Мана: {mana}."
-        damage_text = f"Наносит {data.get('dice', '')} урона."
-        duration = max(1, int(card.effect_duration))
-        remaining_heal_turns = max(0, card.effect_duration - 1)
-        if remaining_heal_turns == 1:
-            heal_duration_text = (
-                f"Восстанавливает {data.get('dice', '')} HP при розыгрыше "
-                "и в начале следующего хода."
-            )
-        else:
-            heal_duration_text = (
-                f"Восстанавливает {data.get('dice', '')} HP при розыгрыше "
-                f"и в начале следующих {remaining_heal_turns} ходов."
-            )
-        if duration % 10 == 1 and duration % 100 != 11:
-            exchange_word = "размен"
-        elif duration % 10 in (2, 3, 4) and duration % 100 not in (12, 13, 14):
-            exchange_word = "размена"
-        else:
-            exchange_word = "разменов"
-        duration_text = f"на {duration} {exchange_word}"
-        stat_names = {
-            "strength": "Силу",
-            "endurance": "Выносливость",
-            "agility": "Ловкость",
-            "intuition": "Интуицию",
-        }
-        instant_stat_names = {
-            "strength": "Силы",
-            "endurance": "Выносливости",
-            "agility": "Ловкости",
-            "intuition": "Интуиции",
-        }
-        descriptions = {
-            "damage": damage_text,
-            "damage_stat_debuff": (
-                f"{damage_text} При попадании снижает "
-                f"{stat_names.get(data.get('stat'), 'характеристику')} противника "
-                f"на {data.get('amount', 0)} {duration_text}."
-            ),
-            "damage_critical_debuff": (
-                f"{damage_text} При попадании снижает шанс критического удара "
-                f"противника на {data.get('amount', 0)}% {duration_text}."
-            ),
-            "damage_dodge_debuff": (
-                f"{damage_text} При попадании снижает шанс уворота противника "
-                f"на {data.get('amount', 0)}% {duration_text}."
-            ),
-            "damage_dodge_critical_debuff": (
-                f"{damage_text} При попадании снижает шанс уворота противника "
-                f"на {data.get('dodge_amount', 0)}% и шанс критического удара "
-                f"противника на {data.get('critical_amount', 0)}% {duration_text}."
-            ),
-            "multi_damage": f"Наносит {data.get('hits', 2)} отдельных удара по броску {data.get('dice', '')}.",
-            "damage_recoil": f"Наносит урон по броску {data.get('dice', '')}. При некритическом ударе вы получаете {data.get('recoil', 0)} урона.",
-            "damage_reduce": f"{damage_text} Следующая атака по вам наносит на {data.get('reduce', 0)} урона меньше.",
-            "heal": f"Восстанавливает здоровье по броску {data.get('dice', '')}.",
-            "dodge": f"Увеличивает уклонение на {data.get('bonus', 0)}%.",
-            "anti_dodge": f"Снижает уклонение противника на {data.get('bonus', 0)}%.",
-            "damage_dodge": f"Наносит {data.get('dice', '')} урона и увеличивает уклонение на {data.get('bonus', 0)}%.",
-            "critical": f"Увеличивает шанс критического удара на {data.get('bonus', 0)}%.",
-            "damage_resistance": (
-                "Уменьшает получаемый урон на "
-                f"{int((1 - data.get('ratio', 1)) * 100)}% "
-                + (
-                    f"{duration_text}."
-                    if card.effect_duration > 1
-                    else "в текущем размене."
-                )
-            ),
-            "extra_action_points": "Повторно начисляет очки хода. Один раз за бой.",
-            "heal_duration": heal_duration_text,
-            "instant_action_points": (
-                "Двойной ЛКМ во время подготовки: мгновенно добавляет "
-                f"{data.get('amount', 0)} очка "
-                f"{instant_stat_names.get(data.get('stat'), 'характеристики')}. "
-                "Стоимость списывается сразу, карта уходит в сброс и занимает "
-                "одно из двух мест карт текущего размена."
-            ),
-            "instant_heal": (
-                "Двойной ЛКМ во время подготовки: мгновенно восстанавливает "
-                f"{data.get('dice', '')} HP. Стоимость списывается сразу, "
-                "карта уходит в сброс и занимает одно из двух мест карт "
-                "текущего размена."
-            ),
-        }
-        return descriptions.get(card.effect_type, "Особое действие карты.")
-
-    def _draw_card_costs(self, screen, card, rect):
-        costs = zip(
-            (
-                card.strength_cost,
-                card.endurance_cost,
-                card.agility_cost,
-                card.intuition_cost,
-            ),
-            self._card_cost_layout(rect),
-        )
-        for value, (position, anchor) in costs:
-            glow = self.card_cost_font.render(
-                str(value),
-                True,
-                self.CARD_COST_GLOW_COLOR,
-            )
-            text = self.card_cost_font.render(
-                str(value),
-                True,
-                self.CARD_COST_COLOR,
-            )
-            text_rect = text.get_rect(**{anchor: position})
-            radius = self.CARD_COST_GLOW_RADIUS
-            for offset_x, offset_y in (
-                (-radius, -radius),
-                (0, -radius),
-                (radius, -radius),
-                (-radius, 0),
-                (radius, 0),
-                (-radius, radius),
-                (0, radius),
-                (radius, radius),
-            ):
-                screen.blit(glow, text_rect.move(offset_x, offset_y))
-            screen.blit(text, text_rect)
-
-    @staticmethod
-    def _card_cost_layout(rect):
-        return (
-            (
-                (rect.centerx, rect.top + CardAreaRenderer.STRENGTH_COST_TOP_OFFSET),
-                "midtop",
-            ),
-            (
-                (
-                    rect.centerx,
-                    rect.bottom - CardAreaRenderer.ENDURANCE_COST_BOTTOM_OFFSET,
-                ),
-                "midbottom",
-            ),
-            (
-                (rect.left + CardAreaRenderer.AGILITY_COST_LEFT_OFFSET, rect.centery),
-                "midleft",
-            ),
-            (
-                (
-                    rect.right - CardAreaRenderer.INTUITION_COST_RIGHT_OFFSET,
-                    rect.centery,
-                ),
-                "midright",
-            ),
-        )
+        return describe_physical_card(card)

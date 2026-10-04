@@ -15,7 +15,7 @@ class GameClient:
         self.timeout = timeout
         self.token = None
 
-    def _request(self, method, path, payload=None, authenticated=False):
+    def _request(self, method, path, payload=None, authenticated=False, timeout=None):
         headers = {"Content-Type": "application/json"}
         if authenticated:
             if not self.token:
@@ -24,7 +24,7 @@ class GameClient:
         data = None if payload is None else json.dumps(payload).encode("utf-8")
         request = Request(f"{self.base_url}{path}", data=data, headers=headers, method=method)
         try:
-            with urlopen(request, timeout=self.timeout) as response:
+            with urlopen(request, timeout=self.timeout if timeout is None else timeout) as response:
                 result = json.loads(response.read().decode("utf-8"))
                 return result
         except (HTTPError, URLError, TimeoutError, json.JSONDecodeError, RemoteDisconnected, ConnectionResetError, OSError) as error:
@@ -191,6 +191,44 @@ class GameClient:
     def get_storage(self, character_id, storage_type="chest1"):
         """Получить хранилище персонажа"""
         return self._request("GET", f"/api/storage/{character_id}/{storage_type}", authenticated=True)["storage"]
+
+    def get_map_terrain(self):
+        return self._request("GET", "/api/map/terrain", authenticated=True, timeout=max(self.timeout, 15))["terrain"]
+
+    def get_city_structures(self):
+        return self._request("GET", "/api/city/structures", authenticated=True)["city"]
+
+    def get_building(self, building, character_id):
+        return self._request("GET", f"/api/buildings/{building}/{character_id}", authenticated=True)["building"]
+
+    def get_player_work(self, character_id):
+        return self._request(
+            "GET", f"/api/buildings/player-work/{character_id}", authenticated=True
+        ).get("work")
+
+    def get_forge_state(self, character_id):
+        return self._request("GET", f"/api/forge/{character_id}", authenticated=True)
+
+    def order_forge_item(self, character_id, item_id):
+        return self._request(
+            "POST", f"/api/forge/{character_id}/orders",
+            {"item_id": int(item_id)}, authenticated=True,
+        )
+
+    def collect_forge_order(self, character_id, order_id):
+        return self._request(
+            "POST", f"/api/forge/{character_id}/orders/{int(order_id)}/collect",
+            {}, authenticated=True,
+        )
+
+    def building_action(self, building, character_id, action, payload=None):
+        """Actions include worker changes, building upgrades, and stable stall upgrades."""
+        return self._request(
+            "POST",
+            f"/api/buildings/{building}/{character_id}/{action}",
+            payload or {},
+            authenticated=True,
+        )["building"]
     
     def get_decks(self, character_id):
         """Получить боевые колоды персонажа"""
@@ -209,6 +247,28 @@ class GameClient:
             "DELETE",
             f"/api/decks/{int(deck_id)}",
             {"character_id": character_id},
+            authenticated=True,
+        )
+
+    def report_battle_result(self, character_id, outcome, opponent_level, hp, mp,
+                             opponent_id=None, opponent_hp=None, opponent_mp=None):
+        payload = {
+            "character_id": character_id,
+            "outcome": outcome,
+            "opponent_level": opponent_level,
+            "hp": hp,
+            "mp": mp,
+        }
+        if opponent_id is not None:
+            payload.update({
+                "opponent_id": int(opponent_id),
+                "opponent_hp": int(opponent_hp),
+                "opponent_mp": int(opponent_mp),
+            })
+        return self._request(
+            "POST",
+            "/api/battle/result",
+            payload,
             authenticated=True,
         )
 

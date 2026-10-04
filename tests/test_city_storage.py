@@ -1,0 +1,629 @@
+import unittest
+from types import SimpleNamespace
+
+import pygame
+
+from core import settings
+from core.production_buildings import building_resources, upgrade_requirements
+from server.items_database import ItemsDatabase
+from server.production_buildings import ProductionBuildings
+from server.structures import city_structures
+from tests.fixtures import create_test_database, drop_test_database
+
+BARN_GOODS = ("berries", "wheat", "meat")
+WAREHOUSE_GOODS = (
+    "wood", "board", "flax", "cotton", "leather", "coal", "stone", "iron", "mithril", "obsidian",
+    "iron_ingot", "steel", "hard_leather", "thick_leather", "cloth", "stone_block",
+)
+
+
+class CityStorageServerTests(unittest.TestCase):
+    def setUp(self):
+        self.database = create_test_database()
+        self.buildings = ProductionBuildings(self.database)
+        user = self.database.register("keeper", "password")
+        self.character_id = self.database.create_character(user["id"], "Keeper")["id"]
+
+    def tearDown(self):
+        drop_test_database(self.database)
+
+    def test_goods_lists_and_capacity(self):
+        barn = self.buildings.get_state(self.character_id, "barn", 10000)
+        self.assertEqual(barn["storage"], {**{good: 0 for good in BARN_GOODS}, "limit": 1000})
+        self.assertEqual(barn["worker_slots"], [])
+        warehouse = self.buildings.get_state(self.character_id, "warehouse", 10000)
+        self.assertEqual(warehouse["storage"], {**{good: 0 for good in WAREHOUSE_GOODS}, "limit": 2000})
+        self.assertEqual(building_resources("barn"), BARN_GOODS)
+
+    def test_upgrade_levels_and_max_level(self):
+        items = ItemsDatabase(self.database)
+        expected = {"barn": (1000, 1500, 2000, 2700, 4000), "warehouse": (2000, 3000, 5000, 7000, 10000)}
+        for building, capacities in expected.items():
+            now = 10000
+            for level in range(1, 5):
+                for item_id, required in upgrade_requirements(level, building)["materials"].items():
+                    items.add_to_inventory(self.character_id, item_id, required)
+                    self.buildings.deposit_material(self.character_id, building, item_id, required, now)
+                self.buildings.start_upgrade(self.character_id, building, now)
+                now += upgrade_requirements(level, building)["time_seconds"]
+                state = self.buildings.get_state(self.character_id, building, now)
+                self.assertEqual(state["level"], level + 1)
+                self.assertEqual(state["storage"]["limit"], capacities[level])
+            self.assertIsNone(state["upgrade"])
+            with self.assertRaisesRegex(ValueError, "максимального уровня"):
+                self.buildings.start_upgrade(self.character_id, building, now)
+
+    def test_stable_building_upgrade_takes_five_hours(self):
+        self.assertEqual(upgrade_requirements(1, "stable")["time_seconds"], 5 * 3600)
+        self.assertEqual(upgrade_requirements(1, "farm")["time_seconds"], 2 * 3600)
+
+    def test_shared_stable_capacity_increases_by_two_per_level(self):
+        user = self.database.register("stablemate", "password")
+        teammate = self.database.create_character(user["id"], "Stablemate")["id"]
+        state = self.buildings.get_state(self.character_id, "stable", 10000)
+        self.assertEqual(state["stall_capacity"], 4)
+        self.assertEqual(state["occupied_stalls"], 0)
+        self.assertEqual(state["feed_consumption_kg_per_hour"], 0)
+        self.assertEqual(sum(1 for slot in state["stall_slots"] if slot["unlocked"]), 4)
+        self.assertEqual(state["stall_slots"][4]["unlock_level"], 2)
+        with self.database.connection() as connection:
+            connection.execute("UPDATE building_states SET level = 2 WHERE building = 'stable'")
+        shared_state = self.buildings.get_state(teammate, "stable", 10001)
+        self.assertEqual(shared_state["stall_capacity"], 6)
+        self.assertEqual(shared_state["level"], 2)
+        self.assertEqual(sum(1 for slot in shared_state["stall_slots"] if slot["unlocked"]), 6)
+
+    def test_horse_prices_grow_by_forty_percent_and_horses_are_shared(self):
+        from core.production_buildings import horse_purchase_price_silver
+
+        self.assertEqual([horse_purchase_price_silver(count) for count in range(5)],
+                         [50, 70, 98, 138, 194])
+        with self.database.connection() as connection:
+            connection.execute("UPDATE characters SET silver = 500 WHERE id = %s", (self.character_id,))
+        state = self.buildings.get_state(self.character_id, "stable", 10000)
+        self.assertEqual(state["horse_price_next_silver"], 50)
+        for slot_index, price in enumerate((50, 70, 98, 138)):
+            state = self.buildings.purchase_horse(self.character_id, slot_index, 10001 + slot_index)
+            horse = state["stall_slots"][slot_index]["horse"]
+            self.assertEqual(horse["purchase_price_silver"], price)
+            self.assertEqual(horse["status"], "Отдыхает")
+        self.assertEqual(state["occupied_stalls"], 4)
+        self.assertEqual(state["horse_price_next_silver"], 194)
+        with self.assertRaisesRegex(ValueError, "Стойло ещё не открыто"):
+            self.buildings.purchase_horse(self.character_id, 4, 10005)
+
+        teammate_user = self.database.register("horse-mate", "password")
+        teammate_id = self.database.create_character(teammate_user["id"], "HorseMate")["id"]
+        shared = self.buildings.get_state(teammate_id, "stable", 10006)
+        self.assertEqual(shared["occupied_stalls"], 4)
+        self.assertEqual(shared["stall_slots"][3]["horse"]["purchase_price_silver"], 138)
+
+    def test_shared_stall_upgrades_require_personal_contributions(self):
+        stable = self.buildings.get_state(self.character_id, "stable", 10000)
+        warehouse = self.buildings.get_state(self.character_id, "warehouse", 10000)
+        items = ItemsDatabase(self.database)
+        items.add_to_inventory(self.character_id, 60, 200)
+        with self.database.connection() as connection:
+            connection.execute("UPDATE characters SET silver = 25 WHERE id = %s", (self.character_id,))
+            self.assertEqual(
+                connection.execute("SELECT silver FROM characters WHERE id = %s", (self.character_id,))
+                .fetchone()["silver"],
+                25,
+            )
+
+        wood_partial = self.buildings.contribute_stall_upgrade(
+            self.character_id, "wooden_stalls", "wood", 300, 10000
+        )
+        self.assertEqual(wood_partial["stall_upgrades"]["wooden_stalls"]["silver_available"], 35)
+        partial = self.buildings.contribute_stall_upgrade(
+            self.character_id, "wooden_stalls", "silver", 25, 10001
+        )
+        self.assertEqual(partial["stall_upgrades"]["wooden_stalls"]["wood_deposited"], 200)
+        self.assertEqual(partial["stall_upgrades"]["wooden_stalls"]["silver_deposited"], 25)
+        self.assertFalse(partial["stall_upgrades"]["wooden_stalls"]["ready"])
+        with self.assertRaisesRegex(ValueError, "внесите все материалы"):
+            self.buildings.purchase_stall_upgrade(self.character_id, "wooden_stalls", 10002)
+
+        teammate_user = self.database.register("stallmate", "password")
+        teammate_id = self.database.create_character(teammate_user["id"], "Stallmate")["id"]
+        items.add_to_inventory(teammate_id, 60, 100)
+        with self.database.connection() as connection:
+            connection.execute("UPDATE characters SET silver = 25 WHERE id = %s", (teammate_id,))
+        self.buildings.contribute_stall_upgrade(teammate_id, "wooden_stalls", "wood", 100, 10003)
+        ready = self.buildings.contribute_stall_upgrade(
+            teammate_id, "wooden_stalls", "silver", 25, 10004
+        )
+        self.assertTrue(ready["stall_upgrades"]["wooden_stalls"]["ready"])
+        self.assertEqual(ready["stall_upgrades"]["wooden_stalls"]["wood_deposited"], 300)
+        self.assertEqual(ready["stall_upgrades"]["wooden_stalls"]["silver_deposited"], 50)
+        warehouse_after = self.buildings.get_state(teammate_id, "warehouse", 10004)
+        self.assertEqual(warehouse_after["storage"]["wood"], warehouse["storage"]["wood"])
+
+        first = self.buildings.purchase_stall_upgrade(self.character_id, "wooden_stalls", 10005)
+        self.assertEqual(first["stall_capacity"], stable["stall_capacity"])
+        self.assertTrue(first["stall_upgrades"]["wooden_stalls"]["purchased"])
+        self.assertTrue(first["stall_upgrades"]["wooden_stalls"]["in_progress"])
+        self.assertEqual(first["stall_upgrades"]["wooden_stalls"]["seconds_left"], 10800)
+        self.assertFalse(first["stall_slots"][4]["unlocked"])
+        with self.assertRaisesRegex(ValueError, "уже куплено"):
+            self.buildings.purchase_stall_upgrade(self.character_id, "wooden_stalls", 10006)
+        before_finish = self.buildings.get_state(teammate_id, "stable", 20804)
+        self.assertEqual(before_finish["stall_capacity"], stable["stall_capacity"])
+        self.assertEqual(before_finish["stall_upgrades"]["wooden_stalls"]["seconds_left"], 1)
+        shared = self.buildings.get_state(teammate_id, "stable", 20805)
+        self.assertEqual(shared["stall_capacity"], stable["stall_capacity"] + 1)
+        self.assertTrue(shared["stall_upgrades"]["wooden_stalls"]["completed"])
+        self.assertTrue(shared["stall_slots"][4]["unlocked"])
+
+
+class FakeStorageClient:
+    get_city_structures = staticmethod(city_structures)
+
+    def get_inventory(self, _character_id):
+        return {"inventory": [
+            {"item_id": 60, "quantity": 12}, {"item_id": 73, "quantity": 7},
+            {"item_id": 61, "quantity": 4}, {"item_id": 64, "quantity": 9},
+            {"item_id": 74, "quantity": 2}, {"item_id": 66, "quantity": 6},
+        ]}
+
+    def get_map_terrain(self):
+        return {"roads": {"routes": [
+            {"building_id": "wheat_farm", "name": "Крестьянское поселение", "distance_tiles": 50.11,
+             "distance_pixels": 1604, "resources": [{"id": "wheat", "label": "Пшеница"}]},
+            {"building_id": "lumber_camp", "name": "Лагерь лесорубов", "distance_tiles": 94.61,
+             "distance_pixels": 3028, "resources": [{"id": "wood", "label": "Древесина"}]},
+            {"building_id": "mountain_rift", "name": "Горный разлом", "distance_tiles": 86.88,
+             "distance_pixels": 2780, "resources": [{"id": "iron", "label": "Железная руда"}]},
+            {"building_id": "barnyard", "name": "Скотный двор", "distance_tiles": 60.53,
+             "distance_pixels": 1937, "resources": [{"id": "leather", "label": "Кожа"}]},
+            {"building_id": "black_pit", "name": "Чёрная копь", "distance_tiles": 81.41,
+             "distance_pixels": 2605, "resources": [{"id": "coal", "label": "Уголь"}]},
+        ]}}
+    def __init__(self):
+        self.calls = []
+
+    def get_building(self, building, _character_id):
+        if building == "stable":
+            return {
+                "building": "stable", "level": 1, "stall_capacity": 4, "max_workers": 0,
+                "occupied_stalls": 0, "feed_consumption_kg_per_hour": 0,
+                "feed_resource_label": "Пшеница",
+                "stall_slots": [
+                    {"slot_index": slot, "unlocked": slot < 4,
+                     "unlock_level": 1 if slot < 4 else 2, "horse": None}
+                    for slot in range(22)
+                ],
+                "stall_capacity_bonus": 0,
+                "silver_available": 100,
+                "horse_price_next_silver": 50,
+                "stall_upgrades": {
+                    "wooden_stalls": {"wood_cost": 300, "silver_cost": 50,
+                                      "purchased": False, "ready": False,
+                                      "wood_deposited": 0, "silver_deposited": 0,
+                                      "wood_in_backpack": 300, "silver_available": 50},
+                    "hayloft": {"wood_cost": 300, "silver_cost": 50,
+                                "purchased": False, "ready": False,
+                                "wood_deposited": 0, "silver_deposited": 0,
+                                "wood_in_backpack": 300, "silver_available": 50},
+                },
+                "storage": {"limit": 0}, "storage_total": 0, "worker_slots": [],
+                "upgrade": {"next_level": 2, "time_seconds": 7200, "ready": False,
+                            "in_progress": False, "finish_at": None, "seconds_left": None,
+                            "materials": [{"item_id": 60, "name": "Древесина", "required": 5,
+                                           "deposited": 0, "in_backpack": 5}]},
+            }
+        goods = BARN_GOODS if building == "barn" else WAREHOUSE_GOODS
+        limit = 1000 if building == "barn" else 2000
+        state = {
+            "building": building, "level": 1, "max_workers": 0, "cycle_start_time": 0, "cycle_duration_sec": 7200,
+            "storage": {**{good: 0 for good in goods}, "limit": limit}, "buffer": {}, "forecast": {},
+            "worker_slots": [],
+            "upgrade": {
+                "next_level": 2, "time_seconds": 7200, "ready": False, "in_progress": False,
+                "finish_at": None, "seconds_left": None,
+                "materials": [{"item_id": 60, "name": "Древесина", "icon": None, "required": 5,
+                               "deposited": 0, "in_backpack": 5}],
+            },
+        }
+        if building == "warehouse":
+            state["storage"].update({"wood": 12, "iron_ingot": 7, "board": 4, "flax": 9,
+                                     "steel": 2, "leather": 6})
+        route_stock = {
+            "farm": {"wheat": 1250}, "lumber_camp": {"wood": 271},
+            "mountain_rift": {"iron": 84}, "barnyard": {"leather": 39},
+            "black_pit": {"coal": 16},
+        }
+        state["storage"].update(route_stock.get(building, {}))
+        return state
+
+    def building_action(self, building, _character_id, action, payload=None):
+        self.calls.append((building, action))
+        return self.get_building(building, _character_id)
+
+
+class CityStorageWindowTests(unittest.TestCase):
+    def setUp(self):
+        pygame.init()
+        self.screen = pygame.display.set_mode((settings.WIDTH, settings.HEIGHT), pygame.HIDDEN)
+        from scenes.city_scene import CityScene
+
+        self.client = FakeStorageClient()
+        self.scene = CityScene(SimpleNamespace(character={"id": 1, "name": "Тест"}, client=self.client))
+
+    def tearDown(self):
+        pygame.quit()
+
+    def test_barn_and_warehouse_windows(self):
+        for building, opener, window in (
+            ("barn", self.scene._open_barn, self.scene.barn_window),
+            ("warehouse", self.scene._open_warehouse, self.scene.warehouse_window),
+        ):
+            with self.subTest(building=building):
+                opener()
+                self.scene.draw(self.screen)
+                self.assertEqual(window.tab, "storage")
+                self.scene.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=window.upgrade_tab.center))
+                self.assertEqual(window.tab, "upgrade")
+                self.scene.draw(self.screen)
+                button = window.deposit_buttons[60]
+                self.scene.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=button.center))
+                self.assertTrue(window.contribution_dialog.is_open)
+                self.scene.draw(self.screen)
+                dialog = window.contribution_dialog
+                self.scene.handle_event(pygame.event.Event(
+                    pygame.MOUSEBUTTONDOWN, button=1,
+                    pos=(dialog.track_rect.right - 1, dialog.track_rect.centery)))
+                self.scene.handle_event(pygame.event.Event(
+                    pygame.MOUSEBUTTONUP, button=1, pos=dialog.track_rect.midright))
+                self.scene.handle_event(pygame.event.Event(
+                    pygame.MOUSEBUTTONDOWN, button=1, pos=dialog.confirm_button.center))
+                self.assertIn((building, "upgrade/deposit"), self.client.calls)
+                self.scene.handle_event(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_ESCAPE))
+                self.assertFalse(window.is_open)
+                self.assertFalse(self.scene._any_modal_open())
+
+    def test_storage_tab_shows_only_goods_and_capacity(self):
+        window = self.scene.barn_window
+        self.scene._open_barn()
+        rendered = []
+        original = self.scene.font
+
+        class Recorder:
+            def render(self, text, *args):
+                rendered.append(text)
+                return original.render(text, *args)
+
+            def __getattr__(self, name):
+                return getattr(original, name)
+
+        self.scene.font = Recorder()
+        try:
+            self.scene.draw(self.screen)
+        finally:
+            self.scene.font = original
+        for text in ("Уровень 1", "Товары:", "Заполнен: 0 / 1000", "Ягоды", "Пшеница", "Мясо"):
+            self.assertIn(text, rendered)
+        self.assertEqual(rendered.count("0"), 3)
+        self.assertEqual(window.production_desc(2), "Вместимость: 1500 продукции")
+
+    def test_stable_is_server_placed_rendered_and_reachable(self):
+        stable = next(obj for obj in self.scene.objects if obj["id"] == "stable_building")
+        self.assertEqual((stable["tile_x"], stable["tile_y"], stable["tile_w"], stable["tile_h"]), (77, 6, 17, 6))
+        self.scene.player_x, self.scene.player_y = stable["approach_pos"]
+        self.assertTrue(self.scene._is_within_one_tile(stable))
+        self.assertFalse(self.scene._check_collision(*stable["approach_pos"]))
+        self.scene.draw(self.screen)
+
+    def test_stable_menu_has_name_and_level_header(self):
+        self.scene.stable_window.open()
+        self.scene.stable_menu_open = True
+        rendered = []
+        original = self.scene.large_font
+
+        class Recorder:
+            def render(self, text, *args):
+                rendered.append(text)
+                return original.render(text, *args)
+
+            def __getattr__(self, name):
+                return getattr(original, name)
+
+        self.scene.large_font = Recorder()
+        try:
+            self.scene.draw(self.screen)
+        finally:
+            self.scene.large_font = original
+        self.assertIn("Конюшня", rendered)
+        self.assertTrue(self.scene._any_modal_open())
+        self.scene.handle_event(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_ESCAPE))
+        self.assertFalse(self.scene.stable_menu_open)
+
+    def test_city_player_information_menu_and_chat_room(self):
+        session = SimpleNamespace(
+            character={"id": 1, "name": "Тест", "level": 1, "type": "warrior"},
+            client=self.client,
+            social_snapshot=lambda location: {
+                "occupants": [], "messages": [], "offers": [],
+                "my_application": None, "group_offers": [],
+            },
+        )
+        from scenes.city_scene import CityScene
+
+        scene = CityScene(session)
+        try:
+            self.assertEqual(scene.chat.location, "city")
+            scene.active_entity = {"id": "player"}
+            scene._trigger_active_action()
+            self.assertTrue(scene.profile_overlay.is_open)
+            scene.draw(self.screen)
+        finally:
+            scene.chat.close()
+
+    def test_forge_and_workshop_modals_draw_independently(self):
+        rendered = []
+        original = self.scene.badge_font
+
+        class Recorder:
+            def render(self, text, *args):
+                rendered.append(text)
+                return original.render(text, *args)
+
+            def __getattr__(self, name):
+                return getattr(original, name)
+
+        self.scene.badge_font = Recorder()
+        try:
+            self.assertEqual(self.scene.forge_modal_rect.size, self.scene.stable_window.rect.size)
+            self.assertTrue(self.scene.forge_modal_rect.contains(self.scene.forge_back_button))
+            self.assertEqual(
+                set(self.scene.forge_tabs),
+                {"weapons", "shields", "helmets", "armor", "gloves", "plates", "shoes", "smelting", "upgrades", "storage"},
+            )
+            forge_tab_rects = list(self.scene.forge_tabs.values())
+            self.assertEqual(forge_tab_rects[0].left, self.scene.forge_modal_rect.left + 24)
+            self.assertEqual(forge_tab_rects[-1].right, self.scene.forge_modal_rect.right - 24)
+            self.assertTrue(all(
+                current.right + 8 == following.left
+                for current, following in zip(forge_tab_rects, forge_tab_rects[1:])
+            ))
+            self.scene.forge_menu_open = True
+            self.scene.draw(self.screen)
+            self.assertTrue(any("ОРУЖЕЙНАЯ КУЗНИЦА" in text for text in rendered))
+            self.assertFalse(any("БРОННАЯ МАСТЕРСКАЯ" in text for text in rendered))
+
+            for tab, button in self.scene.forge_tabs.items():
+                self.scene.handle_event(pygame.event.Event(
+                    pygame.MOUSEBUTTONDOWN, button=1, pos=button.center))
+                self.assertEqual(self.scene.forge_tab, tab)
+                self.scene.draw(self.screen)
+
+            rendered.clear()
+            self.scene.forge_menu_open = False
+            self.scene.workshop_menu_open = True
+            self.scene.draw(self.screen)
+            self.assertTrue(any("БРОННАЯ МАСТЕРСКАЯ" in text for text in rendered))
+            self.assertFalse(any("ОРУЖЕЙНАЯ КУЗНИЦА" in text for text in rendered))
+        finally:
+            self.scene.badge_font = original
+
+    def test_stable_tabs_and_route_selection(self):
+        window = self.scene.stable_window
+        window.open()
+        self.scene.stable_menu_open = True
+        self.assertEqual(window.tab, "transport")
+        ordered_tabs = sorted(window.tabs, key=lambda key: window.tabs[key].left)
+        self.assertEqual(ordered_tabs, ["transport", "routes", "carts", "stalls", "upgrades"])
+        self.assertEqual(list(window._upgrade_subtabs()), ["transport", "stalls", "building"])
+        self.scene.draw(self.screen)
+
+        self.scene.handle_event(pygame.event.Event(
+            pygame.MOUSEBUTTONDOWN, button=1, pos=window.tabs["routes"].center))
+        self.assertEqual(window.tab, "routes")
+        self.assertEqual(len(window.routes), 5)
+        self.scene.draw(self.screen)
+        self.scene.handle_event(pygame.event.Event(
+            pygame.MOUSEBUTTONDOWN, button=1, pos=window._route_row_rects()[1].center))
+        self.assertEqual(window.selected_route, 1)
+        self.assertEqual(window.route_state["storage"]["wood"], 271)
+        rendered = []
+        original_font = self.scene.font
+
+        class Recorder:
+            def render(self, text, *args):
+                rendered.append(text)
+                return original_font.render(text, *args)
+
+            def __getattr__(self, name):
+                return getattr(original_font, name)
+
+        self.scene.font = Recorder()
+        try:
+            self.scene.draw(self.screen)
+        finally:
+            self.scene.font = original_font
+        self.assertIn("271", rendered)
+
+        self.scene.handle_event(pygame.event.Event(
+            pygame.MOUSEBUTTONDOWN, button=1, pos=window.tabs["carts"].center))
+        self.assertEqual(window.tab, "carts")
+        self.scene.draw(self.screen)
+        self.scene.handle_event(pygame.event.Event(
+            pygame.MOUSEBUTTONDOWN, button=1, pos=window.tabs["upgrades"].center))
+        self.assertEqual(window.tab, "upgrades")
+        self.scene.draw(self.screen)
+        window.handle_event(pygame.event.Event(
+            pygame.MOUSEBUTTONDOWN, button=1, pos=window._upgrade_subtabs()["transport"].center))
+        self.assertEqual(window.upgrade_tab, "transport")
+        rendered = []
+        original_small_font = self.scene.small_font
+
+        class Recorder:
+            def render(self, text, *args):
+                rendered.append(text)
+                return original_small_font.render(text, *args)
+
+            def __getattr__(self, name):
+                return getattr(original_small_font, name)
+
+        self.scene.small_font = Recorder()
+        try:
+            self.scene.draw(self.screen)
+        finally:
+            self.scene.small_font = original_small_font
+        self.assertIn("Древесина", rendered)
+        self.assertIn("В рюкзаке: 12", rendered)
+        sides_button = window.cart_node_buttons["sides"]
+        self.scene.handle_event(pygame.event.Event(
+            pygame.MOUSEBUTTONDOWN, button=1, pos=sides_button.center))
+        self.assertEqual(window.selected_cart_node, "sides")
+
+        self.scene.handle_event(pygame.event.Event(
+            pygame.MOUSEBUTTONDOWN, button=1, pos=window._upgrade_subtabs()["stalls"].center))
+        self.assertEqual(window.upgrade_tab, "stalls")
+        rendered.clear()
+        self.scene.small_font = Recorder()
+        try:
+            self.scene.draw(self.screen)
+        finally:
+            self.scene.small_font = original_small_font
+        self.assertTrue(any("Приставные деревянные денники" in text for text in rendered))
+        self.assertTrue(any("Внешний сеновал" in text for text in rendered))
+        self.assertTrue(any("Древесина: 0/300" in text for text in rendered))
+        self.assertTrue(any("Внесено: 0 меди / 50 серебра" in text for text in rendered))
+        self.assertEqual(sum(text.startswith("Время улучшения: 3 ч") for text in rendered), 2)
+        self.assertNotIn("wooden_stalls", window.stall_upgrade_buttons)
+        wood_button = window.stall_contribution_buttons[("wooden_stalls", "wood")]
+        self.scene.handle_event(pygame.event.Event(
+            pygame.MOUSEBUTTONDOWN, button=1, pos=wood_button.center))
+        self.assertTrue(window.contribution_dialog.is_open)
+        self.assertEqual(window.contribution_dialog.maximum, 300)
+        self.scene.draw(self.screen)
+        slider = window.contribution_dialog
+        self.scene.handle_event(pygame.event.Event(
+            pygame.MOUSEBUTTONDOWN, button=1, pos=(slider.track_rect.right, slider.track_rect.centery)))
+        self.scene.handle_event(pygame.event.Event(pygame.MOUSEBUTTONUP, button=1, pos=slider.track_rect.topright))
+        self.scene.handle_event(pygame.event.Event(
+            pygame.MOUSEBUTTONDOWN, button=1, pos=slider.confirm_button.center))
+        self.assertIn(("stable", "stall-upgrade/contribute"), self.client.calls)
+        window.state["stall_upgrades"]["wooden_stalls"]["ready"] = True
+        self.scene.draw(self.screen)
+        upgrade_button = window.stall_upgrade_buttons["wooden_stalls"]
+        self.scene.handle_event(pygame.event.Event(
+            pygame.MOUSEBUTTONDOWN, button=1, pos=upgrade_button.center))
+        self.assertIn(("stable", "stall-upgrade/purchase"), self.client.calls)
+
+    def test_stalls_tab_uses_server_capacity(self):
+        window = self.scene.stable_window
+        window.open()
+        self.scene.stable_menu_open = True
+        self.assertEqual(window.state["stall_capacity"], 4)
+        self.scene.handle_event(pygame.event.Event(
+            pygame.MOUSEBUTTONDOWN, button=1, pos=window.tabs["stalls"].center))
+        self.scene.draw(self.screen)
+        self.assertEqual(window.tab, "stalls")
+        self.scene.handle_event(pygame.event.Event(
+            pygame.MOUSEBUTTONDOWN, button=1, pos=window.stall_buy_buttons[0].center))
+        self.assertIn(("stable", "horse/purchase"), self.client.calls)
+
+    def test_transport_empty_popups_for_carts_and_horses(self):
+        window = self.scene.stable_window
+        window.open()
+        self.scene.stable_menu_open = True
+        self.scene.draw(self.screen)
+        self.scene.handle_event(pygame.event.Event(
+            pygame.MOUSEBUTTONDOWN, button=1, pos=window.transport_buttons[("cart", None)].center))
+        self.scene.draw(self.screen)
+        rendered = []
+        original = self.scene.small_font
+
+        class Recorder:
+            def render(self, text, *args):
+                rendered.append(text)
+                return original.render(text, *args)
+
+            def __getattr__(self, name):
+                return getattr(original, name)
+
+        self.scene.small_font = Recorder()
+        try:
+            self.scene.draw(self.screen)
+        finally:
+            self.scene.small_font = original
+        self.assertIn("У вас нет свободного транспорта", rendered)
+
+        window.state["available_carts"] = [
+            {"id": 42, "name": "Лесная арба", "horse_slots": 1, "resource_slots": 1}
+        ]
+        window.transport_popup = ("cart", None)
+        self.scene.draw(self.screen)
+        cart_option = next(iter(window.transport_popup_options.values()))
+        self.scene.handle_event(pygame.event.Event(
+            pygame.MOUSEBUTTONDOWN, button=1, pos=cart_option.center))
+        self.scene.draw(self.screen)
+        horse_button = window.transport_buttons[("horse", 0)]
+        self.scene.handle_event(pygame.event.Event(
+            pygame.MOUSEBUTTONDOWN, button=1, pos=horse_button.center))
+        self.scene.draw(self.screen)
+        rendered.clear()
+        self.scene.small_font = Recorder()
+        try:
+            self.scene.draw(self.screen)
+        finally:
+            self.scene.small_font = original
+        self.assertIn("У вас нет свободных лошадей", rendered)
+
+    def test_carts_tab_renders_grades_stock_and_selectable_nodes(self):
+        window = self.scene.stable_window
+        window.open()
+        self.scene.stable_menu_open = True
+        self.scene.handle_event(pygame.event.Event(
+            pygame.MOUSEBUTTONDOWN, button=1, pos=window.tabs["carts"].center))
+        self.scene.draw(self.screen)
+        rendered = []
+        original = self.scene.small_font
+        original_font = self.scene.font
+
+        class Recorder:
+            def render(self, text, *args):
+                rendered.append(text)
+                return original.render(text, *args)
+
+            def __getattr__(self, name):
+                return getattr(original, name)
+
+        self.scene.small_font = Recorder()
+        self.scene.font = Recorder()
+        try:
+            self.scene.draw(self.screen)
+        finally:
+            self.scene.small_font = original
+            self.scene.font = original_font
+        self.assertTrue(any("Лёгкая повозка" in text for text in rendered))
+        self.assertTrue(any("Крестьянский обоз" in text for text in rendered))
+        self.assertTrue(any("Слотов для товаров" in text for text in rendered))
+        self.assertIn("КУПИТЬ", rendered)
+        self.assertFalse(any(text == "20" for text in rendered))
+        self.assertTrue(any("требование: уровень конюшни 1" in text for text in rendered))
+        self.assertTrue(any("Древесина:" in text for text in rendered))
+        self.assertTrue(any("Серебро:" in text for text in rendered))
+        self.assertFalse(any("Грейд 1" in text for text in rendered))
+        self.assertTrue(any("150 тайлов/час" in text for text in rendered))
+        self.assertTrue(any("1 кг/20 сек (3 кг/мин)" in text for text in rendered))
+        self.assertFalse(any(text.startswith("не задано") for text in rendered))
+
+    def test_cart_grade_one_formulas_and_grade_two_gate(self):
+        from core.cart_progress import cart_stats, grade_two_unlocked
+
+        levels = {"wheels": 3, "sides": 3, "axles": 3}
+        stats = cart_stats(levels)
+        self.assertEqual(stats["capacity_kg"], 450)
+        self.assertAlmostEqual(stats["seconds_per_tile"], 17.9473)
+        self.assertEqual(stats["full_load_speed_penalty_percent"], 40)
+        progress = {"grades": {"1": {"upgrades": {"wheels": 3, "sides": 3, "axles": 2}}}}
+        self.assertFalse(grade_two_unlocked(progress))
+        progress["grades"]["1"]["upgrades"]["axles"] = 3
+        self.assertTrue(grade_two_unlocked(progress))
+
+
+if __name__ == "__main__":
+    unittest.main()

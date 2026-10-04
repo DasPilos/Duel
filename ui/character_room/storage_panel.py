@@ -5,6 +5,8 @@
 import pygame
 from typing import List, Dict, Optional
 
+from ui.catalog_icons import draw_item_icon
+
 
 class StoragePanel:
     """Панель для управления сундуками персонажа"""
@@ -145,9 +147,7 @@ class StoragePanel:
                     # Ячейка предмета
                     pygame.draw.rect(screen, item_color, rect, border_radius=6, width=2)
 
-                    # Иконка
-                    icon_text = self.small_font.render(item.get("icon", "📦"), True, (255, 255, 255))
-                    screen.blit(icon_text, (rect.x + 10, rect.y + 10))
+                    draw_item_icon(screen, item, (rect.x + 8, rect.y + 8), 32)
 
                     # Название
                     name_text = self.small_font.render(item["name"][:18], True, (220, 220, 220))

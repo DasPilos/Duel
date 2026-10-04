@@ -14,6 +14,24 @@ from ui.renderers.card_area import CardAreaRenderer
 class DuelRenderer:
     REWARD_CURRENCY_ICON_SIZE = 70
     REWARD_CARD_SIZE = (150, 200)
+    STATS_PANEL_HEIGHT = 200
+    STATS_ROW_HEIGHT = 22
+    BAR_TOP = 62
+    BAR_STEP = 36
+    ALL_STATS = (
+        ("strength", "Сила"),
+        ("agility", "Ловкость"),
+        ("intuition", "Интуиция"),
+        ("wisdom", "Мудрость"),
+        ("intellect", "Интеллект"),
+        ("harmony", "Гармония"),
+        ("endurance", "Выносливость"),
+    )
+    RESOURCE_BARS = {
+        "rage": ("Ярость", (200, 100, 80)),
+        "accuracy": ("Меткость", (100, 180, 240)),
+        "concentration": ("Концентрация", (180, 120, 200)),
+    }
 
     def __init__(self, scene):
         self.scene = scene
@@ -21,12 +39,18 @@ class DuelRenderer:
 
         self.player_card = CharacterCard()
         self.enemy_card = CharacterCard()
+        currency_dir = Path(__file__).resolve().parent.parent / "assets" / "ui" / "currency"
+        def _load_currency_icon(filename, size):
+            img = pygame.image.load(str(currency_dir / filename))
+            try:
+                img = img.convert_alpha()
+            except pygame.error:
+                pass
+            return pygame.transform.smoothscale(img, (size, size))
+
         self.reward_currency_icons = {
-            currency: pygame.transform.smoothscale(
-                image,
-                (self.REWARD_CURRENCY_ICON_SIZE, self.REWARD_CURRENCY_ICON_SIZE),
-            )
-            for currency, image in self.player_card.currency_icons.items()
+            currency: _load_currency_icon(f"{currency}.png", self.REWARD_CURRENCY_ICON_SIZE)
+            for currency in ("copper", "silver", "gold")
         }
 
         self.card_renderer = CardAreaRenderer(
@@ -179,14 +203,12 @@ class DuelRenderer:
                 cursor_x += entry_width + 24
 
         if scene.card_reward is not None:
-            costs = scene.card_reward.get("costs", {})
             reward_card = SimpleNamespace(
+                name=scene.card_reward.get("name", ""),
                 image_path=scene.card_reward.get("image_path", ""),
                 group_name=scene.card_reward.get("group_name", ""),
-                strength_cost=int(costs.get("strength", 0)),
-                endurance_cost=int(costs.get("endurance", 0)),
-                agility_cost=int(costs.get("agility", 0)),
-                intuition_cost=int(costs.get("intuition", 0)),
+                resource_type=scene.card_reward.get("resource_type", ""),
+                resource_cost=int(scene.card_reward.get("resource_cost", 0)),
             )
             reward_card_rect = pygame.Rect(
                 0,
@@ -323,7 +345,8 @@ class DuelRenderer:
         bar = self.layout.turn_bar
         pygame.draw.rect(screen, (55, 58, 68), bar, border_radius=5)
         fill = bar.copy()
-        fill.width = int(bar.width * remaining / settings.TURN_DECISION_SECONDS)
+        total = settings.DRAFT_TIMEOUT_SECONDS if self.scene.phase.startswith("draft") else settings.TURN_DECISION_SECONDS
+        fill.width = int(bar.width * min(1.0, remaining / total))
         pygame.draw.rect(screen, color, fill, border_radius=5)
 
     def draw_battle_stats(self, screen):
@@ -395,7 +418,7 @@ class DuelRenderer:
             derived=player_derived,
             side="player",
             x=player_stats_x,
-            y=screen_height - 130,
+            y=screen_height - self.STATS_PANEL_HEIGHT - 30,
             width=player_stats_width,
             border_color=(80, 180, 120)
         )
@@ -407,7 +430,7 @@ class DuelRenderer:
             derived=enemy_derived,
             side="enemy",
             x=enemy_stats_x,
-            y=screen_height - 130,
+            y=screen_height - self.STATS_PANEL_HEIGHT - 30,
             width=enemy_stats_width,
             border_color=(210, 80, 80)
         )
@@ -422,17 +445,12 @@ class DuelRenderer:
             side = "player" if align == "left" else "enemy"
             self._draw_mage_status(screen, x + 12, 370, color, align, side)
             stats = profile.get("stats", {})
-            frame = pygame.Rect(10 if align == "left" else screen_width - 320, screen_height - 115, 310, 95)
+            frame = pygame.Rect(10 if align == "left" else screen_width - 320, screen_height - self.STATS_PANEL_HEIGHT - 20, 310, self.STATS_PANEL_HEIGHT)
             pygame.draw.rect(screen, (20, 24, 34, 210), frame, border_radius=8)
             pygame.draw.rect(screen, color, frame, 2, border_radius=8)
-            labels = (
-                f"Мудрость: {stats.get('wisdom', 2)}",
-                f"Интеллект: {stats.get('intellect', 2)}",
-                f"Гармония: {stats.get('harmony', 2)}",
-                f"Выносливость: {stats.get('endurance', 2)}",
-            )
-            for index, label in enumerate(labels):
-                draw_text(screen, self.scene.small_font, label, frame.x + 8 + (index % 2) * 145, frame.y + 8 + (index // 2) * 24, color)
+            draw_text(screen, self.scene.small_font, "ХАРАКТЕРИСТИКИ", frame.x + 12, frame.y + 8, color)
+            for index, (key, label) in enumerate(self.ALL_STATS):
+                draw_text(screen, self.scene.small_font, f"{label}: {stats.get(key, 0)}", frame.x + 12, frame.y + 30 + index * self.STATS_ROW_HEIGHT, (215, 220, 225))
             summon_x = 270 if align == "left" else screen_width - 550
             self._draw_mage_summons(screen, summon_x, 705, side, color)
 
@@ -552,8 +570,10 @@ class DuelRenderer:
         level_text = f"Уровень {fighter.level}"
         draw_text(screen, self.scene.small_font, level_text, inner_x, y + 28, (210, 215, 225))
         
-        # HP шкала (опущена вниз чтобы не наплывать на текст)
-        hp_y = y + 65
+        # Три полосы (HP, MP, ресурс класса) с одинаковым шагом, подпись над каждой
+        hp_y = y + self.BAR_TOP
+        mp_y = hp_y + self.BAR_STEP
+        unique_y = mp_y + self.BAR_STEP
         bar_width = 280
         bar_height = 11
         self._draw_resource_bar(
@@ -571,10 +591,8 @@ class DuelRenderer:
             side = "player" if fighter is self.scene.player else "enemy"
             shield = int(getattr(self.scene.battle, "mage_shields", {}).get(side, 0))
             if shield:
-                draw_text(screen, self.scene.small_font, f"ЩИТ: +{shield} HP", inner_x, y + 84, (100, 210, 255))
-        
-        # MP шкала ниже HP
-        mp_y = y + 105
+                draw_text(screen, self.scene.small_font, f"ЩИТ: +{shield} HP", inner_x + 170, hp_y - 15, (100, 210, 255))
+
         self._draw_resource_bar(
             screen,
             inner_x,
@@ -587,34 +605,27 @@ class DuelRenderer:
             (60, 140, 220)
         )
 
-        # Уникальный ресурс (ярость, меткость, концентрация) ниже MP
-        if hasattr(fighter, "unique_resource_type") and fighter.unique_resource_type != "mana":
-            unique_y = y + 130
-            resource_name = fighter.unique_resource_type.upper()[:3]  # RAG, ACC, CON
-            resource_colors = {
-                "rage": (200, 100, 80),  # Красный для ярости
-                "accuracy": (100, 180, 240),  # Синий для меткости
-                "concentration": (180, 120, 200),  # Фиолетовый для концентрации
-            }
-            color = resource_colors.get(fighter.unique_resource_type, (180, 180, 180))
+        resource = self.RESOURCE_BARS.get(getattr(fighter, "unique_resource_type", None))
+        if resource is not None:
+            label, color = resource
             self._draw_resource_bar(
                 screen,
                 inner_x,
                 unique_y,
                 bar_width,
                 bar_height,
-                resource_name,
+                label,
                 int(getattr(fighter, "unique_resource_current", 0)),
                 int(getattr(fighter, "unique_resource_max", 1)),
                 color
             )
 
-        # Отображение статусов элементов в режиме магов
+        # Отображение статусов элементов в режиме магов (на месте полосы ресурса — у магов её нет)
         if getattr(self.scene, "mage_battle", False):
             side = "player" if fighter is self.scene.player else "enemy"
             statuses = self.scene.battle.mage_statuses.get(side, [])
             if statuses:
-                status_y = y + 150
+                status_y = unique_y - 15
                 status_text = ", ".join(s["name"].upper() for s in statuses if s["remaining"] > 0)[:40]
                 if status_text:
                     draw_text(screen, self.scene.small_font, f"Статусы: {status_text}", inner_x, status_y, (220, 200, 100))
@@ -640,8 +651,8 @@ class DuelRenderer:
         return x, max(default_width, screen_width - margin - x)
 
     def _draw_corner_stats(self, screen, profile, derived, side, x, y, width, border_color):
-        """Рисует характеристики боца в углу (Урон, Уворот, Крит, HP) как на карточке."""
-        height = 100
+        """Все 7 характеристик бойца слева и производные значения справа."""
+        height = self.STATS_PANEL_HEIGHT
         
         # Фон с полупрозрачностью
         overlay = pygame.Surface((width, height), pygame.SRCALPHA)
@@ -653,107 +664,59 @@ class DuelRenderer:
         
         inner_x = x + 12
         header_y = y + 8
-        
-        # Заголовок "ХАРАКТЕРИСТИКИ"
         draw_text(screen, self.scene.small_font, "ХАРАКТЕРИСТИКИ", inner_x, header_y, border_color)
-        
-        # Характеристики как на карточке (в 2 колонки)
+
         stats = profile.get("stats", {})
-        stat_names = (
-            ("strength", "Сила", "Урон"),
-            ("agility", "Ловкость", "Уворот"),
-            ("intuition", "Интуиция", "Крит"),
-            ("endurance", "Выносливость", "HP"),
-        )
-        
         stat_value_colors = {
             "Урон": (255, 255, 255),
             "Уворот": (150, 220, 255),
             "Крит": (255, 90, 90),
-            "HP": (110, 235, 120),
+            "Маг Урон": (180, 140, 240),
         }
-        
-        # Левая колонка (имена статов)
         col1_x = inner_x
-        # Правая колонка (производные значения)
-        col2_x = inner_x + 150
+        col2_x = inner_x + 190
         active_effects = self._active_effect_statuses(side)
-        
-        for index, (key, label, derived_key) in enumerate(stat_names):
-            row_y = header_y + 22 + index * 16
-            
-            # Левая: название стата и значение
+
+        for index, (key, label) in enumerate(self.ALL_STATS):
+            row_y = header_y + 24 + index * self.STATS_ROW_HEIGHT
             stat_text = f"{label}: {stats.get(key, 0)}"
             draw_text(screen, self.scene.small_font, stat_text, col1_x, row_y, (215, 220, 225))
-            stat_status_x = col1_x + self.scene.small_font.size(stat_text)[0] + 8
-            for status_text, status_color in active_effects[key]:
-                draw_text(
-                    screen,
-                    self.scene.small_font,
-                    status_text,
-                    stat_status_x,
-                    row_y,
-                    status_color,
-                )
-                stat_status_x += self.scene.small_font.size(status_text)[0] + 8
-            
-            # Правая: производное значение (Урон, Уворот, Крит, HP)
-            derived_text = f"{derived_key}: {derived[derived_key]}"
-            color = stat_value_colors.get(derived_key, (220, 70, 70))
-            draw_text(screen, self.scene.small_font, derived_text, col2_x, row_y, color)
-            status_x = col2_x + self.scene.small_font.size(derived_text)[0] + 15
-            for status_text, status_color in active_effects[derived_key]:
-                draw_text(
-                    screen,
-                    self.scene.small_font,
-                    status_text,
-                    status_x,
-                    row_y,
-                    status_color,
-                )
+            status_x = col1_x + self.scene.small_font.size(stat_text)[0] + 8
+            for status_text, status_color in active_effects.get(key, []):
+                draw_text(screen, self.scene.small_font, status_text, status_x, row_y, status_color)
                 status_x += self.scene.small_font.size(status_text)[0] + 8
 
+        derived_keys = [key for key in stat_value_colors if key in derived]
+        for index, derived_key in enumerate(derived_keys):
+            row_y = header_y + 24 + index * self.STATS_ROW_HEIGHT
+            derived_text = f"{derived_key}: {derived[derived_key]}"
+            draw_text(screen, self.scene.small_font, derived_text, col2_x, row_y, stat_value_colors[derived_key])
+            status_x = col2_x + self.scene.small_font.size(derived_text)[0] + 15
+            for status_text, status_color in active_effects.get(derived_key, []):
+                draw_text(screen, self.scene.small_font, status_text, status_x, row_y, status_color)
+                status_x += self.scene.small_font.size(status_text)[0] + 8
+
+        # Периодический урон (кровотечение, яд) — отдельной строкой под производными
+        status_x = col2_x
+        row_y = header_y + 24 + len(derived_keys) * self.STATS_ROW_HEIGHT
+        for status_text, status_color in active_effects["HP"]:
+            draw_text(screen, self.scene.small_font, status_text, status_x, row_y, status_color)
+            status_x += self.scene.small_font.size(status_text)[0] + 8
+
     def _active_effect_statuses(self, side):
+        """Активные эффекты карт бойца/лучника/асасина рядом с нужной строкой характеристик."""
         battle = self.scene.battle
-        statuses = {
-            "strength": [],
-            "agility": [],
-            "intuition": [],
-            "endurance": [],
-            "Урон": [],
-            "Уворот": [],
-            "Крит": [],
-            "HP": [],
-        }
-
-        for effect in battle.timed_stat_effects[side]:
-            amount = int(effect["amount"])
-            color = (90, 230, 120) if amount > 0 else (245, 90, 90)
-            sign = "+" if amount > 0 else ""
-            statuses[effect["stat"]].append((f"{sign}{amount}", color))
-
-        for effect in battle.timed_dodge_effects[side]:
-            turns = max(1, int(effect["expires_after_turn"]) - battle.turn + 1)
-            statuses["Уворот"].append(
-                self._format_effect_status(int(effect["amount"]), "%", turns)
-            )
-
-        for effect in battle.timed_critical_effects[side]:
-            turns = max(1, int(effect["expires_after_turn"]) - battle.turn + 1)
-            statuses["Крит"].append(
-                self._format_effect_status(int(effect["amount"]), "%", turns)
-            )
-
-        for effect in battle.timed_damage_ratio_effects[side]:
-            turns = max(1, int(effect["expires_after_turn"]) - battle.turn + 1)
-            reduction = int((1 - effect["ratio"]) * 100)
-            text = f"Защита {reduction}% на {turns} {self._turn_word(turns)}"
-            statuses["Урон"].append((text, (90, 230, 120)))
-
-        for effect in battle.regen_effects[side]:
-            turns = max(1, int(effect["remaining"]))
-            text = f"+{effect['dice']} на {turns} {self._turn_word(turns)}"
-            statuses["HP"].append((text, (90, 230, 120)))
+        statuses = {"Урон": [], "Уворот": [], "Крит": [], "HP": []}
+        for buff in battle.phys_buffs[side]:
+            turns = max(1, int(buff["remaining"]))
+            for key, row in (("damage_percent", "Урон"), ("dodge_percent", "Уворот"), ("crit_chance", "Крит")):
+                if buff.get(key):
+                    statuses[row].append(self._format_effect_status(int(buff[key]), "%", turns))
+        bleed = sum(effect["damage"] for effect in battle.bleeds[side])
+        if bleed:
+            statuses["HP"].append((f"Кровотечение -{bleed}/ход", (245, 90, 90)))
+        if battle.poisons[side]:
+            statuses["HP"].append((f"Яд x{len(battle.poisons[side])}", (150, 220, 90)))
         return statuses
 
     @staticmethod
@@ -773,12 +736,14 @@ class DuelRenderer:
     def _apply_chance_modifiers(derived, fighter):
         adjusted = dict(derived)
         dodge = int(str(adjusted["Уворот"]).rstrip("%"))
-        critical = int(str(adjusted["Крит"]).rstrip("%"))
+        # Крит выводится как «шанс% × крит.урон%» — меняем только шанс
+        critical_text, separator, critical_damage = str(adjusted["Крит"]).partition(" × ")
+        critical = int(critical_text.rstrip("%"))
         adjusted["Уворот"] = (
             f"{max(0, dodge + fighter.temporary_dodge_chance_modifier)}%"
         )
         adjusted["Крит"] = (
-            f"{max(0, critical + fighter.temporary_critical_chance_modifier)}%"
+            f"{max(0, critical + fighter.temporary_critical_chance_modifier)}%{separator}{critical_damage}"
         )
         return adjusted
 

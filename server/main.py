@@ -1,4 +1,5 @@
 import json
+import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import threading
 import traceback
@@ -9,16 +10,36 @@ import time
 from server import config
 from server.database import Database
 from server.items_database import ItemsDatabase
+from server.forge import Forge
 from server import social
 from server.world import run_bot_battle_tick
+from core.production_buildings import BUILDINGS
+from server.production_buildings import ProductionBuildings
+from server.world_map import terrain_payload
+from server.structures import city_structures
+from server.world_roads import roads_payload
+from core.currency import Currency
 from combat.anticheat import score_match
-from combat.card_database import card_to_dict, choose_battle_reward, is_mage_card, load_cards
+from combat.fighter import Fighter
+from combat.progression import apply_xp, battle_currency_reward, battle_xp
+from combat.card_database import (
+    card_allowed_for,
+    card_to_dict,
+    cards_for_type,
+    choose_battle_reward,
+    deck_validation_error,
+    load_cards,
+)
 
 
 class GameRequestHandler(BaseHTTPRequestHandler):
+    CHAT_LOCATIONS = ("tavern", "backyard", "city", "world_map", "character_room")
     database = Database()
     items_database = ItemsDatabase(database)
     chat_send_times = {}
+    battle_result_times = {}
+    # Результат боя шлёт клиент: не чаще одного боя за это время
+    BATTLE_RESULT_MIN_INTERVAL = 20
 
     def _send(self, status, payload):
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -72,7 +93,131 @@ class GameRequestHandler(BaseHTTPRequestHandler):
             raise ValueError("Персонаж не найден")
         return user_id, character
 
-    def _card_collection(self, character_id):
+    def _announce_player_status(self, character, status):
+        text = f"[ИГРОК] {character['name']} {status}"
+        for location in self.CHAT_LOCATIONS:
+            self.database.add_chat_message(character["id"], location, text)
+
+    @staticmethod
+    def _validate_client_character_update(current, payload):
+        """Reject client attempts to increase server-owned progression fields."""
+        if "level" in payload and int(payload["level"]) > int(current["level"]):
+            raise ValueError("Уровень изменяется сервером")
+        if "xp" in payload and int(payload["xp"]) > int(current["xp"]):
+            raise ValueError("Опыт начисляется сервером")
+
+        current_stats = current.get("stats", {})
+        requested_stats = payload.get("stats", {})
+        current_points = int(current.get("stat_points", 0))
+        requested_points = int(payload.get("stat_points", current_points))
+        if not isinstance(requested_stats, dict):
+            requested_stats = {}
+        # Повышать характеристики можно только за свободные очки: сумма статов + очков не растёт
+        increase = sum(
+            max(0, int(value) - int(current_stats.get(stat, 0)))
+            for stat, value in requested_stats.items()
+        )
+        decrease = sum(
+            max(0, int(current_stats.get(stat, 0)) - int(requested_stats[stat]))
+            for stat in current_stats
+            if stat in requested_stats
+        )
+        if increase + requested_points > current_points + decrease:
+            raise ValueError("Характеристики изменяются сервером")
+
+        current_currency = Currency.from_dict(current)
+        requested_currency = Currency.from_dict(payload)
+        if requested_currency.total_copper() > current_currency.total_copper():
+            raise ValueError("Валюта начисляется сервером")
+
+    def _apply_battle_result(self, user_id, character_id, body):
+        character = self.database.get_character(user_id, character_id)
+        if character is None:
+            raise ValueError("Персонаж не найден")
+        outcome = str(body.get("outcome", ""))
+        if outcome not in ("win", "draw", "loss"):
+            raise ValueError("Некорректный исход боя")
+        now = time.time()
+        last = self.battle_result_times.get(character_id, 0)
+        if now - last < self.BATTLE_RESULT_MIN_INTERVAL:
+            raise ValueError("Результат боя уже засчитан")
+        self.battle_result_times[character_id] = now
+        opponent_level = max(1, min(1000, int(body.get("opponent_level", character["level"]))))
+
+        fighter = Fighter(character["name"], character["level"], profession_type=character.get("type", "warrior"))
+        fighter.stats = dict(character["stats"])
+        fighter.stat_points = character["stat_points"]
+        fighter.xp = character["xp"]
+        fighter.recalculate_parameters()
+        fighter.hp = max(0, min(int(body.get("hp", character["hp"])), fighter.max_hp))
+        xp = battle_xp(character["level"], opponent_level, outcome)
+        apply_xp(fighter, xp, restore_hp=False)
+
+        copper, silver = battle_currency_reward(character["level"]) if outcome == "win" else (0, 0)
+        currency = Currency.from_dict(character)
+        currency.add(copper, silver, 0)
+        saved = self.database.save_character(user_id, character_id, {
+            **character,
+            **currency.to_dict(),
+            "level": fighter.level,
+            "xp": fighter.xp,
+            "stats": fighter.stats,
+            "stat_points": fighter.stat_points,
+            "hp": fighter.hp,
+            "mp": max(0, min(int(body.get("mp", character["mp"])), character["max_mp"])),
+        })
+        afk_result = self._apply_afk_defender_result(character_id, body)
+        return {
+            "character": saved,
+            "xp": xp,
+            "currency": {"copper": copper, "silver": silver, "gold": 0},
+            "afk_opponent": afk_result,
+        }
+
+    def _apply_afk_defender_result(self, attacker_id, body):
+        opponent_id = body.get("opponent_id")
+        if opponent_id is None or body.get("opponent_hp") is None or body.get("opponent_mp") is None:
+            return None
+        opponent_id = int(opponent_id)
+        battle = self.database.get_active_battle(int(attacker_id), opponent_id)
+        if (battle is None or not battle.get("opponent_afk")
+                or battle.get("battle_data", {}).get("mode") != "afk_defense"):
+            return None
+
+        presence = social.get_character_presence(opponent_id)
+        if presence is None or not presence.get("afk"):
+            self.database.delete_active_battle(int(attacker_id), opponent_id)
+            return None
+        target = self.database.get_character_for_battle(opponent_id)
+        if target is None:
+            self.database.delete_active_battle(int(attacker_id), opponent_id)
+            return None
+
+        character = target["character"]
+        hp = max(0, min(int(body["opponent_hp"]), character["max_hp"]))
+        mp = max(0, min(int(body["opponent_mp"]), character["max_mp"]))
+        defeated = hp <= 0
+        checkpoint = {**character, "hp": hp, "mp": mp}
+        if defeated:
+            checkpoint.update({
+                "hp": 1,
+                "mp": 1,
+                "zone": "city",
+                "position_x": 50 * 32 + 16,
+                "position_y": 53 * 32 + 16,
+                "position_direction": "n",
+            })
+        saved = self.database.save_character(target["user_id"], opponent_id, checkpoint)
+        social.update_afk_character(saved)
+        self.database.delete_active_battle(int(attacker_id), opponent_id)
+        return {"character_id": opponent_id, "hp": saved["hp"], "mp": saved["mp"], "defeated": defeated}
+
+    def _card_collection(self, character):
+        character_id = character["id"]
+        self.database.ensure_starter_cards(
+            character_id,
+            [card.key for card in cards_for_type(character.get("type"))],
+        )
         cards_by_key = {card.key: card for card in load_cards()}
         collection = []
         for entry in self.database.get_card_collection(character_id):
@@ -126,7 +271,8 @@ class GameRequestHandler(BaseHTTPRequestHandler):
         location = query.get("location", ["tavern"])[0]
         character_id = int(query.get("character_id", [0])[0])
         _, character = self._chat_actor(token, character_id)
-        social.update_presence(token, user_id, character, location)
+        if social.update_presence(token, user_id, character, location):
+            self._announce_player_status(character, "присоединился к игре")
         offers = social.offers_for(character_id)
         if location == "backyard":
             offers += social.public_offers(location, character_id)
@@ -185,6 +331,49 @@ class GameRequestHandler(BaseHTTPRequestHandler):
             if path == "/api/characters":
                 user_id = self.database.user_id_by_token(self._token())
                 self._send(200, {"characters": self.database.get_characters(user_id)})
+                return
+            if path == "/api/map/terrain":
+                self.database.user_id_by_token(self._token())
+                self._send(200, {"terrain": terrain_payload()})
+                return
+            if path == "/api/city/structures":
+                self.database.user_id_by_token(self._token())
+                self._send(200, {"city": city_structures()})
+                return
+            if path.startswith("/api/buildings/player-work/"):
+                parts = path.split("/")
+                if len(parts) != 5:
+                    raise ValueError("Некорректный путь производственной работы")
+                user_id = self.database.user_id_by_token(self._token())
+                character_id = int(parts[4])
+                if self.database.get_character(user_id, character_id) is None:
+                    raise ValueError("Персонаж не найден")
+                work = ProductionBuildings(self.database).active_player_work(character_id)
+                self._send(200, {"work": work})
+                return
+            if path.startswith("/api/forge/"):
+                parts = path.split("/")
+                if len(parts) != 4 or parts[3] == "orders":
+                    raise ValueError("Некорректный путь кузницы")
+                user_id = self.database.user_id_by_token(self._token())
+                character_id = int(parts[3])
+                if self.database.get_character(user_id, character_id) is None:
+                    raise ValueError("Персонаж не найден")
+                forge = Forge(self.database, self.items_database)
+                self._send(200, forge.get_state(character_id))
+                return
+            if path.startswith("/api/buildings/"):
+                parts = path.split("/")
+                if len(parts) != 5 or parts[3] not in BUILDINGS:
+                    self._send(404, {"error": "Здание не найдено"})
+                    return
+                building, character_id = parts[3], int(parts[4])
+                user_id = self.database.user_id_by_token(self._token())
+                if self.database.get_character(user_id, character_id) is None:
+                    self._send(404, {"error": "Персонаж не найден"})
+                else:
+                    state = ProductionBuildings(self.database).get_state(character_id, building)
+                    self._send(200, {"building": state})
                 return
             if path == "/api/opponents":
                 user_id = self.database.user_id_by_token(self._token())
@@ -245,7 +434,6 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                if character is None:
                    self._send(404, {"error": "Персонаж не найден"})
                else:
-                   self.items_database.ensure_starter_kit(character_id)
                    self._send(200, self.items_database.get_inventory_state(character_id))
                return
             
@@ -291,7 +479,7 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                if character is None:
                   self._send(404, {"error": "Персонаж не найден"})
                else:
-                  self._send(200, {"collection": self._card_collection(character_id)})
+                  self._send(200, {"collection": self._card_collection(character)})
                return
             
             self._send(404, {"error": "Маршрут не найден"})
@@ -325,27 +513,16 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                     raise ValueError("Название колоды: от 1 до 32 символов")
                 cards = body.get("cards", {})
                 if isinstance(cards, list):
+                    if len(cards) != len(set(map(str, cards))):
+                        raise ValueError("Карты в колоде не должны повторяться")
                     cards = {str(key): 1 for key in cards}
-                if not isinstance(cards, dict) or len(cards) != 22:
-                    raise ValueError("В колоде должно быть ровно 22 уникальные карты")
-                available = {card.key: card for card in load_cards()}
-                if any(key not in available for key in cards):
-                    raise ValueError("Колода содержит неизвестную карту")
-                character_type = character.get("type", "warrior")
-                for key in cards:
-                    if is_mage_card(available[key]) != (character_type == "mage"):
-                        raise ValueError("Колода содержит карты чужого класса")
-                for key, card in available.items():
-                    if key in cards and card.effect_data.get("ultimate"):
-                        element = card.effect_data.get("element")
-                        same_element = sum(
-                            1 for selected_key in cards
-                            if selected_key in available
-                            and available[selected_key].effect_data.get("element") == element
-                            and not available[selected_key].effect_data.get("ultimate")
-                        )
-                        if same_element < 5:
-                            raise ValueError(f"Ульта «{card.name}» требует минимум 5 обычных карт элемента «{element}»")
+                if not isinstance(cards, dict):
+                    raise ValueError("Некорректный состав колоды")
+                cards = {str(key): 1 for key in cards}
+                owned_keys = {entry["card_key"] for entry in self._card_collection(character)}
+                error = deck_validation_error(list(cards), character.get("type"), owned_keys)
+                if error:
+                    raise ValueError(error)
                 deck_id = self.items_database.create_deck(character_id, name, cards)
                 self._send(201, {"deck": self.items_database.get_deck(deck_id)})
                 return
@@ -357,7 +534,62 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                 valid_professions = ["warrior", "archer", "assassin", "battle_mage", "support_mage", "harmonist"]
                 if profession_type not in valid_professions:
                     raise ValueError(f"Профессия должна быть одной из: {', '.join(valid_professions)}")
-                self._send(201, {"character": self.database.create_character(user_id, name, profession_type)})
+                character = self.database.create_character(user_id, name, profession_type)
+                self.items_database.grant_base_equipment(character["id"])
+                self._send(201, {"character": character})
+                return
+            if path.startswith("/api/forge/"):
+                parts = path.split("/")
+                if not ((len(parts) == 5 and parts[4] == "orders")
+                        or (len(parts) == 7 and parts[4] == "orders" and parts[6] == "collect")):
+                    raise ValueError("Некорректный путь кузницы")
+                user_id = self.database.user_id_by_token(self._token())
+                character_id = int(parts[3])
+                if self.database.get_character(user_id, character_id) is None:
+                    raise ValueError("Персонаж не найден")
+                forge = Forge(self.database, self.items_database)
+                if len(parts) == 5:
+                    order_id = forge.create_order(character_id, body.get("item_id"))
+                    self._send(201, {"order_id": order_id, **forge.get_state(character_id)})
+                    return
+                forge.collect_order(character_id, int(parts[5]))
+                self._send(200, forge.get_state(character_id))
+                return
+            if path.startswith("/api/buildings/"):
+                parts = path.split("/")
+                if len(parts) < 6 or parts[3] not in BUILDINGS:
+                    raise ValueError("Некорректный путь здания")
+                building, character_id = parts[3], int(parts[4])
+                user_id = self.database.user_id_by_token(self._token())
+                if self.database.get_character(user_id, character_id) is None:
+                    raise ValueError("Персонаж не найден")
+                buildings = ProductionBuildings(self.database)
+                action = "/".join(parts[5:])
+                if action == "workers/hire":
+                    state = buildings.hire_worker(character_id, building, body.get("slot_index"), body.get("worker_id"))
+                elif action == "workers/fire":
+                    state = buildings.fire_worker(character_id, building, body.get("slot_index"))
+                elif action == "workers/player/toggle":
+                    state = buildings.toggle_player_worker(character_id, building, body.get("slot_index"))
+                elif action == "player-harvest/claim":
+                    state = buildings.claim_player_harvest(
+                        character_id, building, body.get("resource"), body.get("quantity", 0)
+                    )
+                elif action == "upgrade/deposit":
+                    state = buildings.deposit_material(character_id, building, body.get("item_id", 0), body.get("quantity", 0))
+                elif action == "upgrade/start":
+                    state = buildings.start_upgrade(character_id, building)
+                elif action == "stall-upgrade/contribute" and building == "stable":
+                    state = buildings.contribute_stall_upgrade(
+                        character_id, body.get("upgrade_id"), body.get("resource"), body.get("quantity", 0)
+                    )
+                elif action == "stall-upgrade/purchase" and building == "stable":
+                    state = buildings.purchase_stall_upgrade(character_id, body.get("upgrade_id"))
+                elif action == "horse/purchase" and building == "stable":
+                    state = buildings.purchase_horse(character_id, body.get("slot_index"))
+                else:
+                    raise ValueError("Неизвестное действие здания")
+                self._send(200, {"building": state})
                 return
             if path.startswith("/api/characters/") and path.endswith("/delete"):
                 character_id = int(path.rsplit("/", 2)[1])
@@ -373,8 +605,21 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                 self._send(200, {"deleted": True})
                 return
             if path == "/api/sessions/disconnect":
+                token = self._token()
                 character_id = body.get("character_id")
-                self._send(200, self.database.disconnect(self._token(), int(character_id) if character_id is not None else None, body.get("character")))
+                user_id = self.database.user_id_by_token(token)
+                character_id = int(character_id) if character_id is not None else None
+                result = self.database.disconnect(token, character_id, body.get("character"))
+                if character_id is not None and body.get("character") is not None:
+                    saved_character = self.database.get_character(user_id, character_id)
+                    if saved_character is not None:
+                        try:
+                            social.cancel_public_duel_offer(character_id, "backyard")
+                        except ValueError:
+                            pass
+                        social.mark_afk(token, user_id, saved_character)
+                        self._announce_player_status(saved_character, "покинул сервер")
+                self._send(200, result)
                 return
             if path == "/api/social/presence":
                 token = self._token()
@@ -382,7 +627,8 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                 character = self.database.get_character(user_id, int(body["character_id"]))
                 if character is None:
                     raise ValueError("Персонаж не найден")
-                social.update_presence(token, user_id, character, str(body.get("location", "tavern")))
+                if social.update_presence(token, user_id, character, str(body.get("location", "tavern"))):
+                    self._announce_player_status(character, "присоединился к игре")
                 self._send(200, {"ok": True})
                 return
             if path == "/api/social/messages":
@@ -453,6 +699,11 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                 result = self.database.record_match_audit(audit)
                 self._send(201, {**result, "xp": 0, "flags": audit["signals"], "denied": audit["action"] == "xp_denied"})
                 return
+            if path == "/api/battle/result":
+                user_id = self.database.user_id_by_token(self._token())
+                character_id = int(body.get("character_id", 0))
+                self._send(200, self._apply_battle_result(user_id, character_id, body))
+                return
             if path == "/api/battle/card-reward":
                 user_id = self.database.user_id_by_token(self._token())
                 character_id = int(body.get("character_id", 0))
@@ -466,6 +717,7 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                 eligible_cards = [
                     card for card in load_cards()
                     if card.key in eligible_key_set
+                    and card_allowed_for(card, character.get("type"))
                 ]
                 reward = choose_battle_reward(eligible_cards)
                 if reward is None:
@@ -512,6 +764,25 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                     )
                     offer["status"] = "accepted"
                     offer["accepted_by"] = target["character_id"]
+                    self._send(201, {"accepted": True, "offer": offer})
+                    return
+                if target.get("afk"):
+                    target_id = int(target["character_id"])
+                    if (self.database.get_active_battle(character["id"], target_id)
+                            or self.database.get_active_battle(target_id, character["id"])):
+                        raise ValueError("Один из персонажей уже участвует в бою")
+                    offer = social.add_duel_offer(
+                        {"character_id": character["id"], "name": character["name"]},
+                        target_id,
+                        location,
+                    )
+                    offer["status"] = "accepted"
+                    offer["accepted_by"] = target_id
+                    self.database.save_active_battle(
+                        character["id"], target_id,
+                        {"mode": "afk_defense", "location": location},
+                    )
+                    self.database.mark_opponent_afk(character["id"], target_id, True)
                     self._send(201, {"accepted": True, "offer": offer})
                     return
                 offer = social.add_duel_offer(
@@ -604,12 +875,31 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                     (item for item in social.DUEL_OFFERS if item["id"] == body["offer_id"]),
                     None,
                 )
+                afk_defender_id = None
                 if offer is not None and str(offer["sender_id"]).lstrip("-").isdigit():
-                    sender = self.database.get_character_for_battle(offer["sender_id"])
+                    sender_id = int(offer["sender_id"])
+                    sender = self.database.get_character_for_battle(sender_id)
                     sender_character = sender["character"] if sender is not None else None
                     if sender_character is not None and sender_character.get("type", "warrior") != character.get("type", "warrior"):
                         raise ValueError("Нельзя принять вызов персонажа другого класса")
+                    sender_presence = social.get_character_presence(sender_id)
+                    if (body.get("accepted") and offer.get("target_id") is None
+                            and sender_presence and sender_presence.get("afk")):
+                        if sender_character is None:
+                            raise ValueError("Персонаж уже недоступен")
+                        if sender_character["hp"] < sender_character["max_hp"]:
+                            raise ValueError("Нельзя вступить в бой: здоровье соперника должно быть полностью восстановлено")
+                        if (self.database.get_active_battle(character["id"], sender_id)
+                                or self.database.get_active_battle(sender_id, character["id"])):
+                            raise ValueError("Этот персонаж уже участвует в бою")
+                        afk_defender_id = sender_id
                 offer = social.respond_duel_offer(character["id"], body["offer_id"], bool(body.get("accepted")))
+                if afk_defender_id is not None:
+                    self.database.save_active_battle(
+                        character["id"], afk_defender_id,
+                        {"mode": "afk_defense", "location": "backyard"},
+                    )
+                    self.database.mark_opponent_afk(character["id"], afk_defender_id, True)
                 self._send(200, {"offer": offer})
                 return
             
@@ -699,6 +989,10 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                     character = self.database.update_character_profession(user_id, character_id, body["profession_type"])
                     self._send(200, {"character": character})
                 else:
+                    current = self.database.get_character(user_id, character_id)
+                    if current is None:
+                        raise ValueError("Персонаж не найден")
+                    self._validate_client_character_update(current, body)
                     character = self.database.save_character(user_id, character_id, body)
                     self._send(200, {"character": character})
                 return
@@ -712,8 +1006,15 @@ class GameRequestHandler(BaseHTTPRequestHandler):
         print(f"[server] {self.address_string()} - {format_string % args}")
 
 
+class GameHTTPServer(ThreadingHTTPServer):
+    # В Windows SO_REUSEADDR позволяет второму серверу молча занять тот же порт
+    allow_reuse_address = os.name != "nt"
+
+
 def run():
-    server = ThreadingHTTPServer((config.HOST, config.PORT), GameRequestHandler)
+    print("Подготавливаю дороги к загородным постройкам...")
+    roads_payload()
+    server = GameHTTPServer((config.HOST, config.PORT), GameRequestHandler)
     stop_bot_battles = threading.Event()
     bot_battle_thread = threading.Thread(
         target=_run_bot_battles,

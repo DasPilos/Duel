@@ -43,6 +43,13 @@ def battle_xp(player_level, opponent_level, outcome):
     return int(round(base_xp * _tier_multiplier(int(opponent_level) - int(player_level))))
 
 
+def battle_currency_reward(level):
+    """(медь, серебро) за победу на уровне персонажа."""
+    level = int(level)
+    rewards = {1: (10, 0), 2: (20, 0), 3: (60, 0), 4: (80, 0), 5: (20, 1)}
+    return rewards.get(level, (0, 2) if level >= 6 else (0, 0))
+
+
 def apply_xp(fighter, amount, restore_hp=False):
     """Apply XP and level-ups, optionally restoring HP outside combat."""
     if fighter.level >= LEVEL_CAP:

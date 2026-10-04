@@ -22,6 +22,7 @@ class BackyardScene:
             self.small_font,
             collection_loader=getattr(self.session, "get_card_collection", None),
             deck_loader=getattr(self.session, "get_decks", None),
+            deck_creator=getattr(self.session, "create_deck", None),
         )
         self.chat = ChatPanel(session, "backyard", profile_overlay=self.profile_overlay)
         self.navigate = None

@@ -1,6 +1,7 @@
 import json
 import random
 import sqlite3
+from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -14,42 +15,22 @@ class Card:
     key: str
     name: str
     group_name: str
-    # Затраты action points (старая система для физических карт)
-    strength_cost: int
-    intuition_cost: int
-    agility_cost: int
-    endurance_cost: int
-    # Новая система: явный тип и затрата ресурса
-    resource_type: str = "action_points"  # "action_points", "mana", "rage", "accuracy", "concentration"
-    resource_cost: int = 0  # Затрата уникального ресурса (для новых карт)
-    # Эффекты
-    effect_type: str = ""
+    # Ресурс класса: "mana", "rage", "accuracy", "concentration"
+    resource_type: str
+    resource_cost: int
+    effect_type: str
     effect_data: dict = None
     level: int = 1
-    # Экономика
     price_copper: int = 0
     price_silver: int = 0
     price_gold: int = 0
     drop_chance: float = 0.0
     image_path: str = ""
     effect_duration: int = 0
-    # Старое поле мана_cost (для обратной совместимости)
-    mana_cost: int = 0
 
     def __post_init__(self):
-        # Убедиться что effect_data не None
         if self.effect_data is None:
-            object.__setattr__(self, 'effect_data', {})
-
-    @property
-    def costs(self):
-        """Затраты action points (для старых карт)."""
-        return {
-            "strength": self.strength_cost,
-            "intuition": self.intuition_cost,
-            "agility": self.agility_cost,
-            "endurance": self.endurance_cost
-        }
+            object.__setattr__(self, "effect_data", {})
 
 
 # Список карт очищен: будем собирать набор заново с нуля.
@@ -63,10 +44,6 @@ def _mage_card(key, name, element, mana_cost, effect_type, effect_data, duration
         key=key,
         name=name,
         group_name=f"Магия: {element}",
-        strength_cost=0,
-        intuition_cost=0,
-        agility_cost=0,
-        endurance_cost=0,
         resource_type="mana",
         resource_cost=mana_cost,
         effect_type=effect_type,
@@ -74,7 +51,6 @@ def _mage_card(key, name, element, mana_cost, effect_type, effect_data, duration
         level=1,
         drop_chance=0,
         effect_duration=duration,
-        mana_cost=mana_cost,
     )
 
 
@@ -84,10 +60,6 @@ def _warrior_card(key, name, style, resource_cost, effect_type, effect_data, dur
         key=key,
         name=name,
         group_name=f"Боец: {style}",
-        strength_cost=0,
-        intuition_cost=0,
-        agility_cost=0,
-        endurance_cost=0,
         resource_type="rage",
         resource_cost=resource_cost,
         effect_type=effect_type,
@@ -104,10 +76,6 @@ def _archer_card(key, name, style, resource_cost, effect_type, effect_data, dura
         key=key,
         name=name,
         group_name=f"Лучник: {style}",
-        strength_cost=0,
-        intuition_cost=0,
-        agility_cost=0,
-        endurance_cost=0,
         resource_type="accuracy",
         resource_cost=resource_cost,
         effect_type=effect_type,
@@ -124,10 +92,6 @@ def _assassin_card(key, name, style, resource_cost, effect_type, effect_data, du
         key=key,
         name=name,
         group_name=f"Асасин: {style}",
-        strength_cost=0,
-        intuition_cost=0,
-        agility_cost=0,
-        endurance_cost=0,
         resource_type="concentration",
         resource_cost=resource_cost,
         effect_type=effect_type,
@@ -183,7 +147,7 @@ MAGE_CARDS = (
     _mage_card("mage_raging_frost", "Бушующая стужа", "Холод", 55, "mage_area_damage", {"damage": 20, "intellect_damage": 4, "ultimate": True, "cast_turns": 1}, 1),
 )
 
-# Карты воина (21 карта: 3 стиля × 7 карт)
+# Карты воина (22 карты: 3 стиля, в «Танце клинка» 8 карт)
 WARRIOR_CARDS = (
     # Искусство войны: Кровавая жатва (7 карт)
     _warrior_card("warrior_slash", "Разрез", "Кровавая жатва", 11, "damage", {"dice": "1d8", "bleed_percent": 8}),
@@ -199,9 +163,10 @@ WARRIOR_CARDS = (
     _warrior_card("warrior_multi_strike", "Множественный удар", "Танец клинка", 16, "damage", {"dice": "1d6", "hits": 3, "target_count": 3}),
     _warrior_card("warrior_marked_cut", "Меченый разрез", "Танец клинка", 23, "damage", {"dice": "1d6", "hits": 2, "mark_damage": 4, "mark_strength": 1}),
     _warrior_card("warrior_stun_counter", "Оглушающий ответ", "Танец клинка", 11, "damage_buff", {"hit_bonus": 1, "stun_after_hits": 8}, 2),
-    _warrior_card("warrior_flurry", "Град ударов", "Танец клинца", 9, "damage_buff", {"extra_hits": 1}, 2),
+    _warrior_card("warrior_flurry", "Град ударов", "Танец клинка", 9, "damage_buff", {"extra_hits": 1}, 2),
     _warrior_card("warrior_dance_regen", "Танец регенерации", "Танец клинка", 0, "damage_buff", {"regen_percent": 1, "regen_max_hp": 1}, 3),
     _warrior_card("warrior_uriel_dance", "Танец Урииля", "Танец клинка", 58, "damage", {"dice": "1d6", "hits": 6, "target_count": 4, "ultimate": True}),
+    _warrior_card("warrior_blade_strike", "Удар клинком", "Танец клинка", 10, "damage", {"dice": "1d10"}),
 
     # Стиль бога Валентайна (7 карт)
     _warrior_card("warrior_valen_strike", "Удар Валентайна", "Стиль Валентайна", 12, "damage", {"dice": "1d10", "heal_percent": 4}),
@@ -277,113 +242,68 @@ ASSASSIN_CARDS = (
 
 BASE_CARDS = BASE_CARDS + MAGE_CARDS + WARRIOR_CARDS + ARCHER_CARDS + ASSASSIN_CARDS
 
+_INITIALIZED_PATHS = set()
+
+
+CARD_COLUMNS = (
+    "key", "name", "group_name", "resource_type", "resource_cost", "effect_type",
+    "effect_data", "level", "price_copper", "price_silver", "price_gold",
+    "drop_chance", "image_path", "effect_duration",
+)
+
 
 def initialize_database(path=DATABASE_PATH):
-    with sqlite3.connect(path) as connection:
+    """Таблица карт — кэш справочника из кода: при смене схемы пересоздаётся."""
+    with closing(sqlite3.connect(path)) as connection:
+        columns = [row[1] for row in connection.execute("PRAGMA table_info(cards)")]
+        if columns and columns != [*CARD_COLUMNS, "enabled"]:
+            connection.execute("DROP TABLE cards")
         connection.execute("""CREATE TABLE IF NOT EXISTS cards (
             key TEXT PRIMARY KEY, name TEXT NOT NULL, group_name TEXT NOT NULL,
-            strength_cost INTEGER NOT NULL, intuition_cost INTEGER NOT NULL,
-            agility_cost INTEGER NOT NULL, endurance_cost INTEGER NOT NULL,
+            resource_type TEXT NOT NULL, resource_cost INTEGER NOT NULL,
             effect_type TEXT NOT NULL, effect_data TEXT NOT NULL,
+            level INTEGER NOT NULL, price_copper INTEGER NOT NULL,
+            price_silver INTEGER NOT NULL, price_gold INTEGER NOT NULL,
+            drop_chance REAL NOT NULL, image_path TEXT NOT NULL,
+            effect_duration INTEGER NOT NULL,
             enabled INTEGER NOT NULL DEFAULT 1)""")
-        columns = {row[1] for row in connection.execute("PRAGMA table_info(cards)")}
-        if "level" not in columns:
-            connection.execute("ALTER TABLE cards ADD COLUMN level INTEGER NOT NULL DEFAULT 1")
-        if "price_copper" not in columns:
-            connection.execute("ALTER TABLE cards ADD COLUMN price_copper INTEGER NOT NULL DEFAULT 0")
-        if "price_silver" not in columns:
-            connection.execute("ALTER TABLE cards ADD COLUMN price_silver INTEGER NOT NULL DEFAULT 0")
-        if "price_gold" not in columns:
-            connection.execute("ALTER TABLE cards ADD COLUMN price_gold INTEGER NOT NULL DEFAULT 0")
-        if "drop_chance" not in columns:
-            connection.execute("ALTER TABLE cards ADD COLUMN drop_chance REAL NOT NULL DEFAULT 0")
-        if "image_path" not in columns:
-            connection.execute("ALTER TABLE cards ADD COLUMN image_path TEXT NOT NULL DEFAULT ''")
-        if "effect_duration" not in columns:
-            connection.execute(
-                "ALTER TABLE cards ADD COLUMN effect_duration INTEGER NOT NULL DEFAULT 0"
-            )
-        if "mana_cost" not in columns:
-            connection.execute(
-                "ALTER TABLE cards ADD COLUMN mana_cost INTEGER NOT NULL DEFAULT 0"
-            )
+        placeholders = ", ".join("?" for _ in CARD_COLUMNS)
+        updates = ", ".join(f"{column} = excluded.{column}" for column in CARD_COLUMNS[1:])
         connection.executemany(
-            """INSERT INTO cards
-            (key, name, group_name, strength_cost, intuition_cost, agility_cost,
-             endurance_cost, effect_type, effect_data, level, price_copper,
-             price_silver, price_gold, drop_chance, image_path, effect_duration, mana_cost)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(key) DO UPDATE SET
-                name = excluded.name,
-                group_name = excluded.group_name,
-                strength_cost = excluded.strength_cost,
-                intuition_cost = excluded.intuition_cost,
-                agility_cost = excluded.agility_cost,
-                endurance_cost = excluded.endurance_cost,
-                effect_type = excluded.effect_type,
-                effect_data = excluded.effect_data,
-                level = excluded.level,
-                price_copper = excluded.price_copper,
-                price_silver = excluded.price_silver,
-                price_gold = excluded.price_gold,
-                drop_chance = excluded.drop_chance,
-                image_path = excluded.image_path,
-                effect_duration = excluded.effect_duration,
-                mana_cost = excluded.mana_cost,
-                enabled = 1""",
+            f"""INSERT INTO cards ({", ".join(CARD_COLUMNS)}) VALUES ({placeholders})
+            ON CONFLICT(key) DO UPDATE SET {updates}, enabled = 1""",
             [
-                (
-                    card.key,
-                    card.name,
-                    card.group_name,
-                    card.strength_cost,
-                    card.intuition_cost,
-                    card.agility_cost,
-                    card.endurance_cost,
-                    card.effect_type,
-                    json.dumps(card.effect_data, ensure_ascii=False),
-                    card.level,
-                    card.price_copper,
-                    card.price_silver,
-                    card.price_gold,
-                    card.drop_chance,
-                    card.image_path,
-                    card.effect_duration,
-                    card.mana_cost,
+                tuple(
+                    json.dumps(card.effect_data, ensure_ascii=False) if column == "effect_data" else getattr(card, column)
+                    for column in CARD_COLUMNS
                 )
                 for card in BASE_CARDS
             ],
         )
-        # Отключаем/удаляем устаревшие карты, которых больше нет в коде.
         valid_keys = [card.key for card in BASE_CARDS]
-        placeholders = ",".join("?" for _ in valid_keys)
         connection.execute(
-            f"DELETE FROM cards WHERE key NOT IN ({placeholders})",
+            f"DELETE FROM cards WHERE key NOT IN ({','.join('?' for _ in valid_keys)})",
             valid_keys,
         )
         connection.commit()
 
 
 def load_cards(path=DATABASE_PATH):
-    initialize_database(path)
-    with sqlite3.connect(path) as connection:
+    # Таблица пересобирается из кода один раз за процесс
+    if path not in _INITIALIZED_PATHS:
+        initialize_database(path)
+        _INITIALIZED_PATHS.add(path)
+    with closing(sqlite3.connect(path)) as connection:
+        connection.row_factory = sqlite3.Row
         rows = connection.execute(
-            """SELECT key, name, group_name, strength_cost, intuition_cost,
-                      agility_cost, endurance_cost, effect_type, effect_data,
-                      level, price_copper, price_silver, price_gold, drop_chance,
-                      image_path, effect_duration, mana_cost
-               FROM cards
-               WHERE enabled = 1
-               ORDER BY rowid"""
+            f"SELECT {', '.join(CARD_COLUMNS)} FROM cards WHERE enabled = 1 ORDER BY rowid"
         ).fetchall()
-    return [
-        Card(
-            *row[:8],
-            json.loads(row[8]),
-            *row[9:],
-        )
-        for row in rows
-    ]
+    cards = []
+    for row in rows:
+        fields = dict(row)
+        fields["effect_data"] = json.loads(fields["effect_data"])
+        cards.append(Card(**fields))
+    return cards
 
 
 MAGE_GROUP_PREFIX = "Магия:"
@@ -393,13 +313,69 @@ def is_mage_card(card):
     return card.group_name.startswith(MAGE_GROUP_PREFIX)
 
 
+DECK_SIZE = 22
+ULTIMATE_STYLE_CARDS_REQUIRED = 5
+
+# Каждый класс пользуется только картами своей группы ("Магия: Огонь" -> "Магия:").
+PROFESSION_CARD_GROUPS = {
+    "warrior": "Боец:",
+    "archer": "Лучник:",
+    "assassin": "Асасин:",
+    "battle_mage": MAGE_GROUP_PREFIX,
+    "support_mage": MAGE_GROUP_PREFIX,
+    "harmonist": MAGE_GROUP_PREFIX,
+    "mage": MAGE_GROUP_PREFIX,  # старый тип персонажа
+}
+
+
+def is_mage_profession(character_type):
+    return PROFESSION_CARD_GROUPS.get(character_type) == MAGE_GROUP_PREFIX
+
+
+def card_allowed_for(card, character_type):
+    prefix = PROFESSION_CARD_GROUPS.get(character_type)
+    return prefix is not None and card.group_name.startswith(prefix)
+
+
+def card_style(card):
+    """Стиль/элемент карты — по нему считается требование ульты."""
+    return card.group_name.split(":", 1)[-1].strip()
+
+
 def cards_for_type(character_type, path=DATABASE_PATH):
-    """Cards eligible for a character's class, so warrior and mage pools never mix
-    (mage cards cost 0 in every stat field, so they'd be "free" in a warrior's draft)."""
-    cards = load_cards(path)
-    if character_type == "mage":
-        return [card for card in cards if is_mage_card(card)]
-    return [card for card in cards if not is_mage_card(card)]
+    """Все карты, доступные классу персонажа. Пулы классов никогда не смешиваются."""
+    return [card for card in load_cards(path) if card_allowed_for(card, character_type)]
+
+
+def deck_validation_error(card_keys, character_type, owned_keys=None, path=DATABASE_PATH):
+    """Текст ошибки колоды или пустая строка. Используется и сервером, и клиентом."""
+    keys = [str(key) for key in card_keys]
+    if len(keys) != len(set(keys)):
+        return "Карты в колоде не должны повторяться"
+    if len(keys) != DECK_SIZE:
+        return f"В колоде должно быть ровно {DECK_SIZE} уникальные карты"
+    by_key = {card.key: card for card in load_cards(path)}
+    if any(key not in by_key for key in keys):
+        return "Колода содержит неизвестную карту"
+    if any(not card_allowed_for(by_key[key], character_type) for key in keys):
+        return "Колода содержит карты чужого класса"
+    if owned_keys is not None and any(key not in owned_keys for key in keys):
+        return "Колода содержит карты, которых нет в коллекции"
+    for key in keys:
+        card = by_key[key]
+        if not card.effect_data.get("ultimate"):
+            continue
+        style = card_style(card)
+        same_style = sum(
+            1 for other in keys
+            if card_style(by_key[other]) == style and not by_key[other].effect_data.get("ultimate")
+        )
+        if same_style < ULTIMATE_STYLE_CARDS_REQUIRED:
+            return (
+                f"Ульта «{card.name}» требует минимум {ULTIMATE_STYLE_CARDS_REQUIRED} "
+                f"обычных карт стиля «{style}»"
+            )
+    return ""
 
 
 def card_to_dict(card):
@@ -407,7 +383,6 @@ def card_to_dict(card):
         "key": card.key,
         "name": card.name,
         "group_name": card.group_name,
-        "costs": card.costs,
         "effect_type": card.effect_type,
         "effect_data": dict(card.effect_data),
         "level": card.level,
@@ -417,7 +392,8 @@ def card_to_dict(card):
         "drop_chance": card.drop_chance,
         "image_path": card.image_path,
         "effect_duration": card.effect_duration,
-        "mana_cost": card.mana_cost,
+        "resource_type": card.resource_type,
+        "resource_cost": card.resource_cost,
     }
 
 

@@ -10,8 +10,6 @@ class DuelLayout:
         self.player_selected = pygame.Rect(settings.PLAYER_SELECTED_RECT)
         self.enemy_selected = pygame.Rect(settings.ENEMY_SELECTED_RECT)
         self.enemy_hand = pygame.Rect(settings.ENEMY_HAND_RECT)
-        self.player_points = pygame.Rect(settings.PLAYER_POINTS_RECT)
-        self.enemy_points = pygame.Rect(settings.ENEMY_POINTS_RECT)
         self.confirm_selection_button = pygame.Rect(settings.CONFIRM_SELECTION_RECT)
         self.play_cards_button = pygame.Rect(settings.PLAY_CARDS_RECT)
         self.turn_bar = pygame.Rect(settings.TURN_BAR_RECT)

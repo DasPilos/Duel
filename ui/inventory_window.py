@@ -13,13 +13,16 @@ from pathlib import Path
 import pygame
 
 from client.network import ServerError
+from combat.card_database import is_mage_profession
 from combat.mechanics import weapon_damage_range
 from core import settings
+from core.currency import Currency
 from ui.equipment_slots import SLOT_LABELS, slot_at, slot_rects
 from ui.hud import draw_button
 
 
 PLACEHOLDERS_DIR = Path(__file__).resolve().parent.parent / "assets" / "fighters" / "equipment" / "placeholders"
+CURRENCY_DIR = Path(__file__).resolve().parent.parent / "assets" / "ui" / "currency"
 
 BACKPACK_COLS = 10
 BACKPACK_ROWS = 5
@@ -42,6 +45,10 @@ STAT_LABELS = {
     "wisdom": "Мудрость",
     "intellect": "Интеллект",
     "harmony": "Гармония",
+    "hp": "HP",
+    "mp": "MP",
+    "dodge": "% Уворот",
+    "block": "% Блок",
 }
 
 PANEL_BG = (32, 28, 30)
@@ -56,6 +63,10 @@ GREEN = (120, 220, 120)
 RED = (235, 110, 100)
 
 
+def format_item_price(item):
+    return Currency.format_amount(item.get("price", 0))
+
+
 class IconCache:
     """Иконки предметов: обрезанные слои экипировки или процедурные рисунки"""
 
@@ -64,11 +75,20 @@ class IconCache:
         self._icons = {}
 
     def layer(self, key):
-        """Полноразмерный слой экипировки 1024x1024 (или None)"""
+        """Полноразмерный слой экипировки 1024x1024 или иконка валюты 512x512 (или None)"""
         if key not in self._layers:
             path = PLACEHOLDERS_DIR / f"{key}.png"
+            if not path.is_file():
+                curr_path = CURRENCY_DIR / f"{key}.png"
+                if curr_path.is_file():
+                    path = curr_path
             try:
-                self._layers[key] = pygame.image.load(str(path)).convert_alpha()
+                img = pygame.image.load(str(path))
+                try:
+                    img = img.convert_alpha()
+                except pygame.error:
+                    pass
+                self._layers[key] = img
             except (pygame.error, OSError, FileNotFoundError):
                 self._layers[key] = None
         return self._layers[key]
@@ -233,6 +253,7 @@ class InventoryWindow:
         character = self.session.character
         character["equipment_bonuses"] = dict(self.bonuses)
         character["equipment"] = dict(self.equipment)
+        character["carried_weight_kg"] = float(state.get("carried_weight_kg", 0))
         updated = state.get("character")
         if updated:
             for key in ("hp", "max_hp", "mp", "max_mp"):
@@ -301,7 +322,11 @@ class InventoryWindow:
             if self._request(client.move_item, character_id, source[1], target[1]):
                 self.selected = target
         elif source[0] == "bag" and target[0] == "equip":
-            if item.get("equip_slot") != target[1]:
+            two_handed_hand_target = (
+                (item.get("effects", {}).get("two_handed") or item.get("effects", {}).get("either_hand"))
+                and target[1] in ("weapon", "shield")
+            )
+            if item.get("equip_slot") != target[1] and not two_handed_hand_target:
                 self._say("Предмет не подходит для этого слота", RED)
             elif self._request(client.equip_item, character_id, source[1], target[1]):
                 self._say(f"Надето: {item['name']}", GREEN)
@@ -328,7 +353,7 @@ class InventoryWindow:
         # Отложенный импорт: карточки сами импортируют IconCache из этого модуля
         from ui.character_card import CharacterCard
         from ui.mage_card import MageCard
-        card_type = MageCard if character.get("type") == "mage" else CharacterCard
+        card_type = MageCard if is_mage_profession(character.get("type")) else CharacterCard
         return card_type.get_or_create(character.get("id"))
 
     def _highlight_slot(self):
@@ -545,7 +570,7 @@ class InventoryWindow:
             lines.append((f"Урон: {text}", GOLD, self.small_font))
         if item.get("can_use") and effects.get("type") in ("hp", "mp"):
             lines.append((f"Восстанавливает {effects.get('value', 0)} {'здоровья' if effects['type'] == 'hp' else 'маны'}", GREEN, self.small_font))
-        lines.append((f"Вес: {item.get('weight', 0):g} кг   ·   Цена: {item.get('price', 0)} зол.", TEXT_DIM, self.small_font))
+        lines.append((f"Вес: {item.get('weight', 0):g} кг   ·   Цена: {format_item_price(item)}", TEXT_DIM, self.small_font))
         return lines
 
     def _draw_item_text(self, screen, item, x, y, width):

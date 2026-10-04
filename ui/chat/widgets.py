@@ -72,10 +72,14 @@ class MessageItem:
         sender = "Вы" if own else message.get("sender", "Персонаж")
         segments = message.get("segments")
         if not segments:
-            segments = [{
-                "text": f"{sender}: {message.get('text', '')}",
-                "color": (150, 210, 255) if own else (215, 215, 225),
-            }]
+            text = str(message.get("text", ""))
+            if text.startswith("[ИГРОК] "):
+                segments = [{"text": text, "color": (220, 195, 130)}]
+            else:
+                segments = [{
+                    "text": f"{sender}: {text}",
+                    "color": (150, 210, 255) if own else (215, 215, 225),
+                }]
         flat_segments = []
         for segment in segments:
             text = str(segment.get("text", ""))

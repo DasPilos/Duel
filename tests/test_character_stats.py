@@ -2,9 +2,10 @@ import unittest
 
 import pygame
 
-from combat.character_stats import adjust_stats, calculate_max_hp
+from combat.character_stats import adjust_stats, calculate_carry_capacity, calculate_max_hp
 from combat.fighter import Fighter
 from core import settings
+from core.carry_weight import GREEN, NEUTRAL, RED, YELLOW, carried_weight_kg, load_color, movement_speed_multiplier
 from scenes.tavern_scene import TavernScene
 from ui.chat.panel import ChatPanel
 from ui.character_card import CharacterCard
@@ -14,6 +15,31 @@ from ui.tavern_shop import TavernShop
 
 
 class CharacterStatTests(unittest.TestCase):
+    def test_carry_capacity_uses_strength_and_endurance(self):
+        self.assertEqual(calculate_carry_capacity(6, 4), 42)
+        self.assertEqual(calculate_carry_capacity(3, 3), 24)
+
+    def test_carry_load_colors_and_movement_thresholds(self):
+        self.assertEqual(load_color(30, 100), GREEN)
+        self.assertEqual(movement_speed_multiplier(45, 100), 0.7)
+        self.assertEqual(movement_speed_multiplier(60, 100), 0.7)
+        self.assertEqual(load_color(61, 100), YELLOW)
+        self.assertEqual(movement_speed_multiplier(61, 100), 0.5)
+        self.assertEqual(load_color(80, 100), YELLOW)
+        self.assertEqual(movement_speed_multiplier(80, 100), 0.5)
+        self.assertEqual(load_color(81, 100), RED)
+        self.assertEqual(movement_speed_multiplier(81, 100), 0.3)
+        self.assertEqual(load_color(45, 100), NEUTRAL)
+
+    def test_carried_weight_sums_bag_and_equipment_once(self):
+        inventory = [{"weight": 2.5, "quantity": 2}, {"weight": 1, "quantity": 3}]
+        equipment = {
+            "weapon": {"weight": 4},
+            "shield": {"weight": 4, "_two_handed_shadow": True},
+            "body": {"weight": 5},
+        }
+        self.assertEqual(carried_weight_kg(inventory, equipment), 17)
+
     def test_max_hp_formula_matches_level_and_endurance(self):
         self.assertEqual(calculate_max_hp(1, 5), 50)
         self.assertEqual(calculate_max_hp(3, 7), 70)
@@ -26,9 +52,10 @@ class CharacterStatTests(unittest.TestCase):
         self.assertEqual(derived_values(profile), {
             "Урон": 3,
             "Уворот": "6%",
-            "Крит": "5%",
+            "Крит": "5% × 165%",
             "Маг Урон": 3,
             "HP": 30,
+            "Грузоподъёмность": 24,
         })
 
     def test_endurance_cannot_increase_manually(self):
@@ -141,8 +168,8 @@ class CharacterStatTests(unittest.TestCase):
             frame = pygame.Rect(20, 120, 500, 955)
             minus, plus = CharacterCard._stat_control_rects(frame, frame.bottom - 92)
 
-            self.assertEqual(minus.topleft, (203, 988))
-            self.assertEqual(plus.topleft, (222, 988))
+            self.assertEqual(minus.topleft, (176, 988))
+            self.assertEqual(plus.topleft, (195, 988))
             self.assertEqual(minus.size, (13, 13))
             self.assertEqual(plus.size, (13, 13))
         finally:
@@ -235,7 +262,7 @@ class CharacterStatTests(unittest.TestCase):
                     return {"offers": []}
 
             panel = ChatPanel(Session(), "tavern")
-            panel.messages = [{"id": 1, "sender_id": 2, "sender": "Игрок", "text": "длинное сообщение " * 20}]
+            panel.messages = [{"id": 1, "sender_id": 2, "sender": "Игрок", "text": "длинное сообщение " * 40}]
             panel.message_list.set_messages(panel.messages)
             screen = pygame.Surface((1920, 1080))
             panel.draw(screen)
@@ -363,9 +390,15 @@ class CharacterStatTests(unittest.TestCase):
         }
 
         # Урон = сила 5 + 1 от предмета + меч 5–7
-        self.assertEqual(derived_values(warrior), {"Урон": "11-13", "Уворот": "10%", "Крит": "5%", "Маг Урон": "6-8", "HP": 40})
+        self.assertEqual(derived_values(warrior), {
+            "Урон": "11-13", "Уворот": "10%", "Крит": "5% × 175%",
+            "Маг Урон": "6-8", "HP": 40, "Грузоподъёмность": 45,
+        })
         # Показатели одинаковы для всех классов: маг урон идёт от мудрости
-        self.assertEqual(derived_values(mage), {"Урон": 1, "Уворот": "6%", "Крит": "5%", "Маг Урон": 3, "HP": 90})
+        self.assertEqual(derived_values(mage), {
+            "Урон": 1, "Уворот": "6%", "Крит": "5% × 150%",
+            "Маг Урон": 3, "HP": 90, "Грузоподъёмность": 12,
+        })
 
     def test_character_comparison_draw_cross_class_does_not_crash(self):
         from ui.character_comparison import CharacterComparison

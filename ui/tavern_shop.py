@@ -2,6 +2,8 @@ from pathlib import Path
 
 import pygame
 from core import settings
+from core.currency import Currency
+from ui.catalog_icons import draw_item_icon
 from ui.hud import draw_button
 
 
@@ -183,17 +185,17 @@ class TavernShop:
                 # Иконка напитка (слева)
                 self._draw_drink_icon(screen, rect.x + 5, rect.y + 5)
                 
-                # Текст товара (справа от иконки)
-                drink_text = self.small_font.render(f"{drink['name']} - {drink['price']} медяков", True, (255, 255, 255))
-                screen.blit(
-                    drink_text,
-                    drink_text.get_rect(
-                        midleft=(
-                            rect.x + self.DRINK_ICON_SIZE + 15,
-                            rect.centery,
-                        )
-                    ),
-                )
+                # Текст товара (справа от иконки с монетой)
+                name_surf = self.small_font.render(f"{drink['name']} -", True, (255, 255, 255))
+                name_rect = name_surf.get_rect(midleft=(rect.x + self.DRINK_ICON_SIZE + 15, rect.centery))
+                screen.blit(name_surf, name_rect)
+
+                coin = "gold" if drink["price"] >= 10000 else ("silver" if drink["price"] >= 100 else "copper")
+                draw_item_icon(screen, coin, (name_rect.right + 6, rect.centery - 10), 20)
+
+                price_text = Currency.format_amount(drink["price"])
+                price_surf = self.small_font.render(price_text, True, (255, 225, 120))
+                screen.blit(price_surf, (name_rect.right + 30, name_rect.top))
             
             # Tooltip при наведении
             if self.hovered_drink_index >= 0 and self.hovered_drink_index < len(self.drinks):

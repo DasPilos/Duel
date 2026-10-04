@@ -8,6 +8,7 @@ from pathlib import Path
 from core import settings
 from ui.music import play_tavern_music, stop_tavern_music
 from ui.character_profile_overlay import CharacterProfileOverlay
+from ui.chat import ChatPanel
 from ui.inventory_window import SLOT_LABELS
 
 
@@ -38,7 +39,10 @@ class CharacterRoom:
             self.small_font,
             collection_loader=getattr(self.session, "get_card_collection", None),
             deck_loader=getattr(self.session, "get_decks", None),
+            deck_creator=getattr(self.session, "create_deck", None),
         )
+        self.chat = (ChatPanel(session, "character_room", profile_overlay=self.profile_overlay)
+                     if hasattr(session, "social_snapshot") else None)
 
         # Вкладки (рюкзак убран, он теперь в глобальной панели)
         self.current_tab = "equipment"
@@ -74,6 +78,8 @@ class CharacterRoom:
     def handle_event(self, event):
         """Обработка событий"""
         if self.profile_overlay.handle_event(event):
+            return
+        if self.chat is not None and self.chat.handle_event(event):
             return
         # Сначала обрабатываем profile_overlay
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
@@ -123,6 +129,8 @@ class CharacterRoom:
 
     def update(self, dt):
         """Обновление логики сцены"""
+        if self.chat is not None:
+            self.chat.update(dt)
         # Загружаем данные с сервера (при первом входе)
         if not self.equipment_data and self.current_tab == "equipment":
             self._load_equipment()
@@ -190,6 +198,9 @@ class CharacterRoom:
         inv_rect = inv_text.get_rect(center=self.inventory_button.center)
         screen.blit(inv_text, inv_rect)
 
+        if self.chat is not None:
+            self.chat.draw(screen)
+
         # Оверлей профиля
         show_player_only = self.profile_overlay.counterpart is None
         self.profile_overlay.draw(screen, opponent=self.session.character, show_player_only=show_player_only)
@@ -250,7 +261,8 @@ class CharacterRoom:
                 # Бонусы
                 bonuses = equipment.get("bonuses", {})
                 if bonuses:
-                    bonuses_text = ", ".join([f"+{v} {k}" for k, v in bonuses.items()])
+                    stat_labels = {"strength": "Сила", "agility": "Ловкость", "intuition": "Интуиция", "endurance": "Выносливость", "wisdom": "Мудрость", "intellect": "Интеллект", "harmony": "Гармония", "hp": "HP", "mp": "MP", "dodge": "% Уворот", "block": "% Блок"}
+                    bonuses_text = ", ".join([f"+{v} {stat_labels.get(k, k)}" for k, v in bonuses.items()])
                     bonuses_surface = self.small_font.render(bonuses_text, True, (100, 200, 100))
                     screen.blit(bonuses_surface, (start_x + 250, y + 25))
             else:

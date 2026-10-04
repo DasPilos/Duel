@@ -1,6 +1,7 @@
 """HUD и окно активного (выбранного по ЛКМ) объекта города."""
 import pygame
 from core import settings
+from ui.catalog_icons import draw_building_icon
 from ui.hud import draw_button
 
 
@@ -9,7 +10,7 @@ class CityHudMixin:
 
     def _draw_active_window(self, screen):
         """Отрисовывает окно активного объекта (выбранного по ЛКМ)."""
-        if self.active_entity is None or self.castle_menu_open or self.barn_menu_open or self.warehouse_menu_open or self.forge_menu_open or self.workshop_menu_open or self.barracks_menu_open or self.engineering_menu_open or self.university_menu_open or self.academy_menu_open or self.mage_school_menu_open:
+        if self.active_entity is None or self.castle_menu_open or self.barn_menu_open or self.warehouse_menu_open or self.stable_menu_open or self.forge_menu_open or self.workshop_menu_open or self.barracks_menu_open or self.engineering_menu_open or self.university_menu_open or self.academy_menu_open or self.mage_school_menu_open:
             return
 
         ent = self.active_entity
@@ -20,10 +21,12 @@ class CityHudMixin:
         pygame.draw.rect(win_surf, (220, 185, 60, 255), (0, 0, rect.width, rect.height), width=2, border_radius=8)
         screen.blit(win_surf, rect.topleft)
 
-        icon = ent.get("icon", "📍")
         name = ent.get("name", "Объект")
-        title_surf = self.font.render(f"{icon} {name}", True, (255, 225, 120))
-        screen.blit(title_surf, (rect.left + 14, rect.top + 12))
+        building_icon = draw_building_icon(screen, ent.get("id"), (rect.left + 12, rect.top + 6), 32)
+        title_x = rect.left + 52 if building_icon else rect.left + 14
+        title = name if building_icon else f"{ent.get('icon', '📍')} {name}"
+        title_surf = self.font.render(title, True, (255, 225, 120))
+        screen.blit(title_surf, (title_x, rect.top + 12))
 
         status_surf = self.badge_font.render("● АКТИВЕН", True, (80, 255, 120))
         screen.blit(status_surf, (rect.left + 14, rect.top + 40))
@@ -72,7 +75,7 @@ class CityHudMixin:
             screen.blit(not_surf, not_rect)
         else:
             if ent.get("id") == "player":
-                action_label = "ФОКУС КАМЕРЫ"
+                action_label = "ИНФОРМАЦИЯ"
             elif ent.get("id") == "main_castle":
                 action_label = "ПОСЕТИТЬ ЗАМОК"
             elif ent.get("id") == "tavern_building":
@@ -81,6 +84,8 @@ class CityHudMixin:
                 action_label = "ОТКРЫТЬ АМБАР"
             elif ent.get("id") == "warehouse_building":
                 action_label = "ОТКРЫТЬ СКЛАД"
+            elif ent.get("id") == "stable_building":
+                action_label = "ВОЙТИ В КОНЮШНЮ"
             elif ent.get("id") == "forge_building":
                 action_label = "ОТКРЫТЬ КУЗНИЦУ"
             elif ent.get("id") == "workshop_building":
@@ -101,7 +106,7 @@ class CityHudMixin:
                 action_label = "ВЗАИМОДЕЙСТВОВАТЬ"
 
             btn_hover = self.active_action_button.collidepoint(m_pos)
-            if ent.get("id") in ("player", "main_castle", "barn_building", "warehouse_building", "forge_building", "workshop_building", "barracks_building", "engineering_building", "university_building", "military_academy", "mage_school_building") or in_range:
+            if ent.get("id") in ("player", "main_castle", "barn_building", "warehouse_building", "stable_building", "forge_building", "workshop_building", "barracks_building", "engineering_building", "university_building", "military_academy", "mage_school_building") or in_range:
                 btn_col = (70, 120, 180) if btn_hover else (45, 80, 130)
                 text_col = (255, 255, 255)
             else:

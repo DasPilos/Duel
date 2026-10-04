@@ -31,7 +31,11 @@ def get_dodge_chance(attacker, defender):
         if prof_data:
             base_dodge = prof_data.get("base_dodge", 0)
 
-    total_dodge = dodge_from_agility + base_dodge
+    equipment_dodge = 0
+    if hasattr(defender, "equipment_stat_modifiers") and defender.equipment_stat_modifiers:
+        equipment_dodge = float(defender.equipment_stat_modifiers.get("dodge", 0))
+
+    total_dodge = dodge_from_agility + base_dodge + equipment_dodge
     return clamp_chance(total_dodge, 70.0)
 
 
@@ -44,6 +48,11 @@ def weapon_damage_range(equipment):
     """(мин, макс) урона надетого оружия или None. Урон хранится в effects["damage"] = [мин, макс]."""
     weapon = (equipment or {}).get("weapon") or {}
     damage = (weapon.get("effects") or {}).get("damage")
+    if not damage or damage == [0, 0] or damage == (0, 0):
+        shield = (equipment or {}).get("shield") or {}
+        shield_damage = (shield.get("effects") or {}).get("damage")
+        if shield_damage and shield_damage != [0, 0] and shield_damage != (0, 0):
+            damage = shield_damage
     if not damage:
         return None
     if isinstance(damage, (int, float)):

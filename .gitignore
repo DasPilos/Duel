@@ -2,6 +2,7 @@ __pycache__/
 *.py[cod]
 .venv/
 server_data.sqlite3
+backups/
 battle_archive/
 debug_*.png
 

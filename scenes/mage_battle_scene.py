@@ -2,8 +2,6 @@ import pygame
 
 from core import settings
 from scenes.duel_scene import DuelScene
-from combat.card_battle import CardBattle
-from combat.card_database import cards_for_type
 
 
 class MageBattleScene(DuelScene):
@@ -15,29 +13,8 @@ class MageBattleScene(DuelScene):
         self.enemy_status = "СТАРТОВЫЙ ДРАФТ"
         super().__init__(online_session, opponent)
         self._configure_mage_layout()
-        mage_cards = cards_for_type("mage")
-        if mage_cards:
-            by_key = {card.key: card for card in mage_cards}
-            selected = getattr(online_session, "selected_deck", None) if online_session else None
-            player_keys = selected.get("cards", {}) if selected else {}
-            if isinstance(player_keys, dict):
-                player_keys = player_keys.keys()
-            player_deck = [by_key[key] for key in player_keys if key in by_key]
-            player_deck.extend(card for card in mage_cards if card not in player_deck)
-            player_deck = player_deck[:22]
-
-            enemy_keys = (opponent or {}).get("deck", [])
-            enemy_deck = [by_key[key] for key in enemy_keys if key in by_key]
-            enemy_deck.extend(card for card in mage_cards if card not in enemy_deck)
-            enemy_deck = enemy_deck[:22]
-            self.battle = CardBattle(
-                self.player,
-                self.enemy,
-                cards=player_deck,
-                enemy_cards=enemy_deck,
-            )
-            self.battle.mage_mode = True
-            self.draft_next_side = "player"
+        # Колоды и столы сторон собирает DuelScene.restart() по классу каждого бойца.
+        self.draft_next_side = "player"
 
     def _configure_mage_layout(self):
         """Arrange the mage duel like the shared battle-board design."""

@@ -1,5 +1,7 @@
 import pygame
 
+from combat.card_database import is_mage_profession
+
 from client.network import ServerError
 from core import settings
 from ui.character_card import CharacterCard
@@ -117,7 +119,7 @@ class CharacterScene:
                     actual_index = visible_index + self.character_scroll
                     if 0 <= actual_index < len(self.characters):
                         self.selected_character = self.characters[actual_index]
-                        self.card = MageCard() if self.selected_character.get("type") == "mage" else CharacterCard()
+                        self.card = MageCard() if is_mage_profession(self.selected_character.get("type")) else CharacterCard()
                         self.card.sync(self.selected_character, title=None, kind="player")
                     return
 

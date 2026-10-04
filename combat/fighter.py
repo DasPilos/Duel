@@ -138,10 +138,12 @@ class Fighter:
 
     def recalculate_parameters(self):
         """Пересчитывает производные параметры бойца."""
-        self.max_hp = calculate_max_hp(self.level, self.endurance)
+        hp_bonus = int(getattr(self, "equipment_stat_modifiers", {}).get("hp", 0))
+        mp_bonus = int(getattr(self, "equipment_stat_modifiers", {}).get("mp", 0))
+        self.max_hp = calculate_max_hp(self.level, self.endurance) + hp_bonus
         if hasattr(self, "hp"):
             self.hp = min(int(self.hp), self.max_hp)
-        self.max_mp = calculate_max_mana(self.intellect)
+        self.max_mp = calculate_max_mana(self.intellect) + mp_bonus
         if hasattr(self, "mp"):
             self.mp = min(int(self.mp), self.max_mp)
         # Пересчитать максимум уникального ресурса
@@ -149,6 +151,21 @@ class Fighter:
             self.unique_resource_max = calculate_max_unique_resource(self.profession_type, self.level, self.intellect)
             if hasattr(self, "unique_resource_current"):
                 self.unique_resource_current = min(int(self.unique_resource_current), self.unique_resource_max)
+
+    def set_profession(self, profession_type):
+        """Сменить класс бойца по профилю персонажа (ресурс класса, бонус лучника)."""
+        if profession_type == "mage":  # старый тип персонажа
+            profession_type = "battle_mage"
+        if not is_valid_profession(profession_type) or profession_type == self.profession_type:
+            return
+        if self.profession_type == "archer":
+            self.temporary_dodge_chance_modifier -= 10
+        if profession_type == "archer":
+            self.temporary_dodge_chance_modifier += 10
+        self.profession_type = profession_type
+        self.unique_resource_type = get_profession_data(profession_type)["unique_resource"]
+        self.unique_resource_max = calculate_max_unique_resource(profession_type, self.level, self.intellect)
+        self.unique_resource_current = self.unique_resource_max
 
     def spend_unique_resource(self, amount):
         """Потратить уникальный ресурс (ярость, меткость, концентрация, мана)."""

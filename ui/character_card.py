@@ -5,6 +5,7 @@ import pygame
 from combat.character_stats import is_debug_unlimited
 from combat.progression import xp_to_next
 from core import settings
+from core.carry_weight import load_color
 from ui.character_profile import (
     adjust_profile_level,
     adjust_profile_stat,
@@ -211,6 +212,19 @@ class CharacterCard:
             screen, frame, self.sprite, self.icons, self.small_font,
             normalized.get("equipment", {}), slot_highlight, dragged_slot,
         )
+        shoe_slot = equipment_slots.slot_rects(frame)["feet"]
+        capacity_kg = derived_values(normalized)["Грузоподъёмность"]
+        carried_kg = float(normalized.get("carried_weight_kg", 0))
+        carry_text = self.small_font.render(
+            f"Грузоподъёмность: {carried_kg:g}/{capacity_kg} кг",
+            True,
+            load_color(carried_kg, capacity_kg),
+        )
+        carry_rect = carry_text.get_rect(midtop=(frame.centerx, shoe_slot.bottom + 10))
+        carry_back = carry_rect.inflate(12, 6)
+        pygame.draw.rect(screen, (24, 29, 30), carry_back, border_radius=4)
+        pygame.draw.rect(screen, (82, 88, 76), carry_back, 1, border_radius=4)
+        screen.blit(carry_text, carry_rect)
         for floating_text in self.regen_floating_texts:
             floating_text.x = frame.centerx
             floating_text.y = sprite_top - 12
@@ -226,10 +240,11 @@ class CharacterCard:
             row_y = self._stat_row_y(frame, index)
             draw_text(screen, self.small_font, f"{label}: {stats.get(key, 0)}", x, row_y, (255, 255, 255))
             if derived_key and derived_key in derived:
+                unit = " кг" if derived_key == "Грузоподъёмность" else ""
                 draw_text(
                     screen,
                     self.small_font,
-                    f"{derived_key}: {derived[derived_key]}{preview.get(derived_key, '')}",
+                    f"{derived_key}: {derived[derived_key]}{unit}{preview.get(derived_key, '')}",
                     derived_x,
                     row_y,
                     DERIVED_COLORS.get(derived_key, (255, 255, 255)),

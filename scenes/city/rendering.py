@@ -1082,6 +1082,84 @@ class CityRenderMixin:
             badge_col = (255, 215, 60) if is_m_active else (180, 110, 255) if is_m_hover else (205, 165, 240)
             self._draw_badge(screen, school_rect.centerx, mssy - 10, "🔮 Школа стихий [Ур. 1 • 15х9]", badge_col)
 
+        self._draw_stable(screen)
+
+    def _draw_stable(self, screen):
+        """Конюшня 17х6: несколько деревянных сараев со стойлами, лошадьми и сеновалом."""
+        stable = next((obj for obj in self.objects if obj.get("id") == "stable_building"), None)
+        if stable is None:
+            return
+        sx_world = stable["tile_x"] * self.tile_size
+        sy_world = stable["tile_y"] * self.tile_size
+        width = stable["tile_w"] * self.tile_size
+        height = stable["tile_h"] * self.tile_size
+        sx, sy = self.world_to_screen(sx_world, sy_world)
+        if not (-width <= sx <= settings.WIDTH + width and -height <= sy <= settings.HEIGHT + height):
+            return
+
+        rect = pygame.Rect(sx, sy, width, height)
+        is_active = self.active_entity and self.active_entity.get("id") == stable["id"]
+        is_hovered = self.hovered_entity and self.hovered_entity.get("id") == stable["id"]
+        pygame.draw.ellipse(screen, (14, 18, 14, 180), (sx + 12, sy + height - 20, width - 24, 30))
+        pygame.draw.rect(screen, (116, 91, 58), rect)
+
+        shed_width = 160
+        gap = 12
+        shed_y = sy + 34
+        shed_height = height - 48
+        shed_count = 3
+        total_width = shed_count * shed_width + (shed_count - 1) * gap
+        start_x = rect.centerx - total_width // 2
+        for index in range(shed_count):
+            left = start_x + index * (shed_width + gap)
+            shed = pygame.Rect(left, shed_y, shed_width, shed_height)
+            pygame.draw.rect(screen, (115, 75, 42), shed)
+            pygame.draw.rect(screen, (66, 48, 32), shed, 3)
+            roof = [(left - 8, shed_y + 5), (left + shed_width // 2, sy + 4),
+                    (left + shed_width + 8, shed_y + 5)]
+            pygame.draw.polygon(screen, (91, 53, 38), roof)
+            pygame.draw.lines(screen, (54, 39, 30), True, roof, 3)
+
+            stall_width = shed_width // 2
+            for stall in range(2):
+                stall_rect = pygame.Rect(left + stall * stall_width + 7, shed_y + 20,
+                                         stall_width - 14, shed_height - 27)
+                pygame.draw.rect(screen, (79, 57, 39), stall_rect)
+                pygame.draw.rect(screen, (157, 119, 75), stall_rect, 2)
+                for rail_y in range(stall_rect.top + 12, stall_rect.bottom - 4, 13):
+                    pygame.draw.line(screen, (171, 131, 80), (stall_rect.left, rail_y),
+                                     (stall_rect.right, rail_y), 2)
+                horse_x = stall_rect.centerx
+                horse_y = stall_rect.centery + 4
+                coat = ((119, 68, 43), (83, 58, 44), (155, 122, 79))[index]
+                pygame.draw.ellipse(screen, coat, (horse_x - 23, horse_y - 11, 38, 21))
+                pygame.draw.ellipse(screen, coat, (horse_x + 7, horse_y - 18, 17, 18))
+                pygame.draw.polygon(screen, (54, 39, 30), [(horse_x + 11, horse_y - 17),
+                                  (horse_x + 13, horse_y - 27), (horse_x + 17, horse_y - 17)])
+                pygame.draw.circle(screen, (235, 220, 180), (horse_x + 18, horse_y - 11), 2)
+                for leg_x in (horse_x - 17, horse_x - 4, horse_x + 5, horse_x + 13):
+                    pygame.draw.line(screen, (48, 36, 27), (leg_x, horse_y + 7),
+                                     (leg_x - 2, horse_y + 20), 3)
+
+        hay_x = rect.right - 58
+        hay_y = rect.top + 12
+        for bale in range(3):
+            bale_rect = pygame.Rect(hay_x - bale * 13, hay_y + bale * 4, 42, 19)
+            pygame.draw.rect(screen, (204, 170, 91), bale_rect, border_radius=4)
+            pygame.draw.rect(screen, (126, 94, 49), bale_rect, 2, border_radius=4)
+            pygame.draw.line(screen, (231, 202, 127), (bale_rect.left + 8, bale_rect.top + 4),
+                             (bale_rect.right - 8, bale_rect.top + 4), 2)
+
+        entrance_x = sx + (stable["entrance_tile"][0] - stable["tile_x"]) * self.tile_size
+        pygame.draw.rect(screen, (74, 52, 35), (entrance_x, rect.bottom - 22, self.tile_size, 22))
+        pygame.draw.rect(screen, (195, 164, 111), (entrance_x + 3, rect.bottom - 18, self.tile_size - 6, 15), 2)
+        if is_active:
+            pygame.draw.rect(screen, (255, 215, 60), rect, 3)
+        elif is_hovered:
+            pygame.draw.rect(screen, (100, 200, 255), rect.inflate(6, 6), 2)
+        color = (255, 215, 60) if is_active else (100, 200, 255) if is_hovered else (211, 184, 140)
+        self._draw_badge(screen, rect.centerx, sy - 10, "Городская Конюшня [17х6]", color)
+
     def _draw_walls_and_gates(self, screen):
         """Отрисовывает мощные каменные стены периметра и 4 ворот."""
         pulse = 1.0 + 0.08 * math.sin(self.player_anim_timer * 5.0)

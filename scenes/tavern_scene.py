@@ -24,6 +24,7 @@ class TavernScene:
             self.small_font,
             collection_loader=getattr(self.session, "get_card_collection", None),
             deck_loader=getattr(self.session, "get_decks", None),
+            deck_creator=getattr(self.session, "create_deck", None),
         )
         self.chat = ChatPanel(session, "tavern", profile_overlay=self.profile_overlay)
         self.tavern_shop = TavernShop(self.font, self.small_font)
@@ -73,15 +74,6 @@ class TavernScene:
 
     def handle_event(self, event):
         self.profile_overlay.handle_event(event)
-        deck_name = self.profile_overlay.take_create_deck_request()
-        if deck_name:
-            try:
-                name, cards = deck_name
-                self.session.create_deck(name, cards)
-                self.profile_overlay.deck_panel.open(self.session.get_decks())
-            except Exception as error:
-                self.tavern_shop.show_error(str(error))
-            return
         if self.profile_overlay.deck_panel.is_open and event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             action, profile = self.profile_overlay.handle_click(event.pos)
             if action == "delete_deck":
@@ -236,7 +228,7 @@ class TavernScene:
             gold=int(character.get("gold", 0))
         )
         
-        if not currency.has_enough(copper=drink["price"]):
+        if not currency.has_enough_copper(drink["price"]):
             self.tavern_shop.show_error("ХАЛЯВЫ НЕТ! хочешь выпить иди на задний двор!")
             return
         
@@ -267,7 +259,11 @@ class TavernScene:
             self.tavern_shop.show_error(f"Ошибка покупки: {error_msg}")
 
     def _save_profile_card(self, profile):
-        saved_profile = self.session.save_character_profile(profile)
+        try:
+            saved_profile = self.session.save_character_profile(profile)
+        except ServerError as error:
+            self.tavern_shop.show_error(str(error))
+            return
         if saved_profile is not None:
             self.profile_overlay.update_counterpart(saved_profile)
 
@@ -287,7 +283,7 @@ class TavernScene:
                 {
                     "id": drink.get("id", 1),
                     "name": drink.get("name", "Неизвестный напиток"),
-                    "price": drink.get("price_copper", 0),
+                    "price": int(drink.get("price_copper", 0)),
                     "effect": drink.get("effect", "recovery"),
                     "description": drink.get("description", "")
                 }

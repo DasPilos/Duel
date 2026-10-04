@@ -3,6 +3,7 @@ import os
 
 import pygame
 
+from combat.card_database import is_mage_profession
 from core.settings import FPS, HEIGHT, WIDTH
 from scenes.duel_scene import DuelScene
 from scenes.mage_battle_scene import MageBattleScene
@@ -17,6 +18,7 @@ from scenes.title_scene import TitleScene
 from ui.scene_transition import SceneTransition
 from client.network import ServerError
 from ui.inventory_window import InventoryWindow
+from ui.exit_menu import ExitMenu
 
 
 # Сцены, где инвентарь открывается клавишей I (не в бою и не в меню входа)
@@ -59,6 +61,81 @@ def close_scene_ui(scene):
     chat = getattr(scene, "chat", None)
     if chat is not None:
         chat.close()
+
+
+def scene_session(scene):
+    return getattr(scene, "session", None) or getattr(scene, "online_session", None)
+
+
+def toggle_player_profile(scene):
+    session = scene_session(scene)
+    overlay = getattr(scene, "profile_overlay", None)
+    if session is None or not getattr(session, "character", None) or overlay is None:
+        return False
+    if overlay.is_open:
+        overlay.close()
+    else:
+        overlay.open(session.character, None)
+    return True
+
+
+def checkpoint_for_scene(scene):
+    session = scene_session(scene)
+    if session is None or not session.character:
+        return None
+    checkpoint = dict(session.character)
+    if isinstance(scene, WorldMapScene):
+        checkpoint.update({
+            "zone": "world_map",
+            "position_x": scene.player_x,
+            "position_y": scene.player_y,
+            "position_direction": scene.player_direction,
+        })
+    elif isinstance(scene, CityScene):
+        checkpoint.update({
+            "zone": "city",
+            "position_x": scene.player_x,
+            "position_y": scene.player_y,
+            "position_direction": scene.player_direction,
+        })
+    elif isinstance(scene, BackyardScene):
+        checkpoint["zone"] = "backyard"
+    elif isinstance(scene, CharacterRoom):
+        checkpoint["zone"] = "character_room"
+    elif isinstance(scene, TavernScene):
+        checkpoint["zone"] = "tavern"
+    elif isinstance(scene, DuelScene):
+        checkpoint["zone"] = "backyard"
+    return checkpoint
+
+
+def scene_for_saved_character(session):
+    character = session.character or {}
+    position = (character.get("position_x"), character.get("position_y"))
+    direction = character.get("position_direction") or "s"
+    if character.get("zone") == "world_map" and all(value is not None for value in position):
+        return WorldMapScene(session, spawn_pos=(*position, direction))
+    if character.get("zone") == "city" and all(value is not None for value in position):
+        return CityScene(session, spawn_pos=(*position, direction))
+    if character.get("zone") == "backyard":
+        return BackyardScene(session)
+    if character.get("zone") == "character_room":
+        return CharacterRoom(session)
+    return TavernScene(session)
+
+
+def disconnect_scene(scene):
+    session = scene_session(scene)
+    checkpoint = checkpoint_for_scene(scene)
+    if session is None:
+        return None
+    close_scene_ui(scene)
+    fighter = scene.player if isinstance(scene, DuelScene) else None
+    try:
+        session.disconnect(fighter=fighter, character=checkpoint)
+    except ServerError as error:
+        return str(error)
+    return None
 
 
 def apply_passive_regen(scene, dt):
@@ -107,8 +184,7 @@ def main():
     pygame.init()
     pygame.mixer.init()  # Инициализируем звуковую систему
 
-    screen = pygame.display.set_mode((WIDTH, HEIGHT))
-    pygame.display.set_caption("Мини-дуэль")
+    screen = pygame.display.set_mode((WIDTH, HEIGHT), pygame.NOFRAME)
 
     clock = pygame.time.Clock()
     if args.online:
@@ -123,6 +199,7 @@ def main():
 
     transition = SceneTransition()
     inventory = InventoryWindow()
+    exit_menu = ExitMenu()
 
     try:
         running = True
@@ -132,10 +209,31 @@ def main():
 
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
-                    running = False
+                    if exit_menu.quitting:
+                        continue
+                    if scene_session(scene) is not None:
+                        exit_menu.open()
+                    else:
+                        running = False
+                    continue
                 elif transition.active:
                     continue
+                elif exit_menu.quitting:
+                    continue
+                elif exit_menu.is_open:
+                    action = exit_menu.handle_event(event)
+                    if action == "quit":
+                        error = disconnect_scene(scene)
+                        if error is None:
+                            exit_menu.begin_quit()
+                        else:
+                            exit_menu.open(error=error)
+                    continue
                 elif inventory.handle_event(event):
+                    continue
+                elif (event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE
+                      and scene_session(scene) is not None and not text_input_focused(scene)):
+                    exit_menu.open()
                     continue
                 elif (
                     event.type == pygame.KEYDOWN
@@ -143,7 +241,7 @@ def main():
                     and inventory_session(scene) is not None
                     and not text_input_focused(scene)
                 ):
-                    inventory.open(inventory_session(scene))
+                    toggle_player_profile(scene)
                 else:
                     scene.handle_event(event)
 
@@ -153,6 +251,9 @@ def main():
                 overlay.inventory_requested = False
                 if inventory_session(scene) is not None:
                     inventory.open(inventory_session(scene))
+
+            if exit_menu.update_quit(dt):
+                running = False
 
             ensure_equipment_loaded(scene)
 
@@ -184,7 +285,7 @@ def main():
                     else:
                         close_scene_ui(scene)
                         session = scene.session
-                        transition.start(screen, lambda: TavernScene(session))
+                        transition.start(screen, lambda: scene_for_saved_character(session))
 
                 elif args.online and isinstance(scene, CreateCharacterScene) and scene.finished:
                     pygame.key.stop_text_input()
@@ -201,8 +302,11 @@ def main():
 
                 elif args.online and isinstance(scene, TavernScene) and scene.finished:
                     if scene.cancelled:
-                        scene.session.disconnect()
-                        running = False
+                        error = disconnect_scene(scene)
+                        if error is None:
+                            running = False
+                        else:
+                            exit_menu.open(error=error)
                     else:
                         close_scene_ui(scene)
                         session = scene.session
@@ -247,7 +351,7 @@ def main():
                     else:
                         opponent = scene.opponent
                         close_scene_ui(scene)
-                        if session.character.get("type") == "mage":
+                        if is_mage_profession(session.character.get("type")):
                             transition.start(screen, lambda: MageBattleScene(session, opponent))
                         else:
                             transition.start(screen, lambda: DuelScene(session, opponent))
@@ -269,11 +373,13 @@ def main():
                         transition.start(screen, lambda: TavernScene(session))
 
             if not transition.active:
-                if args.online:
-                    apply_passive_regen(scene, dt)
-                scene.update(dt)
+                if not exit_menu.is_open and not exit_menu.quitting:
+                    if args.online:
+                        apply_passive_regen(scene, dt)
+                    scene.update(dt)
                 scene.draw(screen)
                 inventory.draw(screen)
+                exit_menu.draw(screen, pygame.font.SysFont("arial", 30), pygame.font.SysFont("arial", 20))
             else:
                 new_scene = transition.update(dt)
                 if new_scene is not None:

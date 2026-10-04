@@ -12,6 +12,9 @@ class ChatPanel:
     ROOM_NAMES = {
         "tavern": "ТРАКТИР",
         "backyard": "ЗАДНИЙ ДВОР",
+        "city": "ГОРОД",
+        "world_map": "ОТКРЫТЫЙ МИР",
+        "character_room": "КОМНАТА ПЕРСОНАЖА",
     }
 
     def __init__(self, session, location, battle_source=None, profile_overlay=None):
@@ -32,6 +35,7 @@ class ChatPanel:
         self.last_character_click = 0
         self.last_character_position = None
         self.people_scroll = 0
+        self.afk_challenge_buttons = {}
         self.error = ""
         self.elapsed = 0.0
         self.background_poller = None
@@ -41,10 +45,10 @@ class ChatPanel:
         self.dragging_divider = False
         self._layout_widgets()
         self.unread_badge = UnreadBadge()
-        if hasattr(session, "client"):
+        if hasattr(session, "client") and hasattr(session, "social_snapshot"):
             self.background_poller = BackgroundPoller(self._fetch_remote_state)
             self.background_poller.start()
-        else:
+        elif hasattr(session, "social_snapshot"):
             self.refresh()
 
     @property
@@ -218,6 +222,11 @@ class ChatPanel:
         for visible_index, occupant in enumerate(self.occupants[self.people_scroll:self.people_scroll + visible_rows]):
             rect = pygame.Rect(self.people_rect.x, self.people_rect.y + visible_index * row_height, self.people_rect.width, 25)
             if rect.collidepoint(event.pos):
+                challenge_button = self.afk_challenge_buttons.get(str(occupant.get("character_id")))
+                if (event.button == 1 and challenge_button is not None
+                        and challenge_button.collidepoint(event.pos)):
+                    self._challenge_afk_player(occupant)
+                    return True
                 if event.button == 3 and self.profile_overlay is not None:
                     self.profile_overlay.open(occupant, counterpart=self.session.character)
                 elif event.button == 1 and self._is_double_character_click(event.pos):
@@ -247,6 +256,16 @@ class ChatPanel:
             self.message_input.focused = True
             return True
         return False
+
+    def _challenge_afk_player(self, occupant):
+        try:
+            result = self.session.offer_duel(self.location, occupant.get("character_id"))
+            if result.get("accepted"):
+                self.duel_accepted = {**occupant, **result.get("offer", {})}
+            else:
+                self.error = result.get("message", "Не удалось начать поединок")
+        except ServerError as error:
+            self.error = str(error)
 
     def _challenge_bot(self, bot):
         try:
@@ -348,6 +367,7 @@ class ChatPanel:
         visible_rows = max(1, self.people_rect.height // row_height)
         max_scroll = max(0, len(self.occupants) - visible_rows)
         self.people_scroll = max(0, min(max_scroll, self.people_scroll))
+        self.afk_challenge_buttons = {}
         if max_scroll:
             thumb_height = max(18, int((visible_rows / max(1, len(self.occupants))) * (self.people_rect.height - 14)))
             thumb_y = self.people_rect.y + 7 + int(self.people_scroll / max_scroll * (self.people_rect.height - 14 - thumb_height))
@@ -355,14 +375,22 @@ class ChatPanel:
             pygame.draw.rect(screen, (170, 180, 210), thumb, border_radius=3)
         screen.set_clip(self.people_rect.inflate(-12, 0))
         for visible_index, occupant in enumerate(self.occupants[self.people_scroll:self.people_scroll + visible_rows]):
+            is_afk = bool(occupant.get("afk", False))
+            display_name = occupant.get("name", "") + (" (АФК)" if is_afk else "")
             draw_text(
                 screen,
                 pygame.font.SysFont("arial", 16),
-                occupant.get("name", ""),
+                display_name,
                 people_x + settings.CHAT_PEOPLE_TEXT_LEFT_PADDING,
                 self.people_rect.y + visible_index * row_height + 4,
-                (215, 215, 225),
+                (135, 139, 145) if is_afk else (215, 215, 225),
             )
+            if is_afk and self.location == "backyard":
+                challenge_button = pygame.Rect(self.people_rect.right - 69,
+                                               self.people_rect.y + visible_index * row_height + 1, 58, 23)
+                self.afk_challenge_buttons[str(occupant.get("character_id"))] = challenge_button
+                draw_button(screen, challenge_button, "ДУЭЛЬ", pygame.font.SysFont("arial", 12),
+                            color=(91, 63, 50), text_color=(228, 207, 174))
         screen.set_clip(previous_clip)
         if self.error:
             draw_text(screen, pygame.font.SysFont("arial", 14), self.error, self.panel_rect.x + 12, self.panel_rect.bottom - 20, (255, 120, 100))

@@ -189,6 +189,11 @@ def calculate_max_mana(intellect):
     return MANA_PER_INTELLECT * int(intellect)
 
 
+def calculate_carry_capacity(strength, endurance):
+    """Return character carry capacity in kilograms from effective stats."""
+    return max(0, int(strength)) * 5 + max(0, int(endurance)) * 3
+
+
 def adjust_stats(stats, stat_points, hp, max_hp, level, stat_name, delta, character_id=None):
     """Return updated stat state, or None when the requested change is invalid."""
     if stat_name not in stats or delta not in (-1, 1):

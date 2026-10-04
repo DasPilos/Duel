@@ -1,203 +1,116 @@
+import atexit
 import hashlib
 import hmac
 import json
 import secrets
-import sqlite3
+import threading
 import time
 from contextlib import contextmanager
+
+from psycopg import errors as pg_errors
+from psycopg.rows import dict_row
+from psycopg_pool import ConnectionPool
 
 from combat.character_stats import (
     BASE_STAT_VALUE,
     MIN_STAT_VALUE,
     STARTING_STAT_POINTS,
+    calculate_carry_capacity,
     calculate_max_hp,
     calculate_max_mana,
     minimum_endurance,
 )
 from core.currency import Currency
 from server import config
+from server.migrations import apply_migrations
+
+SYSTEM_USER_ID = 0
+
+# One pool per (dsn, schema) for the whole process: bot chat, bot battles and HTTP handlers share it.
+_POOLS = {}
+_POOLS_LOCK = threading.Lock()
+
+
+def _shared_pool(dsn, schema):
+    key = (dsn, schema)
+    with _POOLS_LOCK:
+        entry = _POOLS.get(key)
+        if entry is not None:
+            return entry
+        kwargs = {"row_factory": dict_row}
+        if schema:
+            kwargs["options"] = f"-c search_path={schema}"
+        pool = ConnectionPool(
+            dsn,
+            min_size=config.DB_POOL_MIN_SIZE,
+            max_size=config.DB_POOL_MAX_SIZE,
+            kwargs=kwargs,
+            check=ConnectionPool.check_connection,
+            name=f"game-{schema or 'main'}",
+            open=True,
+        )
+        try:
+            pool.wait(timeout=10)
+        except Exception as error:
+            pool.close()
+            raise RuntimeError(f"Нет подключения к PostgreSQL ({dsn}): {error}") from error
+        entry = {"pool": pool, "initialized": False, "init_lock": threading.Lock()}
+        _POOLS[key] = entry
+        return entry
+
+
+def lock_character(connection, character_id):
+    """Serializes concurrent changes of one character until the current transaction ends."""
+    connection.execute(
+        "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+        (f"character:{int(character_id)}",),
+    )
+
+
+def close_all_pools():
+    with _POOLS_LOCK:
+        entries = list(_POOLS.values())
+        _POOLS.clear()
+    for entry in entries:
+        entry["pool"].close()
+
+
+atexit.register(close_all_pools)
 
 
 class Database:
-    def __init__(self, path=config.DATABASE_PATH):
-        self.path = str(path)
+    def __init__(self, dsn=None, *, schema=None, world_id=None):
+        self.dsn = dsn or config.DATABASE_URL
+        self.schema = schema
+        self.world_id = config.WORLD_ID if world_id is None else int(world_id)
+        self._entry = _shared_pool(self.dsn, schema)
         self.initialize()
 
     @contextmanager
     def connection(self):
-        connection = sqlite3.connect(self.path)
-        connection.row_factory = sqlite3.Row
-        try:
+        # Commits when the block succeeds, rolls back on any exception.
+        with self._entry["pool"].connection() as connection:
             yield connection
-            connection.commit()
-        finally:
-            connection.close()
+
+    def close(self):
+        """Closes the shared pool. Only for throwaway databases (test schemas)."""
+        with _POOLS_LOCK:
+            _POOLS.pop((self.dsn, self.schema), None)
+        self._entry["pool"].close()
 
     def initialize(self):
+        with self._entry["init_lock"]:
+            if not self._entry["initialized"]:
+                self._initialize_schema()
+                self._entry["initialized"] = True
         with self.connection() as connection:
-            connection.executescript(
-                """
-                CREATE TABLE IF NOT EXISTS users (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    username TEXT NOT NULL UNIQUE,
-                    password_hash TEXT NOT NULL,
-                    created_at REAL NOT NULL,
-                    last_login_at REAL
-                );
+            if connection.execute("SELECT 1 FROM worlds WHERE id = %s", (self.world_id,)).fetchone() is None:
+                raise RuntimeError(f"Мир WORLD_ID={self.world_id} не найден в таблице worlds")
 
-                CREATE TABLE IF NOT EXISTS characters (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER NOT NULL,
-                    name TEXT NOT NULL,
-                    type TEXT NOT NULL DEFAULT 'warrior',
-                    level INTEGER NOT NULL DEFAULT 1,
-                    xp INTEGER NOT NULL DEFAULT 0,
-                    hp INTEGER NOT NULL,
-                    max_hp INTEGER NOT NULL,
-                    mp INTEGER NOT NULL DEFAULT 50,
-                    max_mp INTEGER NOT NULL DEFAULT 50,
-                    stats_json TEXT NOT NULL,
-                    stat_points INTEGER NOT NULL DEFAULT 6,
-                    zone TEXT NOT NULL DEFAULT 'town',
-                    copper INTEGER NOT NULL DEFAULT 0,
-                    silver INTEGER NOT NULL DEFAULT 0,
-                    gold INTEGER NOT NULL DEFAULT 0,
-                    updated_at REAL NOT NULL,
-                    FOREIGN KEY(user_id) REFERENCES users(id)
-                );
-
-                CREATE TABLE IF NOT EXISTS sessions (
-                    token TEXT PRIMARY KEY,
-                    user_id INTEGER NOT NULL,
-                    created_at REAL NOT NULL,
-                    last_seen_at REAL NOT NULL,
-                    FOREIGN KEY(user_id) REFERENCES users(id)
-                );
-
-                CREATE TABLE IF NOT EXISTS chat_messages (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    location TEXT NOT NULL,
-                    sender_character_id INTEGER NOT NULL,
-                    recipient_character_id TEXT,
-                    text TEXT NOT NULL,
-                    created_at REAL NOT NULL,
-                    deleted_at REAL,
-                    deleted_by INTEGER
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_chat_messages_location_time
-                    ON chat_messages(location, created_at, id);
-
-                CREATE TABLE IF NOT EXISTS chat_reads (
-                    character_id INTEGER NOT NULL,
-                    location TEXT NOT NULL,
-                    last_read_message_id INTEGER NOT NULL DEFAULT 0,
-                    last_read_at REAL NOT NULL,
-                    PRIMARY KEY(character_id, location)
-                );
-
-                CREATE TABLE IF NOT EXISTS chat_reports (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    message_id INTEGER NOT NULL,
-                    reporter_character_id INTEGER NOT NULL,
-                    reason TEXT NOT NULL,
-                    status TEXT NOT NULL DEFAULT 'open',
-                    created_at REAL NOT NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS chat_mutes (
-                    character_id INTEGER NOT NULL,
-                    muted_character_id INTEGER NOT NULL,
-                    expires_at REAL,
-                    PRIMARY KEY(character_id, muted_character_id)
-                );
-
-                CREATE TABLE IF NOT EXISTS active_battles (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    player_id INTEGER NOT NULL,
-                    opponent_id INTEGER NOT NULL,
-                    battle_data TEXT NOT NULL,
-                    player_afk INTEGER NOT NULL DEFAULT 0,
-                    opponent_afk INTEGER NOT NULL DEFAULT 0,
-                    created_at REAL NOT NULL,
-                    updated_at REAL NOT NULL,
-                    FOREIGN KEY(player_id) REFERENCES characters(id),
-                    FOREIGN KEY(opponent_id) REFERENCES characters(id)
-                );
-
-                CREATE TABLE IF NOT EXISTS drinks (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name TEXT NOT NULL UNIQUE,
-                    description TEXT,
-                    price_copper INTEGER NOT NULL DEFAULT 0,
-                    price_silver INTEGER NOT NULL DEFAULT 0,
-                    price_gold INTEGER NOT NULL DEFAULT 0,
-                    effect TEXT NOT NULL,
-                    effect_value INTEGER NOT NULL,
-                    created_at REAL NOT NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS character_inventory (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    character_id INTEGER NOT NULL,
-                    drink_id INTEGER NOT NULL,
-                    quantity INTEGER NOT NULL DEFAULT 1,
-                    FOREIGN KEY(character_id) REFERENCES characters(id),
-                    FOREIGN KEY(drink_id) REFERENCES drinks(id),
-                    UNIQUE(character_id, drink_id)
-                );
-
-                CREATE TABLE IF NOT EXISTS battle_logs (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    player_id INTEGER NOT NULL,
-                    opponent_id INTEGER NOT NULL,
-                    battle_data TEXT NOT NULL,
-                    player_afk INTEGER NOT NULL DEFAULT 0,
-                    opponent_afk INTEGER NOT NULL DEFAULT 0,
-                    created_at REAL NOT NULL,
-                    expires_at REAL NOT NULL,
-                    FOREIGN KEY(player_id) REFERENCES characters(id),
-                    FOREIGN KEY(opponent_id) REFERENCES characters(id)
-                );
-
-                CREATE TABLE IF NOT EXISTS character_card_collection (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    character_id INTEGER NOT NULL,
-                    card_key TEXT NOT NULL,
-                    quantity INTEGER NOT NULL DEFAULT 1,
-                    slot_index INTEGER NOT NULL,
-                    acquired_at REAL NOT NULL,
-                    FOREIGN KEY(character_id) REFERENCES characters(id),
-                    UNIQUE(character_id, card_key),
-                    UNIQUE(character_id, slot_index)
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_battle_logs_expires_at
-                    ON battle_logs(expires_at);
-
-                CREATE INDEX IF NOT EXISTS idx_card_collection_character
-                    ON character_card_collection(character_id);
-                """
-            )
-            user_columns = {row[1] for row in connection.execute("PRAGMA table_info(users)")}
-            if "role" not in user_columns:
-                connection.execute("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'user'")
-            
-            # Добавляем колонки валюты, если их нет
-            character_columns = {row[1] for row in connection.execute("PRAGMA table_info(characters)")}
-            if "copper" not in character_columns:
-                connection.execute("ALTER TABLE characters ADD COLUMN copper INTEGER NOT NULL DEFAULT 0")
-            if "silver" not in character_columns:
-                connection.execute("ALTER TABLE characters ADD COLUMN silver INTEGER NOT NULL DEFAULT 0")
-            if "gold" not in character_columns:
-                connection.execute("ALTER TABLE characters ADD COLUMN gold INTEGER NOT NULL DEFAULT 0")
-            if "type" not in character_columns:
-                connection.execute("ALTER TABLE characters ADD COLUMN type TEXT NOT NULL DEFAULT 'warrior'")
-            
-            # Инициализируем напитки (если их еще нет)
+    def _initialize_schema(self):
+        with self.connection() as connection:
+            apply_migrations(connection)
             self._initialize_drinks(connection)
-            
-            self._migrate_characters(connection)
             self._normalize_character_stats(connection)
 
     @staticmethod
@@ -224,85 +137,26 @@ class Database:
             max_mp = calculate_max_mana(stats["intellect"])
             connection.execute(
                 """UPDATE characters
-                   SET stats_json = ?, max_hp = ?, hp = MIN(hp, ?),
-                      mp = MIN(mp, ?), max_mp = ?
-                   WHERE id = ?""",
+                   SET stats_json = %s, max_hp = %s, hp = LEAST(hp, %s),
+                      mp = LEAST(mp, %s), max_mp = %s
+                   WHERE id = %s""",
                 (json.dumps(stats), max_hp, max_hp, row["mp"], max_mp, row["id"]),
             )
-    
+
     @staticmethod
     def _initialize_drinks(connection):
         """Инициализирует напитки в БД"""
-        import time
         now = time.time()
-        
         drinks = [
-            ("Эль", "Восстанавливает 50 жизней", 20, 0, 0, "heal", 50),
+            ("Эль", "Восстанавливает 50 жизней", 20, "heal", 50),
         ]
-        
-        for name, description, copper, silver, gold, effect, value in drinks:
-            try:
-                connection.execute(
-                    """INSERT INTO drinks (name, description, price_copper, price_silver, price_gold, effect, effect_value, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (name, description, copper, silver, gold, effect, value, now)
-                )
-            except:
-                pass  # Напиток уже существует
-
-    @staticmethod
-    def _migrate_characters(connection):
-        columns = connection.execute("PRAGMA table_info(characters)").fetchall()
-        if not columns:
-            return
-        indexes = connection.execute("PRAGMA index_list(characters)").fetchall()
-        has_single_character_constraint = False
-        for index in indexes:
-            if not index[2]:
-                continue
-            index_columns = connection.execute(
-                f"PRAGMA index_info({index[1]})"
-            ).fetchall()
-            if [item[2] for item in index_columns] == ["user_id"]:
-                has_single_character_constraint = True
-                break
-        if not has_single_character_constraint:
-            return
-        connection.execute("ALTER TABLE characters RENAME TO characters_legacy")
-        connection.execute(
-            """
-            CREATE TABLE characters (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL,
-                name TEXT NOT NULL,
-                level INTEGER NOT NULL DEFAULT 1,
-                xp INTEGER NOT NULL DEFAULT 0,
-                hp INTEGER NOT NULL,
-                max_hp INTEGER NOT NULL,
-                mp INTEGER NOT NULL DEFAULT 50,
-                max_mp INTEGER NOT NULL DEFAULT 50,
-                stats_json TEXT NOT NULL,
-                stat_points INTEGER NOT NULL DEFAULT 6,
-                zone TEXT NOT NULL DEFAULT 'tavern',
-                copper INTEGER NOT NULL DEFAULT 0,
-                silver INTEGER NOT NULL DEFAULT 0,
-                gold INTEGER NOT NULL DEFAULT 0,
-                updated_at REAL NOT NULL,
-                FOREIGN KEY(user_id) REFERENCES users(id)
+        for name, description, price_copper, effect, value in drinks:
+            connection.execute(
+                """INSERT INTO drinks (name, description, price_copper, effect, effect_value, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                ON CONFLICT (name) DO NOTHING""",
+                (name, description, price_copper, effect, value, now),
             )
-            """
-        )
-        connection.execute(
-            """
-            INSERT INTO characters
-            (id, user_id, name, level, xp, hp, max_hp, mp, max_mp,
-             stats_json, stat_points, zone, copper, silver, gold, updated_at)
-            SELECT id, user_id, name, level, xp, hp, max_hp, mp, max_mp,
-                   stats_json, stat_points, zone, 0, 0, 0, updated_at
-            FROM characters_legacy
-            """
-        )
-        connection.execute("DROP TABLE characters_legacy")
 
     @staticmethod
     def _password_hash(password):
@@ -332,42 +186,38 @@ class Database:
 
     def register(self, username, password):
         now = time.time()
-        with self.connection() as connection:
-            try:
-                cursor = connection.execute(
-                    "INSERT INTO users (username, password_hash, created_at) VALUES (?, ?, ?)",
+        try:
+            with self.connection() as connection:
+                row = connection.execute(
+                    "INSERT INTO users (username, password_hash, created_at) VALUES (%s, %s, %s) RETURNING id, username",
                     (username, self._password_hash(password), now),
-                )
-            except sqlite3.IntegrityError as error:
-                raise ValueError("Пользователь уже существует") from error
-            row = connection.execute(
-                "SELECT id, username FROM users WHERE id = ?",
-                (cursor.lastrowid,),
-            ).fetchone()
+                ).fetchone()
+        except pg_errors.UniqueViolation as error:
+            raise ValueError("Пользователь уже существует") from error
         return self._user_payload(row)
 
     def login(self, username, password):
         now = time.time()
         with self.connection() as connection:
             row = connection.execute(
-                "SELECT id, username, password_hash FROM users WHERE username = ?",
-                (username,),
+                "SELECT id, username, password_hash FROM users WHERE username = %s AND id <> %s",
+                (username, SYSTEM_USER_ID),
             ).fetchone()
             if row is None or not self._check_password(password, row["password_hash"]):
                 raise ValueError("Неверное имя пользователя или пароль")
             for character in connection.execute(
-                "SELECT * FROM characters WHERE user_id = ?",
-                (row["id"],),
+                "SELECT * FROM characters WHERE user_id = %s AND world_id = %s",
+                (row["id"], self.world_id),
             ).fetchall():
                 self._apply_passive_regen(connection, character, now)
             token = secrets.token_urlsafe(32)
             connection.execute(
-                "UPDATE users SET last_login_at = ? WHERE id = ?",
+                "UPDATE users SET last_login_at = %s WHERE id = %s",
                 (now, row["id"]),
             )
             connection.execute(
-                "INSERT INTO sessions (token, user_id, created_at, last_seen_at) VALUES (?, ?, ?, ?)",
-                (token, row["id"], now, now),
+                "INSERT INTO sessions (token, user_id, world_id, created_at, last_seen_at) VALUES (%s, %s, %s, %s, %s)",
+                (token, row["id"], self.world_id, now, now),
             )
         return {"token": token, "user": self._user_payload(row)}
 
@@ -377,13 +227,13 @@ class Database:
         now = time.time()
         with self.connection() as connection:
             row = connection.execute(
-                "SELECT user_id FROM sessions WHERE token = ? AND last_seen_at > ?",
-                (token, now - config.TOKEN_TTL_SECONDS),
+                "SELECT user_id FROM sessions WHERE token = %s AND world_id = %s AND last_seen_at > %s",
+                (token, self.world_id, now - config.TOKEN_TTL_SECONDS),
             ).fetchone()
             if row is None:
                 raise ValueError("Сессия недействительна или истекла")
             connection.execute(
-                "UPDATE sessions SET last_seen_at = ? WHERE token = ?",
+                "UPDATE sessions SET last_seen_at = %s WHERE token = %s",
                 (now, token),
             )
         return row["user_id"]
@@ -392,7 +242,7 @@ class Database:
         """Get user by ID with password hash"""
         with self.connection() as connection:
             row = connection.execute(
-                "SELECT id, username, password_hash FROM users WHERE id = ?",
+                "SELECT id, username, password_hash FROM users WHERE id = %s",
                 (user_id,),
             ).fetchone()
         return row
@@ -419,36 +269,38 @@ class Database:
         max_hp = calculate_max_hp(1, stats["endurance"])
         max_mp = calculate_max_mana(stats["intellect"])
         stat_points = STARTING_STAT_POINTS
-        with self.connection() as connection:
-            cursor = connection.execute(
-                """
-                INSERT INTO characters
-                (user_id, name, type, hp, max_hp, mp, max_mp, stats_json, stat_points, copper, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (user_id, name, profession_type, max_hp, max_hp, max_mp, max_mp, json.dumps(stats), stat_points, 1000, now),
-            )
-            character_id = cursor.lastrowid
+        try:
+            with self.connection() as connection:
+                character_id = connection.execute(
+                    """
+                    INSERT INTO characters
+                    (user_id, world_id, name, type, hp, max_hp, mp, max_mp, stats_json, stat_points, copper, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING id
+                    """,
+                    (user_id, self.world_id, name, profession_type, max_hp, max_hp, max_mp, max_mp,
+                     json.dumps(stats), stat_points, 1000, now),
+                ).fetchone()["id"]
+        except pg_errors.UniqueViolation as error:
+            if error.diag.constraint_name == "uq_characters_user_world":
+                raise ValueError("В этом мире у вас уже есть персонаж") from error
+            if error.diag.constraint_name == "uq_characters_world_name":
+                raise ValueError("Это имя уже занято в этом мире") from error
+            raise
         return self.get_character(user_id, character_id)
 
     def delete_character(self, user_id, character_id):
         """Delete a character"""
         with self.connection() as connection:
-            # Verify ownership
             row = connection.execute(
-                "SELECT user_id FROM characters WHERE id = ?",
-                (character_id,),
+                "SELECT user_id FROM characters WHERE id = %s AND world_id = %s",
+                (character_id, self.world_id),
             ).fetchone()
             if row is None or row["user_id"] != user_id:
                 raise ValueError("Персонаж не найден")
-            
-            # Delete character
+            # Items, equipment, cards, farm and chat rows are removed by ON DELETE CASCADE.
             connection.execute(
-                "DELETE FROM character_card_collection WHERE character_id = ?",
-                (character_id,),
-            )
-            connection.execute(
-                "DELETE FROM characters WHERE id = ?",
+                "DELETE FROM characters WHERE id = %s",
                 (character_id,),
             )
     
@@ -473,17 +325,15 @@ class Database:
             raise ValueError(f"Профессия должна быть одной из: {', '.join(valid_professions)}")
         
         with self.connection() as connection:
-            # Verify ownership
             row = connection.execute(
-                "SELECT user_id FROM characters WHERE id = ?",
-                (character_id,),
+                "SELECT user_id FROM characters WHERE id = %s AND world_id = %s",
+                (character_id, self.world_id),
             ).fetchone()
             if row is None or row["user_id"] != user_id:
                 raise ValueError("Персонаж не найден")
-            
             # Preserve stats; new characters receive them in create_character.
             connection.execute(
-                "UPDATE characters SET type = ? WHERE id = ?",
+                "UPDATE characters SET type = %s WHERE id = %s",
                 (profession_type, character_id),
             )
         
@@ -504,38 +354,21 @@ class Database:
 
     @staticmethod
     def _inventory_rows_for_character(connection, character_id):
-        columns = {row[1] for row in connection.execute("PRAGMA table_info(character_inventory)").fetchall()}
-        if "drink_id" in columns:
-            return connection.execute(
-                """SELECT ci.id as slot, d.id as drink_id, d.name, d.effect, d.effect_value, ci.quantity
-                FROM character_inventory ci
-                JOIN drinks d ON ci.drink_id = d.id
-                WHERE ci.character_id = ?
-                ORDER BY ci.id""",
-                (character_id,),
-            ).fetchall()
-        if "item_id" in columns:
-            return connection.execute(
-                """SELECT ci.id as slot,
-                        ci.item_id as drink_id,
-                        c.name,
-                        COALESCE(json_extract(c.effects_json, '$.type'), c.item_type) AS effect,
-                        COALESCE(CAST(json_extract(c.effects_json, '$.value') AS INTEGER), 0) AS effect_value,
-                        ci.quantity
-                FROM character_inventory ci
-                JOIN items_catalog c ON c.id = ci.item_id
-                WHERE ci.character_id = ?
-                ORDER BY ci.id""",
-                (character_id,),
-            ).fetchall()
-        return []
+        return connection.execute(
+            """SELECT ci.id as slot, d.id as drink_id, d.name, d.effect, d.effect_value, ci.quantity
+            FROM character_inventory ci
+            JOIN drinks d ON ci.drink_id = d.id
+            WHERE ci.character_id = %s
+            ORDER BY ci.id""",
+            (character_id,),
+        ).fetchall()
 
     def get_characters(self, user_id):
         now = time.time()
         with self.connection() as connection:
             rows = connection.execute(
-                "SELECT * FROM characters WHERE user_id = ? ORDER BY id",
-                (user_id,),
+                "SELECT * FROM characters WHERE user_id = %s AND world_id = %s ORDER BY id",
+                (user_id, self.world_id),
             ).fetchall()
             characters = []
             for original_row in rows:
@@ -552,7 +385,9 @@ class Database:
                         "effect": inv_row["effect"],
                     }
                 character["inventory"] = inventory
+                character["equipment_bonuses"] = self.equipment_bonuses(connection, row["id"])
                 character["equipment"] = self.equipped_items(connection, row["id"])
+                self._update_carry_capacity(character)
                 characters.append(character)
 
             return characters
@@ -561,22 +396,23 @@ class Database:
         now = time.time()
         with self.connection() as connection:
             self._purge_old_chat_messages(connection, now)
-            cursor = connection.execute(
+            message_id = connection.execute(
                 """
                 INSERT INTO chat_messages
-                (location, sender_character_id, recipient_character_id, text, created_at)
-                VALUES (?, ?, ?, ?, ?)
+                (world_id, location, sender_character_id, recipient_character_id, text, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                RETURNING id
                 """,
-                (location, character_id, recipient_id, text, now),
-            )
+                (self.world_id, location, character_id, recipient_id, text, now),
+            ).fetchone()["id"]
             row = connection.execute(
                 """
                 SELECT chat_messages.*, characters.name AS sender_name
                 FROM chat_messages
                 JOIN characters ON characters.id = chat_messages.sender_character_id
-                WHERE chat_messages.id = ?
+                WHERE chat_messages.id = %s
                 """,
-                (cursor.lastrowid,),
+                (message_id,),
             ).fetchone()
         return self._chat_message_payload(row)
 
@@ -585,34 +421,32 @@ class Database:
             raise ValueError("Требуется идентификатор бота")
         synthetic_id = -abs(int(hashlib.md5(str(bot_id).encode("utf-8")).hexdigest()[:8], 16))
         with self.connection() as connection:
-            row = connection.execute(
-                "SELECT id, name FROM characters WHERE id = ?",
-                (synthetic_id,),
-            ).fetchone()
-            if row is None:
-                connection.execute(
-                    """
-                    INSERT INTO characters
-                    (id, user_id, name, level, xp, hp, max_hp, mp, max_mp,
-                     stats_json, stat_points, zone, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        synthetic_id,
-                        0,
-                        str(bot_name),
-                        1,
-                        0,
-                        200,
-                        200,
-                        50,
-                        50,
-                        json.dumps({"strength": 5, "agility": 5, "intuition": 5, "endurance": 5}),
-                        0,
-                        "tavern",
-                        time.time(),
-                    ),
-                )
+            # NPC rows are shared by all worlds; concurrent first messages must not collide.
+            connection.execute(
+                """
+                INSERT INTO characters
+                (id, user_id, world_id, name, level, xp, hp, max_hp, mp, max_mp,
+                 stats_json, stat_points, zone, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (id) DO NOTHING
+                """,
+                (
+                    synthetic_id,
+                    SYSTEM_USER_ID,
+                    self.world_id,
+                    str(bot_name),
+                    1,
+                    0,
+                    200,
+                    200,
+                    50,
+                    50,
+                    json.dumps({"strength": 5, "agility": 5, "intuition": 5, "endurance": 5}),
+                    0,
+                    "tavern",
+                    time.time(),
+                ),
+            )
         return synthetic_id
 
     def get_chat_history(self, character_id, location, before_id=None, limit=50):
@@ -624,18 +458,19 @@ class Database:
                 SELECT chat_messages.*, characters.name AS sender_name
                 FROM chat_messages
                 JOIN characters ON characters.id = chat_messages.sender_character_id
-                WHERE chat_messages.location = ?
-                                    AND chat_messages.created_at >= ?
+                WHERE chat_messages.world_id = %s
+                  AND chat_messages.location = %s
+                  AND chat_messages.created_at >= %s
                   AND chat_messages.deleted_at IS NULL
                   AND (chat_messages.recipient_character_id IS NULL
-                       OR chat_messages.recipient_character_id = ?
-                       OR chat_messages.sender_character_id = ?)
+                       OR chat_messages.recipient_character_id = %s
+                       OR chat_messages.sender_character_id = %s)
             """
-            params = [location, cutoff, str(character_id), character_id]
+            params = [self.world_id, location, cutoff, str(character_id), character_id]
             if before_id is not None:
-                query += " AND chat_messages.id < ?"
+                query += " AND chat_messages.id < %s"
                 params.append(int(before_id))
-            query += " ORDER BY chat_messages.id DESC LIMIT ?"
+            query += " ORDER BY chat_messages.id DESC LIMIT %s"
             params.append(limit)
             rows = connection.execute(query, params).fetchall()
             return [self._chat_message_payload(row) for row in reversed(rows)]
@@ -643,15 +478,15 @@ class Database:
     @staticmethod
     def _purge_old_chat_messages(connection, now):
         connection.execute(
-            "DELETE FROM chat_messages WHERE created_at < ?",
+            "DELETE FROM chat_messages WHERE created_at < %s",
             (now - config.CHAT_HISTORY_TTL_SECONDS,),
         )
- 
+
     @staticmethod
     def _purge_old_battle_logs(connection, now):
         """Удаляет логи боя старше 24 часов"""
         connection.execute(
-            "DELETE FROM battle_logs WHERE expires_at < ?",
+            "DELETE FROM battle_logs WHERE expires_at < %s",
             (now,),
         )
 
@@ -661,7 +496,7 @@ class Database:
             connection.execute(
                 """
                 INSERT INTO chat_reads(character_id, location, last_read_message_id, last_read_at)
-                VALUES (?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s)
                 ON CONFLICT(character_id, location) DO UPDATE SET
                     last_read_message_id = excluded.last_read_message_id,
                     last_read_at = excluded.last_read_at
@@ -672,30 +507,30 @@ class Database:
     def chat_unread_count(self, character_id, location):
         with self.connection() as connection:
             row = connection.execute(
-                "SELECT last_read_message_id FROM chat_reads WHERE character_id = ? AND location = ?",
+                "SELECT last_read_message_id FROM chat_reads WHERE character_id = %s AND location = %s",
                 (character_id, location),
             ).fetchone()
             last_read = row["last_read_message_id"] if row else 0
             count = connection.execute(
                 """
                 SELECT COUNT(*) AS amount FROM chat_messages
-                WHERE location = ? AND id > ? AND deleted_at IS NULL
-                AND (recipient_character_id IS NULL OR recipient_character_id = ?)
+                WHERE world_id = %s AND location = %s AND id > %s AND deleted_at IS NULL
+                AND (recipient_character_id IS NULL OR recipient_character_id = %s)
                 """,
-                (location, last_read, str(character_id)),
+                (self.world_id, location, last_read, str(character_id)),
             ).fetchone()
         return count["amount"]
 
     def report_chat_message(self, message_id, reporter_character_id, reason):
         with self.connection() as connection:
             connection.execute(
-                "INSERT INTO chat_reports(message_id, reporter_character_id, reason, created_at) VALUES (?, ?, ?, ?)",
+                "INSERT INTO chat_reports(message_id, reporter_character_id, reason, created_at) VALUES (%s, %s, %s, %s)",
                 (int(message_id), reporter_character_id, reason, time.time()),
             )
 
     def is_moderator(self, user_id):
         with self.connection() as connection:
-            row = connection.execute("SELECT role FROM users WHERE id = ?", (user_id,)).fetchone()
+            row = connection.execute("SELECT role FROM users WHERE id = %s", (user_id,)).fetchone()
         return row is not None and row["role"] in ("moderator", "admin")
 
     def delete_chat_message(self, message_id, moderator_id):
@@ -703,7 +538,7 @@ class Database:
             raise ValueError("Недостаточно прав модератора")
         with self.connection() as connection:
             connection.execute(
-                "UPDATE chat_messages SET deleted_at = ?, deleted_by = ? WHERE id = ?",
+                "UPDATE chat_messages SET deleted_at = %s, deleted_by = %s WHERE id = %s",
                 (time.time(), moderator_id, int(message_id)),
             )
 
@@ -714,7 +549,7 @@ class Database:
             connection.execute(
                 """
                 INSERT INTO chat_mutes(character_id, muted_character_id, expires_at)
-                VALUES (?, ?, ?)
+                VALUES (%s, %s, %s)
                 ON CONFLICT(character_id, muted_character_id) DO UPDATE SET expires_at = excluded.expires_at
                 """,
                 (character_id, muted_character_id, time.time() + max(1, min(seconds, 86400))),
@@ -725,7 +560,7 @@ class Database:
             row = connection.execute(
                 """
                 SELECT 1 FROM chat_mutes
-                WHERE muted_character_id = ? AND expires_at > ?
+                WHERE muted_character_id = %s AND expires_at > %s
                 """,
                 (character_id, time.time()),
             ).fetchone()
@@ -749,8 +584,8 @@ class Database:
         now = time.time()
         with self.connection() as connection:
             rows = connection.execute(
-                "SELECT * FROM characters WHERE user_id != ? ORDER BY id",
-                (user_id,),
+                "SELECT * FROM characters WHERE user_id <> %s AND user_id <> %s AND world_id = %s ORDER BY id",
+                (user_id, SYSTEM_USER_ID, self.world_id),
             ).fetchall()
             players = [
                 self._character_payload(
@@ -774,13 +609,13 @@ class Database:
         with self.connection() as connection:
             if character_id is None:
                 row = connection.execute(
-                    "SELECT * FROM characters WHERE user_id = ? ORDER BY id LIMIT 1",
-                    (user_id,),
+                    "SELECT * FROM characters WHERE user_id = %s AND world_id = %s ORDER BY id LIMIT 1",
+                    (user_id, self.world_id),
                 ).fetchone()
             else:
                 row = connection.execute(
-                    "SELECT * FROM characters WHERE id = ? AND user_id = ?",
-                    (character_id, user_id),
+                    "SELECT * FROM characters WHERE id = %s AND user_id = %s AND world_id = %s",
+                    (character_id, user_id, self.world_id),
                 ).fetchone()
             if row is None:
                 return None
@@ -799,54 +634,58 @@ class Database:
             character["inventory"] = inventory
             character["equipment_bonuses"] = self.equipment_bonuses(connection, row["id"])
             character["equipment"] = self.equipped_items(connection, row["id"])
+            self._update_carry_capacity(character)
 
             return character
 
     def get_character_for_battle(self, character_id):
         with self.connection() as connection:
             row = connection.execute(
-                "SELECT * FROM characters WHERE id = ?",
-                (int(character_id),),
+                "SELECT * FROM characters WHERE id = %s AND world_id = %s",
+                (int(character_id), self.world_id),
             ).fetchone()
             if row is None:
                 return None
             character = self._character_payload(row)
             character["equipment_bonuses"] = self.equipment_bonuses(connection, row["id"])
             character["equipment"] = self.equipped_items(connection, row["id"])
+            self._update_carry_capacity(character)
         return {"user_id": row["user_id"], "character": character}
+
+    @staticmethod
+    def _update_carry_capacity(character):
+        stats = character.get("stats", {})
+        bonuses = character.get("equipment_bonuses", {})
+        strength = int(stats.get("strength", BASE_STAT_VALUE)) + int(bonuses.get("strength", 0))
+        endurance = int(stats.get("endurance", minimum_endurance(character.get("level", 1))))
+        endurance += int(bonuses.get("endurance", 0))
+        character["carry_capacity_kg"] = calculate_carry_capacity(strength, endurance)
 
     @staticmethod
     def equipped_items(connection, character_id):
         """Надетые предметы: {слот: предмет}. Отдаются вместе с любым персонажем,
         чтобы слоты на карточке были заполнены у всех, независимо от класса."""
-        from server.items_database import _ITEM_COLUMNS, _item_payload
+        from server.items_database import _ITEM_COLUMNS, _item_payload, display_equipment_hands
 
-        try:
-            rows = connection.execute(
-                f"""SELECT e.slot, e.item_id, {_ITEM_COLUMNS}
-                    FROM character_equipment e
-                    JOIN items_catalog c ON c.id = e.item_id
-                    WHERE e.character_id = ?""",
-                (character_id,),
-            ).fetchall()
-        except sqlite3.OperationalError:
-            # Таблицы предметов создаёт ItemsDatabase; без неё экипировки нет
-            return {}
-        return {row["slot"]: _item_payload(row) for row in rows}
+        rows = connection.execute(
+            f"""SELECT e.slot, e.item_id, {_ITEM_COLUMNS}
+                FROM character_equipment e
+                JOIN items_catalog c ON c.id = e.item_id
+                WHERE e.character_id = %s""",
+            (character_id,),
+        ).fetchall()
+        equipment = {row["slot"]: _item_payload(row) for row in rows}
+        return display_equipment_hands(equipment)
 
     @staticmethod
     def equipment_bonuses(connection, character_id):
         """Суммарные бонусы к статам от надетых предметов: {"strength": 2, ...}"""
-        try:
-            rows = connection.execute(
-                """SELECT c.bonuses_json FROM character_equipment e
-                   JOIN items_catalog c ON c.id = e.item_id
-                   WHERE e.character_id = ?""",
-                (character_id,),
-            ).fetchall()
-        except sqlite3.OperationalError:
-            # Таблицы предметов создаёт ItemsDatabase; без неё бонусов нет
-            return {}
+        rows = connection.execute(
+            """SELECT c.bonuses_json FROM character_equipment e
+               JOIN items_catalog c ON c.id = e.item_id
+               WHERE e.character_id = %s""",
+            (character_id,),
+        ).fetchall()
         bonuses = {}
         for row in rows:
             for stat, value in json.loads(row["bonuses_json"] or "{}").items():
@@ -856,7 +695,7 @@ class Database:
     @staticmethod
     def _has_active_session(connection, user_id, now):
         return connection.execute(
-            "SELECT 1 FROM sessions WHERE user_id = ? AND last_seen_at > ? LIMIT 1",
+            "SELECT 1 FROM sessions WHERE user_id = %s AND last_seen_at > %s LIMIT 1",
             (user_id, now - config.TOKEN_TTL_SECONDS),
         ).fetchone() is not None
 
@@ -873,7 +712,7 @@ class Database:
         if recovered_hp == hp:
             return row
         connection.execute(
-            "UPDATE characters SET hp = ?, updated_at = ? WHERE id = ?",
+            "UPDATE characters SET hp = %s, updated_at = %s WHERE id = %s",
             (recovered_hp, now, row["id"]),
         )
         updated = dict(row)
@@ -905,6 +744,11 @@ class Database:
             "stats": payload.get("stats", current["stats"]),
             "stat_points": int(payload.get("stat_points", current["stat_points"])),
             "zone": str(payload.get("zone", current["zone"])),
+            "position_x": (None if payload.get("position_x", current.get("position_x")) is None
+                           else float(payload.get("position_x", current.get("position_x")))),
+            "position_y": (None if payload.get("position_y", current.get("position_y")) is None
+                           else float(payload.get("position_y", current.get("position_y")))),
+            "position_direction": payload.get("position_direction", current.get("position_direction")),
             "copper": currency.copper,
             "silver": currency.silver,
             "gold": currency.gold,
@@ -930,16 +774,19 @@ class Database:
         with self.connection() as connection:
             connection.execute(
                 """
-                UPDATE characters SET name = ?, level = ?, xp = ?, hp = ?,
-                max_hp = ?, mp = ?, max_mp = ?, stats_json = ?, stat_points = ?,
-                zone = ?, copper = ?, silver = ?, gold = ?, updated_at = ? WHERE id = ? AND user_id = ?
+                UPDATE characters SET name = %s, level = %s, xp = %s, hp = %s,
+                max_hp = %s, mp = %s, max_mp = %s, stats_json = %s, stat_points = %s,
+                zone = %s, position_x = %s, position_y = %s, position_direction = %s,
+                copper = %s, silver = %s, gold = %s, updated_at = %s
+                WHERE id = %s AND user_id = %s AND world_id = %s
                 """,
                 (
                     updated["name"], updated["level"], updated["xp"], updated["hp"],
                     updated["max_hp"], updated["mp"], updated["max_mp"],
                     json.dumps(updated["stats"]), updated["stat_points"],
-                    updated["zone"], updated["copper"], updated["silver"], updated["gold"],
-                    time.time(), character_id, user_id,
+                    updated["zone"], updated["position_x"], updated["position_y"],
+                    updated["position_direction"], updated["copper"], updated["silver"], updated["gold"],
+                    time.time(), character_id, user_id, self.world_id,
                 ),
             )
         return self.get_character(user_id, character_id)
@@ -949,18 +796,18 @@ class Database:
         now = time.time()
         with self.connection() as connection:
             cursor = connection.execute(
-                "SELECT id FROM active_battles WHERE player_id = ? AND opponent_id = ?",
+                "SELECT id FROM active_battles WHERE player_id = %s AND opponent_id = %s",
                 (player_id, opponent_id),
             )
             row = cursor.fetchone()
             if row:
                 connection.execute(
-                    "UPDATE active_battles SET battle_data = ?, updated_at = ? WHERE id = ?",
+                    "UPDATE active_battles SET battle_data = %s, updated_at = %s WHERE id = %s",
                     (json.dumps(battle_data), now, row["id"]),
                 )
             else:
                 connection.execute(
-                    "INSERT INTO active_battles (player_id, opponent_id, battle_data, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+                    "INSERT INTO active_battles (player_id, opponent_id, battle_data, created_at, updated_at) VALUES (%s, %s, %s, %s, %s)",
                     (player_id, opponent_id, json.dumps(battle_data), now, now),
                 )
 
@@ -968,7 +815,14 @@ class Database:
         """Отмечает игрока как АФК в боевой системе"""
         with self.connection() as connection:
             connection.execute(
-                "UPDATE active_battles SET player_afk = ? WHERE player_id = ? AND opponent_id = ?",
+                "UPDATE active_battles SET player_afk = %s WHERE player_id = %s AND opponent_id = %s",
+                (1 if is_afk else 0, player_id, opponent_id),
+            )
+
+    def mark_opponent_afk(self, player_id, opponent_id, is_afk=True):
+        with self.connection() as connection:
+            connection.execute(
+                "UPDATE active_battles SET opponent_afk = %s WHERE player_id = %s AND opponent_id = %s",
                 (1 if is_afk else 0, player_id, opponent_id),
             )
 
@@ -976,13 +830,14 @@ class Database:
         """Получает сохраненное состояние боя"""
         with self.connection() as connection:
             row = connection.execute(
-                "SELECT battle_data, player_afk FROM active_battles WHERE player_id = ? AND opponent_id = ?",
+                "SELECT battle_data, player_afk, opponent_afk FROM active_battles WHERE player_id = %s AND opponent_id = %s",
                 (player_id, opponent_id),
             ).fetchone()
             if row:
                 return {
                     "battle_data": json.loads(row["battle_data"]),
                     "player_afk": bool(row["player_afk"]),
+                    "opponent_afk": bool(row["opponent_afk"]),
                 }
             return None
 
@@ -991,7 +846,7 @@ class Database:
         with self.connection() as connection:
             # Получаем данные боя перед удалением
             battle = connection.execute(
-                "SELECT battle_data, player_afk, opponent_afk FROM active_battles WHERE player_id = ? AND opponent_id = ?",
+                "SELECT battle_data, player_afk, opponent_afk FROM active_battles WHERE player_id = %s AND opponent_id = %s",
                 (player_id, opponent_id),
             ).fetchone()
             
@@ -1003,14 +858,14 @@ class Database:
                 connection.execute(
                     """INSERT INTO battle_logs 
                     (player_id, opponent_id, battle_data, player_afk, opponent_afk, created_at, expires_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)""",
                     (player_id, opponent_id, battle["battle_data"], battle["player_afk"], 
                      battle["opponent_afk"], now, expires_at),
                 )
                 
                 # Удаляем из активных боев
                 connection.execute(
-                    "DELETE FROM active_battles WHERE player_id = ? AND opponent_id = ?",
+                    "DELETE FROM active_battles WHERE player_id = %s AND opponent_id = %s",
                     (player_id, opponent_id),
                 )
                 
@@ -1023,8 +878,8 @@ class Database:
             row = connection.execute(
                 """SELECT battle_data, player_afk, opponent_afk, created_at 
                 FROM battle_logs 
-                WHERE player_id = ? AND opponent_id = ? 
-                AND expires_at > ?
+                WHERE player_id = %s AND opponent_id = %s
+                AND expires_at > %s
                 ORDER BY created_at DESC LIMIT 1""",
                 (player_id, opponent_id, time.time()),
             ).fetchone()
@@ -1080,8 +935,15 @@ class Database:
             "mp": min(row["mp"], max_mp),
             "max_mp": max_mp,
             "stats": stats,
+            "carry_capacity_kg": calculate_carry_capacity(
+                stats.get("strength", BASE_STAT_VALUE),
+                stats.get("endurance", minimum_endurance(row["level"])),
+            ),
             "stat_points": row["stat_points"],
             "zone": row["zone"],
+            "position_x": row_dict.get("position_x"),
+            "position_y": row_dict.get("position_y"),
+            "position_direction": row_dict.get("position_direction"),
             "copper": currency.copper,
             "silver": currency.silver,
             "gold": currency.gold,
@@ -1093,13 +955,15 @@ class Database:
         if character_id is not None and payload is not None:
             self.save_character(user_id, character_id, payload)
         with self.connection() as connection:
-            connection.execute("DELETE FROM sessions WHERE token = ?", (token,))
+            connection.execute("DELETE FROM sessions WHERE token = %s", (token,))
         return {"saved": True}
     
     def get_drinks_list(self):
         """Получить список всех напитков"""
         with self.connection() as connection:
-            rows = connection.execute("SELECT id, name, description, price_copper, price_silver, price_gold, effect, effect_value FROM drinks ORDER BY id").fetchall()
+            rows = connection.execute(
+                "SELECT id, name, description, price_copper, effect, effect_value FROM drinks ORDER BY id"
+            ).fetchall()
             return [dict(row) for row in rows]
     
     def buy_drink(self, user_id, character_id, drink_id):
@@ -1109,7 +973,7 @@ class Database:
         with self.connection() as connection:
             # Получаем информацию о напитке
             drink = connection.execute(
-                "SELECT price_copper, price_silver, price_gold, effect, effect_value FROM drinks WHERE id = ?",
+                "SELECT price_copper, effect, effect_value FROM drinks WHERE id = %s",
                 (drink_id,)
             ).fetchone()
             
@@ -1138,19 +1002,11 @@ class Database:
             
             # Проверяем деньги
             current = Currency.from_dict(character)
-            if not current.has_enough(
-                copper=drink["price_copper"],
-                silver=drink["price_silver"],
-                gold=drink["price_gold"]
-            ):
+            if not current.has_enough_copper(drink["price_copper"]):
                 raise ValueError("Недостаточно денег")
             
             # Вычитаем деньги
-            current.subtract(
-                copper=drink["price_copper"],
-                silver=drink["price_silver"],
-                gold=drink["price_gold"]
-            )
+            current.subtract_copper_amount(drink["price_copper"])
             character.update(current.to_dict())
             
             # Применяем эффект напитка (восстанавливаем HP, но не больше max_hp)
@@ -1172,7 +1028,7 @@ class Database:
                 """SELECT ci.id, d.id as drink_id, d.name, d.effect, d.effect_value, ci.quantity
                 FROM character_inventory ci
                 JOIN drinks d ON ci.drink_id = d.id
-                WHERE ci.character_id = ?
+                WHERE ci.character_id = %s
                 ORDER BY d.name""",
                 (character_id,)
             ).fetchall()
@@ -1186,7 +1042,7 @@ class Database:
                 """SELECT ci.id, d.effect, d.effect_value, ci.drink_id
                 FROM character_inventory ci
                 JOIN drinks d ON ci.drink_id = d.id
-                WHERE ci.id = ? AND ci.character_id = ?""",
+                WHERE ci.id = %s AND ci.character_id = %s""",
                 (inventory_item_id, character_id)
             ).fetchone()
             
@@ -1207,7 +1063,7 @@ class Database:
             
             # Удаляем из инвентаря или уменьшаем количество
             connection.execute(
-                "UPDATE character_inventory SET quantity = quantity - 1 WHERE id = ?",
+                "UPDATE character_inventory SET quantity = quantity - 1 WHERE id = %s",
                 (inventory_item_id,)
             )
             connection.execute(
@@ -1221,25 +1077,61 @@ class Database:
             rows = connection.execute(
                 """SELECT id, card_key, quantity, slot_index, acquired_at
                    FROM character_card_collection
-                   WHERE character_id = ?
+                   WHERE character_id = %s
                    ORDER BY slot_index""",
                 (character_id,),
             ).fetchall()
             return [dict(row) for row in rows]
 
+    def ensure_starter_cards(self, character_id, card_keys):
+        """Один раз кладёт в коллекцию карты класса, чтобы из них можно было собрать колоду."""
+        with self.connection() as connection:
+            lock_character(connection, character_id)
+            granted = connection.execute(
+                "SELECT 1 FROM character_card_grants WHERE character_id = %s",
+                (character_id,),
+            ).fetchone()
+            if granted:
+                return False
+            rows = connection.execute(
+                "SELECT card_key, slot_index FROM character_card_collection WHERE character_id = %s",
+                (character_id,),
+            ).fetchall()
+            owned = {row["card_key"] for row in rows}
+            free_slots = iter(sorted(set(range(60)) - {row["slot_index"] for row in rows}))
+            now = time.time()
+            for card_key in card_keys:
+                if card_key in owned:
+                    continue
+                slot_index = next(free_slots, None)
+                if slot_index is None:
+                    break
+                connection.execute(
+                    """INSERT INTO character_card_collection
+                       (character_id, card_key, quantity, slot_index, acquired_at)
+                       VALUES (%s, %s, 1, %s, %s)""",
+                    (character_id, card_key, slot_index, now),
+                )
+            connection.execute(
+                "INSERT INTO character_card_grants (character_id, starter_cards_at) VALUES (%s, %s)",
+                (character_id, now),
+            )
+            return True
+
     def add_card_to_collection(self, character_id, card_key):
         with self.connection() as connection:
+            lock_character(connection, character_id)
             existing = connection.execute(
                 """SELECT id, quantity, slot_index
                    FROM character_card_collection
-                   WHERE character_id = ? AND card_key = ?""",
+                   WHERE character_id = %s AND card_key = %s""",
                 (character_id, card_key),
             ).fetchone()
             if existing is not None:
                 connection.execute(
                     """UPDATE character_card_collection
-                       SET quantity = quantity + 1, acquired_at = ?
-                       WHERE id = ?""",
+                       SET quantity = quantity + 1, acquired_at = %s
+                       WHERE id = %s""",
                     (time.time(), existing["id"]),
                 )
                 return {
@@ -1254,7 +1146,7 @@ class Database:
                 for row in connection.execute(
                     """SELECT slot_index
                        FROM character_card_collection
-                       WHERE character_id = ?""",
+                       WHERE character_id = %s""",
                     (character_id,),
                 ).fetchall()
             }
@@ -1262,14 +1154,15 @@ class Database:
             if slot_index is None:
                 raise ValueError("В коллекции нет свободных ячеек")
             now = time.time()
-            cursor = connection.execute(
+            entry_id = connection.execute(
                 """INSERT INTO character_card_collection
                    (character_id, card_key, quantity, slot_index, acquired_at)
-                   VALUES (?, ?, 1, ?, ?)""",
+                   VALUES (%s, %s, 1, %s, %s)
+                   RETURNING id""",
                 (character_id, card_key, slot_index, now),
-            )
+            ).fetchone()["id"]
             return {
-                "id": cursor.lastrowid,
+                "id": entry_id,
                 "card_key": card_key,
                 "quantity": 1,
                 "slot_index": slot_index,
