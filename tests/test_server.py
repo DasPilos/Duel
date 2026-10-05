@@ -1,4 +1,5 @@
 import time
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -7,6 +8,7 @@ from combat.card_database import Card
 from server.database import Database
 from server.main import GameRequestHandler
 from server import social, world
+from server import maintenance
 from client.state import ChatState
 from ui.chat.widgets import MessageList
 from tests.fixtures import create_test_database, drop_test_database, running_server
@@ -20,6 +22,86 @@ class ServerPersistenceTests(unittest.TestCase):
 
     def tearDown(self):
         drop_test_database(self.database)
+
+    def test_restart_notice_counts_down_and_can_be_cancelled(self):
+        maintenance.cancel_restart()
+        try:
+            notice = maintenance.schedule_restart(delay_seconds=180, now=1000)
+            self.assertEqual(notice["seconds_remaining"], 180)
+            self.assertFalse(maintenance.restart_due(now=1179))
+            self.assertTrue(maintenance.restart_due(now=1180))
+            maintenance.cancel_restart()
+            self.assertIsNone(maintenance.public_notice(now=1180))
+        finally:
+            maintenance.cancel_restart()
+
+    def test_restart_scheduler_stops_server_when_countdown_expires(self):
+        from server.main import _run_scheduled_restart
+
+        class FakeServer:
+            def __init__(self):
+                self.shutdown_called = False
+
+            def shutdown(self):
+                self.shutdown_called = True
+
+        maintenance.cancel_restart()
+        stop = threading.Event()
+        restart_requested = threading.Event()
+        server = FakeServer()
+        try:
+            maintenance.schedule_restart(delay_seconds=1, now=time.time() - 1)
+            _run_scheduled_restart(server, stop, restart_requested)
+            self.assertTrue(server.shutdown_called)
+            self.assertTrue(restart_requested.is_set())
+        finally:
+            maintenance.cancel_restart()
+
+    def test_scheduled_restart_stops_http_server_at_deadline(self):
+        from server.main import _run_scheduled_restart
+
+        class FakeServer:
+            def __init__(self):
+                self.stopped = threading.Event()
+
+            def shutdown(self):
+                self.stopped.set()
+
+        maintenance.cancel_restart()
+        stop = threading.Event()
+        requested = threading.Event()
+        server = FakeServer()
+        try:
+            maintenance.schedule_restart(delay_seconds=1, now=time.time() - 1)
+            _run_scheduled_restart(server, stop, requested)
+            self.assertTrue(requested.is_set())
+            self.assertTrue(server.stopped.is_set())
+        finally:
+            maintenance.cancel_restart()
+
+    def test_server_status_counts_players_and_restart_control_requires_moderator(self):
+        maintenance.cancel_restart()
+        with running_server(self.database) as client:
+            client.register("statususer", "password")
+            client.login("statususer", "password")
+            character = client.create_character("StatusUser")
+            client.social_snapshot("tavern", character["id"])
+
+            self.assertEqual(client.get_server_status(), {
+                "online_players": 1,
+                "restart_notice": None,
+            })
+            with self.assertRaisesRegex(ServerError, "Недостаточно прав"):
+                client.schedule_server_restart()
+
+            with self.database.connection() as connection:
+                connection.execute("UPDATE users SET role = 'moderator' WHERE username = %s", ("statususer",))
+
+            notice = client.schedule_server_restart()
+            self.assertEqual(notice["seconds_remaining"], 180)
+            self.assertIn("обновление", notice["message"])
+            self.assertIsNone(client.cancel_server_restart())
+        self.assertIsNone(maintenance.public_notice())
 
     def test_character_is_created_and_loaded(self):
         user = self.database.register("tester", "password")

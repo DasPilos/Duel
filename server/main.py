@@ -11,7 +11,7 @@ from server import config
 from server.database import Database
 from server.items_database import ItemsDatabase
 from server.forge import Forge
-from server import social
+from server import maintenance, social
 from server.world import run_bot_battle_tick
 from core.production_buildings import BUILDINGS
 from server.production_buildings import ProductionBuildings
@@ -284,6 +284,13 @@ class GameRequestHandler(BaseHTTPRequestHandler):
             "group_offers": social.group_battle_offers() if location == "backyard" else [],
         })
 
+    def _handle_server_status(self):
+        self.database.user_id_by_token(self._token())
+        self._send(200, {
+            "online_players": social.online_player_count(),
+            "restart_notice": maintenance.public_notice(),
+        })
+
     def _handle_social_offers(self):
         token = self._token()
         user_id = self.database.user_id_by_token(token)
@@ -319,6 +326,9 @@ class GameRequestHandler(BaseHTTPRequestHandler):
             path = urlparse(self.path).path.rstrip("/")
             if path == "/health":
                 self._send(200, {"status": "ok"})
+                return
+            if path == "/api/server/status":
+                self._handle_server_status()
                 return
             if path == "/download/client":
                 self._send_client_download()
@@ -498,6 +508,23 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                 if not 3 <= len(username) <= 32 or not 6 <= len(password) <= 128:
                     raise ValueError("Имя: 3-32 символа, пароль: 6-128 символов")
                 self._send(201, {"user": self.database.register(username, password)})
+                return
+            if path == "/api/server/restart-notice":
+                user_id = self.database.user_id_by_token(self._token())
+                if not self.database.is_moderator(user_id):
+                    raise ValueError("Недостаточно прав для управления сервером")
+                if body.get("action") == "cancel":
+                    maintenance.cancel_restart()
+                    self._send(200, {"restart_notice": None})
+                    return
+                minutes = int(body.get("minutes", 3))
+                if not 1 <= minutes <= 30:
+                    raise ValueError("Время до перезапуска: от 1 до 30 минут")
+                notice = maintenance.schedule_restart(
+                    delay_seconds=minutes * 60,
+                    message="Сервер получил обновление.",
+                )
+                self._send(200, {"restart_notice": notice})
                 return
             if path == "/api/login":
                 self._send(200, self.database.login(str(body.get("username", "")), str(body.get("password", ""))))
@@ -1035,6 +1062,7 @@ def run():
     roads_payload()
     server = GameHTTPServer((config.HOST, config.PORT), GameRequestHandler)
     stop_bot_battles = threading.Event()
+    restart_requested = threading.Event()
     bot_battle_thread = threading.Thread(
         target=_run_bot_battles,
         args=(stop_bot_battles,),
@@ -1042,6 +1070,13 @@ def run():
         daemon=True,
     )
     bot_battle_thread.start()
+    restart_thread = threading.Thread(
+        target=_run_scheduled_restart,
+        args=(server, stop_bot_battles, restart_requested),
+        name="scheduled-server-restart",
+        daemon=True,
+    )
+    restart_thread.start()
     print(f"Game server: http://{config.HOST}:{config.PORT}")
     try:
         server.serve_forever()
@@ -1050,7 +1085,10 @@ def run():
     finally:
         stop_bot_battles.set()
         bot_battle_thread.join(timeout=2)
+        restart_thread.join(timeout=2)
         server.server_close()
+    if restart_requested.is_set():
+        raise SystemExit(1)
 
 
 def _run_bot_battles(stop_event):
@@ -1061,6 +1099,14 @@ def _run_bot_battles(stop_event):
             traceback.print_exc()
         if stop_event.wait(1):
             break
+
+
+def _run_scheduled_restart(server, stop_event, restart_requested):
+    while not stop_event.wait(0.5):
+        if maintenance.restart_due():
+            restart_requested.set()
+            server.shutdown()
+            return
 
 
 if __name__ == "__main__":

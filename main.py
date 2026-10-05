@@ -1,5 +1,6 @@
 import argparse
 import os
+import sys
 
 import pygame
 
@@ -19,6 +20,7 @@ from ui.scene_transition import SceneTransition
 from client.network import ServerError
 from ui.inventory_window import InventoryWindow
 from ui.exit_menu import ExitMenu
+from ui.server_status_hud import ServerStatusHUD
 
 
 # Сцены, где инвентарь открывается клавишей I (не в бою и не в меню входа)
@@ -65,6 +67,27 @@ def close_scene_ui(scene):
 
 def scene_session(scene):
     return getattr(scene, "session", None) or getattr(scene, "online_session", None)
+
+
+def server_status_visible(scene, transition, exit_menu):
+    if transition or exit_menu.is_open or exit_menu.quitting or isinstance(scene, DuelScene):
+        return False
+    session = scene_session(scene)
+    if session is None or not getattr(session, "character", None):
+        return False
+    if isinstance(scene, CityScene):
+        menu_flags = (
+            "castle_menu_open", "barn_menu_open", "warehouse_menu_open", "stable_menu_open",
+            "forge_menu_open", "workshop_menu_open", "barracks_menu_open",
+            "engineering_menu_open", "university_menu_open", "academy_menu_open",
+            "mage_school_menu_open",
+        )
+        if any(getattr(scene, name, False) for name in menu_flags):
+            return False
+        if any(getattr(scene, name, None) is not None and getattr(scene, name).is_open
+               for name in ("barn_window", "warehouse_window", "stable_window")):
+            return False
+    return True
 
 
 def toggle_player_profile(scene):
@@ -200,6 +223,7 @@ def main():
     transition = SceneTransition()
     inventory = InventoryWindow()
     exit_menu = ExitMenu()
+    server_status_hud = ServerStatusHUD()
 
     try:
         running = True
@@ -228,6 +252,15 @@ def main():
                             exit_menu.begin_quit()
                         else:
                             exit_menu.open(error=error)
+                    continue
+                elif (server_status_visible(scene, transition.active, exit_menu)
+                      and server_status_hud.handle_event(event) == "restart_client"):
+                    error = disconnect_scene(scene)
+                    if error is None:
+                        pygame.quit()
+                        os.execv(sys.executable, [sys.executable, *sys.argv])
+                    else:
+                        exit_menu.open(error=error)
                     continue
                 elif inventory.handle_event(event):
                     continue
@@ -373,6 +406,10 @@ def main():
                         transition.start(screen, lambda: TavernScene(session))
 
             if not transition.active:
+                server_status_hud.update(
+                    scene_session(scene), dt,
+                    visible=server_status_visible(scene, transition.active, exit_menu),
+                )
                 if not exit_menu.is_open and not exit_menu.quitting:
                     if args.online:
                         apply_passive_regen(scene, dt)
@@ -380,6 +417,8 @@ def main():
                 scene.draw(screen)
                 inventory.draw(screen)
                 exit_menu.draw(screen, pygame.font.SysFont("arial", 30), pygame.font.SysFont("arial", 20))
+                if server_status_visible(scene, transition.active, exit_menu):
+                    server_status_hud.draw(screen)
             else:
                 new_scene = transition.update(dt)
                 if new_scene is not None:
