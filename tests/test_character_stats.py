@@ -399,6 +399,15 @@ class CharacterStatTests(unittest.TestCase):
             "Маг Урон": 3, "HP": 90,
         })
 
+    def test_equipped_shield_block_is_displayed_in_derived_values(self):
+        profile = normalize_character_profile({
+            "stats": {"strength": 3, "agility": 3, "intuition": 3, "wisdom": 3,
+                      "intellect": 3, "harmony": 3, "endurance": 3},
+            "equipment_bonuses": {"hp": 20, "block": 5},
+        })
+
+        self.assertEqual(derived_values(profile)["Блок"], "5%")
+
     def test_character_comparison_draw_cross_class_does_not_crash(self):
         from ui.character_comparison import CharacterComparison
         pygame.init()

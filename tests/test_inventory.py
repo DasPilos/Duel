@@ -306,6 +306,20 @@ class InventoryTests(unittest.TestCase):
         self.assertEqual(battle["equipment_bonuses"], {"endurance": 2})
         self.assertEqual(battle["carry_capacity_kg"], character["carry_capacity_kg"])
 
+    def test_shield_bonuses_reach_battle_fighter(self):
+        from scenes.duel_scene import DuelScene
+
+        self.items.add_to_inventory(self.character_id, 39, 1)
+        self.items.equip_item(self.character_id, 0, "shield")
+        character = self.database.get_character_for_battle(self.character_id)["character"]
+        fighter = Fighter("Щитоносец")
+
+        DuelScene._apply_fighter_profile(fighter, character)
+
+        self.assertEqual(fighter.equipment_stat_modifiers["hp"], 20)
+        self.assertEqual(fighter.equipment_stat_modifiers["block"], 5)
+        self.assertEqual(fighter.max_hp, 50)
+
     def test_fighter_uses_equipment_bonus_without_changing_base_stats(self):
         fighter = Fighter("Воин")
         base_strength = fighter.stats["strength"]

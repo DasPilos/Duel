@@ -123,6 +123,19 @@ class PhysicalEffectTests(unittest.TestCase):
         self.assertFalse(event["dodged"])
         self.assertGreater(event["damage"], 0)
 
+    def test_equipped_block_prevents_physical_attack_damage(self):
+        battle, _player, enemy = _battle(rng=FixedRandom(0.0))
+        enemy.temporary_dodge_chance_modifier = -6
+        enemy.equipment_stat_modifiers["block"] = 100
+        hp_before = enemy.hp
+
+        event = battle._resolve_card("player", _card("warrior", "warrior_slash"))
+
+        self.assertTrue(event["blocked"])
+        self.assertEqual(event["block_count"], 1)
+        self.assertEqual(event["damage"], 0)
+        self.assertEqual(enemy.hp, hp_before)
+
     def test_thirst_for_blood_guarantees_crit(self):
         battle, _player, _enemy = _battle("assassin", "warrior")
         battle._resolve_card("player", _card("assassin", "assassin_thirst_blood"))

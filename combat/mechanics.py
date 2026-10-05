@@ -39,6 +39,12 @@ def get_dodge_chance(attacker, defender):
     return clamp_chance(total_dodge, 70.0)
 
 
+def get_block_chance(defender):
+    """Return the equipped block chance, capped like other defensive chances."""
+    modifiers = getattr(defender, "equipment_stat_modifiers", {}) or {}
+    return clamp_chance(float(modifiers.get("block", 0)), 70.0)
+
+
 def get_critical_chance(attacker, defender):
     """Return the base critical chance — no longer affected by either fighter's stats."""
     return clamp_chance(BASE_CRITICAL_CHANCE)

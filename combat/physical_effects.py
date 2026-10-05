@@ -5,7 +5,12 @@
 """
 import math
 
-from combat.mechanics import get_critical_chance, get_critical_damage_multiplier, get_dodge_chance
+from combat.mechanics import (
+    get_block_chance,
+    get_critical_chance,
+    get_critical_damage_multiplier,
+    get_dodge_chance,
+)
 
 PHYSICAL_RESOURCES = ("rage", "accuracy", "concentration")
 BLEED_TURNS = 2
@@ -315,6 +320,12 @@ class PhysicalEffectsMixin:
                 self._on_dodge(target_side, side, data)
                 continue
             event["hits"] += 1
+            block_chance = get_block_chance(defender)
+            if block_chance and self.rng.random() * 100 < block_chance:
+                event["blocked"] = True
+                event["block_count"] = event.get("block_count", 0) + 1
+                event["effect_text"] = (event.get("effect_text", "") + " БЛОКИРОВКА").strip()
+                continue
             if execution_stacks:
                 damage = execution_stacks * int(data["poison_damage_multiplier"])
             else:

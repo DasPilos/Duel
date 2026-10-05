@@ -176,7 +176,7 @@ STAT_ROWS = (
     ("wisdom", "Мудрость", "Маг Урон"),
     ("intellect", "Интеллект", None),
     ("harmony", "Гармония", None),
-    ("endurance", "Выносливость", None),
+    ("endurance", "Выносливость", "Блок"),
 )
 
 # Цвета показателей напротив характеристик
@@ -186,6 +186,7 @@ DERIVED_COLORS = {
     "Крит": (255, 90, 90),
     "Маг Урон": (180, 100, 240),
     "HP": (110, 235, 120),
+    "Блок": (150, 210, 255),
 }
 
 
@@ -218,10 +219,14 @@ def derived_values(profile):
     crit_multiplier = get_critical_damage_multiplier(own)
     crit_damage = int(crit_multiplier * 100)
 
-    return {
+    values = {
         "Урон": _damage_text(stats.get("strength", 0), weapon),
         "Уворот": f"{int(get_dodge_chance(None, own))}%",
         "Крит": f"{crit_chance}% × {crit_damage}%",
         "Маг Урон": _damage_text(stats.get("wisdom", 0), weapon),
         "HP": profile["max_hp"] + int(equipment_bonuses.get("hp", 0)),
     }
+    block = int(equipment_bonuses.get("block", 0))
+    if block:
+        values["Блок"] = f"{block}%"
+    return values

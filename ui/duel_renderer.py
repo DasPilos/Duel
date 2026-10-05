@@ -729,7 +729,9 @@ class DuelRenderer:
             for stat_name in ("strength", "agility", "intuition", "wisdom", "endurance")
             if hasattr(fighter, stat_name)
         }
-        effective_profile["equipment_bonuses"] = {}
+        effective_profile["equipment_bonuses"] = {
+            "block": int(getattr(fighter, "equipment_stat_modifiers", {}).get("block", 0)),
+        }
         return effective_profile
 
     @staticmethod
