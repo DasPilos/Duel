@@ -1,5 +1,6 @@
 import time
 import threading
+from datetime import datetime, timezone
 import unittest
 from unittest.mock import patch
 
@@ -84,10 +85,11 @@ class ServerPersistenceTests(unittest.TestCase):
         with running_server(self.database) as client:
             client.register("statususer", "password")
             client.login("statususer", "password")
-            self.assertEqual(client.get_server_status(), {
-                "online_players": 1,
-                "restart_notice": None,
-            })
+            status = client.get_server_status()
+            self.assertEqual(status["online_players"], 1)
+            self.assertIsNone(status["restart_notice"])
+            self.assertEqual(status["server_timezone"], "Europe/Kyiv")
+            self.assertAlmostEqual(status["server_time"], time.time(), delta=2)
             with self.assertRaisesRegex(ServerError, "Недостаточно прав"):
                 client.schedule_server_restart()
 
@@ -132,6 +134,20 @@ class ServerPersistenceTests(unittest.TestCase):
         self.assertEqual(saved["hp"], loaded["hp"])
         self.assertEqual(loaded["xp"], 30)
         self.assertEqual(loaded["name"], "Воин")
+
+    def test_chat_message_payload_formats_server_time_in_kiev(self):
+        created_at = datetime(2025, 1, 1, 22, 59, 59, tzinfo=timezone.utc).timestamp()
+        payload = Database._chat_message_payload({
+            "id": 1,
+            "location": "tavern",
+            "sender_character_id": 2,
+            "sender_name": "Игрок",
+            "recipient_character_id": None,
+            "text": "Привет",
+            "created_at": created_at,
+        })
+
+        self.assertEqual(payload["time_text"], "00:59:59")
 
     def test_card_collection_persists_and_stacks_duplicate_cards(self):
         user = self.database.register("collector", "password")

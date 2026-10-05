@@ -81,6 +81,9 @@ class MessageItem:
                     "color": (150, 210, 255) if own else (215, 215, 225),
                 }]
         flat_segments = []
+        sent_time = message.get("time_text")
+        if sent_time:
+            flat_segments.append((f"[{sent_time}] ", (160, 165, 170)))
         for segment in segments:
             text = str(segment.get("text", ""))
             color = segment.get("color", (215, 215, 225))

@@ -286,9 +286,12 @@ class GameRequestHandler(BaseHTTPRequestHandler):
 
     def _handle_server_status(self):
         self.database.user_id_by_token(self._token())
+        server_time = time.time()
         self._send(200, {
             "online_players": self.database.online_player_count(),
             "restart_notice": maintenance.public_notice(),
+            "server_time": server_time,
+            "server_timezone": config.SERVER_TIMEZONE,
         })
 
     def _handle_social_offers(self):

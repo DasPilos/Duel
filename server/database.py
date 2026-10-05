@@ -6,6 +6,8 @@ import secrets
 import threading
 import time
 from contextlib import contextmanager
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from psycopg import errors as pg_errors
 from psycopg.rows import dict_row
@@ -579,6 +581,7 @@ class Database:
 
     @staticmethod
     def _chat_message_payload(row):
+        sent_at = float(row["created_at"])
         return {
             "id": row["id"],
             "location": row["location"],
@@ -586,7 +589,10 @@ class Database:
             "sender": row["sender_name"],
             "recipient_id": row["recipient_character_id"],
             "text": row["text"],
-            "created_at": row["created_at"],
+            "created_at": sent_at,
+            "time_text": datetime.fromtimestamp(
+                sent_at, ZoneInfo(config.SERVER_TIMEZONE)
+            ).strftime("%H:%M:%S"),
         }
 
     def get_opponents(self, user_id):

@@ -1,6 +1,8 @@
 """Global online count and scheduled server-restart notice."""
 
 import time
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import pygame
 
@@ -21,6 +23,9 @@ class ServerStatusHUD:
         self.session = None
         self.poll_elapsed = self.POLL_SECONDS
         self.notice_received_at = time.monotonic()
+        self.server_time = None
+        self.server_time_received_at = time.monotonic()
+        self.server_timezone = "Europe/Kyiv"
         self.panel_rect = pygame.Rect(0, 0, 260, 38)
         self.restart_button = pygame.Rect(0, 0, 188, 30)
         self.font = pygame.font.SysFont(settings.FONT_NAME, 18)
@@ -28,7 +33,7 @@ class ServerStatusHUD:
         self.button_font = pygame.font.SysFont(settings.FONT_NAME, 15)
 
     def update(self, session, dt, *, visible):
-        if not visible or session is None or not getattr(session, "character", None):
+        if session is None or not getattr(session, "character", None):
             self.session = None
             return
         self.session = session
@@ -45,6 +50,16 @@ class ServerStatusHUD:
         if (old_notice or {}).get("restart_at") != (new_notice or {}).get("restart_at"):
             self.notice_received_at = time.monotonic()
         self.status = status
+        if status.get("server_time") is not None:
+            self.server_time = float(status["server_time"])
+            self.server_time_received_at = time.monotonic()
+            self.server_timezone = status.get("server_timezone", "Europe/Kyiv")
+
+    def _server_clock_text(self):
+        if self.server_time is None:
+            return "--:--:--"
+        estimated = self.server_time + max(0.0, time.monotonic() - self.server_time_received_at)
+        return datetime.fromtimestamp(estimated, ZoneInfo(self.server_timezone)).strftime("%H:%M:%S")
 
     def handle_event(self, event):
         notice = (self.status or {}).get("restart_notice")
@@ -70,6 +85,7 @@ class ServerStatusHUD:
         pygame.draw.rect(screen, self.PANEL_COLOR, self.panel_rect, border_radius=5)
         pygame.draw.rect(screen, self.BORDER_COLOR, self.panel_rect, 1, border_radius=5)
         online = max(0, int(self.status.get("online_players", 0)))
+        server_clock = self._server_clock_text()
         if notice:
             elapsed = max(0, int(time.monotonic() - self.notice_received_at))
             remaining = max(0, int(notice.get("seconds_remaining", 0)) - elapsed)
@@ -78,11 +94,11 @@ class ServerStatusHUD:
             screen.blit(self.small_font.render(title, True, self.NOTICE_COLOR),
                         (self.panel_rect.left + 14, self.panel_rect.top + 12))
             screen.blit(self.small_font.render(
-                f"Онлайн: {online}. Если требуется обновить клиент, перезапустите его.",
+                f"Онлайн: {online} · Сервер: {server_clock}. Если нужно, перезапустите клиент.",
                 True, self.TEXT_COLOR,
             ), (self.panel_rect.left + 14, self.panel_rect.top + 42))
             draw_button(screen, self.restart_button, "Перезапустить клиент", self.button_font,
                         color=(84, 111, 83), hover_color=(103, 143, 98), text_color=(245, 241, 224))
         else:
-            text = self.font.render(f"Игроков онлайн: {online}", True, self.TEXT_COLOR)
+            text = self.font.render(f"Игроков онлайн: {online}   {server_clock}", True, self.TEXT_COLOR)
             screen.blit(text, text.get_rect(center=self.panel_rect.center))
