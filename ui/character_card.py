@@ -12,6 +12,7 @@ from ui.character_profile import (
     DERIVED_COLORS,
     STAT_ROWS,
     derived_values,
+    displayed_hp_values,
     effective_stats,
     normalize_character_profile,
     profile_from_fighter,
@@ -188,7 +189,8 @@ class CharacterCard:
         mp_y = frame.y + 140
         bar_width = 280
         bar_height = 11
-        self._draw_resource(screen, x, hp_y, bar_width, bar_height, "HP", normalized["hp"], normalized["max_hp"], (210, 80, 80))
+        current_hp, max_hp = displayed_hp_values(normalized)
+        self._draw_resource(screen, x, hp_y, bar_width, bar_height, "HP", current_hp, max_hp, (210, 80, 80))
         self._draw_resource(screen, x, mp_y, bar_width, bar_height, "MP", normalized["mp"], normalized["max_mp"], (60, 140, 220))
         
         # Отображение валюты под MP шкалой
@@ -269,6 +271,67 @@ class CharacterCard:
                     hover_color=(80, 200, 120),
                     text_color=(30, 32, 45),
                 )
+        self._draw_equipment_tooltip(screen, frame, normalized.get("equipment", {}))
+
+    def _draw_equipment_tooltip(self, screen, frame, equipment):
+        slot = equipment_slots.slot_at(frame, pygame.mouse.get_pos())
+        item = (equipment or {}).get(slot)
+        if not item:
+            return False
+
+        lines = self.equipment_tooltip_lines(item)
+        max_text_width = min(360, screen.get_width() - 28)
+        wrapped = []
+        for text, color in lines:
+            words = str(text).split()
+            current = ""
+            for word in words:
+                candidate = f"{current} {word}".strip()
+                if current and self.small_font.size(candidate)[0] > max_text_width:
+                    wrapped.append((current, color))
+                    current = word
+                else:
+                    current = candidate
+            if current:
+                wrapped.append((current, color))
+
+        padding = 10
+        line_height = self.small_font.get_linesize() + 3
+        width = min(max_text_width + padding * 2,
+                    max((self.small_font.size(text)[0] for text, _ in wrapped), default=0) + padding * 2)
+        height = line_height * len(wrapped) + padding * 2
+        mouse_x, mouse_y = pygame.mouse.get_pos()
+        left = min(mouse_x + 16, screen.get_width() - width - 8)
+        top = min(mouse_y + 16, screen.get_height() - height - 8)
+        tooltip = pygame.Rect(max(8, left), max(8, top), width, height)
+        pygame.draw.rect(screen, (22, 25, 31), tooltip, border_radius=5)
+        pygame.draw.rect(screen, (145, 133, 112), tooltip, 1, border_radius=5)
+        text_y = tooltip.top + padding
+        for text, color in wrapped:
+            screen.blit(self.small_font.render(text, True, color), (tooltip.left + padding, text_y))
+            text_y += line_height
+        return True
+
+    @staticmethod
+    def equipment_tooltip_lines(item):
+        lines = [(item.get("name", "Предмет"), (255, 224, 150))]
+        description = item.get("description")
+        if description:
+            lines.append((description, (225, 220, 207)))
+        labels = {
+            "strength": "Сила", "agility": "Ловкость", "intuition": "Интуиция",
+            "endurance": "Выносливость", "wisdom": "Мудрость", "intellect": "Интеллект",
+            "harmony": "Гармония", "hp": "HP", "mp": "MP", "dodge": "% Уворот",
+            "block": "% Блок",
+        }
+        for stat, value in (item.get("bonuses") or {}).items():
+            sign = "+" if int(value) > 0 else ""
+            lines.append((f"Бонус: {sign}{value} {labels.get(stat, stat)}", (140, 230, 150)))
+        damage = (item.get("effects") or {}).get("damage")
+        if damage and damage != [0, 0]:
+            lines.append((f"Урон: {damage[0]}–{damage[-1]}", (255, 220, 120)))
+        lines.append((f"Вес: {float(item.get('weight', 0) or 0):g} кг", (175, 180, 185)))
+        return lines
 
     STAT_ROW_HEIGHT = 20
 

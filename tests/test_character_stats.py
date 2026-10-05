@@ -9,7 +9,12 @@ from core.carry_weight import GREEN, NEUTRAL, RED, YELLOW, carried_weight_kg, lo
 from scenes.tavern_scene import TavernScene
 from ui.chat.panel import ChatPanel
 from ui.character_card import CharacterCard
-from ui.character_profile import derived_values, normalize_character_profile, profile_from_fighter
+from ui.character_profile import (
+    derived_values,
+    displayed_hp_values,
+    normalize_character_profile,
+    profile_from_fighter,
+)
 from ui.character_profile_overlay import CharacterProfileOverlay
 from ui.tavern_shop import TavernShop
 
@@ -407,6 +412,56 @@ class CharacterStatTests(unittest.TestCase):
         })
 
         self.assertEqual(derived_values(profile)["Блок"], "5%")
+
+    def test_equipment_hp_bonus_updates_card_max_without_double_counting_fighter(self):
+        server_profile = normalize_character_profile({
+            "hp": 30, "max_hp": 30,
+            "stats": {"strength": 3, "agility": 3, "intuition": 3, "wisdom": 3,
+                      "intellect": 3, "harmony": 3, "endurance": 3},
+            "equipment_bonuses": {"hp": 20},
+        })
+        self.assertEqual(displayed_hp_values(server_profile), (50, 50))
+        self.assertEqual(derived_values(server_profile)["HP"], 50)
+
+        fighter = Fighter("Щитоносец")
+        fighter.equipment_stat_modifiers = {"hp": 20}
+        fighter.recalculate_parameters()
+        self.assertEqual(displayed_hp_values(normalize_character_profile(profile_from_fighter(fighter))),
+                         (fighter.hp, fighter.max_hp))
+
+    def test_equipped_item_tooltip_contains_description_and_bonuses(self):
+        lines = CharacterCard.equipment_tooltip_lines({
+            "name": "Деревянный щит",
+            "description": "Щит для защиты",
+            "weight": 3,
+            "bonuses": {"hp": 20, "block": 5},
+            "effects": {"block": 5},
+        })
+        text = " ".join(line for line, _color in lines)
+        self.assertIn("Щит для защиты", text)
+        self.assertIn("+20 HP", text)
+        self.assertIn("+5 % Блок", text)
+
+    def test_hovering_equipped_shield_draws_tooltip(self):
+        from unittest.mock import patch
+        from ui.equipment_slots import slot_rects
+
+        pygame.init()
+        try:
+            card = CharacterCard()
+            screen = pygame.Surface((900, 1000))
+            frame = pygame.Rect(20, 20, 440, 900)
+            shield = {
+                "name": "Деревянный щит",
+                "description": "Щит для защиты",
+                "weight": 3,
+                "bonuses": {"hp": 20, "block": 5},
+                "effects": {"block": 5},
+            }
+            with patch("pygame.mouse.get_pos", return_value=slot_rects(frame)["shield"].center):
+                self.assertTrue(card._draw_equipment_tooltip(screen, frame, {"shield": shield}))
+        finally:
+            pygame.quit()
 
     def test_character_comparison_draw_cross_class_does_not_crash(self):
         from ui.character_comparison import CharacterComparison

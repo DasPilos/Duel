@@ -43,6 +43,7 @@ def normalize_character_profile(profile, *, title=None, kind="player"):
             "inventory": dict(getattr(data, "inventory", {})),
             "equipment": dict(getattr(data, "equipment", {})),
             "equipment_bonuses": dict(getattr(data, "equipment_stat_modifiers", {})),
+            "max_hp_includes_equipment": True,
             "carried_weight_kg": getattr(data, "carried_weight_kg", 0),
             "kind": kind,
         }
@@ -66,6 +67,7 @@ def normalize_character_profile(profile, *, title=None, kind="player"):
             "inventory": dict(data.get("inventory", {})),
             "equipment": dict(data.get("equipment", {})),
             "equipment_bonuses": dict(data.get("equipment_bonuses", {})),
+            "max_hp_includes_equipment": bool(data.get("max_hp_includes_equipment", False)),
             "carried_weight_kg": float(data.get("carried_weight_kg", 0)),
             "kind": kind,
         }
@@ -89,6 +91,7 @@ def normalize_character_profile(profile, *, title=None, kind="player"):
             "inventory": {},
             "equipment": {},
             "equipment_bonuses": {},
+            "max_hp_includes_equipment": False,
             "carried_weight_kg": 0,
             "kind": kind,
         }
@@ -113,6 +116,19 @@ def effective_stats(profile):
     return stats
 
 
+def displayed_hp_values(profile):
+    """Return current/max HP including equipped bonuses without double-counting fighters."""
+    base_max_hp = int(profile.get("max_hp", 1))
+    hp_bonus = 0 if profile.get("max_hp_includes_equipment") else int(
+        (profile.get("equipment_bonuses") or {}).get("hp", 0)
+    )
+    maximum = max(1, base_max_hp + hp_bonus)
+    current = int(profile.get("hp", 0))
+    if hp_bonus > 0 and current >= base_max_hp:
+        current += hp_bonus
+    return min(current, maximum), maximum
+
+
 def profile_from_fighter(fighter):
     """Создаёт профиль карточки из действующего бойца без привязки к рендеру."""
     return {
@@ -129,6 +145,7 @@ def profile_from_fighter(fighter):
         "stat_points": getattr(fighter, "stat_points", 0),
         "equipment": dict(getattr(fighter, "equipment", {})),
         "equipment_bonuses": dict(getattr(fighter, "equipment_stat_modifiers", {})),
+        "max_hp_includes_equipment": True,
         "carried_weight_kg": float(getattr(fighter, "carried_weight_kg", 0)),
     }
 
@@ -224,7 +241,7 @@ def derived_values(profile):
         "Уворот": f"{int(get_dodge_chance(None, own))}%",
         "Крит": f"{crit_chance}% × {crit_damage}%",
         "Маг Урон": _damage_text(stats.get("wisdom", 0), weapon),
-        "HP": profile["max_hp"] + int(equipment_bonuses.get("hp", 0)),
+        "HP": displayed_hp_values(profile)[1],
     }
     block = int(equipment_bonuses.get("block", 0))
     if block:
