@@ -15,16 +15,6 @@ def cleanup():
             del PRESENCE[token]
 
 
-def online_player_count():
-    """Count distinct connected human accounts; AFK entries and bots are excluded."""
-    cleanup()
-    return len({
-        item["user_id"]
-        for item in PRESENCE.values()
-        if not item.get("afk", False)
-    })
-
-
 def update_presence(token, user_id, character, location):
     cleanup()
     character_id = character["id"]

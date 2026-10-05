@@ -84,9 +84,6 @@ class ServerPersistenceTests(unittest.TestCase):
         with running_server(self.database) as client:
             client.register("statususer", "password")
             client.login("statususer", "password")
-            character = client.create_character("StatusUser")
-            client.social_snapshot("tavern", character["id"])
-
             self.assertEqual(client.get_server_status(), {
                 "online_players": 1,
                 "restart_notice": None,
@@ -102,6 +99,21 @@ class ServerPersistenceTests(unittest.TestCase):
             self.assertIn("обновление", notice["message"])
             self.assertIsNone(client.cancel_server_restart())
         self.assertIsNone(maintenance.public_notice())
+
+    def test_online_player_count_deduplicates_accounts_and_ignores_stale_sessions(self):
+        self.database.register("online-first", "password")
+        self.database.login("online-first", "password")
+        self.database.login("online-first", "password")
+        second = self.database.register("online-second", "password")
+        second_login = self.database.login("online-second", "password")
+        now = time.time()
+        with self.database.connection() as connection:
+            connection.execute(
+                "UPDATE sessions SET last_seen_at = %s WHERE token = %s",
+                (now - 20, second_login["token"]),
+            )
+
+        self.assertEqual(self.database.online_player_count(now=now), 1)
 
     def test_character_is_created_and_loaded(self):
         user = self.database.register("tester", "password")

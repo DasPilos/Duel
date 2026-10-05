@@ -41,21 +41,6 @@ class GameClient:
     def health(self):
         return self._request("GET", "/health")
 
-        def get_server_status(self):
-            return self._request("GET", "/api/server/status", authenticated=True)
-
-        def schedule_server_restart(self, minutes=3):
-            return self._request(
-                "POST", "/api/server/restart-notice",
-                {"minutes": int(minutes)}, authenticated=True,
-            )["restart_notice"]
-
-        def cancel_server_restart(self):
-            return self._request(
-                "POST", "/api/server/restart-notice",
-                {"action": "cancel"}, authenticated=True,
-            )["restart_notice"]
-
     def get_server_status(self):
         return self._request("GET", "/api/server/status", authenticated=True)
 

@@ -1,6 +1,5 @@
 import math
 import unittest
-import time
 from types import SimpleNamespace
 
 import pygame
@@ -14,23 +13,6 @@ from tests.fixtures import create_test_database, drop_test_database, running_ser
 
 
 class WorldTerrainTests(unittest.TestCase):
-    def test_online_player_count_excludes_afk_and_deduplicates_accounts(self):
-        previous = dict(presence.PRESENCE)
-        presence.PRESENCE.clear()
-        try:
-            now = time.time()
-            presence.PRESENCE.update({
-                "one": {"user_id": 7, "character_id": 70, "seen_at": now, "afk": False},
-                "two": {"user_id": 7, "character_id": 71, "seen_at": now, "afk": False},
-                "afk": {"user_id": 8, "character_id": 80, "seen_at": now, "afk": True},
-                "expired": {"user_id": 9, "character_id": 90, "seen_at": 0, "afk": False},
-            })
-
-            self.assertEqual(presence.online_player_count(), 1)
-        finally:
-            presence.PRESENCE.clear()
-            presence.PRESENCE.update(previous)
-
     def test_afk_presence_survives_ttl_and_is_cleared_on_reconnect(self):
         previous_presence = dict(presence.PRESENCE)
         presence.PRESENCE.clear()

@@ -237,6 +237,17 @@ class Database:
                 (now, token),
             )
         return row["user_id"]
+
+    def online_player_count(self, now=None):
+        """Count recently active human accounts, deduplicating concurrent sessions."""
+        now = time.time() if now is None else float(now)
+        with self.connection() as connection:
+            row = connection.execute(
+                """SELECT COUNT(DISTINCT user_id) AS amount FROM sessions
+                   WHERE user_id <> %s AND last_seen_at > %s""",
+                (SYSTEM_USER_ID, now - config.ONLINE_PLAYER_TTL_SECONDS),
+            ).fetchone()
+        return int(row["amount"])
     
     def get_user(self, user_id):
         """Get user by ID with password hash"""

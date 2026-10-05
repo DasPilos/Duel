@@ -23,7 +23,6 @@ mark_afk = presence.mark_afk
 get_character_presence = presence.get_character_presence
 update_afk_character = presence.update_afk_character
 occupants = presence.occupants
-online_player_count = presence.online_player_count
 
 add_message = chat_cache.add_message
 messages_for = chat_cache.messages_for

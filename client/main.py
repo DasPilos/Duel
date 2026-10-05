@@ -10,14 +10,31 @@ def run():
     parser.add_argument("--password", help="Пароль")
     parser.add_argument("--character", help="Имя персонажа")
     parser.add_argument("--server", default="http://127.0.0.1:8765")
+    restart_action = parser.add_mutually_exclusive_group()
+    restart_action.add_argument("--schedule-restart", action="store_true",
+                                help="Предупредить игроков и перезапустить сервер через 3 минуты")
+    restart_action.add_argument("--cancel-restart", action="store_true",
+                                help="Отменить запланированный перезапуск")
+    parser.add_argument("--restart-minutes", type=int, default=3,
+                        help="Задержка перезапуска в минутах (1-30)")
     args = parser.parse_args()
 
     username = args.username or input("Пользователь: ").strip()
     password = args.password or getpass.getpass("Пароль: ")
-    character_name = args.character or input("Персонаж: ").strip()
     client = GameClient(args.server)
 
     try:
+        if args.schedule_restart or args.cancel_restart:
+            client.login(username, password)
+            if args.cancel_restart:
+                client.cancel_server_restart()
+                print("Запланированный перезапуск отменён")
+            else:
+                notice = client.schedule_server_restart(args.restart_minutes)
+                print(f"Игроки уведомлены; перезапуск запланирован через {notice['seconds_remaining']} секунд")
+            return
+
+        character_name = args.character or input("Персонаж: ").strip()
         try:
             client.register(username, password)
             print("Пользователь создан")

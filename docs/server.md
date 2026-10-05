@@ -98,14 +98,20 @@ python main.py --online
 `admin`. По умолчанию сервер предупредит игроков за 3 минуты и после отсчёта
 завершится с ненулевым кодом. Для автоматического запуска после этого сервисный
 менеджер должен иметь политику перезапуска при ошибке (на Z440 используется
-`systemd` `Restart=on-failure`). Например, из уже авторизованного Python-клиента:
+`systemd` `Restart=on-failure`). Выполните на администраторской машине:
 
-```python
-client.schedule_server_restart(minutes=3)
+```bash
+python -m client.main --schedule-restart --server http://<SERVER-IP>:8765
 ```
 
-Отменить запланированный перезапуск можно методом
-`client.cancel_server_restart()` до истечения таймера.
+CLI запросит логин и пароль; пароль вводится скрыто. Сервер примет команду только
+для аккаунта с ролью `moderator` или `admin`. По умолчанию задержка — 3 минуты;
+изменить её можно через `--restart-minutes 1..30`. Отменить перезапуск до
+истечения таймера:
+
+```bash
+python -m client.main --cancel-restart --server http://<SERVER-IP>:8765
+```
 
 ## Активный UI чата
 

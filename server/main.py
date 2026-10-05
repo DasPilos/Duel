@@ -287,7 +287,7 @@ class GameRequestHandler(BaseHTTPRequestHandler):
     def _handle_server_status(self):
         self.database.user_id_by_token(self._token())
         self._send(200, {
-            "online_players": social.online_player_count(),
+            "online_players": self.database.online_player_count(),
             "restart_notice": maintenance.public_notice(),
         })
 
