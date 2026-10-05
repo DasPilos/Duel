@@ -5,7 +5,11 @@ import unittest
 
 from core.production_buildings import upgrade_requirements
 from server.items_database import ItemsDatabase
-from server.production_buildings import ProductionBuildings, distribute_to_storage
+from server.production_buildings import (
+    STORAGE_RESOURCES_BY_ITEM_ID,
+    ProductionBuildings,
+    distribute_to_storage,
+)
 from tests.fixtures import create_test_database, drop_test_database, running_server
 
 
@@ -330,9 +334,13 @@ class ProductionBuildingsTests(unittest.TestCase):
 
         for item_id, required in materials.items():
             items.add_to_inventory(character_id, item_id, required + 2)
+            self.buildings.deposit_to_storage(
+                character_id, "warehouse", STORAGE_RESOURCES_BY_ITEM_ID[item_id],
+                required + 2, 10000,
+            )
             state = self.buildings.deposit_material(character_id, "farm", item_id, 999, 10000)
         self.assertTrue(state["upgrade"]["ready"])
-        self.assertTrue(all(row["in_backpack"] == 2 for row in state["upgrade"]["materials"]))
+        self.assertTrue(all(row["in_warehouse"] == 2 for row in state["upgrade"]["materials"]))
 
         state = self.buildings.start_upgrade(character_id, "farm", 10000)
         self.assertTrue(state["upgrade"]["in_progress"])
@@ -397,8 +405,11 @@ class ProductionBuildingsTests(unittest.TestCase):
         for index, (item_id, required) in enumerate(materials):
             giver = first if index % 2 == 0 else second
             items.add_to_inventory(giver, item_id, required)
+            self.buildings.deposit_to_storage(
+                giver, "warehouse", STORAGE_RESOURCES_BY_ITEM_ID[item_id], required, 10000
+            )
             state = self.buildings.deposit_material(giver, "farm", item_id, required, 10000)
-            self.assertEqual(state["upgrade"]["materials"][index]["in_backpack"], 0)
+            self.assertEqual(state["upgrade"]["materials"][index]["deposited"], required)
         state = self.buildings.start_upgrade(second, "farm", 10000)
         self.assertTrue(state["upgrade"]["in_progress"])
 

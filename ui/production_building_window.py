@@ -251,7 +251,7 @@ class ProductionBuildingWindow:
             )
             self.received_at = time.monotonic()
             self.message = None
-            if action in ("upgrade/deposit", "player-harvest/claim"):
+            if action in ("upgrade/deposit", "player-harvest/claim", "storage/deposit"):
                 refresh_carrying_state = getattr(self.scene.session, "refresh_carrying_state", None)
                 if refresh_carrying_state is not None:
                     refresh_carrying_state()
@@ -721,7 +721,7 @@ class ProductionBuildingWindow:
                         self.contribution_dialog.open(
                             item_id,
                             material["name"],
-                            material["in_backpack"],
+                            material["in_warehouse"],
                             material["required"] - material["deposited"],
                         )
                     return
@@ -1279,17 +1279,17 @@ class ProductionBuildingWindow:
         curr_y += 30
         screen.blit(scene.small_font.render(self.production_desc(upgrade["next_level"]), True, (190, 195, 180)), (rect.left + 24, curr_y))
         curr_y += 34
-        screen.blit(scene.small_font.render("Взносы игроков из личных рюкзаков", True, (220, 210, 170)), (rect.left + 24, curr_y))
+        screen.blit(scene.small_font.render("Материалы списываются с общего склада", True, (220, 210, 170)), (rect.left + 24, curr_y))
         curr_y += 28
         for material in upgrade["materials"]:
             done = material["deposited"] >= material["required"]
-            text = f"{material['name']}: {material['deposited']}/{material['required']}   в рюкзаке: {material['in_backpack']}"
+            text = f"{material['name']}: {material['deposited']}/{material['required']}   на складе: {material['in_warehouse']}"
             draw_item_icon(screen, material, (rect.left + 12, curr_y + 2), 24)
             screen.blit(scene.small_font.render(text, True, (140, 230, 140) if done else (230, 200, 120)), (rect.left + 42, curr_y + 6))
             if not done and not upgrade["in_progress"]:
                 button = pygame.Rect(rect.left + 520, curr_y, 140, 28)
                 draw_button(screen, button, "ВНЕСТИ", scene.small_font,
-                            color=(80, 140, 85) if material["in_backpack"] > 0 else (55, 55, 60))
+                            color=(80, 140, 85) if material["in_warehouse"] > 0 else (55, 55, 60))
                 self.deposit_buttons[material["item_id"]] = button
             curr_y += 36
         curr_y += 12

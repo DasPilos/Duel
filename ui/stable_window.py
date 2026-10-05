@@ -104,6 +104,7 @@ class StableWindow:
             self.state = self.scene.session.client.get_building(
                 "stable", self.scene.session.character["id"]
             )
+            self._sync_cart_progress()
             self.state_received_at = time.monotonic()
             self.last_state_refresh = self.state_received_at
         except (ServerError, AttributeError, KeyError, OSError) as error:
@@ -132,6 +133,14 @@ class StableWindow:
             self.inventory_state = None
             self.message = self.message or str(error)
 
+    def _sync_cart_progress(self):
+        server_progress = (self.state or {}).get("cart_progress")
+        if not server_progress:
+            return
+        selected_grade = self.cart_progress.get("selected_grade", 1)
+        self.cart_progress = deepcopy(server_progress)
+        self.cart_progress["selected_grade"] = selected_grade
+
     def handle_event(self, event):
         if self.contribution_dialog.is_open:
             result = self.contribution_dialog.handle_event(event)
@@ -140,30 +149,9 @@ class StableWindow:
                 if isinstance(target, tuple):
                     upgrade_id, resource = target
                     if upgrade_id == "cart_grade_1":
-                        g1 = self.cart_progress["grades"]["1"]
-                        if resource == "wood":
-                            try:
-                                self.scene.session.client.remove_inventory_item(
-                                    self.scene.session.character["id"], 60, quantity
-                                )
-                            except (ServerError, AttributeError, KeyError, OSError, TypeError, ValueError) as error:
-                                self.message = str(error) or "Не удалось внести древесину."
-                                self._load_player_inventory()
-                                return
-                            g1["wood_deposited"] = min(100, g1.get("wood_deposited", 0) + quantity)
-                            if g1.get("wood_deposited", 0) >= 100 and g1.get("silver_deposited", 0) >= 20:
-                                g1["body_owned"] = True
-                                self.message = "Повозка куплена и готова к рейсам!"
-                            else:
-                                self.message = f"Внесено {quantity} древесины за повозку."
-                        elif resource == "silver":
-                            g1["silver_deposited"] = min(20, g1.get("silver_deposited", 0) + quantity)
-                            if g1.get("wood_deposited", 0) >= 100 and g1.get("silver_deposited", 0) >= 20:
-                                g1["body_owned"] = True
-                                self.message = "Повозка куплена и готова к рейсам!"
-                            else:
-                                self.message = f"Внесено {quantity} серебра за повозку."
-                        self._load_player_inventory()
+                        self._building_action("cart/contribute", {
+                            "resource": resource, "quantity": quantity,
+                        })
                         return
                     self._building_action("stall-upgrade/contribute", {
                         "upgrade_id": upgrade_id, "resource": resource, "quantity": quantity,
@@ -237,7 +225,7 @@ class StableWindow:
                         self.contribution_dialog.open(
                             (upgrade_id, resource),
                             "Древесина" if is_wood else "Серебро",
-                            upgrade.get("wood_in_backpack", 0) if is_wood else upgrade.get("silver_available", 0),
+                            upgrade.get("wood_in_warehouse", 0) if is_wood else upgrade.get("silver_available", 0),
                             upgrade.get("wood_cost", 0) - upgrade.get("wood_deposited", 0)
                             if is_wood else upgrade.get("silver_cost", 0) - upgrade.get("silver_deposited", 0),
                         )
@@ -255,7 +243,7 @@ class StableWindow:
                                      if item["item_id"] == item_id), None)
                     if material:
                         self.contribution_dialog.open(
-                            item_id, material["name"], material["in_backpack"],
+                            item_id, material["name"], material["in_warehouse"],
                             material["required"] - material["deposited"],
                         )
                     return
@@ -272,12 +260,10 @@ class StableWindow:
                     g1 = self.cart_progress["grades"]["1"]
                     if resource == "wood":
                         wood_needed = max(0, 100 - g1.get("wood_deposited", 0))
-                        self._load_player_inventory()
-                        inventory = (self.inventory_state or {}).get("inventory", [])
-                        wood_in_bag = sum(it["quantity"] for it in inventory if it.get("item_id") == 60)
-                        if wood_needed > 0 and wood_in_bag > 0:
+                        wood_available = (self.state or {}).get("warehouse_storage", {}).get("wood", 0)
+                        if wood_needed > 0 and wood_available > 0:
                             self.contribution_dialog.open(
-                                ("cart_grade_1", "wood"), "Древесина", wood_in_bag, wood_needed
+                                ("cart_grade_1", "wood"), "Древесина", wood_available, wood_needed
                             )
                         elif wood_needed <= 0:
                             self.message = "Древесина для повозки уже полностью внесена (100/100)!"
@@ -304,18 +290,15 @@ class StableWindow:
                         wood_cost = CART_GRADES["1"].get("wood_cost", 100)
                         silver_cost = CART_GRADES["1"].get("silver_cost", 20)
                         if wood_dep >= wood_cost and silver_dep >= silver_cost:
-                            g1["body_owned"] = True
-                            self.message = "Повозка успешно куплена и готова к рейсам!"
+                            self._building_action("cart/purchase", {"grade": grade})
                         else:
                             wood_needed = max(0, wood_cost - wood_dep)
                             silver_needed = max(0, silver_cost - silver_dep)
-                            self._load_player_inventory()
-                            inventory = (self.inventory_state or {}).get("inventory", [])
-                            wood_in_bag = sum(it["quantity"] for it in inventory if it.get("item_id") == 60)
+                            wood_available = (self.state or {}).get("warehouse_storage", {}).get("wood", 0)
                             silver_avail = (self.state or {}).get("silver_available", 0)
-                            if wood_needed > 0 and wood_in_bag > 0:
+                            if wood_needed > 0 and wood_available > 0:
                                 self.contribution_dialog.open(
-                                    ("cart_grade_1", "wood"), "Древесина", wood_in_bag, wood_needed
+                                    ("cart_grade_1", "wood"), "Древесина", wood_available, wood_needed
                                 )
                             elif silver_needed > 0 and silver_avail > 0:
                                 self.contribution_dialog.open(
@@ -337,10 +320,11 @@ class StableWindow:
             self.state = self.scene.session.client.building_action(
                 "stable", self.scene.session.character["id"], action, payload
             )
+            self._sync_cart_progress()
             self.state_received_at = time.monotonic()
             self.message = None
-            if action in ("stall-upgrade/contribute", "upgrade/deposit"):
-                self._load_player_inventory()
+            if action == "cart/contribute":
+                self.message = "Взнос внесён со склада." if payload.get("resource") == "wood" else "Серебро внесено."
         except (ServerError, AttributeError, KeyError, OSError) as error:
             self.message = str(error)
 
@@ -365,6 +349,7 @@ class StableWindow:
                 self.state = self.scene.session.client.get_building(
                     "stable", self.scene.session.character["id"]
                 )
+                self._sync_cart_progress()
                 self.state_received_at = time.monotonic()
                 self.last_state_refresh = self.state_received_at
                 if self.tab == "upgrades" and self.upgrade_tab == "transport":
@@ -373,6 +358,8 @@ class StableWindow:
                     self._load_selected_route_state()
             except (ServerError, AttributeError, KeyError, OSError) as error:
                 self.message = str(error)
+            else:
+                self._sync_cart_progress()
         scene = self.scene
         rect = self.rect
         overlay = pygame.Surface((settings.WIDTH, settings.HEIGHT), pygame.SRCALPHA)
@@ -1054,7 +1041,7 @@ class StableWindow:
             wood_remaining = max(0, config["wood_cost"] - wood_deposited)
             silver_remaining = max(0, config["silver_cost"] - silver_deposited)
             wood_label = (f"Древесина: {wood_deposited}/{config['wood_cost']}   "
-                          f"в рюкзаке: {progress.get('wood_in_backpack', 0)}")
+                          f"на складе: {progress.get('wood_in_warehouse', 0)}")
             silver_label = (
                 f"Внесено: {Currency.format_amount(Currency.to_copper(silver=silver_deposited))} / "
                 f"{Currency.format_amount(Currency.to_copper(silver=config['silver_cost']))}   "
@@ -1085,7 +1072,7 @@ class StableWindow:
                 silver_button = pygame.Rect(card.left + 218, card.bottom - 46, 190, 32)
                 activate_button = pygame.Rect(card.right - 208, card.bottom - 46, 190, 32)
                 draw_button(screen, wood_button, "ВНЕСТИ ДРЕВЕСИНУ", scene.small_font,
-                            color=(62, 83, 53) if wood_remaining and progress.get("wood_in_backpack", 0) else (49, 51, 46),
+                            color=(62, 83, 53) if wood_remaining and progress.get("wood_in_warehouse", 0) else (49, 51, 46),
                             text_color=(224, 219, 199))
                 draw_button(screen, silver_button, "ВНЕСТИ СЕРЕБРО", scene.small_font,
                             color=(62, 83, 53) if silver_remaining and progress.get("silver_available", 0) else (49, 51, 46),
@@ -1123,8 +1110,7 @@ class StableWindow:
         detail = pygame.Rect(panel.left + 12, panel.top + 246, panel.width - 24, panel.height - 260)
         self._panel(screen, detail, "Материалы для улучшения")
         node = CART_UPGRADE_NODES[self.selected_cart_node]
-        inventory = (self.inventory_state or {}).get("inventory", [])
-        inventory_by_id = {item["item_id"]: item["quantity"] for item in inventory}
+        warehouse = (self.state or {}).get("warehouse_storage", {})
         y = detail.top + 48
         screen.blit(scene.small_font.render(node["name"], True, (219, 204, 171)),
                     (detail.left + 14, y))
@@ -1133,7 +1119,7 @@ class StableWindow:
             self._draw_resource_icon(screen, resource_id, WAREHOUSE_RESOURCE_LABELS[resource_id],
                                      detail.left + 14, y)
             amount = scene.small_font.render(
-                f"В рюкзаке: {inventory_by_id.get(RESOURCE_ITEM_IDS[resource_id], 0)}",
+                f"На складе: {warehouse.get(resource_id, 0)}",
                                              True, (193, 188, 170))
             screen.blit(amount, (detail.left + 300, y + 1))
 
@@ -1154,17 +1140,17 @@ class StableWindow:
         screen.blit(scene.font.render(f"Улучшение до уровня {upgrade['next_level']}", True, (255, 225, 130)),
                     (panel.left + 18, y))
         y += 38
-        screen.blit(scene.small_font.render("Взносы в проект из личных рюкзаков", True, (220, 210, 170)),
+        screen.blit(scene.small_font.render("Материалы списываются с общего склада", True, (220, 210, 170)),
                     (panel.left + 18, y))
         y += 30
         for material in upgrade["materials"]:
             draw_item_icon(screen, material.get("item_id", material.get("name")), (panel.left + 18, y + 2), 24)
             text = (f"{material['name']}: {material['deposited']} / {material['required']}   "
-                    f"у вас в рюкзаке: {material['in_backpack']}")
+                    f"на складе: {material['in_warehouse']}")
             screen.blit(scene.small_font.render(text, True, (215, 210, 192)), (panel.left + 48, y + 5))
             if material["deposited"] < material["required"] and not upgrade["in_progress"]:
                 button = pygame.Rect(panel.right - 140, y, 120, 28)
-                enabled = material["in_backpack"] > 0
+                enabled = material["in_warehouse"] > 0
                 draw_button(screen, button, "ВНЕСТИ", scene.small_font,
                             color=(80, 140, 85) if enabled else (55, 55, 60))
                 self.deposit_buttons[material["item_id"]] = button

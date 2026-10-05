@@ -575,6 +575,10 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                     state = buildings.claim_player_harvest(
                         character_id, building, body.get("resource"), body.get("quantity", 0)
                     )
+                elif action == "storage/deposit":
+                    state = buildings.deposit_to_storage(
+                        character_id, building, body.get("resource"), body.get("quantity", 0)
+                    )
                 elif action == "upgrade/deposit":
                     state = buildings.deposit_material(character_id, building, body.get("item_id", 0), body.get("quantity", 0))
                 elif action == "upgrade/start":
@@ -585,6 +589,12 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                     )
                 elif action == "stall-upgrade/purchase" and building == "stable":
                     state = buildings.purchase_stall_upgrade(character_id, body.get("upgrade_id"))
+                elif action == "cart/contribute" and building == "stable":
+                    state = buildings.contribute_cart(
+                        character_id, body.get("resource"), body.get("quantity", 0)
+                    )
+                elif action == "cart/purchase" and building == "stable":
+                    state = buildings.purchase_cart(character_id, body.get("grade", 1))
                 elif action == "horse/purchase" and building == "stable":
                     state = buildings.purchase_horse(character_id, body.get("slot_index"))
                 else:
