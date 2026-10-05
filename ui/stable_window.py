@@ -142,12 +142,15 @@ class StableWindow:
                     if upgrade_id == "cart_grade_1":
                         g1 = self.cart_progress["grades"]["1"]
                         if resource == "wood":
+                            try:
+                                self.scene.session.client.remove_inventory_item(
+                                    self.scene.session.character["id"], 60, quantity
+                                )
+                            except (ServerError, AttributeError, KeyError, OSError, TypeError, ValueError) as error:
+                                self.message = str(error) or "Не удалось внести древесину."
+                                self._load_player_inventory()
+                                return
                             g1["wood_deposited"] = min(100, g1.get("wood_deposited", 0) + quantity)
-                            if hasattr(self.scene, "session") and hasattr(self.scene.session, "client") and hasattr(self.scene.session, "character") and self.scene.session.character:
-                                try:
-                                    self.scene.session.client.drop_item(self.scene.session.character["id"], 60, quantity)
-                                except Exception:
-                                    pass
                             if g1.get("wood_deposited", 0) >= 100 and g1.get("silver_deposited", 0) >= 20:
                                 g1["body_owned"] = True
                                 self.message = "Повозка куплена и готова к рейсам!"

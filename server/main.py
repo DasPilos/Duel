@@ -906,6 +906,7 @@ class GameRequestHandler(BaseHTTPRequestHandler):
             # ============= API ИНВЕНТАРЯ (действия) =============
             # Каждое действие отвечает новым состоянием рюкзака и экипировки
             if path in ("/api/inventory/move", "/api/inventory/use", "/api/inventory/drop",
+                        "/api/inventory/remove",
                         "/api/equipment/equip", "/api/equipment/unequip"):
                user_id = self.database.user_id_by_token(self._token())
                character_id = int(body.get("character_id", 0))
@@ -918,6 +919,14 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                    response["character"] = self.items_database.use_item(user_id, character_id, body["slot_index"])
                elif path == "/api/inventory/drop":
                    self.items_database.drop_from_slot(character_id, body["slot_index"])
+               elif path == "/api/inventory/remove":
+                   quantity = int(body.get("quantity", 0))
+                   if quantity <= 0:
+                       raise ValueError("Некорректное количество предметов")
+                   if not self.items_database.remove_from_inventory(
+                       character_id, int(body["item_id"]), quantity
+                   ):
+                       raise ValueError("В рюкзаке недостаточно предметов")
                elif path == "/api/equipment/equip":
                    self.items_database.equip_item(character_id, body["slot_index"], body.get("slot"))
                else:

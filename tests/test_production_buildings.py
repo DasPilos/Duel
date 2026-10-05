@@ -1,4 +1,5 @@
 import random
+import json
 import threading
 import unittest
 
@@ -31,7 +32,18 @@ class ProductionBuildingsTests(unittest.TestCase):
 
     def _character(self, login="farmer"):
         user = self.database.register(login, "password")
-        return self.database.create_character(user["id"], login.title())["id"]
+        character_id = self.database.create_character(user["id"], login.title())["id"]
+        self._set_strength(character_id, 1000)
+        return character_id
+
+    def _set_strength(self, character_id, strength):
+        with self.database.connection() as connection:
+            connection.execute(
+                "UPDATE characters SET stats_json = %s WHERE id = %s",
+                (json.dumps({"strength": strength, "agility": 3, "intuition": 3,
+                             "wisdom": 3, "intellect": 3, "harmony": 3, "endurance": 3}),
+                 character_id),
+            )
 
     def _set_level(self, character_id, building, level):
         self.buildings.get_state(character_id, building, 10000)
@@ -209,6 +221,7 @@ class ProductionBuildingsTests(unittest.TestCase):
 
     def test_player_replaces_worker_and_claims_only_harvest_that_fits(self):
         character_id = self._character("player-worker")
+        self._set_strength(character_id, 100)
         items = ItemsDatabase(self.database)
         items.add_to_inventory(character_id, 63, 95)
         items.add_to_inventory(character_id, 20, 49)
@@ -239,6 +252,23 @@ class ProductionBuildingsTests(unittest.TestCase):
                              if item["item_id"] == 63), 145)
         stopped = self.buildings.toggle_player_worker(character_id, "farm", 0, 17202)
         self.assertFalse(stopped["worker_slots"][0]["occupied"])
+
+    def test_warehouse_harvest_is_limited_by_carry_capacity(self):
+        character_id = self._character("weight-farmer")
+        self._set_strength(character_id, 3)
+        items = ItemsDatabase(self.database)
+        self.buildings.hire_worker(character_id, "farm", 0, "citizen-0", 10000)
+        self.buildings.toggle_player_worker(character_id, "farm", 0, 10140)
+        self.buildings.get_state(character_id, "farm", 17200)
+
+        state = self.buildings.claim_player_harvest(character_id, "farm", "wheat", 50, 17200)
+
+        self.assertEqual(state["player_harvest_claims"]["wheat"], 38)
+        self.assertEqual(state["storage"]["wheat"], 39)
+        self.assertEqual(
+            sum(item["weight"] * item["quantity"] for item in items.get_inventory(character_id)),
+            24,
+        )
 
     def test_player_cannot_start_work_when_storage_is_full(self):
         character_id = self._character("full-worker")
@@ -352,6 +382,7 @@ class ProductionBuildingsTests(unittest.TestCase):
         items = ItemsDatabase(self.database)
         user = self.database.register("leaver", "password")
         first = self.database.create_character(user["id"], "Leaver")["id"]
+        self._set_strength(first, 1000)
         second = self._character("helper")
 
         # Один игрок отправил горожанина — другой видит его на том же поле

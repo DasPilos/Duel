@@ -5,7 +5,7 @@ import pygame
 from combat.character_stats import is_debug_unlimited
 from combat.progression import xp_to_next
 from core import settings
-from core.carry_weight import load_color
+from core.carry_weight import character_carry_capacity, load_color
 from ui.character_profile import (
     adjust_profile_level,
     adjust_profile_stat,
@@ -213,7 +213,7 @@ class CharacterCard:
             normalized.get("equipment", {}), slot_highlight, dragged_slot,
         )
         shoe_slot = equipment_slots.slot_rects(frame)["feet"]
-        capacity_kg = derived_values(normalized)["Грузоподъёмность"]
+        capacity_kg = character_carry_capacity(normalized)
         carried_kg = float(normalized.get("carried_weight_kg", 0))
         carry_text = self.small_font.render(
             f"Грузоподъёмность: {carried_kg:g}/{capacity_kg} кг",

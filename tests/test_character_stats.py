@@ -55,7 +55,6 @@ class CharacterStatTests(unittest.TestCase):
             "Крит": "5% × 165%",
             "Маг Урон": 3,
             "HP": 30,
-            "Грузоподъёмность": 24,
         })
 
     def test_endurance_cannot_increase_manually(self):
@@ -392,12 +391,12 @@ class CharacterStatTests(unittest.TestCase):
         # Урон = сила 5 + 1 от предмета + меч 5–7
         self.assertEqual(derived_values(warrior), {
             "Урон": "11-13", "Уворот": "10%", "Крит": "5% × 175%",
-            "Маг Урон": "6-8", "HP": 40, "Грузоподъёмность": 45,
+            "Маг Урон": "6-8", "HP": 40,
         })
         # Показатели одинаковы для всех классов: маг урон идёт от мудрости
         self.assertEqual(derived_values(mage), {
             "Урон": 1, "Уворот": "6%", "Крит": "5% × 150%",
-            "Маг Урон": 3, "HP": 90, "Грузоподъёмность": 12,
+            "Маг Урон": 3, "HP": 90,
         })
 
     def test_character_comparison_draw_cross_class_does_not_crash(self):

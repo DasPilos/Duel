@@ -3,15 +3,17 @@
 """
 
 import json
+import math
 import time
 from typing import List, Dict, Optional
 
-from core.carry_weight import carried_weight_kg
+from core.carry_weight import carried_weight_kg, character_carry_capacity
 from server.database import lock_character
 
 
 BACKPACK_SIZE = 50
 MAX_STACK = 99
+ITEM_STACK_LIMITS = {60: 10}
 
 # Ограничение предметов по классам: архер может брать только эти предметы
 ARCHER_ALLOWED_ITEMS = {
@@ -214,6 +216,12 @@ class ItemsDatabase:
         return connection.execute("SELECT * FROM items_catalog WHERE id = %s", (item_id,)).fetchone()
 
     @staticmethod
+    def _stack_limit(item):
+        if item["item_type"] == "equipment":
+            return 1
+        return ITEM_STACK_LIMITS.get(int(item["id"]), MAX_STACK)
+
+    @staticmethod
     def _slot_row(connection, character_id, slot_index):
         return connection.execute(
             "SELECT * FROM character_items WHERE character_id = %s AND slot_index = %s",
@@ -232,6 +240,52 @@ class ItemsDatabase:
         return [index for index in range(BACKPACK_SIZE) if index not in used]
 
     @classmethod
+    def _max_carryable_quantity(cls, connection, character_id, item, requested):
+        requested = max(0, int(requested))
+        item_weight = float(item["weight"] or 0)
+        if requested == 0 or item_weight <= 0:
+            return requested
+
+        character = connection.execute(
+            "SELECT level, stats_json FROM characters WHERE id = %s",
+            (character_id,),
+        ).fetchone()
+        if character is None:
+            return 0
+
+        inventory = connection.execute(
+            """SELECT c.weight, i.quantity FROM character_items i
+               JOIN items_catalog c ON c.id = i.item_id
+               WHERE i.character_id = %s""",
+            (character_id,),
+        ).fetchall()
+        equipped = connection.execute(
+            """SELECT e.slot, c.weight FROM character_equipment e
+               JOIN items_catalog c ON c.id = e.item_id
+               WHERE e.character_id = %s""",
+            (character_id,),
+        ).fetchall()
+        equipment = {row["slot"]: {"weight": row["weight"]} for row in equipped}
+
+        bonuses = {}
+        for row in connection.execute(
+            """SELECT c.bonuses_json FROM character_equipment e
+               JOIN items_catalog c ON c.id = e.item_id
+               WHERE e.character_id = %s""",
+            (character_id,),
+        ).fetchall():
+            for stat, value in json.loads(row["bonuses_json"] or "{}").items():
+                bonuses[stat] = bonuses.get(stat, 0) + int(value)
+
+        capacity = character_carry_capacity({
+            "stats": json.loads(character["stats_json"] or "{}"),
+            "equipment_bonuses": bonuses,
+        })
+        carried = carried_weight_kg(inventory, equipment)
+        available = max(0.0, capacity - carried)
+        return min(requested, math.floor((available + 1e-9) / item_weight))
+
+    @classmethod
     def _add_items(cls, connection, character_id: int, item_id: int, quantity: int) -> bool:
         """Кладёт предметы в рюкзак: сначала докладывает в стопки, затем занимает свободные ячейки.
         Ничего не меняет и возвращает False, если места не хватает."""
@@ -239,7 +293,9 @@ class ItemsDatabase:
         item = cls._catalog_item(connection, item_id)
         if item is None or quantity <= 0:
             return False
-        stack_limit = 1 if item["item_type"] == "equipment" else MAX_STACK
+        if cls._max_carryable_quantity(connection, character_id, item, quantity) < quantity:
+            return False
+        stack_limit = cls._stack_limit(item)
 
         stacks = connection.execute(
             """SELECT id, quantity FROM character_items
@@ -282,7 +338,7 @@ class ItemsDatabase:
         item = cls._catalog_item(connection, item_id)
         if item is None:
             return 0
-        stack_limit = 1 if item["item_type"] == "equipment" else MAX_STACK
+        stack_limit = cls._stack_limit(item)
         stacks = connection.execute(
             """SELECT quantity FROM character_items
                WHERE character_id = %s AND item_id = %s AND quantity < %s""",
@@ -291,6 +347,7 @@ class ItemsDatabase:
         room_in_stacks = sum(stack_limit - row["quantity"] for row in stacks)
         free_slots = cls._free_slots(connection, character_id)
         amount = min(quantity, room_in_stacks + len(free_slots) * stack_limit)
+        amount = cls._max_carryable_quantity(connection, character_id, item, amount)
         if amount and cls._add_items(connection, character_id, item_id, amount):
             return amount
         return 0
@@ -302,6 +359,9 @@ class ItemsDatabase:
 
     def remove_from_inventory(self, character_id: int, item_id: int, quantity: int = 1) -> bool:
         """Удаляет предметы из рюкзака (из любых стопок). False, если столько нет."""
+        quantity = int(quantity)
+        if quantity <= 0:
+            return False
         with self.db.connection() as connection:
             lock_character(connection, character_id)
             rows = connection.execute(
@@ -359,8 +419,9 @@ class ItemsDatabase:
                 return True
 
             item = self._catalog_item(connection, source["item_id"])
-            if target["item_id"] == source["item_id"] and item["item_type"] != "equipment" and target["quantity"] < MAX_STACK:
-                moved = min(MAX_STACK - target["quantity"], source["quantity"])
+            stack_limit = self._stack_limit(item)
+            if target["item_id"] == source["item_id"] and item["item_type"] != "equipment" and target["quantity"] < stack_limit:
+                moved = min(stack_limit - target["quantity"], source["quantity"])
                 connection.execute("UPDATE character_items SET quantity = quantity + %s WHERE id = %s", (moved, target["id"]))
                 self._take_from_row(connection, source, moved)
                 return True

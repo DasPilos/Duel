@@ -2,7 +2,6 @@ from types import SimpleNamespace
 
 from combat.character_stats import (
     adjust_stats,
-    calculate_carry_capacity,
     calculate_max_hp,
     is_debug_unlimited,
     minimum_endurance,
@@ -177,7 +176,7 @@ STAT_ROWS = (
     ("wisdom", "Мудрость", "Маг Урон"),
     ("intellect", "Интеллект", None),
     ("harmony", "Гармония", None),
-    ("endurance", "Выносливость", "Грузоподъёмность"),
+    ("endurance", "Выносливость", None),
 )
 
 # Цвета показателей напротив характеристик
@@ -187,7 +186,6 @@ DERIVED_COLORS = {
     "Крит": (255, 90, 90),
     "Маг Урон": (180, 100, 240),
     "HP": (110, 235, 120),
-    "Грузоподъёмность": (220, 190, 120),
 }
 
 
@@ -226,7 +224,4 @@ def derived_values(profile):
         "Крит": f"{crit_chance}% × {crit_damage}%",
         "Маг Урон": _damage_text(stats.get("wisdom", 0), weapon),
         "HP": profile["max_hp"] + int(equipment_bonuses.get("hp", 0)),
-        "Грузоподъёмность": calculate_carry_capacity(
-            stats.get("strength", 0), stats.get("endurance", 0)
-        ),
     }

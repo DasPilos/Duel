@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 import unittest
 from unittest.mock import patch
@@ -28,6 +29,15 @@ class InventoryTests(unittest.TestCase):
 
     def bag(self):
         return {item["slot_index"]: item for item in self.items.get_inventory(self.character_id)}
+
+    def set_strength(self, strength):
+        with self.database.connection() as connection:
+            connection.execute(
+                "UPDATE characters SET stats_json = %s WHERE id = %s",
+                (json.dumps({"strength": strength, "agility": 3, "intuition": 3,
+                             "wisdom": 3, "intellect": 3, "harmony": 3, "endurance": 3}),
+                 self.character_id),
+            )
 
     def test_base_equipment_grant_is_idempotent(self):
         self.assertTrue(self.items.grant_base_equipment(self.character_id))
@@ -116,20 +126,79 @@ class InventoryTests(unittest.TestCase):
         quantities = sorted((item["item_id"], item["quantity"]) for item in self.bag().values())
         self.assertEqual(quantities, [(2, 5), (2, MAX_STACK), (20, 1), (20, 1)])
 
+    def test_wood_stacks_are_limited_to_ten(self):
+        self.set_strength(100)
+        self.assertTrue(self.items.add_to_inventory(self.character_id, 60, 90))
+        quantities = sorted(item["quantity"] for item in self.bag().values())
+        self.assertEqual(quantities, [10] * 9)
+
+    def test_wood_stack_migration_splits_existing_large_stack(self):
+        migration = Path(__file__).resolve().parents[1] / "server" / "migrations" / "0021_wood_inventory_stack_limit.sql"
+        with self.database.connection() as connection:
+            connection.execute(
+                """INSERT INTO character_items
+                   (character_id, item_id, quantity, slot_index, created_at)
+                   VALUES (%s, 60, 90, 0, 0)""",
+                (self.character_id,),
+            )
+            connection.execute(migration.read_text(encoding="utf-8"))
+
+        wood = [item["quantity"] for item in self.items.get_inventory(self.character_id)
+                if item["item_id"] == 60]
+        self.assertEqual(sum(wood), 90)
+        self.assertTrue(all(quantity <= 10 for quantity in wood))
+
     def test_full_backpack_rejects_new_items_without_partial_add(self):
+        self.set_strength(100)
         self.assertTrue(self.items.add_to_inventory(self.character_id, 20, BACKPACK_SIZE))
         self.assertFalse(self.items.add_to_inventory(self.character_id, 2, 1))
         self.assertEqual(len(self.bag()), BACKPACK_SIZE)
 
+    def test_inventory_rejects_items_over_carry_capacity(self):
+        self.assertTrue(self.items.add_to_inventory(self.character_id, 60, 6))
+        self.assertFalse(self.items.add_to_inventory(self.character_id, 60, 1))
+        self.assertEqual(self.items.get_inventory_state(self.character_id)["carried_weight_kg"], 24)
+
+    def test_battle_reward_stays_unclaimed_when_it_exceeds_carry_capacity(self):
+        self.assertTrue(self.items.add_to_inventory(self.character_id, 60, 6))
+        reward_id = self.items.add_reward(self.character_id, 60, 1)
+
+        self.assertFalse(self.items.claim_reward(reward_id, self.character_id))
+        self.assertEqual(len(self.items.get_rewards(self.character_id)), 1)
+        self.assertEqual(self.items.get_inventory_state(self.character_id)["carried_weight_kg"], 24)
+
+    def test_remove_inventory_item_endpoint_decrements_requested_quantity(self):
+        self.set_strength(100)
+        self.items.add_to_inventory(self.character_id, 60, 10)
+        with patch.object(GameRequestHandler, "items_database", self.items):
+            with running_server(self.database) as client:
+                client.login("tester", "password")
+                client.remove_inventory_item(self.character_id, 60, 3)
+
+        wood = [item for item in self.items.get_inventory(self.character_id) if item["item_id"] == 60]
+        self.assertEqual(sum(item["quantity"] for item in wood), 7)
+
+    def test_remove_inventory_item_endpoint_rejects_missing_quantity(self):
+        self.items.add_to_inventory(self.character_id, 60, 2)
+        with patch.object(GameRequestHandler, "items_database", self.items):
+            with running_server(self.database) as client:
+                client.login("tester", "password")
+                with self.assertRaisesRegex(ServerError, "недостаточно предметов"):
+                    client.remove_inventory_item(self.character_id, 60, 3)
+
+        wood = [item for item in self.items.get_inventory(self.character_id) if item["item_id"] == 60]
+        self.assertEqual(sum(item["quantity"] for item in wood), 2)
+
     def test_partial_inventory_add_fills_only_available_stack_capacity(self):
-        self.items.add_to_inventory(self.character_id, 60, 95)
+        self.set_strength(100)
+        self.items.add_to_inventory(self.character_id, 60, 8)
         self.items.add_to_inventory(self.character_id, 20, BACKPACK_SIZE - 1)
         with self.database.connection() as connection:
             added = ItemsDatabase.add_to_inventory_up_to(connection, self.character_id, 60, 20)
-        self.assertEqual(added, 4)
+        self.assertEqual(added, 2)
         wood = [item for item in self.bag().values() if item["item_id"] == 60]
         self.assertEqual(len(wood), 1)
-        self.assertEqual(wood[0]["quantity"], MAX_STACK)
+        self.assertEqual(wood[0]["quantity"], 10)
         self.assertEqual(len(self.bag()), BACKPACK_SIZE)
 
     def test_move_to_empty_cell_and_swap(self):
@@ -204,6 +273,7 @@ class InventoryTests(unittest.TestCase):
         self.assertEqual(self.bag()[12]["item_id"], 32)
 
         self.items.equip_item(self.character_id, 12)
+        self.set_strength(100)
         self.items.add_to_inventory(self.character_id, 20, BACKPACK_SIZE)
         with self.assertRaises(ValueError):
             self.items.unequip_item(self.character_id, "head")

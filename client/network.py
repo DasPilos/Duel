@@ -302,6 +302,15 @@ class GameClient:
         """Выбросить предмет из ячейки"""
         return self._request("POST", "/api/inventory/drop", {"character_id": character_id, "slot_index": slot_index}, authenticated=True)
 
+    def remove_inventory_item(self, character_id, item_id, quantity):
+        """Удалить указанное количество предмета из рюкзака по ID предмета."""
+        return self._request(
+            "POST",
+            "/api/inventory/remove",
+            {"character_id": character_id, "item_id": item_id, "quantity": quantity},
+            authenticated=True,
+        )
+
     def equip_item(self, character_id, slot_index, slot=None):
         """Надеть предмет из ячейки рюкзака (slot — проверка целевого слота куклы)"""
         return self._request("POST", "/api/equipment/equip", {"character_id": character_id, "slot_index": slot_index, "slot": slot}, authenticated=True)

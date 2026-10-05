@@ -1,5 +1,6 @@
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import pygame
 
@@ -23,6 +24,12 @@ class CityStorageServerTests(unittest.TestCase):
         self.buildings = ProductionBuildings(self.database)
         user = self.database.register("keeper", "password")
         self.character_id = self.database.create_character(user["id"], "Keeper")["id"]
+        with self.database.connection() as connection:
+            connection.execute(
+                "UPDATE characters SET stats_json = %s WHERE id = %s",
+                ('{"strength":1000,"agility":3,"intuition":3,"wisdom":3,"intellect":3,"harmony":3,"endurance":3}',
+                 self.character_id),
+            )
 
     def tearDown(self):
         drop_test_database(self.database)
@@ -126,6 +133,12 @@ class CityStorageServerTests(unittest.TestCase):
 
         teammate_user = self.database.register("stallmate", "password")
         teammate_id = self.database.create_character(teammate_user["id"], "Stallmate")["id"]
+        with self.database.connection() as connection:
+            connection.execute(
+                "UPDATE characters SET stats_json = %s WHERE id = %s",
+                ('{"strength":1000,"agility":3,"intuition":3,"wisdom":3,"intellect":3,"harmony":3,"endurance":3}',
+                 teammate_id),
+            )
         items.add_to_inventory(teammate_id, 60, 100)
         with self.database.connection() as connection:
             connection.execute("UPDATE characters SET silver = 25 WHERE id = %s", (teammate_id,))
@@ -181,6 +194,13 @@ class FakeStorageClient:
         ]}}
     def __init__(self):
         self.calls = []
+        self.inventory_removals = []
+        self.removal_error = None
+
+    def remove_inventory_item(self, character_id, item_id, quantity):
+        self.inventory_removals.append((character_id, item_id, quantity))
+        if self.removal_error is not None:
+            raise self.removal_error
 
     def get_building(self, building, _character_id):
         if building == "stable":
@@ -252,6 +272,27 @@ class CityStorageWindowTests(unittest.TestCase):
 
     def tearDown(self):
         pygame.quit()
+
+    def test_cart_wood_progress_updates_only_after_inventory_removal_succeeds(self):
+        from client.network import ServerError
+
+        window = self.scene.stable_window
+        window.cart_progress["grades"]["1"]["wood_deposited"] = 0
+        window.contribution_dialog.is_open = True
+        event = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_RETURN)
+        contribution = (("cart_grade_1", "wood"), 5)
+
+        self.client.removal_error = ServerError("В рюкзаке недостаточно предметов")
+        with patch.object(window.contribution_dialog, "handle_event", return_value=contribution):
+            window.handle_event(event)
+        self.assertEqual(window.cart_progress["grades"]["1"]["wood_deposited"], 0)
+
+        self.client.removal_error = None
+        window.contribution_dialog.is_open = True
+        with patch.object(window.contribution_dialog, "handle_event", return_value=contribution):
+            window.handle_event(event)
+        self.assertEqual(window.cart_progress["grades"]["1"]["wood_deposited"], 5)
+        self.assertEqual(self.client.inventory_removals, [(1, 60, 5), (1, 60, 5)])
 
     def test_barn_and_warehouse_windows(self):
         for building, opener, window in (
