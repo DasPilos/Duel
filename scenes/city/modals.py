@@ -42,67 +42,7 @@ class CityModalsMixin:
         screen.blit(title, (rect.left + 70, rect.top + 24))
 
     def _draw_castle_modal(self, screen):
-        """Отрисовывает модальное меню-заглушку Главного Замка с кнопкой 'Вернуться в город'."""
-        # Полупрозрачное затемнение города
-        overlay = pygame.Surface((settings.WIDTH, settings.HEIGHT), pygame.SRCALPHA)
-        overlay.fill((8, 12, 18, 215))
-        screen.blit(overlay, (0, 0))
-
-        # Окно модалки
-        rect = self.castle_modal_rect
-        modal_surf = pygame.Surface((rect.width, rect.height), pygame.SRCALPHA)
-        pygame.draw.rect(modal_surf, (18, 24, 34, 250), (0, 0, rect.width, rect.height), border_radius=12)
-        pygame.draw.rect(modal_surf, (220, 185, 70), (0, 0, rect.width, rect.height), width=2, border_radius=12)
-        screen.blit(modal_surf, rect.topleft)
-
-        # Кнопка закрытия (крестик)
-        m_pos = pygame.mouse.get_pos()
-        c_hover = self.castle_close_button.collidepoint(m_pos)
-        pygame.draw.rect(screen, (160, 45, 45) if c_hover else (45, 30, 35), self.castle_close_button, border_radius=4)
-        pygame.draw.rect(screen, (220, 100, 100), self.castle_close_button, 1, border_radius=4)
-        x_surf = self.small_font.render("✕", True, (255, 255, 255))
-        screen.blit(x_surf, x_surf.get_rect(center=self.castle_close_button.center))
-
-        # Заголовок замка
-        self._draw_building_title(screen, rect, "main_castle", "КОРОЛЕВСКИЙ ЗАМОК РАДБУРГА", (255, 220, 100))
-
-        sub_surf = self.badge_font.render("[ ГЛАВНАЯ ЦИТАДЕЛЬ СТОЛИЦЫ СВЕТА • 15х15 ТАЙЛОВ • ЦЕНТР: 75/70 ]", True, (130, 200, 255))
-        screen.blit(sub_surf, (rect.left + 30, rect.top + 58))
-
-        pygame.draw.line(screen, (60, 80, 105), (rect.left + 24, rect.top + 84), (rect.right - 24, rect.top + 84), 1)
-
-        # Плашка статуса "Сам замок пока посетить нельзя"
-        status_box = pygame.Rect(rect.left + 30, rect.top + 98, rect.width - 60, 40)
-        pygame.draw.rect(screen, (40, 28, 22), status_box, border_radius=6)
-        pygame.draw.rect(screen, (220, 140, 50), status_box, 1, border_radius=6)
-        notice_txt = self.small_font.render("🔒 Сам замок пока посетить нельзя — внутренние залы закрыты на реконструкцию", True, (255, 200, 120))
-        screen.blit(notice_txt, notice_txt.get_rect(center=status_box.center))
-
-        # Блок описания возможностей в будущем
-        desc_top = rect.top + 155
-        h1 = self.font.render("👑 Возможности при посещении замка в будущем:", True, (255, 230, 140))
-        screen.blit(h1, (rect.left + 30, desc_top))
-
-        features = [
-            ("👑 Аудиенция у Короля Радбурга:", "Возможность брать личные поручения Короны на самые премиумные, редкие и высокооплачиваемые квесты."),
-            ("📊 Жизневажные сведения о городе:", "Полная оперативная сводка: казна, склад ресурсов (дерево, камень, руда, хлеб), гарнизон и обороноспособность стен."),
-            ("🏛️ Заседания Королевского Совета:", "Принятие ключевых решений по развитию города, торговле и дипломатии в Великой Войне Света и Тьмы."),
-            ("🛡️ Элитная королевская гвардия:", "Возможность нанимать рыцарей света и улучшать экипировку защитников города."),
-        ]
-
-        curr_y = desc_top + 34
-        for title_line, text_line in features:
-            f_title = self.small_font.render(title_line, True, (100, 220, 255))
-            screen.blit(f_title, (rect.left + 40, curr_y))
-            curr_y += 20
-            f_desc = self.grid_font.render(text_line, True, (205, 215, 225))
-            screen.blit(f_desc, (rect.left + 50, curr_y))
-            curr_y += 26
-
-        # Кнопка: [ ВЕРНУТЬСЯ В ГОРОД ]
-        btn_hover = self.castle_back_button.collidepoint(m_pos)
-        btn_col = (70, 130, 200) if btn_hover else (45, 85, 140)
-        draw_button(screen, self.castle_back_button, "ВЕРНУТЬСЯ В ГОРОД", self.font, color=btn_col, text_color=(255, 255, 255))
+        self.castle_window.draw(screen)
 
     def _draw_forge_modal(self, screen):
         """Интерактивное меню кузницы: карточки рецептов (8 на страницу 4х2 со скроллом), процесс работы и склад."""

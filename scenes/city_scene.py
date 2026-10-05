@@ -6,10 +6,11 @@ from core import settings
 from core.carry_weight import character_movement_speed_multiplier
 from core.currency import Currency
 from scenes.city.buildings import CityBuildingsMixin
-from scenes.city.rendering import CityRenderMixin
+from scenes.city.rendering import CITIZEN_HOUSE_LOTS, CityRenderMixin
 from scenes.city.modals import CityModalsMixin
 from scenes.city.hud import CityHudMixin
 from ui.city_storage_window import CityStorageWindow
+from ui.castle_window import CastleWindow
 from ui.stable_window import StableWindow
 from ui.character_profile_overlay import CharacterProfileOverlay
 from ui.chat import ChatPanel
@@ -153,9 +154,11 @@ class CityScene(CityBuildingsMixin, CityRenderMixin, CityModalsMixin, CityHudMix
 
         # Модальное окно заглушки Главного Замка
         self.castle_menu_open = False
-        self.castle_modal_rect = pygame.Rect(settings.WIDTH // 2 - 340, settings.HEIGHT // 2 - 250, 680, 500)
-        self.castle_back_button = pygame.Rect(self.castle_modal_rect.centerx - 140, self.castle_modal_rect.bottom - 62, 280, 44)
-        self.castle_close_button = pygame.Rect(self.castle_modal_rect.right - 42, self.castle_modal_rect.top + 14, 28, 28)
+        self.city_population_count = 4
+        self.castle_window = CastleWindow(self)
+        self.castle_modal_rect = self.castle_window.rect
+        self.castle_back_button = self.castle_window.close_button
+        self.castle_close_button = self.castle_window.close_button
 
         # Городские хранилища (Амбар, Склад): состояние и улучшение на сервере
         self.barn_menu_open = False
@@ -378,6 +381,11 @@ class CityScene(CityBuildingsMixin, CityRenderMixin, CityModalsMixin, CityHudMix
                 if feet_rect.colliderect(s_rect):
                     return True
 
+        # Residential houses are solid building footprints, not walkable decoration.
+        for house_rect in self._citizen_house_solid_rects():
+            if feet_rect.colliderect(house_rect):
+                return True
+
         return False
 
     def _vector_to_direction(self, dx, dy):
@@ -491,6 +499,7 @@ class CityScene(CityBuildingsMixin, CityRenderMixin, CityModalsMixin, CityHudMix
 
         if eid == "main_castle":
             self.castle_menu_open = True
+            self.castle_window.open()
             return
 
         if eid == "tavern_building":
@@ -751,14 +760,8 @@ class CityScene(CityBuildingsMixin, CityRenderMixin, CityModalsMixin, CityHudMix
 
         # 1. Если открыто модальное меню замка
         if self.castle_menu_open:
-            if event.type == pygame.KEYDOWN:
-                if event.key in (pygame.K_ESCAPE, pygame.K_RETURN, pygame.K_SPACE):
-                    self.castle_menu_open = False
-                    return
-            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                if self.castle_back_button.collidepoint(event.pos) or self.castle_close_button.collidepoint(event.pos):
-                    self.castle_menu_open = False
-                    return
+            self.castle_window.handle_event(event)
+            self.castle_menu_open = self.castle_window.is_open
             return
 
         # 2. Если открыто окно амбара
@@ -1230,13 +1233,16 @@ class CityScene(CityBuildingsMixin, CityRenderMixin, CityModalsMixin, CityHudMix
                 if self.show_grid:
                     pygame.draw.rect(screen, (58, 66, 76), rect, 1)
 
-        # 2. Объекты города: Главный Замок, Таверна и Кристалл Жизни
+        # 2. Дома жителей у главного замка
+        self._draw_citizen_houses(screen)
+
+        # 3. Объекты города: Главный Замок, Таверна и Кристалл Жизни
         self._draw_city_objects(screen)
 
-        # 3. Внешние крепостные стены и 4 ворот
+        # 4. Внешние крепостные стены и 4 ворот
         self._draw_walls_and_gates(screen)
 
-        # 4. Эффекты клика и персонаж
+        # 5. Эффекты клика и персонаж
         self._draw_click_effect(screen)
         self._draw_player_character(screen)
         draw_afk_players(self, screen, "city")

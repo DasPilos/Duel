@@ -176,6 +176,51 @@ class CityStorageServerTests(unittest.TestCase):
         self.assertTrue(shared["stall_upgrades"]["wooden_stalls"]["completed"])
         self.assertTrue(shared["stall_slots"][4]["unlocked"])
 
+    def test_stall_upgrade_accepts_backpack_wood_and_treasury_silver(self):
+        items = ItemsDatabase(self.database)
+        items.add_to_inventory(self.character_id, 60, 40)
+        with self.database.connection() as connection:
+            connection.execute("UPDATE characters SET silver=25 WHERE id=%s", (self.character_id,))
+            connection.execute(
+                "UPDATE city_population_state SET treasury_copper=5000 WHERE world_id=%s AND faction='light'",
+                (self.database.world_id,),
+            )
+
+        wood_state = self.buildings.contribute_stall_upgrade(
+            self.character_id, "wooden_stalls", "wood", 40, 10000, source="backpack"
+        )
+        progress = wood_state["stall_upgrades"]["wooden_stalls"]
+        self.assertEqual(progress["wood_deposited"], 40)
+        self.assertEqual(progress["wood_in_warehouse"], 0)
+        self.assertEqual(progress["wood_in_backpack"], 0)
+
+        silver_state = self.buildings.contribute_stall_upgrade(
+            self.character_id, "wooden_stalls", "silver", 20, 10001, source="treasury"
+        )
+        progress = silver_state["stall_upgrades"]["wooden_stalls"]
+        self.assertEqual(progress["silver_deposited"], 20)
+        self.assertEqual(progress["treasury_silver_available"], 30)
+        with self.database.connection() as connection:
+            wallet = connection.execute("SELECT silver FROM characters WHERE id=%s", (self.character_id,)).fetchone()["silver"]
+        self.assertEqual(wallet, 25)
+
+    def test_building_upgrade_accepts_material_from_backpack(self):
+        items = ItemsDatabase(self.database)
+        requirements = upgrade_requirements(1, "stable")["materials"]
+        item_id, required = next(iter(requirements.items()))
+        items.add_to_inventory(self.character_id, item_id, required)
+
+        state = self.buildings.deposit_material(
+            self.character_id, "stable", item_id, required, 10000, source="backpack"
+        )
+
+        deposited = next(item for item in state["upgrade"]["materials"]
+                         if item["item_id"] == item_id)
+        self.assertEqual(deposited["deposited"], required)
+        self.assertEqual(deposited["in_backpack"], 0)
+        self.assertEqual(sum(item["quantity"] for item in items.get_inventory(self.character_id)
+                             if item["item_id"] == item_id), 0)
+
     def test_warehouse_deposit_and_cart_purchase_are_server_backed(self):
         items = ItemsDatabase(self.database)
         with self.database.connection() as connection:
@@ -197,6 +242,34 @@ class CityStorageServerTests(unittest.TestCase):
         self.assertTrue(purchased["cart_progress"]["grades"]["1"]["body_owned"])
         persisted = ProductionBuildings(self.database).get_state(self.character_id, "stable", 10004)
         self.assertTrue(persisted["cart_progress"]["grades"]["1"]["body_owned"])
+
+    def test_cart_contribution_can_use_backpack_and_city_treasury(self):
+        items = ItemsDatabase(self.database)
+        items.add_to_inventory(self.character_id, 60, 100)
+        with self.database.connection() as connection:
+            connection.execute("UPDATE characters SET silver=50 WHERE id=%s", (self.character_id,))
+            connection.execute(
+                "UPDATE city_population_state SET treasury_copper=2000 WHERE world_id=%s AND faction='light'",
+                (self.database.world_id,),
+            )
+
+        after_wood = self.buildings.contribute_cart(
+            self.character_id, "wood", 100, 10001, source="backpack"
+        )
+        self.assertEqual(after_wood["cart_progress"]["grades"]["1"]["wood_deposited"], 100)
+        self.assertEqual(sum(item["quantity"] for item in items.get_inventory(self.character_id)
+                             if item["item_id"] == 60), 0)
+
+        after_silver = self.buildings.contribute_cart(
+            self.character_id, "silver", 20, 10002, source="treasury"
+        )
+        self.assertEqual(after_silver["cart_progress"]["grades"]["1"]["silver_deposited"], 20)
+        self.assertEqual(after_silver["treasury_silver_available"], 0)
+        with self.database.connection() as connection:
+            wallet = connection.execute(
+                "SELECT silver FROM characters WHERE id=%s", (self.character_id,)
+            ).fetchone()["silver"]
+        self.assertEqual(wallet, 50)
 
 
 class FakeStorageClient:
@@ -224,6 +297,7 @@ class FakeStorageClient:
         ]}}
     def __init__(self):
         self.calls = []
+        self.last_payload = None
         self.cart_progress = deepcopy(DEFAULT_CART_PROGRESS)
         self.warehouse_storage = {"wood": 12, "board": 4, "flax": 9}
         self.action_error = None
@@ -241,6 +315,8 @@ class FakeStorageClient:
                 ],
                 "stall_capacity_bonus": 0,
                 "silver_available": 100,
+                "treasury_silver_available": 30,
+                "backpack_resource_amounts": {"wood": 12},
                 "warehouse_storage": dict(self.warehouse_storage),
                 "cart_progress": deepcopy(self.cart_progress),
                 "horse_price_next_silver": 50,
@@ -248,11 +324,13 @@ class FakeStorageClient:
                     "wooden_stalls": {"wood_cost": 300, "silver_cost": 50,
                                       "purchased": False, "ready": False,
                                       "wood_deposited": 0, "silver_deposited": 0,
-                                      "wood_in_warehouse": 300, "silver_available": 50},
+                                      "wood_in_warehouse": 300, "wood_in_backpack": 12,
+                                      "silver_available": 50, "treasury_silver_available": 30},
                     "hayloft": {"wood_cost": 300, "silver_cost": 50,
                                 "purchased": False, "ready": False,
                                 "wood_deposited": 0, "silver_deposited": 0,
-                                "wood_in_warehouse": 300, "silver_available": 50},
+                                  "wood_in_warehouse": 300, "wood_in_backpack": 12,
+                                  "silver_available": 50, "treasury_silver_available": 30},
                 },
                 "storage": {"limit": 0}, "storage_total": 0, "worker_slots": [],
                 "upgrade": {"next_level": 2, "time_seconds": 7200, "ready": False,
@@ -291,10 +369,26 @@ class FakeStorageClient:
                        "max_deposit": min(backpack.get(item_id, 0), free)}
             for resource, item_id in resource_item_ids.items() if resource in goods
         }
+        item_weights = {60: 4.0, 61: 6.0, 62: 2.0, 63: 2.0, 64: 3.0, 65: 4.0,
+                        66: 3.0, 67: 3.0, 68: 3.0, 69: 3.0, 73: 6.0, 74: 7.0}
+        item_id_by_resource = {resource: item_id for item_id, resource in
+                               ((item_id, resource) for resource, item_id in {
+                                   "wood": 60, "board": 61, "berries": 62, "wheat": 63,
+                                   "flax": 64, "cotton": 65, "leather": 66, "meat": 67,
+                                   "coal": 68, "stone": 69, "iron_ingot": 73, "steel": 74,
+                               }.items())}
+        state["storage_withdrawable"] = {
+            resource: {"available": amount, "max_withdraw": min(amount, 12),
+                       "item_weight_kg": item_weights[item_id_by_resource[resource]],
+                       "carried_weight_kg": 18.0, "carry_capacity_kg": 42.0}
+            for resource, amount in state["storage"].items()
+            if resource != "limit" and resource in item_id_by_resource
+        }
         return state
 
     def building_action(self, building, _character_id, action, payload=None):
         self.calls.append((building, action))
+        self.last_payload = payload or {}
         if self.action_error is not None:
             raise self.action_error
         if building == "stable" and action == "cart/contribute":
@@ -391,6 +485,67 @@ class CityStorageWindowTests(unittest.TestCase):
             window.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=(0, 0)))
         self.assertIn(("warehouse", "storage/deposit"), self.client.calls)
 
+    def test_city_storage_window_can_open_withdraw_dialog(self):
+        window = self.scene.warehouse_window
+        window.open()
+        window._draw_storage_tab(self.screen, window.rect.top + 136)
+        self.assertIn("wood", window.storage_withdraw_buttons)
+
+        window.handle_event(pygame.event.Event(
+            pygame.MOUSEBUTTONDOWN, button=1,
+            pos=window.storage_withdraw_buttons["wood"].center,
+        ))
+
+        self.assertTrue(window.contribution_dialog.is_open)
+        self.assertEqual(window.contribution_dialog.mode, "withdraw")
+        self.assertEqual(window.contribution_dialog.maximum, 12)
+
+        with patch.object(window.contribution_dialog, "handle_event",
+                          return_value=(("storage_withdraw", "wood"), 4)):
+            window.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=(0, 0)))
+        self.assertIn(("warehouse", "storage/withdraw"), self.client.calls)
+
+    def test_withdraw_slider_caps_by_weight_and_updates_weight_readout(self):
+        dialog = self.scene.warehouse_window.contribution_dialog
+        dialog.open(
+            ("storage_withdraw", "wheat"), "Пшеница", 500, 12,
+            mode="withdraw",
+            weight_state={"carried_weight_kg": 18, "carry_capacity_kg": 42},
+            item_weight_kg=2,
+        )
+        rendered = []
+        rendered_colors = {}
+        original_font = self.scene.small_font
+
+        class Recorder:
+            def render(self, text, *args):
+                rendered.append(text)
+                if len(args) > 1:
+                    rendered_colors[text] = args[1]
+                return original_font.render(text, *args)
+
+            def __getattr__(self, name):
+                return getattr(original_font, name)
+
+        self.scene.small_font = Recorder()
+        try:
+            dialog.draw(self.screen)
+            dialog.handle_event(pygame.event.Event(
+                pygame.MOUSEBUTTONDOWN, button=1,
+                pos=(dialog.track_rect.right, dialog.track_rect.centery),
+            ))
+            dialog.handle_event(pygame.event.Event(
+                pygame.MOUSEBUTTONUP, button=1, pos=dialog.track_rect.midright,
+            ))
+            dialog.draw(self.screen)
+        finally:
+            self.scene.small_font = original_font
+
+        self.assertEqual(dialog.quantity, 12)
+        self.assertIn("Забрать: 12 / 500", rendered)
+        self.assertIn("Вес после забора: 42 / 42 кг", rendered)
+        self.assertEqual(rendered_colors["Вес после забора: 42 / 42 кг"], (235, 95, 85))
+
     def test_storage_tab_shows_only_goods_and_capacity(self):
         window = self.scene.barn_window
         self.scene._open_barn()
@@ -423,6 +578,20 @@ class CityStorageWindowTests(unittest.TestCase):
         self.assertFalse(self.scene._check_collision(*stable["approach_pos"]))
         self.scene.draw(self.screen)
 
+    def test_resident_houses_block_movement_as_population_grows(self):
+        from scenes.city.rendering import CITIZEN_HOUSE_LOTS
+
+        first_house = self.scene._citizen_house_solid_rects()[0]
+        self.assertTrue(self.scene._check_collision(*first_house.center))
+        self.assertFalse(self.scene._check_collision(first_house.left - 16, first_house.centery))
+
+        tile_x, tile_y, width_tiles, depth_tiles, _floors = CITIZEN_HOUSE_LOTS[4]
+        fifth_house_center = (tile_x * self.scene.tile_size + width_tiles * self.scene.tile_size // 2,
+                              tile_y * self.scene.tile_size + depth_tiles * self.scene.tile_size // 2)
+        self.assertFalse(self.scene._check_collision(*fifth_house_center))
+        self.scene.city_population_count = 5
+        self.assertTrue(self.scene._check_collision(*fifth_house_center))
+
     def test_stable_menu_has_name_and_level_header(self):
         self.scene.stable_window.open()
         self.scene.stable_menu_open = True
@@ -446,6 +615,61 @@ class CityStorageWindowTests(unittest.TestCase):
         self.assertTrue(self.scene._any_modal_open())
         self.scene.handle_event(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_ESCAPE))
         self.assertFalse(self.scene.stable_menu_open)
+
+    def test_cart_contribution_button_opens_source_picker_before_slider(self):
+        window = self.scene.stable_window
+        window.state = self.client.get_building("stable", 1)
+        window.tab = "carts"
+        window._draw_carts(self.screen)
+        window.handle_event(pygame.event.Event(
+            pygame.MOUSEBUTTONDOWN, button=1,
+            pos=window.cart_contribution_areas["wood"].center,
+        ))
+        self.assertEqual(window.source_picker["target"], ("cart_grade_1", "wood"))
+        window._draw_source_picker(self.screen)
+        self.assertEqual(set(window.source_picker_buttons), {"warehouse", "backpack"})
+        window.handle_event(pygame.event.Event(
+            pygame.MOUSEBUTTONDOWN, button=1,
+            pos=window.source_picker_buttons["backpack"].center,
+        ))
+        self.assertEqual(window.pending_contribution_source, "backpack")
+        self.assertEqual(window.contribution_dialog.maximum, 12)
+
+        with patch.object(window.contribution_dialog, "handle_event",
+                          return_value=(("cart_grade_1", "wood"), 8)):
+            window.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=(0, 0)))
+
+        self.assertIn(("stable", "cart/contribute"), self.client.calls)
+        self.assertEqual(self.client.last_payload, {
+            "resource": "wood", "quantity": 8, "source": "backpack",
+        })
+
+    def test_cart_contribution_source_picker_precedes_amount_slider(self):
+        window = self.scene.stable_window
+        window.state = self.client.get_building("stable", 1)
+        window._open_source_picker(
+            ("cart_grade_1", "wood"), "Древесина", 100,
+            [{"source": "warehouse", "label": "Склад", "available": 12},
+             {"source": "backpack", "label": "Рюкзак", "available": 12}],
+        )
+        window._draw_source_picker(self.screen)
+        self.assertEqual(set(window.source_picker_buttons), {"warehouse", "backpack"})
+
+        window.handle_event(pygame.event.Event(
+            pygame.MOUSEBUTTONDOWN, button=1,
+            pos=window.source_picker_buttons["backpack"].center,
+        ))
+
+        self.assertTrue(window.contribution_dialog.is_open)
+        self.assertEqual(window.contribution_dialog.maximum, 12)
+        self.assertEqual(window.pending_contribution_source, "backpack")
+        with patch.object(window.contribution_dialog, "handle_event",
+                          return_value=(("cart_grade_1", "wood"), 8)):
+            window.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=(0, 0)))
+        self.assertIn(("stable", "cart/contribute"), self.client.calls)
+        self.assertEqual(self.client.last_payload, {
+            "resource": "wood", "quantity": 8, "source": "backpack",
+        })
 
     def test_city_player_information_menu_and_chat_room(self):
         session = SimpleNamespace(
@@ -604,6 +828,12 @@ class CityStorageWindowTests(unittest.TestCase):
         wood_button = window.stall_contribution_buttons[("wooden_stalls", "wood")]
         self.scene.handle_event(pygame.event.Event(
             pygame.MOUSEBUTTONDOWN, button=1, pos=wood_button.center))
+        self.assertIsNotNone(window.source_picker)
+        window._draw_source_picker(self.screen)
+        self.scene.handle_event(pygame.event.Event(
+            pygame.MOUSEBUTTONDOWN, button=1,
+            pos=window.source_picker_buttons["warehouse"].center,
+        ))
         self.assertTrue(window.contribution_dialog.is_open)
         self.assertEqual(window.contribution_dialog.maximum, 300)
         self.scene.draw(self.screen)

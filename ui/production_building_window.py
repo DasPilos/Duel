@@ -251,7 +251,7 @@ class ProductionBuildingWindow:
             )
             self.received_at = time.monotonic()
             self.message = None
-            if action in ("upgrade/deposit", "player-harvest/claim", "storage/deposit"):
+            if action in ("upgrade/deposit", "player-harvest/claim", "storage/deposit", "storage/withdraw"):
                 refresh_carrying_state = getattr(self.scene.session, "refresh_carrying_state", None)
                 if refresh_carrying_state is not None:
                     refresh_carrying_state()
@@ -266,7 +266,24 @@ class ProductionBuildingWindow:
             if slot is None:
                 return
             slot_index = slot["slot_index"]
-        self._request("workers/hire", {"slot_index": slot_index, "worker_id": f"citizen-{slot_index + 1}"})
+        character_id = int(self.scene.session.character["id"])
+        try:
+            population = self.scene.session.client.get_city_population(character_id)
+            citizen = next((row for row in population.get("citizens", [])
+                            if not row.get("job_building")
+                            and row.get("satisfaction") == "satisfied"), None)
+            if citizen is None:
+                self.message = "Нет свободных горожан для работы."
+                return
+            self.scene.session.client.assign_city_citizen(
+                character_id, citizen["id"], self.building, int(slot_index)
+            )
+            self.load()
+            self.message = f"{citizen['name']} отправлен к месту работы."
+        except ServerError as error:
+            self.message = str(error)
+        except (KeyError, AttributeError, OSError):
+            self.message = "Сервер недоступен"
 
     def fire_worker(self, slot_index=None):
         if slot_index is None:
@@ -274,7 +291,24 @@ class ProductionBuildingWindow:
             if slot is None:
                 return
             slot_index = slot["slot_index"]
-        self._request("workers/fire", {"slot_index": slot_index})
+        character_id = int(self.scene.session.character["id"])
+        try:
+            self.scene.session.client.get_city_population(character_id)
+            self.load()
+            slot = next((item for item in self._state().get("worker_slots", [])
+                         if int(item["slot_index"]) == int(slot_index)), None)
+            worker_id = None if slot is None else slot.get("worker_id")
+            if worker_id and worker_id.startswith("citizen:"):
+                citizen_id = int(worker_id.split(":", 1)[1])
+                self.scene.session.client.recall_city_citizen(character_id, citizen_id)
+                self.load()
+                self.message = "Горожанин возвращается в город."
+            else:
+                self._request("workers/fire", {"slot_index": slot_index})
+        except ServerError as error:
+            self.message = str(error)
+        except (KeyError, AttributeError, OSError):
+            self.message = "Сервер недоступен"
 
     def deposit_material(self, item_id, quantity):
         self._request("upgrade/deposit", {"item_id": item_id, "quantity": quantity})
@@ -671,7 +705,12 @@ class ProductionBuildingWindow:
         if self.contribution_dialog.is_open:
             result = self.contribution_dialog.handle_event(event)
             if result is not None:
-                self.deposit_material(*result)
+                target, quantity = result
+                if isinstance(target, tuple) and target[0] in ("storage", "storage_withdraw"):
+                    action = "storage/withdraw" if target[0] == "storage_withdraw" else "storage/deposit"
+                    self._request(action, {"resource": target[1], "quantity": quantity})
+                else:
+                    self.deposit_material(target, quantity)
             return
         if (event.type == pygame.MOUSEWHEEL and self.tab == "production"
                 and self.worker_stats_rect().collidepoint(pygame.mouse.get_pos())):
@@ -728,6 +767,26 @@ class ProductionBuildingWindow:
             if self.upgrade_button.collidepoint(pos):
                 self.start_upgrade()
         elif event.button == 1 and self.tab == "storage":
+            for resource, button in self.storage_withdraw_buttons.items():
+                if button.collidepoint(pos):
+                    quantity = int(self._state().get("storage", {}).get(resource, 0))
+                    withdrawable = self._state().get("storage_withdrawable", {}).get(resource, {})
+                    self.contribution_dialog.open(
+                        ("storage_withdraw", resource), RESOURCES[resource]["label"],
+                        quantity, withdrawable.get("max_withdraw", 0), mode="withdraw",
+                        weight_state=withdrawable,
+                        item_weight_kg=withdrawable.get("item_weight_kg", 0),
+                    )
+                    return
+            for resource, button in self.storage_deposit_buttons.items():
+                if button.collidepoint(pos):
+                    depositable = self._state().get("storage_depositable", {}).get(resource, {})
+                    self.contribution_dialog.open(
+                        ("storage", resource), RESOURCES[resource]["label"],
+                        depositable.get("in_backpack", 0), depositable.get("max_deposit", 0),
+                        mode="deposit",
+                    )
+                    return
             for resource, button in self.claim_buttons.items():
                 if button.collidepoint(pos):
                     quantity = self._state().get("player_harvest_claims", {}).get(resource, 0)
@@ -1198,7 +1257,22 @@ class ProductionBuildingWindow:
             name = slot.get("worker_name") or "Горожанин"
             is_player = slot.get("worker_id") == f"player:{own_id}"
             name_color = (151, 211, 156) if is_player else (213, 207, 187)
-            screen.blit(scene.small_font.render(name, True, name_color), (row.left + 7, row.top + 5))
+            name_surface = scene.small_font.render(name, True, name_color)
+            name_x = row.left + 7
+            screen.blit(name_surface, (name_x, row.top + 5))
+            bonuses = slot.get("harvest_bonus", {}) if is_player else {}
+            resource_labels = {
+                "wheat": "Пшеница", "wood": "Древесина", "iron": "Железо",
+                "stone": "Камень", "coal": "Уголь", "leather": "Кожа", "meat": "Мясо",
+            }
+            bonus_text = " · ".join(
+                f"+{percent}% {resource_labels[resource]}"
+                for resource, percent in bonuses.items()
+                if resource in resource_labels and percent > 0
+            )
+            if bonus_text:
+                bonus_surface = scene.grid_font.render(bonus_text, True, (117, 225, 128))
+                screen.blit(bonus_surface, (name_x + name_surface.get_width() + 10, row.top + 8))
 
             resource_progress = slot.get("resource_progress_sec", {})
             resource_lines = []
@@ -1206,7 +1280,9 @@ class ProductionBuildingWindow:
             for resource in resources:
                 if not resource or resource not in RESOURCES or "timer_sec" not in RESOURCES[resource]:
                     continue
-                timer = RESOURCES[resource]["timer_sec"]
+                timer = slot.get("timer_sec_by_resource", {}).get(
+                    resource, RESOURCES[resource]["timer_sec"]
+                )
                 progress = (resource_progress.get(resource, slot.get("progress_sec", 0)) + elapsed) % timer
                 remaining = max(0, math.ceil(timer - progress))
                 hours, remainder = divmod(remaining, 3600)
@@ -1248,18 +1324,34 @@ class ProductionBuildingWindow:
         storage = self._state().get("storage", {})
         forecast = self._state().get("forecast", {})
         player_claims = self._state().get("player_harvest_claims", {})
+        depositable = self._state().get("storage_depositable", {})
+        self.storage_withdraw_buttons = {}
+        self.storage_deposit_buttons = {}
         self.claim_buttons = {}
         screen.blit(scene.font.render(f"Склад: {self.storage_total()} / {storage.get('limit', 0)}", True, (255, 225, 130)), (rect.left + 24, curr_y))
         curr_y += 34
         for resource in self.resources:
             claimable = player_claims.get(resource, 0)
-            text = (f"{RESOURCES[resource]['label']}: {storage.get(resource, 0)}   "
-                    f"(к концу цикла +{forecast.get(resource, 0)})   Ваша добыча: {claimable}")
+            shared_amount = int(storage.get(resource, 0))
+            backpack = depositable.get(resource, {})
+            text = (f"{RESOURCES[resource]['label']}: склад {shared_amount} · "
+                    f"рюкзак {backpack.get('in_backpack', 0)} · личная добыча {claimable} "
+                    f"(прогноз +{forecast.get(resource, 0)})")
             draw_item_icon(screen, resource, (rect.left + 12, curr_y + 2), 24)
-            screen.blit(scene.font.render(text, True, (215, 215, 205)), (rect.left + 42, curr_y))
+            screen.blit(scene.small_font.render(text, True, (215, 215, 205)), (rect.left + 42, curr_y + 4))
+            if shared_amount > 0:
+                button = pygame.Rect(rect.left + 1060, curr_y, 112, 28)
+                draw_button(screen, button, "ВЗЯТЬ", scene.small_font,
+                            color=(69, 98, 72), text_color=(235, 245, 230))
+                self.storage_withdraw_buttons[resource] = button
+            if int(backpack.get("max_deposit", 0)) > 0:
+                button = pygame.Rect(rect.left + 1178, curr_y, 112, 28)
+                draw_button(screen, button, "ВНЕСТИ", scene.small_font,
+                            color=(68, 112, 60), text_color=(235, 245, 230))
+                self.storage_deposit_buttons[resource] = button
             if claimable > 0:
-                button = pygame.Rect(rect.left + 1050, curr_y - 2, 190, 28)
-                draw_button(screen, button, f"ЗАБРАТЬ {claimable}", scene.small_font,
+                button = pygame.Rect(rect.left + 1296, curr_y, 150, 28)
+                draw_button(screen, button, f"ЛИЧНАЯ {claimable}", scene.small_font,
                             color=(69, 112, 67), text_color=(235, 232, 215))
                 self.claim_buttons[resource] = button
             curr_y += 30

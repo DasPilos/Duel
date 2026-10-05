@@ -3,9 +3,66 @@ import math
 import pygame
 from core import settings
 
+CITIZEN_HOUSE_LOTS = (
+    (60, 60, 2, 2, 1), (84, 60, 3, 2, 2),
+    (60, 64, 3, 2, 2), (84, 64, 2, 3, 1),
+    (60, 70, 2, 3, 2), (84, 70, 3, 3, 3),
+    (60, 77, 4, 2, 2), (84, 77, 4, 2, 1),
+    (64, 58, 3, 2, 1), (77, 58, 6, 3, 3),
+)
+
 
 class CityRenderMixin:
     """Требует атрибуты CityScene: tile_size, world_to_screen, objects, шрифты и т.д."""
+
+    def _citizen_house_solid_rects(self):
+        count = max(0, min(len(CITIZEN_HOUSE_LOTS), int(getattr(self, "city_population_count", 4))))
+        return [
+            pygame.Rect(tile_x * self.tile_size, tile_y * self.tile_size,
+                        width_tiles * self.tile_size, depth_tiles * self.tile_size)
+            for tile_x, tile_y, width_tiles, depth_tiles, _floors in CITIZEN_HOUSE_LOTS[:count]
+        ]
+
+    def _draw_citizen_houses(self, screen):
+        """Draw resident houses using the same occupied plots as city collision."""
+        wall_colors = ((132, 94, 64), (151, 111, 72), (112, 113, 106), (153, 128, 91))
+        roof_colors = ((91, 55, 42), (105, 67, 46), (75, 73, 66), (121, 77, 47))
+        viewport = pygame.Rect(-192, -192, settings.WIDTH + 384, settings.HEIGHT + 384)
+        count = max(0, min(len(CITIZEN_HOUSE_LOTS), int(getattr(self, "city_population_count", 4))))
+        for index, (tile_x, tile_y, width_tiles, depth_tiles, floors) in enumerate(CITIZEN_HOUSE_LOTS[:count]):
+            world_x, world_y = tile_x * self.tile_size, tile_y * self.tile_size
+            sx, sy = self.world_to_screen(world_x, world_y)
+            width = width_tiles * self.tile_size
+            depth = depth_tiles * self.tile_size
+            floor_height = max(15, self.tile_size // 2)
+            body_height = depth + (floors - 1) * floor_height
+            body = pygame.Rect(sx, sy + depth - floor_height, width, body_height)
+            if not body.colliderect(viewport):
+                continue
+            wall = wall_colors[index % len(wall_colors)]
+            roof = roof_colors[index % len(roof_colors)]
+            pygame.draw.ellipse(screen, (13, 16, 15), (sx + 4, sy + depth - 5, width - 8, 14))
+            pygame.draw.rect(screen, wall, body)
+            pygame.draw.rect(screen, (61, 48, 38), body, 2)
+            windows_per_floor = max(1, width_tiles // 2)
+            for floor in range(floors):
+                floor_y = body.bottom - (floor + 1) * floor_height
+                if floor:
+                    pygame.draw.line(screen, (75, 56, 43), (sx + 2, floor_y),
+                                     (sx + width - 2, floor_y), 3)
+                window_y = floor_y + floor_height // 2 - 3
+                for window_index in range(windows_per_floor):
+                    window_x = sx + (window_index + 1) * width // (windows_per_floor + 1)
+                    pygame.draw.rect(screen, (225, 185, 101),
+                                     (window_x - 4, window_y, 8, 8), border_radius=1)
+                    pygame.draw.line(screen, (74, 54, 39), (window_x, window_y),
+                                     (window_x, window_y + 8), 1)
+            door = pygame.Rect(sx + width // 2 - 5, body.bottom - 19, 10, 19)
+            pygame.draw.rect(screen, (62, 41, 30), door)
+            roof_points = [(sx - 5, body.top + 3), (sx + width // 2, sy - floor_height - 4),
+                           (sx + width + 5, body.top + 3)]
+            pygame.draw.polygon(screen, roof, roof_points)
+            pygame.draw.lines(screen, (54, 42, 35), True, roof_points, 2)
 
     def _draw_badge(self, screen, cx, bottom_y, text, border_color):
         """Вспомогательный метод для аккуратной плашки с текстом над объектом."""

@@ -15,6 +15,7 @@ from server import maintenance, social
 from server.world import run_bot_battle_tick
 from core.production_buildings import BUILDINGS
 from server.production_buildings import ProductionBuildings
+from server.city_population import CityPopulation
 from server.world_map import terrain_payload
 from server.structures import city_structures
 from server.world_roads import roads_payload
@@ -388,6 +389,18 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                     state = ProductionBuildings(self.database).get_state(character_id, building)
                     self._send(200, {"building": state})
                 return
+            if path.startswith("/api/castle/"):
+                parts = path.split("/")
+                if len(parts) != 5 or parts[4] != "population":
+                    self._send(404, {"error": "Путь замка не найден"})
+                    return
+                user_id = self.database.user_id_by_token(self._token())
+                character_id = int(parts[3])
+                if self.database.get_character(user_id, character_id) is None:
+                    raise ValueError("Персонаж не найден")
+                state = CityPopulation(self.database).get_state(character_id)
+                self._send(200, {"population": state})
+                return
             if path == "/api/opponents":
                 user_id = self.database.user_id_by_token(self._token())
                 self._send(200, {"opponents": self.database.get_opponents(user_id)})
@@ -505,6 +518,34 @@ class GameRequestHandler(BaseHTTPRequestHandler):
         try:
             path = urlparse(self.path).path.rstrip("/")
             body = self._body()
+            if path.startswith("/api/castle/"):
+                parts = path.split("/")
+                if len(parts) == 5 and parts[4] == "treasury":
+                    user_id = self.database.user_id_by_token(self._token())
+                    character_id = int(parts[3])
+                    if self.database.get_character(user_id, character_id) is None:
+                        raise ValueError("Персонаж не найден")
+                    state = CityPopulation(self.database).transfer_treasury(
+                        character_id, body.get("direction"), body.get("amount_copper")
+                    )
+                    self._send(200, {"population": state})
+                    return
+                if len(parts) != 7 or parts[4] != "citizens" or parts[6] not in ("assign", "recall"):
+                    self._send(404, {"error": "Путь замка не найден"})
+                    return
+                user_id = self.database.user_id_by_token(self._token())
+                character_id, citizen_id = int(parts[3]), int(parts[5])
+                if self.database.get_character(user_id, character_id) is None:
+                    raise ValueError("Персонаж не найден")
+                population = CityPopulation(self.database)
+                if parts[6] == "assign":
+                    state = population.assign_citizen(
+                        character_id, citizen_id, body.get("building"), body.get("slot_index")
+                    )
+                else:
+                    state = population.recall_citizen(character_id, citizen_id)
+                self._send(200, {"population": state})
+                return
             if path == "/api/register":
                 username = str(body.get("username", "")).strip()
                 password = str(body.get("password", ""))
@@ -609,19 +650,28 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                     state = buildings.deposit_to_storage(
                         character_id, building, body.get("resource"), body.get("quantity", 0)
                     )
+                elif action == "storage/withdraw":
+                    state = buildings.withdraw_from_storage(
+                        character_id, building, body.get("resource"), body.get("quantity", 0)
+                    )
                 elif action == "upgrade/deposit":
-                    state = buildings.deposit_material(character_id, building, body.get("item_id", 0), body.get("quantity", 0))
+                    state = buildings.deposit_material(
+                        character_id, building, body.get("item_id", 0),
+                        body.get("quantity", 0), source=body.get("source", "warehouse"),
+                    )
                 elif action == "upgrade/start":
                     state = buildings.start_upgrade(character_id, building)
                 elif action == "stall-upgrade/contribute" and building == "stable":
                     state = buildings.contribute_stall_upgrade(
-                        character_id, body.get("upgrade_id"), body.get("resource"), body.get("quantity", 0)
+                        character_id, body.get("upgrade_id"), body.get("resource"),
+                        body.get("quantity", 0), source=body.get("source"),
                     )
                 elif action == "stall-upgrade/purchase" and building == "stable":
                     state = buildings.purchase_stall_upgrade(character_id, body.get("upgrade_id"))
                 elif action == "cart/contribute" and building == "stable":
                     state = buildings.contribute_cart(
-                        character_id, body.get("resource"), body.get("quantity", 0)
+                        character_id, body.get("resource"), body.get("quantity", 0),
+                        source=body.get("source"),
                     )
                 elif action == "cart/purchase" and building == "stable":
                     state = buildings.purchase_cart(character_id, body.get("grade", 1))
@@ -1080,6 +1130,13 @@ def run():
         daemon=True,
     )
     restart_thread.start()
+    population_thread = threading.Thread(
+        target=_run_city_population,
+        args=(stop_bot_battles,),
+        name="city-population-ticks",
+        daemon=True,
+    )
+    population_thread.start()
     print(f"Game server: http://{config.HOST}:{config.PORT}")
     try:
         server.serve_forever()
@@ -1089,6 +1146,7 @@ def run():
         stop_bot_battles.set()
         bot_battle_thread.join(timeout=2)
         restart_thread.join(timeout=2)
+        population_thread.join(timeout=2)
         server.server_close()
     if restart_requested.is_set():
         raise SystemExit(1)
@@ -1110,6 +1168,17 @@ def _run_scheduled_restart(server, stop_event, restart_requested):
             restart_requested.set()
             server.shutdown()
             return
+
+
+def _run_city_population(stop_event):
+    population = CityPopulation(GameRequestHandler.database)
+    while not stop_event.is_set():
+        try:
+            population.tick_all()
+        except Exception:
+            traceback.print_exc()
+        if stop_event.wait(10):
+            break
 
 
 if __name__ == "__main__":

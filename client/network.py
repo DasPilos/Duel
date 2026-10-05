@@ -44,6 +44,30 @@ class GameClient:
     def get_server_status(self):
         return self._request("GET", "/api/server/status", authenticated=True)
 
+    def get_city_population(self, character_id):
+        return self._request(
+            "GET", f"/api/castle/{int(character_id)}/population", authenticated=True
+        )["population"]
+
+    def assign_city_citizen(self, character_id, citizen_id, building, slot_index):
+        return self._request(
+            "POST", f"/api/castle/{int(character_id)}/citizens/{int(citizen_id)}/assign",
+            {"building": building, "slot_index": int(slot_index)}, authenticated=True,
+        )["population"]
+
+    def recall_city_citizen(self, character_id, citizen_id):
+        return self._request(
+            "POST", f"/api/castle/{int(character_id)}/citizens/{int(citizen_id)}/recall",
+            {}, authenticated=True,
+        )["population"]
+
+    def transfer_city_treasury(self, character_id, direction, amount_copper):
+        return self._request(
+            "POST", f"/api/castle/{int(character_id)}/treasury",
+            {"direction": str(direction), "amount_copper": int(amount_copper)},
+            authenticated=True,
+        )["population"]
+
     def schedule_server_restart(self, minutes=3):
         return self._request(
             "POST", "/api/server/restart-notice",

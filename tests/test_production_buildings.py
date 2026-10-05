@@ -3,12 +3,14 @@ import json
 import threading
 import unittest
 
-from core.production_buildings import upgrade_requirements
+from core.production_buildings import slot_resources, upgrade_requirements
 from server.items_database import ItemsDatabase
 from server.production_buildings import (
     STORAGE_RESOURCES_BY_ITEM_ID,
     ProductionBuildings,
     distribute_to_storage,
+    _harvest_bonus_for_worker,
+    _resource_timer_sec,
 )
 from tests.fixtures import create_test_database, drop_test_database, running_server
 
@@ -48,6 +50,156 @@ class ProductionBuildingsTests(unittest.TestCase):
                              "wisdom": 3, "intellect": 3, "harmony": 3, "endurance": 3}),
                  character_id),
             )
+
+    def _equip_gathering_tool(self, character_id, item_id):
+        items = ItemsDatabase(self.database)
+        items.grant_base_equipment(character_id)
+        tool = next(row for row in items.get_inventory(character_id) if row["item_id"] == item_id)
+        items.equip_item(character_id, tool["slot_index"])
+
+    def test_all_gathering_tools_reduce_only_matching_resource_timers(self):
+        cases = (
+            (90, {"wheat": (140, 112)}),
+            (91, {"wood": (240, 192)}),
+            (92, {"iron": (300, 240), "coal": (600, 480), "stone": (200, 160)}),
+            (93, {"leather": (460, 368), "meat": (680, 544)}),
+        )
+        for item_id, expected in cases:
+            with self.subTest(item_id=item_id):
+                character_id = self._character(f"tool-{item_id}")
+                self._equip_gathering_tool(character_id, item_id)
+                with self.database.connection() as connection:
+                    bonuses = _harvest_bonus_for_worker(connection, f"player:{character_id}")
+                    self.assertEqual(set(bonuses), set(expected))
+                    for resource, (base_timer, reduced_timer) in expected.items():
+                        self.assertEqual(bonuses[resource], 20)
+                        self.assertEqual(_resource_timer_sec(resource, bonuses), reduced_timer)
+                        locations = {
+                            "wheat": (("farm", 0),),
+                            "wood": (("lumber_camp", 0),),
+                            "iron": (("mountain_rift", 0),),
+                            "coal": (("black_pit", 0),),
+                            "stone": (("mountain_rift", 2),),
+                            "leather": (("barnyard", 0),),
+                            "meat": (("barnyard", 0),),
+                        }
+                        self.assertTrue(any(
+                            resource in slot_resources(building, slot_index)
+                            for building, slot_index in locations[resource]
+                        ))
+
+    def test_butcher_knife_shortens_live_leather_and_meat_production(self):
+        character_id = self._character("butcher-knife")
+        self._equip_gathering_tool(character_id, 93)
+
+        self.buildings.get_state(character_id, "barnyard", 10000)
+        state = self.buildings.toggle_player_worker(character_id, "barnyard", 0, 10000)
+        slot = state["worker_slots"][0]
+        self.assertEqual(slot["harvest_bonus"], {"leather": 20, "meat": 20})
+        self.assertEqual(slot["timer_sec_by_resource"], {"leather": 368, "meat": 544})
+
+        state = self.buildings.get_state(character_id, "barnyard", 10368)
+
+        self.assertEqual(state["player_harvest_totals"].get("leather"), 1)
+        self.assertIsNone(state["player_harvest_totals"].get("meat"))
+
+    def test_shared_building_storage_transfers_to_and_from_backpack(self):
+        character_id = self._character("storemove")
+        items = ItemsDatabase(self.database)
+        items.add_to_inventory(character_id, 66, 10)
+
+        state = self.buildings.deposit_to_storage(character_id, "barnyard", "leather", 5, 10000)
+        self.assertEqual(state["storage"]["leather"], 5)
+        self.assertEqual(sum(row["quantity"] for row in items.get_inventory(character_id)
+                             if row["item_id"] == 66), 5)
+
+        state = self.buildings.withdraw_from_storage(character_id, "barnyard", "leather", 3, 10000)
+        self.assertEqual(state["storage"]["leather"], 2)
+        self.assertEqual(sum(row["quantity"] for row in items.get_inventory(character_id)
+                             if row["item_id"] == 66), 8)
+
+    def test_city_barn_and_warehouse_allow_reciprocal_storage_transfers(self):
+        character_id = self._character("city-stores")
+        items = ItemsDatabase(self.database)
+        for building, resource, item_id in (("barn", "wheat", 63), ("warehouse", "wood", 60)):
+            with self.subTest(building=building):
+                self.buildings.get_state(character_id, building, 10000)
+                items.add_to_inventory(character_id, item_id, 6)
+                deposited = self.buildings.deposit_to_storage(
+                    character_id, building, resource, 4, 10000
+                )
+                self.assertEqual(deposited["storage"][resource], 4)
+
+                withdrawn = self.buildings.withdraw_from_storage(
+                    character_id, building, resource, 3, 10000
+                )
+                self.assertEqual(withdrawn["storage"][resource], 1)
+                carried = sum(row["quantity"] for row in items.get_inventory(character_id)
+                              if row["item_id"] == item_id)
+                self.assertEqual(carried, 5)
+
+    def test_black_pit_gems_can_move_to_and_from_shared_storage(self):
+        character_id = self._character("gem-store")
+        items = ItemsDatabase(self.database)
+        items.add_to_inventory(character_id, 80, 2)
+
+        deposited = self.buildings.deposit_to_storage(character_id, "black_pit", "jet", 1, 10000)
+        self.assertEqual(deposited["storage"]["jet"], 1)
+        withdrawn = self.buildings.withdraw_from_storage(character_id, "black_pit", "jet", 1, 10000)
+        self.assertEqual(withdrawn["storage"]["jet"], 0)
+        self.assertEqual(sum(row["quantity"] for row in items.get_inventory(character_id)
+                             if row["item_id"] == 80), 2)
+
+    def test_authenticated_api_supports_shared_storage_deposit_and_withdraw(self):
+        user = self.database.register("storage-api", "password")
+        character_id = self.database.create_character(user["id"], "StorageApi")["id"]
+        ItemsDatabase(self.database).add_to_inventory(character_id, 67, 5)
+
+        with running_server(self.database) as client:
+            client.login("storage-api", "password")
+            deposited = client.building_action(
+                "barnyard", character_id, "storage/deposit",
+                {"resource": "meat", "quantity": 4},
+            )
+            self.assertEqual(deposited["storage"]["meat"], 4)
+
+            withdrawn = client.building_action(
+                "barnyard", character_id, "storage/withdraw",
+                {"resource": "meat", "quantity": 3},
+            )
+
+        self.assertEqual(withdrawn["storage"]["meat"], 1)
+        carried = sum(row["quantity"] for row in ItemsDatabase(self.database).get_inventory(character_id)
+                      if row["item_id"] == 67)
+        self.assertEqual(carried, 4)
+
+    def test_storage_payload_caps_withdraw_quantity_by_remaining_carry_weight(self):
+        user = self.database.register("carry-limit", "password")
+        character_id = self.database.create_character(user["id"], "CarryLimit")["id"]
+        items = ItemsDatabase(self.database)
+        initial = items.carry_weight_state
+        with self.database.connection() as connection:
+            initial_weight = items.carry_weight_state(connection, character_id)
+        fill_quantity = max(0, int((initial_weight["carry_capacity_kg"] - 1) // 2))
+        if fill_quantity:
+            self.assertTrue(items.add_to_inventory(character_id, 63, fill_quantity))
+
+        self.buildings.get_state(character_id, "farm", 10000)
+        with self.database.connection() as connection:
+            connection.execute(
+                "UPDATE building_resources SET storage=500 WHERE world_id=%s AND faction='light' AND building='farm' AND resource='wheat'",
+                (self.database.world_id,),
+            )
+        state = self.buildings.get_state(character_id, "farm", 10000)
+        carry = items.carry_weight_state
+        with self.database.connection() as connection:
+            actual_weight = carry(connection, character_id)
+
+        expected = min(500, max(0, int((actual_weight["carry_capacity_kg"]
+                                        - actual_weight["carried_weight_kg"] + 1e-9) // 2)))
+        self.assertEqual(state["storage_withdrawable"]["wheat"]["available"], 500)
+        self.assertEqual(state["storage_withdrawable"]["wheat"]["max_withdraw"], expected)
+        self.assertLess(expected, 500)
 
     def _set_level(self, character_id, building, level):
         self.buildings.get_state(character_id, building, 10000)

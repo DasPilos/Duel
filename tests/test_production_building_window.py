@@ -1,6 +1,7 @@
 import time
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import pygame
 
@@ -52,8 +53,29 @@ class FakeBuildingClient:
     get_map_terrain = staticmethod(terrain_payload)
     def __init__(self):
         self.calls = []
+        self.city_calls = []
         self.last_payload = None
         self.active_work = None
+        self.citizens = [
+            {"id": index, "name": f"Горожанин {index}", "job_building": None,
+             "job_slot": None, "satisfaction": "satisfied"}
+            for index in range(1, 5)
+        ]
+
+    def get_city_population(self, _character_id):
+        return {"citizens": self.citizens}
+
+    def assign_city_citizen(self, _character_id, citizen_id, building, slot_index):
+        citizen = next(row for row in self.citizens if row["id"] == citizen_id)
+        citizen.update(job_building=building, job_slot=slot_index)
+        self.city_calls.append(("assign", building, slot_index, citizen_id))
+        return {"citizens": self.citizens}
+
+    def recall_city_citizen(self, _character_id, citizen_id):
+        citizen = next(row for row in self.citizens if row["id"] == citizen_id)
+        self.city_calls.append(("recall", citizen_id))
+        citizen.update(job_building=None, job_slot=None)
+        return {"citizens": self.citizens}
 
     def get_player_work(self, _character_id):
         return self.active_work
@@ -64,6 +86,10 @@ class FakeBuildingClient:
             slot = state["worker_slots"][self.active_work["slot_index"]]
             slot.update(occupied=True, worker_id=f"player:{character_id}", is_player=True)
             state["workers"] = 1
+        for citizen in self.citizens:
+            if citizen["job_building"] == building:
+                slot = state["worker_slots"][citizen["job_slot"]]
+                slot.update(occupied=True, worker_id=f"citizen:{citizen['id']}")
         return state
 
     def building_action(self, building, _character_id, action, payload=None):
@@ -160,7 +186,8 @@ class ProductionBuildingWindowTests(unittest.TestCase):
         self.assertEqual(self.client.calls, [])
         self.assertEqual(window.pending_worker_action, ("hire", 0))
         self._confirm_worker_action(window)
-        self.assertEqual(self.client.calls, [("lumber_camp", "workers/hire", 0)])
+        self.assertEqual(self.client.calls, [])
+        self.assertEqual(self.client.city_calls, [("assign", "lumber_camp", 0, 1)])
         self.scene.draw(self.screen)
 
     def test_click_on_locked_camp_plot_explains_unlock_level(self):
@@ -176,7 +203,8 @@ class ProductionBuildingWindowTests(unittest.TestCase):
         self.scene.draw(self.screen)
         self._click(window.plot_geometry()[0]["center"])
         self._confirm_worker_action(window)
-        self.assertEqual(self.client.calls, [("farm", "workers/hire", 0)])
+        self.assertEqual(self.client.calls, [])
+        self.assertEqual(self.client.city_calls, [("assign", "farm", 0, 1)])
 
     def test_right_click_removes_worker_only_after_confirmation(self):
         window = self._open("wheat_farm")
@@ -249,8 +277,10 @@ class ProductionBuildingWindowTests(unittest.TestCase):
         slot = window.state["worker_slots"][0]
         slot.update(
             worker_id="player:1", worker_name="Тест", is_player=True,
-            resources=["leather", "meat"], progress_sec=400,
-            resource_progress_sec={"leather": 400, "meat": 600},
+            resources=["leather", "meat"], progress_sec=300,
+            resource_progress_sec={"leather": 300, "meat": 500},
+            timer_sec_by_resource={"leather": 368, "meat": 544},
+            harvest_bonus={"leather": 20, "meat": 20},
         )
         window.state["player_harvest_totals"] = {"leather": 5, "meat": 7}
         window.state["player_work"] = {
@@ -264,6 +294,7 @@ class ProductionBuildingWindowTests(unittest.TestCase):
         self.assertGreaterEqual(window.plots_area().left, window.worker_stats_rect().right)
 
         rendered = []
+        rendered_colors = {}
         original_small, original_grid = self.scene.small_font, self.scene.grid_font
 
         class Recorder:
@@ -272,6 +303,8 @@ class ProductionBuildingWindowTests(unittest.TestCase):
 
             def render(self, text, *args):
                 rendered.append(text)
+                if len(args) > 1:
+                    rendered_colors[text] = args[1]
                 return self.font.render(text, *args)
 
             def __getattr__(self, name):
@@ -285,6 +318,10 @@ class ProductionBuildingWindowTests(unittest.TestCase):
             self.scene.small_font = original_small
             self.scene.grid_font = original_grid
         self.assertIn("Тест", rendered)
+        self.assertIn("+20% Кожа · +20% Мясо", rendered)
+        self.assertEqual(rendered_colors["+20% Кожа · +20% Мясо"], (117, 225, 128))
+        self.assertIn("Кожа 1:08", rendered)
+        self.assertIn("Мясо 0:44", rendered)
         self.assertTrue(any(text.startswith("Кожа ") for text in rendered))
         self.assertTrue(any(text.startswith("Мясо ") for text in rendered))
         self.assertTrue(any(text == "Всего:" for text in rendered))
@@ -301,6 +338,45 @@ class ProductionBuildingWindowTests(unittest.TestCase):
         self._click(window.claim_buttons["wheat"].center)
         self.assertEqual(self.client.calls, [("farm", "player-harvest/claim", None)])
         self.assertEqual(self.client.last_payload, {"resource": "wheat", "quantity": 5})
+
+    def test_production_storage_can_withdraw_common_stock(self):
+        window = self._open("wheat_farm")
+        window.state = _payload("farm")
+        window.state["storage"]["wheat"] = 20
+        window.state["storage_depositable"] = {
+            "wheat": {"item_id": 63, "in_backpack": 0, "max_deposit": 0}
+        }
+        window.tab = "storage"
+        self.scene.draw(self.screen)
+        self.assertIn("wheat", window.storage_withdraw_buttons)
+        self._click(window.storage_withdraw_buttons["wheat"].center)
+        self.assertEqual(window.contribution_dialog.mode, "withdraw")
+
+        with patch.object(window.contribution_dialog, "handle_event",
+                          return_value=(("storage_withdraw", "wheat"), 5)):
+            window.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=(0, 0)))
+
+        self.assertEqual(self.client.calls, [("farm", "storage/withdraw", None)])
+        self.assertEqual(self.client.last_payload, {"resource": "wheat", "quantity": 5})
+
+    def test_production_storage_can_deposit_backpack_resources(self):
+        window = self._open("wheat_farm")
+        window.state = _payload("farm")
+        window.state["storage_depositable"] = {
+            "wheat": {"item_id": 63, "in_backpack": 8, "max_deposit": 8}
+        }
+        window.tab = "storage"
+        self.scene.draw(self.screen)
+        self.assertIn("wheat", window.storage_deposit_buttons)
+        self._click(window.storage_deposit_buttons["wheat"].center)
+        self.assertEqual(window.contribution_dialog.mode, "deposit")
+
+        with patch.object(window.contribution_dialog, "handle_event",
+                          return_value=(("storage", "wheat"), 6)):
+            window.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=(0, 0)))
+
+        self.assertEqual(self.client.calls, [("farm", "storage/deposit", None)])
+        self.assertEqual(self.client.last_payload, {"resource": "wheat", "quantity": 6})
 
     def test_deposit_button_sends_material_to_server(self):
         window = self._open("lumber_camp")

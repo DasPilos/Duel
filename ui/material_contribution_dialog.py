@@ -1,5 +1,6 @@
 import pygame
 
+from core.carry_weight import GREEN, RED, YELLOW
 from ui.catalog_icons import draw_item_icon
 from ui.hud import draw_button
 
@@ -16,18 +17,28 @@ class MaterialContributionDialog:
         self.available = 0
         self.maximum = 0
         self.quantity = 0
+        self.mode = "contribute"
+        self.carried_weight_kg = 0.0
+        self.carry_capacity_kg = 0.0
+        self.item_weight_kg = 0.0
         self.dragging = False
         self.rect = pygame.Rect(0, 0, self.WIDTH, self.HEIGHT)
         self.track_rect = pygame.Rect(0, 0, 0, 0)
         self.confirm_button = pygame.Rect(0, 0, 0, 0)
         self.cancel_button = pygame.Rect(0, 0, 0, 0)
 
-    def open(self, item_key, label, available, remaining):
+    def open(self, item_key, label, available, remaining, mode="deposit",
+             weight_state=None, item_weight_kg=0.0):
         self.item_key = item_key
         self.label = label
+        self.mode = mode
         self.available = max(0, int(available))
         self.maximum = min(self.available, max(0, int(remaining)))
         self.quantity = 0
+        weight_state = weight_state or {}
+        self.carried_weight_kg = float(weight_state.get("carried_weight_kg", 0))
+        self.carry_capacity_kg = float(weight_state.get("carry_capacity_kg", 0))
+        self.item_weight_kg = max(0.0, float(item_weight_kg or 0))
         self.dragging = False
         self.is_open = True
 
@@ -85,11 +96,18 @@ class MaterialContributionDialog:
 
         scene = self.scene
         draw_item_icon(screen, self.item_key, (self.rect.left + 24, self.rect.top + 17), 30)
-        screen.blit(scene.font.render(f"Взнос: {self.label}", True, (230, 215, 184)),
+        title = {"withdraw": "Забрать", "deposit": "Пополнение склада"}.get(self.mode, "Взнос")
+        screen.blit(scene.font.render(f"{title}: {self.label}", True, (230, 215, 184)),
                 (self.rect.left + 62, self.rect.top + 20))
-        screen.blit(scene.small_font.render(f"В рюкзаке: {self.available}", True, (190, 187, 170)),
+        available_label = "На складе" if self.mode == "withdraw" else "В рюкзаке"
+        available_text = f"{available_label}: {self.available}"
+        if self.mode == "withdraw":
+            available_text += f" · можно взять сейчас: {self.maximum}"
+        screen.blit(scene.small_font.render(available_text, True, (190, 187, 170)),
                     (self.rect.left + 24, self.rect.top + 76))
-        chosen = scene.small_font.render(f"Внести: {self.quantity} / {self.maximum}", True,
+        chosen_label = "Забрать" if self.mode == "withdraw" else "Внести"
+        chosen_total = self.available if self.mode == "withdraw" else self.maximum
+        chosen = scene.small_font.render(f"{chosen_label}: {self.quantity} / {chosen_total}", True,
                                          (224, 211, 178))
         screen.blit(chosen, chosen.get_rect(topright=(self.rect.right - 24, self.rect.top + 76)))
 
@@ -103,12 +121,31 @@ class MaterialContributionDialog:
         knob_x = self.track_rect.left + round(self.track_rect.width * progress)
         pygame.draw.circle(screen, (229, 215, 182), (knob_x, self.track_rect.centery), 11)
         pygame.draw.circle(screen, (91, 88, 72), (knob_x, self.track_rect.centery), 11, 1)
-        note = scene.small_font.render("Внесённые материалы нельзя забрать обратно", True, (186, 151, 126))
-        screen.blit(note, (self.rect.left + 24, self.rect.top + 151))
+        if self.mode == "withdraw":
+            resulting_weight = self.carried_weight_kg + self.quantity * self.item_weight_kg
+            if resulting_weight >= self.carry_capacity_kg and self.carry_capacity_kg > 0:
+                weight_color = RED
+            elif (self.carry_capacity_kg > 0
+                  and resulting_weight / self.carry_capacity_kg > 0.8):
+                weight_color = YELLOW
+            else:
+                weight_color = GREEN
+            weight_text = (f"Вес после забора: {resulting_weight:g} / "
+                           f"{self.carry_capacity_kg:g} кг")
+            screen.blit(scene.small_font.render(weight_text, True, weight_color),
+                        (self.rect.left + 24, self.rect.top + 145))
+            note_text = "Выбранное количество будет помещено в рюкзак"
+        elif self.mode == "deposit":
+            note_text = "Выбранное количество поступит в общий запас здания"
+        else:
+            note_text = "Внесённые материалы пойдут на улучшение здания"
+        note = scene.small_font.render(note_text, True, (186, 191, 174))
+        screen.blit(note, (self.rect.left + 24, self.rect.top + (170 if self.mode == "withdraw" else 151)))
 
         self.cancel_button = pygame.Rect(self.rect.right - 278, self.rect.bottom - 58, 112, 36)
         self.confirm_button = pygame.Rect(self.rect.right - 152, self.rect.bottom - 58, 128, 36)
         draw_button(screen, self.cancel_button, "ОТМЕНА", scene.small_font, color=(58, 55, 49))
-        draw_button(screen, self.confirm_button, "ВНЕСТИ", scene.small_font,
+        confirm_label = "ЗАБРАТЬ" if self.mode == "withdraw" else "ВНЕСТИ"
+        draw_button(screen, self.confirm_button, confirm_label, scene.small_font,
                     color=(74, 126, 69) if self.quantity else (51, 54, 48),
                     text_color=(238, 235, 217) if self.quantity else (142, 144, 134))

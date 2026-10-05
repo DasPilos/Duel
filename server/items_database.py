@@ -107,10 +107,10 @@ CATALOG = (
     (51, "Свиток защиты", "scroll", "common", 0.15, 1000000, "Даёт щит. Действует только в бою", 0, None, None, "scroll", None),
 
     # Базовые инструменты для добычи
-    (90, "Старый серп", "equipment", "common", 1.0, 100, "Требование: Сила: 4. Увеличивает добычу пшеницы на 20%", 0, {"requirements": {"strength": 4}, "damage": [1, 1], "harvest_bonus": {"wheat": 20}, "two_handed": True}, None, "tool_sickle", "weapon"),
-    (91, "Топор лесоруба", "equipment", "common", 1.0, 100, "Требование: Сила: 4. Увеличивает добычу древесины на 20%", 0, {"requirements": {"strength": 4}, "damage": [1, 1], "harvest_bonus": {"wood": 20}, "two_handed": True}, None, "tool_axe", "weapon"),
-    (92, "Кирка", "equipment", "common", 1.0, 100, "Требование: Сила: 4. Увеличивает добычу железной руды, угля и камня на 20%", 0, {"requirements": {"strength": 4}, "damage": [1, 1], "harvest_bonus": {"iron_ore": 20, "coal": 20, "stone": 20}, "two_handed": True}, None, "tool_pickaxe", "weapon"),
-    (93, "Разделочный нож", "equipment", "common", 1.0, 100, "Требование: Сила: 4. Увеличивает добычу кожи и мяса на 20%", 0, {"requirements": {"strength": 4}, "damage": [1, 1], "harvest_bonus": {"leather": 20, "meat": 20}, "two_handed": True}, None, "tool_butcher_knife", "weapon"),
+    (90, "Старый серп", "equipment", "common", 1.0, 100, "Требование: Сила: 4. Сокращает время добычи пшеницы на 20%", 0, {"requirements": {"strength": 4}, "damage": [1, 1], "harvest_bonus": {"wheat": 20}, "two_handed": True}, None, "tool_sickle", "weapon"),
+    (91, "Топор лесоруба", "equipment", "common", 1.0, 100, "Требование: Сила: 4. Сокращает время добычи древесины на 20%", 0, {"requirements": {"strength": 4}, "damage": [1, 1], "harvest_bonus": {"wood": 20}, "two_handed": True}, None, "tool_axe", "weapon"),
+    (92, "Кирка", "equipment", "common", 1.0, 100, "Требование: Сила: 4. Сокращает время добычи железа, угля и камня на 20%", 0, {"requirements": {"strength": 4}, "damage": [1, 1], "harvest_bonus": {"iron_ore": 20, "coal": 20, "stone": 20}, "two_handed": True}, None, "tool_pickaxe", "weapon"),
+    (93, "Разделочный нож", "equipment", "common", 1.0, 100, "Требование: Сила: 4. Сокращает время добычи кожи и мяса на 20%", 0, {"requirements": {"strength": 4}, "damage": [1, 1], "harvest_bonus": {"leather": 20, "meat": 20}, "two_handed": True}, None, "tool_butcher_knife", "weapon"),
 )
 
 BASE_STARTER_EQUIPMENT = (90, 91, 92, 93)
@@ -240,30 +240,25 @@ class ItemsDatabase:
         return [index for index in range(BACKPACK_SIZE) if index not in used]
 
     @classmethod
-    def _max_carryable_quantity(cls, connection, character_id, item, requested):
-        requested = max(0, int(requested))
-        item_weight = float(item["weight"] or 0)
-        if requested == 0 or item_weight <= 0:
-            return requested
-
+    def carry_weight_state(cls, connection, character_id):
         character = connection.execute(
             "SELECT level, stats_json FROM characters WHERE id = %s",
-            (character_id,),
+            (int(character_id),),
         ).fetchone()
         if character is None:
-            return 0
+            return {"carried_weight_kg": 0.0, "carry_capacity_kg": 0.0}
 
         inventory = connection.execute(
             """SELECT c.weight, i.quantity FROM character_items i
                JOIN items_catalog c ON c.id = i.item_id
                WHERE i.character_id = %s""",
-            (character_id,),
+            (int(character_id),),
         ).fetchall()
         equipped = connection.execute(
             """SELECT e.slot, c.weight FROM character_equipment e
                JOIN items_catalog c ON c.id = e.item_id
                WHERE e.character_id = %s""",
-            (character_id,),
+            (int(character_id),),
         ).fetchall()
         equipment = {row["slot"]: {"weight": row["weight"]} for row in equipped}
 
@@ -272,7 +267,7 @@ class ItemsDatabase:
             """SELECT c.bonuses_json FROM character_equipment e
                JOIN items_catalog c ON c.id = e.item_id
                WHERE e.character_id = %s""",
-            (character_id,),
+            (int(character_id),),
         ).fetchall():
             for stat, value in json.loads(row["bonuses_json"] or "{}").items():
                 bonuses[stat] = bonuses.get(stat, 0) + int(value)
@@ -282,8 +277,38 @@ class ItemsDatabase:
             "equipment_bonuses": bonuses,
         })
         carried = carried_weight_kg(inventory, equipment)
+        return {"carried_weight_kg": carried, "carry_capacity_kg": float(capacity)}
+
+    @classmethod
+    def _max_carryable_quantity(cls, connection, character_id, item, requested, carry_state=None):
+        requested = max(0, int(requested))
+        item_weight = float(item["weight"] or 0)
+        if requested == 0 or item_weight <= 0:
+            return requested
+        carry_state = carry_state or cls.carry_weight_state(connection, character_id)
+        capacity = float(carry_state["carry_capacity_kg"])
+        carried = float(carry_state["carried_weight_kg"])
         available = max(0.0, capacity - carried)
         return min(requested, math.floor((available + 1e-9) / item_weight))
+
+    @classmethod
+    def max_addable_quantity(cls, connection, character_id, item_id, requested, carry_state=None):
+        requested = max(0, int(requested))
+        item = cls._catalog_item(connection, int(item_id))
+        if item is None or requested == 0:
+            return 0
+        stacks = connection.execute(
+            """SELECT quantity FROM character_items
+               WHERE character_id = %s AND item_id = %s AND quantity < %s""",
+            (int(character_id), int(item_id), cls._stack_limit(item)),
+        ).fetchall()
+        room_in_stacks = sum(cls._stack_limit(item) - row["quantity"] for row in stacks)
+        free_slots = cls._free_slots(connection, int(character_id))
+        slot_capacity = room_in_stacks + len(free_slots) * cls._stack_limit(item)
+        amount = min(requested, slot_capacity)
+        return cls._max_carryable_quantity(
+            connection, int(character_id), item, amount, carry_state=carry_state
+        )
 
     @classmethod
     def _add_items(cls, connection, character_id: int, item_id: int, quantity: int) -> bool:

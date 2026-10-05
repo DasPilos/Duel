@@ -11,9 +11,10 @@ import time
 from copy import deepcopy
 from contextlib import contextmanager
 
-from core.cart_progress import CART_GRADES, DEFAULT_CART_PROGRESS
+from core.cart_progress import CART_GRADES, DEFAULT_CART_PROGRESS, RESOURCE_ITEM_IDS
 from core.currency import Currency
 from core.production_buildings import (
+    BUILDINGS,
     CYCLE_DURATION_SEC,
     RESOURCES,
     building_config,
@@ -44,6 +45,14 @@ STORAGE_ITEM_IDS = {
     "iron": 10,
     "mithril": 71,
     "obsidian": 72,
+    "jet": 80,
+    "malachite": 81,
+    "topaz": 82,
+    "garnet": 83,
+    "emerald": 84,
+    "ruby": 85,
+    "sapphire": 86,
+    "diamond": 87,
     "iron_ingot": 73,
     "steel": 74,
     "hard_leather": 75,
@@ -52,6 +61,34 @@ STORAGE_ITEM_IDS = {
     "stone_block": 78,
 }
 STORAGE_RESOURCES_BY_ITEM_ID = {item_id: resource for resource, item_id in STORAGE_ITEM_IDS.items()}
+HARVEST_BONUS_RESOURCE_ALIASES = {"iron_ore": "iron"}
+
+
+def _harvest_bonus_for_worker(connection, worker_id):
+    if not worker_id or not str(worker_id).startswith("player:"):
+        return {}
+    character_id = int(str(worker_id).split(":", 1)[1])
+    rows = connection.execute(
+        """SELECT c.effects_json FROM character_equipment equipment
+           JOIN items_catalog c ON c.id = equipment.item_id
+           WHERE equipment.character_id = %s""",
+        (character_id,),
+    ).fetchall()
+    bonuses = {}
+    for row in rows:
+        effects = json.loads(row["effects_json"] or "{}")
+        for resource, percent in effects.get("harvest_bonus", {}).items():
+            resource = HARVEST_BONUS_RESOURCE_ALIASES.get(resource, resource)
+            bonuses[resource] = bonuses.get(resource, 0) + int(percent)
+    return bonuses
+
+
+def _resource_timer_sec(resource, harvest_bonus=None):
+    base_timer = RESOURCES.get(resource, {}).get("timer_sec")
+    if base_timer is None:
+        return None
+    percent = max(0, min(90, int((harvest_bonus or {}).get(resource, 0))))
+    return max(1, math.ceil(base_timer * (100 - percent) / 100))
 
 
 def _timestamp(now):
@@ -64,12 +101,15 @@ def _completed_units(hire_time, now, timer_sec):
     return max(0, math.floor((float(now) - float(hire_time)) / timer_sec))
 
 
-def _new_units(building, slot, now):
+def _new_units(building, slot, now, harvest_bonus=None):
     """Единицы, готовые с прошлого учёта, и новые счётчики credited (горожанин может давать несколько ресурсов)."""
     credited = dict(slot["credited"] or {})
     added = {}
     for resource in slot_resources(building, slot["slot_index"]):
-        total = _completed_units(slot["hire_time"], now, RESOURCES[resource]["timer_sec"])
+        timer_sec = _resource_timer_sec(resource, harvest_bonus)
+        if timer_sec is None:
+            continue
+        total = _completed_units(slot["hire_time"], now, timer_sec)
         fresh = total - credited.get(resource, 0)
         if fresh > 0:
             added[resource] = fresh
@@ -237,7 +277,8 @@ class ProductionBuildings:
         for slot in self._slots(connection, key):
             if not slot["occupied"]:
                 continue
-            fresh, credited = _new_units(building, slot, now)
+            harvest_bonus = _harvest_bonus_for_worker(connection, slot["worker_id"])
+            fresh, credited = _new_units(building, slot, now, harvest_bonus)
             if not fresh:
                 continue
             for resource, amount in fresh.items():
@@ -337,15 +378,22 @@ class ProductionBuildings:
         slots = []
         for slot in self._slots(connection, key):
             resources = slot_resources(building, slot["slot_index"])
-            timer_sec = RESOURCES[resources[0]]["timer_sec"]
+            harvest_bonus = _harvest_bonus_for_worker(connection, slot["worker_id"])
+            timer_sec_by_resource = {
+                resource: _resource_timer_sec(resource, harvest_bonus)
+                for resource in resources if _resource_timer_sec(resource, harvest_bonus) is not None
+            }
+            timer_sec = timer_sec_by_resource.get(resources[0], RESOURCES[resources[0]].get("timer_sec", 0))
             resource_progress = {
                 resource: (0 if not slot["occupied"] else
-                           int((now - slot["hire_time"]) % RESOURCES[resource]["timer_sec"]))
-                for resource in resources
+                           int((now - slot["hire_time"]) % timer_sec_by_resource[resource]))
+                for resource in resources if resource in timer_sec_by_resource
             }
             if slot["occupied"]:
                 for resource in resources:
-                    forecast[resource] += math.floor(time_left / RESOURCES[resource]["timer_sec"])
+                    resource_timer = timer_sec_by_resource.get(resource)
+                    if resource_timer:
+                        forecast[resource] += math.floor(time_left / resource_timer)
             worker_name = slot["worker_id"]
             if worker_name and worker_name.startswith("player:"):
                 worker_row = connection.execute(
@@ -353,6 +401,13 @@ class ProductionBuildings:
                     (int(worker_name.split(":", 1)[1]),),
                 ).fetchone()
                 worker_name = worker_row["name"] if worker_row else "Игрок"
+            elif worker_name and worker_name.startswith("citizen:"):
+                citizen_id = int(worker_name.split(":", 1)[1])
+                citizen_row = connection.execute(
+                    "SELECT name FROM city_citizens WHERE id = %s",
+                    (citizen_id,),
+                ).fetchone()
+                worker_name = citizen_row["name"] if citizen_row else "Горожанин"
             elif worker_name and worker_name.startswith("citizen-"):
                 worker_name = f"Горожанин {worker_name.split('-', 1)[1]}"
             slots.append({
@@ -368,6 +423,9 @@ class ProductionBuildings:
                 "hire_time": slot["hire_time"],
                 "progress_sec": 0 if not slot["occupied"] else int((now - slot["hire_time"]) % timer_sec),
                 "resource_progress_sec": resource_progress,
+                "timer_sec_by_resource": timer_sec_by_resource,
+                "harvest_bonus": {resource: percent for resource, percent in harvest_bonus.items()
+                                   if resource in resources},
             })
         player_claim_rows = connection.execute(
             f"""SELECT resource, claimable FROM building_player_resources
@@ -389,7 +447,8 @@ class ProductionBuildings:
         if player_work_slot is not None:
             work_resources = slot_resources(building, player_work_slot["slot_index"])
             work_resource = work_resources[0]
-            work_timer = RESOURCES[work_resource]["timer_sec"]
+            work_harvest_bonus = player_work_slot.get("harvest_bonus", {})
+            work_timer = _resource_timer_sec(work_resource, work_harvest_bonus)
             work_progress = int((now - player_work_slot["hire_time"]) % work_timer)
             player_work = {
                 "slot_index": player_work_slot["slot_index"],
@@ -398,27 +457,40 @@ class ProductionBuildings:
                 "timer_sec": work_timer,
                 "progress_sec": work_progress,
                 "seconds_to_next": work_timer - work_progress,
+                "harvest_bonus": work_harvest_bonus,
                 "total_produced": {resource: player_harvest_totals.get(resource, 0)
                                    for resource in work_resources},
             }
         storage = {resource: row["storage"] for resource, row in rows.items()}
         storage_depositable = {}
-        if building in ("barn", "warehouse"):
-            free_storage = max(0, info["storage"] - sum(storage.values()))
-            for resource in building_resources(building):
-                item_id = STORAGE_ITEM_IDS.get(resource)
-                if item_id is not None:
-                    in_backpack = self._backpack_amount(connection, character_id, item_id)
-                    storage_depositable[resource] = {
-                        "item_id": item_id,
-                        "in_backpack": in_backpack,
-                        "max_deposit": min(in_backpack, free_storage),
-                    }
+        storage_withdrawable = {}
+        carry_state = ItemsDatabase.carry_weight_state(connection, character_id)
+        free_storage = max(0, info["storage"] - sum(storage.values()))
+        for resource in building_resources(building):
+            item_id = STORAGE_ITEM_IDS.get(resource)
+            if item_id is not None:
+                in_backpack = self._backpack_amount(connection, character_id, item_id)
+                storage_depositable[resource] = {
+                    "item_id": item_id,
+                    "in_backpack": in_backpack,
+                    "max_deposit": min(in_backpack, free_storage),
+                }
+                item = ItemsDatabase._catalog_item(connection, item_id)
+                storage_withdrawable[resource] = {
+                    "available": int(storage.get(resource, 0)),
+                    "max_withdraw": ItemsDatabase.max_addable_quantity(
+                        connection, character_id, item_id, storage.get(resource, 0), carry_state
+                    ),
+                    "item_weight_kg": 0.0 if item is None else float(item["weight"] or 0),
+                    **carry_state,
+                }
         stall_slots = None
         occupied_stalls = 0
         feed_consumption = 0
         stall_upgrades = None
         cart_progress = None
+        treasury_silver_available = 0
+        backpack_resource_amounts = {}
         if building == "stable":
             cart_progress = self._cart_progress(connection, key)
             level_tables = building_config(building)["levels"]
@@ -442,6 +514,17 @@ class ProductionBuildings:
                 (int(character_id),),
             ).fetchone()
             silver_available = Currency(**currency_row).total_silver
+            treasury_row = connection.execute(
+                """SELECT treasury_copper FROM city_population_state
+                   WHERE world_id = %s AND faction = %s""",
+                key[:2],
+            ).fetchone()
+            treasury_silver_available = (0 if treasury_row is None else
+                                         int(treasury_row["treasury_copper"]) // Currency.COPPER_PER_SILVER)
+            backpack_resource_amounts = {
+                resource: int(self._backpack_amount(connection, character_id, item_id))
+                for resource, item_id in RESOURCE_ITEM_IDS.items()
+            }
             stall_capacity_bonus = sum(
                 upgrade_config[upgrade_id]["horse_capacity"] for upgrade_id in completed_upgrades
             )
@@ -465,7 +548,11 @@ class ProductionBuildings:
                     "wood_in_warehouse": self._warehouse_amount(
                         connection, key, upgrade["wood_item_id"]
                     ),
+                    "wood_in_backpack": int(self._backpack_amount(
+                        connection, character_id, upgrade["wood_item_id"]
+                    )),
                     "silver_available": silver_available,
+                    "treasury_silver_available": treasury_silver_available,
                     "purchased": upgrade_id in purchased_upgrades,
                     "completed": upgrade_id in completed_upgrades,
                     "in_progress": (
@@ -516,6 +603,8 @@ class ProductionBuildings:
             "stall_slots": stall_slots,
             "stall_upgrades": stall_upgrades,
             "cart_progress": cart_progress,
+            "backpack_resource_amounts": backpack_resource_amounts,
+            "treasury_silver_available": treasury_silver_available,
             "silver_available": silver_available if building == "stable" else None,
             "horse_price_next_silver": (
                 horse_purchase_price_silver(occupied_stalls) if building == "stable" else None
@@ -532,6 +621,8 @@ class ProductionBuildings:
             "storage": {**storage, "limit": info["storage"]},
             "storage_total": sum(storage.values()),
             "storage_depositable": storage_depositable,
+            "storage_withdrawable": storage_withdrawable,
+            **carry_state,
             "warehouse_storage": self._warehouse_storage(connection, key) if building == "stable" else None,
             "buffer": {resource: row["buffer"] for resource, row in rows.items()},
             "forecast": forecast,
@@ -540,7 +631,10 @@ class ProductionBuildings:
             "player_harvest_claims": player_harvest_claims,
             "player_harvest_totals": player_harvest_totals,
             "resource_timer_sec": {
-                resource: RESOURCES[resource]["timer_sec"] for resource in rows if "timer_sec" in RESOURCES[resource]
+                resource: (_resource_timer_sec(resource, player_work_slot.get("harvest_bonus", {}))
+                           if player_work_slot and resource in slot_resources(building, player_work_slot["slot_index"])
+                           else RESOURCES[resource]["timer_sec"])
+                for resource in rows if "timer_sec" in RESOURCES[resource]
             },
             "upgrade": self._upgrade_payload(connection, key, character_id, state, now),
         }
@@ -591,12 +685,16 @@ class ProductionBuildings:
             })
         return progress
 
-    def contribute_cart(self, character_id, resource, quantity, now=None):
+    def contribute_cart(self, character_id, resource, quantity, now=None, source=None):
         now = _timestamp(now)
         resource = str(resource)
         quantity = int(quantity)
+        source = str(source or ("warehouse" if resource == "wood" else "wallet"))
         if resource not in ("wood", "silver") or quantity <= 0:
             raise ValueError("Некорректный взнос за повозку")
+        valid_sources = ("warehouse", "backpack") if resource == "wood" else ("treasury", "wallet")
+        if source not in valid_sources:
+            raise ValueError("Выбранный источник не подходит для этого ресурса")
         with self._transaction(character_id, "stable", now) as (connection, key):
             grade = CART_GRADES["1"]
             progress = connection.execute(
@@ -609,30 +707,36 @@ class ProductionBuildings:
 
             if resource == "wood":
                 missing = grade["wood_cost"] - progress["wood_deposited"]
-                warehouse_key = (key[0], key[1], "warehouse")
-                self._ensure(connection, warehouse_key, now)
-                connection.execute(f"SELECT 1 FROM building_states WHERE {_WHERE} FOR UPDATE", warehouse_key)
-                stock = connection.execute(
-                    """SELECT storage FROM building_resources
-                       WHERE world_id = %s AND faction = %s AND building = 'warehouse' AND resource = 'wood'
-                       FOR UPDATE""",
-                    (key[0], key[1]),
-                ).fetchone()
-                available = 0 if stock is None else int(stock["storage"])
+                if source == "warehouse":
+                    warehouse_key = (key[0], key[1], "warehouse")
+                    self._ensure(connection, warehouse_key, now)
+                    connection.execute(f"SELECT 1 FROM building_states WHERE {_WHERE} FOR UPDATE", warehouse_key)
+                    stock = connection.execute(
+                        """SELECT storage FROM building_resources
+                           WHERE world_id = %s AND faction = %s AND building = 'warehouse' AND resource = 'wood'
+                           FOR UPDATE""",
+                        (key[0], key[1]),
+                    ).fetchone()
+                    available = 0 if stock is None else int(stock["storage"])
+                else:
+                    available = int(self._backpack_amount(connection, character_id, STORAGE_ITEM_IDS["wood"]))
                 amount = min(quantity, missing, available)
                 if amount <= 0:
-                    raise ValueError("На складе недостаточно древесины для повозки")
-                connection.execute(
-                    """UPDATE building_resources SET storage = storage - %s
-                       WHERE world_id = %s AND faction = %s AND building = 'warehouse' AND resource = 'wood'""",
-                    (amount, key[0], key[1]),
-                )
+                    raise ValueError("В выбранном источнике недостаточно древесины для повозки")
+                if source == "warehouse":
+                    connection.execute(
+                        """UPDATE building_resources SET storage = storage - %s
+                           WHERE world_id = %s AND faction = %s AND building = 'warehouse' AND resource = 'wood'""",
+                        (amount, key[0], key[1]),
+                    )
+                elif not self._take_inventory_items(connection, character_id, STORAGE_ITEM_IDS["wood"], amount):
+                    raise ValueError("В рюкзаке недостаточно древесины")
                 connection.execute(
                     f"""UPDATE stable_cart_progress SET wood_deposited = wood_deposited + %s
                         WHERE {_WHERE} AND grade = 1""",
                     (amount, *key),
                 )
-            else:
+            elif source == "wallet":
                 missing = grade["silver_cost"] - progress["silver_deposited"]
                 character = connection.execute(
                     "SELECT copper, silver, gold FROM characters WHERE id = %s FOR UPDATE",
@@ -646,6 +750,28 @@ class ProductionBuildings:
                     """UPDATE characters SET copper = %s, silver = %s, gold = %s, updated_at = %s
                        WHERE id = %s""",
                     (currency.copper, currency.silver, currency.gold, now, int(character_id)),
+                )
+                connection.execute(
+                    f"""UPDATE stable_cart_progress SET silver_deposited = silver_deposited + %s
+                        WHERE {_WHERE} AND grade = 1""",
+                    (amount, *key),
+                )
+            else:
+                missing = grade["silver_cost"] - progress["silver_deposited"]
+                treasury = connection.execute(
+                    """SELECT treasury_copper FROM city_population_state
+                       WHERE world_id = %s AND faction = %s FOR UPDATE""",
+                    key[:2],
+                ).fetchone()
+                available = (0 if treasury is None else
+                             int(treasury["treasury_copper"]) // Currency.COPPER_PER_SILVER)
+                amount = min(quantity, missing, available)
+                if amount <= 0:
+                    raise ValueError("В казне недостаточно серебра для повозки")
+                connection.execute(
+                    """UPDATE city_population_state SET treasury_copper = treasury_copper - %s
+                       WHERE world_id = %s AND faction = %s""",
+                    (Currency.to_copper(silver=amount), *key[:2]),
                 )
                 connection.execute(
                     f"""UPDATE stable_cart_progress SET silver_deposited = silver_deposited + %s
@@ -709,12 +835,12 @@ class ProductionBuildings:
         return True
 
     def deposit_to_storage(self, character_id, building, resource, quantity, now=None):
-        """Move harvested items from a player's backpack into a shared barn or warehouse."""
+        """Move matching resources from a player's backpack into a shared building store."""
         now = _timestamp(now)
         building = str(building)
         resource = str(resource)
         quantity = int(quantity)
-        if building not in ("barn", "warehouse") or resource not in building_resources(building):
+        if building not in BUILDINGS or resource not in building_resources(building):
             raise ValueError("Этот ресурс нельзя выгрузить в выбранное хранилище")
         item_id = STORAGE_ITEM_IDS.get(resource)
         if item_id is None or quantity <= 0:
@@ -740,6 +866,34 @@ class ProductionBuildings:
             )
             return self._payload(connection, key, character_id, now)
 
+    def withdraw_from_storage(self, character_id, building, resource, quantity, now=None):
+        """Move shared building resources into a player's backpack, respecting its capacity."""
+        now = _timestamp(now)
+        building = str(building)
+        resource = str(resource)
+        quantity = int(quantity)
+        if building not in BUILDINGS or resource not in building_resources(building):
+            raise ValueError("Этот ресурс нельзя забрать из выбранного хранилища")
+        item_id = STORAGE_ITEM_IDS.get(resource)
+        if item_id is None or quantity <= 0:
+            raise ValueError("Некорректный ресурс или количество")
+
+        with self._transaction(character_id, building, now) as (connection, key):
+            stock = self._resources(connection, key).get(resource)
+            if stock is None or int(stock["storage"]) <= 0:
+                raise ValueError("На складе нет этого ресурса")
+            requested = min(quantity, int(stock["storage"]))
+            amount = ItemsDatabase.add_to_inventory_up_to(
+                connection, int(character_id), item_id, requested
+            )
+            if amount <= 0:
+                raise ValueError("В рюкзаке нет места для этого ресурса")
+            connection.execute(
+                f"UPDATE building_resources SET storage = storage - %s WHERE {_WHERE} AND resource = %s",
+                (amount, *key, resource),
+            )
+            return self._payload(connection, key, character_id, now)
+
     def _upgrade_payload(self, connection, key, character_id, state, now):
         requirements = upgrade_requirements(state["level"], key[2])
         if requirements is None:
@@ -756,6 +910,7 @@ class ProductionBuildings:
                 "deposited": min(required, deposited.get(item_id, 0)),
                 # Рюкзак — личный: показываем, сколько есть у того, кто смотрит окно
                 "in_warehouse": self._warehouse_amount(connection, key, item_id),
+                "in_backpack": self._backpack_amount(connection, character_id, item_id),
             })
         finish_at = state["upgrade_finish_at"]
         return {
@@ -813,7 +968,9 @@ class ProductionBuildings:
             if (slot["worker_id"] or "").startswith("player:"):
                 raise ValueError("Игрок должен сам завершить работу")
             # Целые единицы — в буфер, незавершённый остаток сгорает
-            fresh, _credited = _new_units(building, slot, now)
+            fresh, _credited = _new_units(
+                building, slot, now, _harvest_bonus_for_worker(connection, slot["worker_id"])
+            )
             self._add_to_buffers(connection, key, fresh)
             connection.execute(
                 f"""
@@ -901,12 +1058,15 @@ class ProductionBuildings:
             )
             return self._payload(connection, key, character_id, now)
 
-    def deposit_material(self, character_id, building, item_id, quantity, now=None):
-        """Contribute upgrade materials from the shared warehouse."""
+    def deposit_material(self, character_id, building, item_id, quantity, now=None, source="warehouse"):
+        """Contribute upgrade materials from the shared warehouse or personal backpack."""
         now = _timestamp(now)
         item_id, quantity = int(item_id), int(quantity)
+        source = str(source)
         if quantity <= 0:
             raise ValueError("Некорректное количество")
+        if source not in ("warehouse", "backpack"):
+            raise ValueError("Неизвестный источник материала")
         with self._transaction(character_id, building, now) as (connection, key):
             state = self._state(connection, key)
             requirements = upgrade_requirements(state["level"], building)
@@ -916,28 +1076,34 @@ class ProductionBuildings:
                 raise ValueError("Идёт стройка — дождитесь окончания")
             if item_id not in requirements["materials"]:
                 raise ValueError("Этот материал не нужен для улучшения")
-            warehouse_key = (key[0], key[1], "warehouse")
-            self._ensure(connection, warehouse_key, now)
-            connection.execute(f"SELECT 1 FROM building_states WHERE {_WHERE} FOR UPDATE", warehouse_key)
             missing = requirements["materials"][item_id] - self._deposited(connection, key).get(item_id, 0)
             resource = STORAGE_RESOURCES_BY_ITEM_ID.get(item_id)
             if resource is None:
                 raise ValueError("Материал не хранится на общем складе")
-            stock = connection.execute(
-                """SELECT storage FROM building_resources
-                   WHERE world_id = %s AND faction = %s AND building = 'warehouse' AND resource = %s
-                   FOR UPDATE""",
-                (key[0], key[1], resource),
-            ).fetchone()
-            available = 0 if stock is None else int(stock["storage"])
+            warehouse_key = (key[0], key[1], "warehouse")
+            if source == "warehouse":
+                self._ensure(connection, warehouse_key, now)
+                connection.execute(f"SELECT 1 FROM building_states WHERE {_WHERE} FOR UPDATE", warehouse_key)
+                stock = connection.execute(
+                    """SELECT storage FROM building_resources
+                       WHERE world_id = %s AND faction = %s AND building = 'warehouse' AND resource = %s
+                       FOR UPDATE""",
+                    (key[0], key[1], resource),
+                ).fetchone()
+                available = 0 if stock is None else int(stock["storage"])
+            else:
+                available = int(self._backpack_amount(connection, character_id, item_id))
             amount = min(quantity, missing, available)
             if amount <= 0:
-                raise ValueError("Нечего сдать: материала нет на складе или уже внесено достаточно")
-            connection.execute(
-                """UPDATE building_resources SET storage = storage - %s
-                   WHERE world_id = %s AND faction = %s AND building = 'warehouse' AND resource = %s""",
-                (amount, key[0], key[1], resource),
-            )
+                raise ValueError("Нечего сдать: ресурса нет в выбранном источнике или уже внесено достаточно")
+            if source == "warehouse":
+                connection.execute(
+                    """UPDATE building_resources SET storage = storage - %s
+                       WHERE world_id = %s AND faction = %s AND building = 'warehouse' AND resource = %s""",
+                    (amount, key[0], key[1], resource),
+                )
+            elif not self._take_inventory_items(connection, character_id, item_id, amount):
+                raise ValueError("В рюкзаке недостаточно материала")
             connection.execute(
                 """
                 INSERT INTO building_upgrade_materials (world_id, faction, building, item_id, quantity)
@@ -969,13 +1135,18 @@ class ProductionBuildings:
             )
             return self._payload(connection, key, character_id, now)
 
-    def contribute_stall_upgrade(self, character_id, upgrade_id, resource, quantity, now=None):
+    def contribute_stall_upgrade(self, character_id, upgrade_id, resource, quantity,
+                                 now=None, source=None):
         now = _timestamp(now)
         upgrade_id = str(upgrade_id)
         resource = str(resource)
         quantity = int(quantity)
+        source = str(source or ("warehouse" if resource == "wood" else "wallet"))
         if resource not in ("wood", "silver") or quantity <= 0:
             raise ValueError("Некорректный взнос в улучшение стойла")
+        valid_sources = ("warehouse", "backpack") if resource == "wood" else ("treasury", "wallet")
+        if source not in valid_sources:
+            raise ValueError("Выбранный источник не подходит для этого ресурса")
         with self._transaction(character_id, "stable", now) as (connection, key):
             upgrade = building_config("stable")["stall_upgrades"].get(upgrade_id)
             if upgrade is None:
@@ -1001,32 +1172,38 @@ class ProductionBuildings:
             ).fetchone()
             if resource == "wood":
                 missing = upgrade["wood_cost"] - progress["wood_deposited"]
-                warehouse_key = (key[0], key[1], "warehouse")
-                self._ensure(connection, warehouse_key, now)
-                connection.execute(
-                    f"SELECT 1 FROM building_states WHERE {_WHERE} FOR UPDATE", warehouse_key
-                )
-                stock = connection.execute(
-                    """SELECT storage FROM building_resources
-                       WHERE world_id = %s AND faction = %s AND building = 'warehouse' AND resource = 'wood'
-                       FOR UPDATE""",
-                    (key[0], key[1]),
-                ).fetchone()
-                available = 0 if stock is None else int(stock["storage"])
+                if source == "warehouse":
+                    warehouse_key = (key[0], key[1], "warehouse")
+                    self._ensure(connection, warehouse_key, now)
+                    connection.execute(
+                        f"SELECT 1 FROM building_states WHERE {_WHERE} FOR UPDATE", warehouse_key
+                    )
+                    stock = connection.execute(
+                        """SELECT storage FROM building_resources
+                           WHERE world_id = %s AND faction = %s AND building = 'warehouse' AND resource = 'wood'
+                           FOR UPDATE""",
+                        (key[0], key[1]),
+                    ).fetchone()
+                    available = 0 if stock is None else int(stock["storage"])
+                else:
+                    available = int(self._backpack_amount(connection, character_id, STORAGE_ITEM_IDS["wood"]))
                 amount = min(quantity, missing, available)
                 if amount <= 0:
-                    raise ValueError("На складе нет древесины или взнос уже заполнен")
-                connection.execute(
-                    """UPDATE building_resources SET storage = storage - %s
-                       WHERE world_id = %s AND faction = %s AND building = 'warehouse' AND resource = 'wood'""",
-                    (amount, key[0], key[1]),
-                )
+                    raise ValueError("В выбранном источнике нет древесины или взнос уже заполнен")
+                if source == "warehouse":
+                    connection.execute(
+                        """UPDATE building_resources SET storage = storage - %s
+                           WHERE world_id = %s AND faction = %s AND building = 'warehouse' AND resource = 'wood'""",
+                        (amount, key[0], key[1]),
+                    )
+                elif not self._take_inventory_items(connection, character_id, STORAGE_ITEM_IDS["wood"], amount):
+                    raise ValueError("В рюкзаке недостаточно древесины")
                 connection.execute(
                     f"""UPDATE stable_stall_upgrade_contributions
                         SET wood_deposited = wood_deposited + %s WHERE {_WHERE} AND upgrade_id = %s""",
                     (amount, *key, upgrade_id),
                 )
-            else:
+            elif source == "wallet":
                 missing = upgrade["silver_cost"] - progress["silver_deposited"]
                 character = connection.execute(
                     "SELECT copper, silver, gold FROM characters WHERE id = %s FOR UPDATE",
@@ -1042,6 +1219,28 @@ class ProductionBuildings:
                     """UPDATE characters SET copper = %s, silver = %s, gold = %s, updated_at = %s
                        WHERE id = %s""",
                     (currency.copper, currency.silver, currency.gold, now, int(character_id)),
+                )
+                connection.execute(
+                    f"""UPDATE stable_stall_upgrade_contributions
+                        SET silver_deposited = silver_deposited + %s WHERE {_WHERE} AND upgrade_id = %s""",
+                    (amount, *key, upgrade_id),
+                )
+            else:
+                missing = upgrade["silver_cost"] - progress["silver_deposited"]
+                treasury = connection.execute(
+                    """SELECT treasury_copper FROM city_population_state
+                       WHERE world_id = %s AND faction = %s FOR UPDATE""",
+                    key[:2],
+                ).fetchone()
+                available = (0 if treasury is None else
+                             int(treasury["treasury_copper"]) // Currency.COPPER_PER_SILVER)
+                amount = min(quantity, missing, available)
+                if amount <= 0:
+                    raise ValueError("В казне недостаточно серебра для взноса")
+                connection.execute(
+                    """UPDATE city_population_state SET treasury_copper = treasury_copper - %s
+                       WHERE world_id = %s AND faction = %s""",
+                    (Currency.to_copper(silver=amount), *key[:2]),
                 )
                 connection.execute(
                     f"""UPDATE stable_stall_upgrade_contributions

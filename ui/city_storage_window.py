@@ -22,6 +22,7 @@ class CityStorageWindow(ProductionBuildingWindow):
         self.storage_tab = pygame.Rect(self.rect.left + 24, self.rect.top + 92, 190, 30)
         self.upgrade_tab = pygame.Rect(self.rect.left + 220, self.rect.top + 92, 190, 30)
         self.storage_deposit_buttons = {}
+        self.storage_withdraw_buttons = {}
 
     @property
     def unit(self):
@@ -35,8 +36,9 @@ class CityStorageWindow(ProductionBuildingWindow):
             result = self.contribution_dialog.handle_event(event)
             if result is not None:
                 target, quantity = result
-                if isinstance(target, tuple) and target[0] == "storage":
-                    self._request("storage/deposit", {"resource": target[1], "quantity": quantity})
+                if isinstance(target, tuple) and target[0] in ("storage", "storage_withdraw"):
+                    action = "storage/withdraw" if target[0] == "storage_withdraw" else "storage/deposit"
+                    self._request(action, {"resource": target[1], "quantity": quantity})
                 else:
                     self.deposit_material(target, quantity)
             return
@@ -55,6 +57,18 @@ class CityStorageWindow(ProductionBuildingWindow):
             self.tab = "upgrade"
             self.load()
         elif self.tab == "storage":
+            for resource, button in self.storage_withdraw_buttons.items():
+                if button.collidepoint(pos):
+                    quantity = int(self._state().get("storage", {}).get(resource, 0))
+                    withdrawable = self._state().get("storage_withdrawable", {}).get(resource, {})
+                    self.contribution_dialog.open(
+                        ("storage_withdraw", resource),
+                        RESOURCES.get(resource, {}).get("label", resource),
+                        quantity, withdrawable.get("max_withdraw", 0), mode="withdraw",
+                        weight_state=withdrawable,
+                        item_weight_kg=withdrawable.get("item_weight_kg", 0),
+                    )
+                    return
             for resource, button in self.storage_deposit_buttons.items():
                 if button.collidepoint(pos):
                     depositable = self._state().get("storage_depositable", {}).get(resource, {})
@@ -63,6 +77,7 @@ class CityStorageWindow(ProductionBuildingWindow):
                         RESOURCES.get(resource, {}).get("label", resource),
                         depositable.get("in_backpack", 0),
                         depositable.get("max_deposit", 0),
+                        mode="deposit",
                     )
                     return
         elif self.tab == "upgrade":
@@ -136,22 +151,29 @@ class CityStorageWindow(ProductionBuildingWindow):
         screen.blit(filled, filled.get_rect(midright=(header.right - 12, header.centery)))
         curr_y = header.bottom
         self.storage_deposit_buttons = {}
+        self.storage_withdraw_buttons = {}
         for index, resource in enumerate(self.resources):
             row = pygame.Rect(table.left, curr_y, table.width, row_height)
             pygame.draw.rect(screen, (32, 34, 26) if index % 2 else (38, 40, 30), row)
             draw_item_icon(screen, resource, (row.left + 12, row.top + 3), 22)
             screen.blit(scene.font.render(RESOURCES[resource]["label"], True, (215, 215, 205)), (row.left + 40, row.top + 3))
-            amount = scene.font.render(str(storage.get(resource, 0)), True, (235, 235, 225))
-            screen.blit(amount, amount.get_rect(midright=(row.right - 12, row.centery)))
+            amount = int(storage.get(resource, 0))
+            amount_surface = scene.font.render(str(amount), True, (235, 235, 225))
+            screen.blit(amount_surface, amount_surface.get_rect(midright=(row.right - 230, row.centery)))
             available = depositable.get(resource, {})
             maximum = int(available.get("max_deposit", 0))
+            bag_text = scene.small_font.render(
+                f"Рюкзак: {available.get('in_backpack', 0)}", True, (185, 190, 170)
+            )
+            screen.blit(bag_text, (row.left + 260, row.top + 6))
+            if amount > 0:
+                button = pygame.Rect(row.right - 220, row.top + 2, 96, row.height - 4)
+                draw_button(screen, button, "ВЗЯТЬ", scene.small_font,
+                            color=(69, 98, 72), text_color=(235, 245, 230))
+                self.storage_withdraw_buttons[resource] = button
             if maximum > 0:
-                bag_text = scene.small_font.render(
-                    f"В рюкзаке: {available.get('in_backpack', 0)}", True, (185, 190, 170)
-                )
-                screen.blit(bag_text, bag_text.get_rect(midright=(row.right - 190, row.centery)))
-                button = pygame.Rect(row.right - 155, row.top + 2, 140, row.height - 4)
-                draw_button(screen, button, "ВЫГРУЗИТЬ", scene.small_font,
+                button = pygame.Rect(row.right - 116, row.top + 2, 104, row.height - 4)
+                draw_button(screen, button, "ВНЕСТИ", scene.small_font,
                             color=(68, 112, 60), text_color=(235, 245, 230))
                 self.storage_deposit_buttons[resource] = button
             curr_y = row.bottom
