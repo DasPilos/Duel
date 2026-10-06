@@ -1384,15 +1384,12 @@ class ProductionBuildingWindow:
         screen.blit(scene.small_font.render("Материалы списываются с общего склада", True, (220, 210, 170)), (rect.left + 24, curr_y))
         curr_y += 28
         for material in upgrade["materials"]:
-            done = material["deposited"] >= material["required"]
-            text = f"{material['name']}: {material['deposited']}/{material['required']}   на складе: {material['in_warehouse']}"
+            remaining = int(material.get("remaining", material["required"] - material["deposited"]))
+            done = int(material["deposited"]) + int(material["in_warehouse"]) >= int(material["required"])
+            credit = f", ранее оплачено {material['deposited']}" if material["deposited"] else ""
+            text = f"{material['name']}: склад {material['in_warehouse']}/{remaining}{credit}"
             draw_item_icon(screen, material, (rect.left + 12, curr_y + 2), 24)
             screen.blit(scene.small_font.render(text, True, (140, 230, 140) if done else (230, 200, 120)), (rect.left + 42, curr_y + 6))
-            if not done and not upgrade["in_progress"]:
-                button = pygame.Rect(rect.left + 520, curr_y, 140, 28)
-                draw_button(screen, button, "ВНЕСТИ", scene.small_font,
-                            color=(80, 140, 85) if material["in_warehouse"] > 0 else (55, 55, 60))
-                self.deposit_buttons[material["item_id"]] = button
             curr_y += 36
         curr_y += 12
         if upgrade["in_progress"]:

@@ -58,7 +58,6 @@ class CityStorageServerTests(unittest.TestCase):
             for level in range(1, 5):
                 for item_id, required in upgrade_requirements(level, building)["materials"].items():
                     self._deposit_warehouse(self.character_id, item_id, required, now)
-                    self.buildings.deposit_material(self.character_id, building, item_id, required, now)
                 self.buildings.start_upgrade(self.character_id, building, now)
                 now += upgrade_requirements(level, building)["time_seconds"]
                 state = self.buildings.get_state(self.character_id, building, now)
@@ -94,7 +93,14 @@ class CityStorageServerTests(unittest.TestCase):
         self.assertEqual([horse_purchase_price_silver(count) for count in range(5)],
                  [10, 10, 10, 10, 10])
         with self.database.connection() as connection:
-            connection.execute("UPDATE characters SET silver = 500 WHERE id = %s", (self.character_id,))
+            connection.execute(
+                "UPDATE characters SET copper=0,silver=0,gold=0 WHERE id=%s",
+                (self.character_id,),
+            )
+            connection.execute(
+                "UPDATE city_population_state SET treasury_copper=4000 WHERE world_id=%s AND faction='light'",
+                (self.database.world_id,),
+            )
         state = self.buildings.get_state(self.character_id, "stable", 10000)
         self.assertEqual(state["horse_price_next_silver"], 10)
         for slot_index, price in enumerate((10, 10, 10, 10)):
@@ -104,6 +110,13 @@ class CityStorageServerTests(unittest.TestCase):
             self.assertEqual(horse["status"], "Отдыхает")
         self.assertEqual(state["occupied_stalls"], 4)
         self.assertEqual(state["horse_price_next_silver"], 10)
+        self.assertEqual(state["treasury_silver_available"], 0)
+        with self.database.connection() as connection:
+            wallet = connection.execute(
+                "SELECT copper,silver,gold FROM characters WHERE id=%s",
+                (self.character_id,),
+            ).fetchone()
+        self.assertEqual((wallet["copper"], wallet["silver"], wallet["gold"]), (0, 0, 0))
         with self.assertRaisesRegex(ValueError, "Стойло ещё не открыто"):
             self.buildings.purchase_horse(self.character_id, 4, 10005)
 
@@ -113,118 +126,93 @@ class CityStorageServerTests(unittest.TestCase):
         self.assertEqual(shared["occupied_stalls"], 4)
         self.assertEqual(shared["stall_slots"][3]["horse"]["purchase_price_silver"], 10)
 
-    def test_shared_stall_upgrades_require_personal_contributions(self):
+    def test_shared_stall_upgrade_checks_and_debits_common_balances(self):
         stable = self.buildings.get_state(self.character_id, "stable", 10000)
-        warehouse = self.buildings.get_state(self.character_id, "warehouse", 10000)
-        items = ItemsDatabase(self.database)
-        self._deposit_warehouse(self.character_id, 60, 200)
-        with self.database.connection() as connection:
-            connection.execute("UPDATE characters SET silver = 25 WHERE id = %s", (self.character_id,))
-            self.assertEqual(
-                connection.execute("SELECT silver FROM characters WHERE id = %s", (self.character_id,))
-                .fetchone()["silver"],
-                25,
-            )
-
-        wood_partial = self.buildings.contribute_stall_upgrade(
-            self.character_id, "wooden_stalls", "wood", 300, 10000
-        )
-        self.assertEqual(wood_partial["stall_upgrades"]["wooden_stalls"]["silver_available"], 35)
-        partial = self.buildings.contribute_stall_upgrade(
-            self.character_id, "wooden_stalls", "silver", 25, 10001
-        )
-        self.assertEqual(partial["stall_upgrades"]["wooden_stalls"]["wood_deposited"], 200)
-        self.assertEqual(partial["stall_upgrades"]["wooden_stalls"]["silver_deposited"], 25)
-        self.assertFalse(partial["stall_upgrades"]["wooden_stalls"]["ready"])
-        with self.assertRaisesRegex(ValueError, "внесите все материалы"):
-            self.buildings.purchase_stall_upgrade(self.character_id, "wooden_stalls", 10002)
-
-        teammate_user = self.database.register("stallmate", "password")
-        teammate_id = self.database.create_character(teammate_user["id"], "Stallmate")["id"]
         with self.database.connection() as connection:
             connection.execute(
-                "UPDATE characters SET stats_json = %s WHERE id = %s",
-                ('{"strength":1000,"agility":3,"intuition":3,"wisdom":3,"intellect":3,"harmony":3,"endurance":3}',
-                 teammate_id),
+                "UPDATE characters SET copper=0,silver=25,gold=0 WHERE id=%s",
+                (self.character_id,),
             )
-        self._deposit_warehouse(teammate_id, 60, 100, 10003)
-        with self.database.connection() as connection:
-            connection.execute("UPDATE characters SET silver = 25 WHERE id = %s", (teammate_id,))
-        self.buildings.contribute_stall_upgrade(teammate_id, "wooden_stalls", "wood", 100, 10003)
-        ready = self.buildings.contribute_stall_upgrade(
-            teammate_id, "wooden_stalls", "silver", 25, 10004
-        )
-        self.assertTrue(ready["stall_upgrades"]["wooden_stalls"]["ready"])
-        self.assertEqual(ready["stall_upgrades"]["wooden_stalls"]["wood_deposited"], 300)
-        self.assertEqual(ready["stall_upgrades"]["wooden_stalls"]["silver_deposited"], 50)
-        warehouse_after = self.buildings.get_state(teammate_id, "warehouse", 10004)
-        self.assertEqual(warehouse_after["storage"]["wood"], warehouse["storage"]["wood"])
-
-        first = self.buildings.purchase_stall_upgrade(self.character_id, "wooden_stalls", 10005)
+            connection.execute(
+                "UPDATE city_population_state SET treasury_copper=5000 WHERE world_id=%s AND faction='light'",
+                (self.database.world_id,),
+            )
+        self._deposit_warehouse(self.character_id, 60, 300)
+        before = self.buildings.get_state(self.character_id, "stable", 10001)
+        self.assertTrue(before["stall_upgrades"]["wooden_stalls"]["can_purchase"])
+        first = self.buildings.purchase_stall_upgrade(self.character_id, "wooden_stalls", 10002)
+        self.assertEqual(first["warehouse_storage"]["wood"], 0)
+        self.assertEqual(first["treasury_silver_available"], 0)
+        self.assertEqual(first["silver_available"], 25)
         self.assertEqual(first["stall_capacity"], stable["stall_capacity"])
         self.assertTrue(first["stall_upgrades"]["wooden_stalls"]["purchased"])
         self.assertTrue(first["stall_upgrades"]["wooden_stalls"]["in_progress"])
         self.assertEqual(first["stall_upgrades"]["wooden_stalls"]["seconds_left"], 10800)
         self.assertFalse(first["stall_slots"][4]["unlocked"])
         with self.assertRaisesRegex(ValueError, "уже куплено"):
-            self.buildings.purchase_stall_upgrade(self.character_id, "wooden_stalls", 10006)
-        before_finish = self.buildings.get_state(teammate_id, "stable", 20804)
+            self.buildings.purchase_stall_upgrade(self.character_id, "wooden_stalls", 10003)
+        teammate_user = self.database.register("stallmate", "password")
+        teammate_id = self.database.create_character(teammate_user["id"], "Stallmate")["id"]
+        before_finish = self.buildings.get_state(teammate_id, "stable", 20801)
         self.assertEqual(before_finish["stall_capacity"], stable["stall_capacity"])
         self.assertEqual(before_finish["stall_upgrades"]["wooden_stalls"]["seconds_left"], 1)
-        shared = self.buildings.get_state(teammate_id, "stable", 20805)
+        shared = self.buildings.get_state(teammate_id, "stable", 20802)
         self.assertEqual(shared["stall_capacity"], stable["stall_capacity"] + 1)
         self.assertTrue(shared["stall_upgrades"]["wooden_stalls"]["completed"])
         self.assertTrue(shared["stall_slots"][4]["unlocked"])
 
-    def test_stall_upgrade_accepts_backpack_wood_and_treasury_silver(self):
+    def test_stall_purchase_never_debits_backpack_directly(self):
         items = ItemsDatabase(self.database)
-        items.add_to_inventory(self.character_id, 60, 40)
+        items.add_to_inventory(self.character_id, 60, 300)
         with self.database.connection() as connection:
-            connection.execute("UPDATE characters SET silver=25 WHERE id=%s", (self.character_id,))
             connection.execute(
                 "UPDATE city_population_state SET treasury_copper=5000 WHERE world_id=%s AND faction='light'",
                 (self.database.world_id,),
             )
-
-        wood_state = self.buildings.contribute_stall_upgrade(
-            self.character_id, "wooden_stalls", "wood", 40, 10000, source="backpack"
+        with self.assertRaisesRegex(ValueError, "общем складе"):
+            self.buildings.purchase_stall_upgrade(self.character_id, "wooden_stalls", 10000)
+        self.assertEqual(sum(row["quantity"] for row in items.get_inventory(self.character_id)
+                             if row["item_id"] == 60), 300)
+        self._deposit_warehouse(self.character_id, 60, 300, 10001)
+        purchased = self.buildings.purchase_stall_upgrade(
+            self.character_id, "wooden_stalls", 10002
         )
-        progress = wood_state["stall_upgrades"]["wooden_stalls"]
-        self.assertEqual(progress["wood_deposited"], 40)
-        self.assertEqual(progress["wood_in_warehouse"], 0)
-        self.assertEqual(progress["wood_in_backpack"], 0)
+        self.assertTrue(purchased["stall_upgrades"]["wooden_stalls"]["purchased"])
+        self.assertEqual(purchased["warehouse_storage"]["wood"], 0)
+        self.assertEqual(purchased["treasury_silver_available"], 0)
+        self.assertEqual(sum(row["quantity"] for row in items.get_inventory(self.character_id)
+                             if row["item_id"] == 60), 0)
 
-        silver_state = self.buildings.contribute_stall_upgrade(
-            self.character_id, "wooden_stalls", "silver", 20, 10001, source="treasury"
-        )
-        progress = silver_state["stall_upgrades"]["wooden_stalls"]
-        self.assertEqual(progress["silver_deposited"], 20)
-        self.assertEqual(progress["treasury_silver_available"], 30)
-        with self.database.connection() as connection:
-            wallet = connection.execute("SELECT silver FROM characters WHERE id=%s", (self.character_id,)).fetchone()["silver"]
-        self.assertEqual(wallet, 25)
-
-    def test_building_upgrade_accepts_material_from_backpack(self):
+    def test_building_upgrade_spends_shared_warehouse_not_backpack(self):
         items = ItemsDatabase(self.database)
         requirements = upgrade_requirements(1, "stable")["materials"]
-        item_id, required = next(iter(requirements.items()))
-        items.add_to_inventory(self.character_id, item_id, required)
+        first_item_id, first_required = next(iter(requirements.items()))
+        items.add_to_inventory(self.character_id, first_item_id, first_required)
 
-        state = self.buildings.deposit_material(
-            self.character_id, "stable", item_id, required, 10000, source="backpack"
-        )
-
-        deposited = next(item for item in state["upgrade"]["materials"]
-                         if item["item_id"] == item_id)
-        self.assertEqual(deposited["deposited"], required)
-        self.assertEqual(deposited["in_backpack"], 0)
+        with self.assertRaisesRegex(ValueError, "общем складе"):
+            self.buildings.start_upgrade(self.character_id, "stable", 10000)
         self.assertEqual(sum(item["quantity"] for item in items.get_inventory(self.character_id)
-                             if item["item_id"] == item_id), 0)
+                             if item["item_id"] == first_item_id), first_required)
 
-    def test_warehouse_deposit_and_cart_purchase_are_server_backed(self):
+        for item_id, required in requirements.items():
+            resource = STORAGE_RESOURCES_BY_ITEM_ID[item_id]
+            self._deposit_warehouse(self.character_id, item_id, required, 10001)
+        state = self.buildings.start_upgrade(self.character_id, "stable", 10002)
+        self.assertTrue(state["upgrade"]["in_progress"])
+        warehouse = self.buildings.get_state(self.character_id, "warehouse", 10003)
+        for item_id in requirements:
+            resource = STORAGE_RESOURCES_BY_ITEM_ID[item_id]
+            self.assertEqual(warehouse["storage"].get(resource, 0), 0)
+            self.assertEqual(sum(item["quantity"] for item in items.get_inventory(self.character_id)
+                                 if item["item_id"] == item_id), first_required if item_id == first_item_id else 0)
+
+    def test_cart_purchase_debits_shared_warehouse_and_treasury_atomically(self):
         items = ItemsDatabase(self.database)
         with self.database.connection() as connection:
-            connection.execute("UPDATE characters SET silver = 50 WHERE id = %s", (self.character_id,))
+            connection.execute(
+                "UPDATE characters SET copper = 0, silver = 50, gold = 0 WHERE id = %s",
+                (self.character_id,),
+            )
         items.add_to_inventory(self.character_id, 60, 100)
         deposited = self.buildings.deposit_to_storage(
             self.character_id, "warehouse", "wood", 100, 10000
@@ -233,43 +221,54 @@ class CityStorageServerTests(unittest.TestCase):
         self.assertEqual(sum(item["quantity"] for item in items.get_inventory(self.character_id)
                              if item["item_id"] == 60), 0)
 
-        after_wood = self.buildings.contribute_cart(self.character_id, "wood", 100, 10001)
-        self.assertEqual(after_wood["warehouse_storage"]["wood"], 0)
-        self.assertEqual(after_wood["cart_progress"]["grades"]["1"]["wood_deposited"], 100)
-        after_silver = self.buildings.contribute_cart(self.character_id, "silver", 10, 10002)
-        self.assertEqual(after_silver["cart_progress"]["grades"]["1"]["silver_deposited"], 10)
+        with self.database.connection() as connection:
+            connection.execute(
+                "UPDATE city_population_state SET treasury_copper=1000 WHERE world_id=%s AND faction='light'",
+                (self.database.world_id,),
+            )
         purchased = self.buildings.purchase_cart(self.character_id, now=10003)
         self.assertTrue(purchased["cart_progress"]["grades"]["1"]["body_owned"])
+        self.assertEqual(purchased["warehouse_storage"]["wood"], 0)
+        self.assertEqual(purchased["treasury_silver_available"], 0)
+        self.assertEqual(purchased["silver_available"], 50)
+        self.assertEqual(len(purchased["available_carts"]), 1)
+        self.assertEqual(purchased["available_carts"][0]["id"], "cart_grade_1")
+        self.assertFalse(purchased["available_carts"][0]["dispatch_available"])
         persisted = ProductionBuildings(self.database).get_state(self.character_id, "stable", 10004)
         self.assertTrue(persisted["cart_progress"]["grades"]["1"]["body_owned"])
+        self.assertEqual(len(persisted["available_carts"]), 1)
 
-    def test_cart_contribution_can_use_backpack_and_city_treasury(self):
+    def test_cart_purchase_rejects_shortage_without_partial_debit(self):
+        with self.database.connection() as connection:
+            connection.execute(
+                "UPDATE city_population_state SET treasury_copper=500 WHERE world_id=%s AND faction='light'",
+                (self.database.world_id,),
+            )
+        with self.assertRaisesRegex(ValueError, "Недостаточно ресурсов на общем складе"):
+            self.buildings.purchase_cart(self.character_id, now=10003)
+        state = self.buildings.get_state(self.character_id, "stable", 10004)
+        self.assertFalse(state["cart_progress"]["grades"]["1"]["body_owned"])
+        self.assertEqual(state["treasury_silver_available"], 5)
+
+    def test_cart_purchase_does_not_debit_backpack_or_wallet(self):
         items = ItemsDatabase(self.database)
         items.add_to_inventory(self.character_id, 60, 100)
         with self.database.connection() as connection:
-            connection.execute("UPDATE characters SET silver=50 WHERE id=%s", (self.character_id,))
             connection.execute(
                 "UPDATE city_population_state SET treasury_copper=2000 WHERE world_id=%s AND faction='light'",
                 (self.database.world_id,),
             )
 
-        after_wood = self.buildings.contribute_cart(
-            self.character_id, "wood", 100, 10001, source="backpack"
-        )
-        self.assertEqual(after_wood["cart_progress"]["grades"]["1"]["wood_deposited"], 100)
+        with self.assertRaisesRegex(ValueError, "Отдельные взносы за повозку отключены"):
+            self.buildings.contribute_cart(self.character_id, "wood", 100, 10001, source="backpack")
         self.assertEqual(sum(item["quantity"] for item in items.get_inventory(self.character_id)
-                             if item["item_id"] == 60), 0)
-
-        after_silver = self.buildings.contribute_cart(
-            self.character_id, "silver", 10, 10002, source="treasury"
-        )
-        self.assertEqual(after_silver["cart_progress"]["grades"]["1"]["silver_deposited"], 10)
-        self.assertEqual(after_silver["treasury_silver_available"], 10)
+                             if item["item_id"] == 60), 100)
         with self.database.connection() as connection:
-            wallet = connection.execute(
-                "SELECT silver FROM characters WHERE id=%s", (self.character_id,)
-            ).fetchone()["silver"]
-        self.assertEqual(wallet, 50)
+            treasury = connection.execute(
+                "SELECT treasury_copper FROM city_population_state WHERE world_id=%s AND faction='light'",
+                (self.database.world_id,),
+            ).fetchone()["treasury_copper"]
+        self.assertEqual(treasury, 2000)
 
 
 class FakeStorageClient:
@@ -300,6 +299,7 @@ class FakeStorageClient:
         self.last_payload = None
         self.cart_progress = deepcopy(DEFAULT_CART_PROGRESS)
         self.warehouse_storage = {"wood": 12, "board": 4, "flax": 9}
+        self.treasury_silver_available = 100
         self.action_error = None
 
     def get_building(self, building, _character_id):
@@ -315,22 +315,31 @@ class FakeStorageClient:
                 ],
                 "stall_capacity_bonus": 0,
                 "silver_available": 100,
-                "treasury_silver_available": 30,
+                "treasury_silver_available": self.treasury_silver_available,
                 "backpack_resource_amounts": {"wood": 12},
                 "warehouse_storage": dict(self.warehouse_storage),
                 "cart_progress": deepcopy(self.cart_progress),
+                "available_carts": ([{
+                    "id": "cart_grade_1", "grade": 1, "name": "Лёгкая повозка",
+                    "status": "Ожидает отправки", "can_travel": False,
+                    "dispatch_available": False, "horse_slots": 1, "resource_slots": 1,
+                    "capacity_kg": 300, "seconds_per_tile": 23.9473,
+                    "status_message": "Отправка транспортных рейсов ещё не подключена.",
+                }] if self.cart_progress["grades"]["1"].get("body_owned") else []),
                 "horse_price_next_silver": 50,
                 "stall_upgrades": {
-                    "wooden_stalls": {"wood_cost": 300, "silver_cost": 50,
-                                      "purchased": False, "ready": False,
+                                        "wooden_stalls": {"wood_cost": 300, "silver_cost": 50,
+                                                                            "purchased": False, "ready": True, "can_purchase": True,
+                                                                            "wood_remaining": 300, "silver_remaining": 50,
                                       "wood_deposited": 0, "silver_deposited": 0,
                                       "wood_in_warehouse": 300, "wood_in_backpack": 12,
-                                      "silver_available": 50, "treasury_silver_available": 30},
+                                      "silver_available": 50, "treasury_silver_available": self.treasury_silver_available},
                     "hayloft": {"wood_cost": 300, "silver_cost": 50,
-                                "purchased": False, "ready": False,
+                                                                "purchased": False, "ready": True, "can_purchase": True,
+                                                                "wood_remaining": 300, "silver_remaining": 50,
                                 "wood_deposited": 0, "silver_deposited": 0,
-                                  "wood_in_warehouse": 300, "wood_in_backpack": 12,
-                                  "silver_available": 50, "treasury_silver_available": 30},
+                                                                "wood_in_warehouse": 300, "wood_in_backpack": 12,
+                                                                "silver_available": 50, "treasury_silver_available": self.treasury_silver_available},
                 },
                 "storage": {"limit": 0}, "storage_total": 0, "worker_slots": [],
                 "upgrade": {"next_level": 2, "time_seconds": 7200, "ready": False,
@@ -391,16 +400,16 @@ class FakeStorageClient:
         self.last_payload = payload or {}
         if self.action_error is not None:
             raise self.action_error
-        if building == "stable" and action == "cart/contribute":
+        if building == "stable" and action == "cart/purchase":
             grade = self.cart_progress["grades"]["1"]
-            quantity = int(payload["quantity"])
-            if payload["resource"] == "wood":
-                quantity = min(quantity, self.warehouse_storage["wood"], 100 - grade["wood_deposited"])
-                self.warehouse_storage["wood"] -= quantity
-                grade["wood_deposited"] += quantity
-            else:
-                quantity = min(quantity, 20 - grade["silver_deposited"])
-                grade["silver_deposited"] += quantity
+            wood_due = max(0, 100 - grade.get("wood_deposited", 0))
+            silver_due = max(0, 10 - grade.get("silver_deposited", 0))
+            if self.warehouse_storage["wood"] >= wood_due and self.treasury_silver_available >= silver_due:
+                self.warehouse_storage["wood"] -= wood_due
+                self.treasury_silver_available -= silver_due
+                grade["wood_deposited"] = 100
+                grade["silver_deposited"] = 10
+                grade["body_owned"] = True
         return self.get_building(building, _character_id)
 
 
@@ -416,28 +425,36 @@ class CityStorageWindowTests(unittest.TestCase):
     def tearDown(self):
         pygame.quit()
 
-    def test_cart_wood_progress_updates_only_after_inventory_removal_succeeds(self):
-        from client.network import ServerError
-
+    def test_cart_purchase_debits_shared_balances_without_contribution_dialog(self):
         window = self.scene.stable_window
+        self.client.warehouse_storage["wood"] = 100
+        self.client.treasury_silver_available = 10
         window.state = self.client.get_building("stable", 1)
         window._sync_cart_progress()
-        window.contribution_dialog.is_open = True
-        event = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_RETURN)
-        contribution = (("cart_grade_1", "wood"), 5)
+        window.tab = "carts"
+        window._draw_carts(self.screen)
+        self.assertEqual(window.cart_contribution_areas, {})
+        button = window.cart_purchase_buttons[1]
 
-        self.client.action_error = ServerError("На складе недостаточно древесины")
-        with patch.object(window.contribution_dialog, "handle_event", return_value=contribution):
-            window.handle_event(event)
-        self.assertEqual(window.cart_progress["grades"]["1"]["wood_deposited"], 0)
-        self.assertEqual(self.client.warehouse_storage["wood"], 12)
+        window.handle_event(pygame.event.Event(
+            pygame.MOUSEBUTTONDOWN, button=1, pos=button.center,
+        ))
 
-        self.client.action_error = None
-        window.contribution_dialog.is_open = True
-        with patch.object(window.contribution_dialog, "handle_event", return_value=contribution):
-            window.handle_event(event)
-        self.assertEqual(window.cart_progress["grades"]["1"]["wood_deposited"], 5)
-        self.assertEqual(self.client.warehouse_storage["wood"], 7)
+        self.assertIn(("stable", "cart/purchase"), self.client.calls)
+        self.assertEqual(self.client.warehouse_storage["wood"], 0)
+        self.assertEqual(self.client.treasury_silver_available, 0)
+        self.assertTrue(self.client.cart_progress["grades"]["1"]["body_owned"])
+
+    def test_cart_shortage_does_not_offer_backpack_contribution(self):
+        window = self.scene.stable_window
+        window.state = self.client.get_building("stable", 1)
+        window.tab = "carts"
+        window._draw_carts(self.screen)
+
+        self.assertEqual(window.cart_contribution_areas, {})
+        self.assertNotIn(1, window.cart_purchase_buttons)
+        self.assertIsNone(window.source_picker)
+        self.assertFalse(any(action == "cart/purchase" for _, action in self.client.calls))
 
     def test_barn_and_warehouse_windows(self):
         for building, opener, window in (
@@ -448,25 +465,20 @@ class CityStorageWindowTests(unittest.TestCase):
                 opener()
                 self.scene.draw(self.screen)
                 self.assertEqual(window.tab, "storage")
-                self.scene.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=window.upgrade_tab.center))
+                window.handle_event(pygame.event.Event(
+                    pygame.MOUSEBUTTONDOWN, button=1, pos=window.upgrade_tab.center,
+                ))
                 self.assertEqual(window.tab, "upgrade")
-                self.scene.draw(self.screen)
-                button = window.deposit_buttons[60]
-                self.scene.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=button.center))
-                self.assertTrue(window.contribution_dialog.is_open)
-                self.scene.draw(self.screen)
-                dialog = window.contribution_dialog
-                self.scene.handle_event(pygame.event.Event(
-                    pygame.MOUSEBUTTONDOWN, button=1,
-                    pos=(dialog.track_rect.right - 1, dialog.track_rect.centery)))
-                self.scene.handle_event(pygame.event.Event(
-                    pygame.MOUSEBUTTONUP, button=1, pos=dialog.track_rect.midright))
-                self.scene.handle_event(pygame.event.Event(
-                    pygame.MOUSEBUTTONDOWN, button=1, pos=dialog.confirm_button.center))
-                self.assertIn((building, "upgrade/deposit"), self.client.calls)
-                self.scene.handle_event(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_ESCAPE))
+                window.deposit_buttons = {}
+                window.state["upgrade"]["ready"] = True
+                window.draw(self.screen)
+                self.assertEqual(window.deposit_buttons, {})
+                window.handle_event(pygame.event.Event(
+                    pygame.MOUSEBUTTONDOWN, button=1, pos=window.upgrade_button.center,
+                ))
+                self.assertIn((building, "upgrade/start"), self.client.calls)
+                window.handle_event(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_ESCAPE))
                 self.assertFalse(window.is_open)
-                self.assertFalse(self.scene._any_modal_open())
 
     def test_warehouse_storage_deposit_uses_available_backpack_resource(self):
         window = self.scene.warehouse_window
@@ -615,61 +627,6 @@ class CityStorageWindowTests(unittest.TestCase):
         self.assertTrue(self.scene._any_modal_open())
         self.scene.handle_event(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_ESCAPE))
         self.assertFalse(self.scene.stable_menu_open)
-
-    def test_cart_contribution_button_opens_source_picker_before_slider(self):
-        window = self.scene.stable_window
-        window.state = self.client.get_building("stable", 1)
-        window.tab = "carts"
-        window._draw_carts(self.screen)
-        window.handle_event(pygame.event.Event(
-            pygame.MOUSEBUTTONDOWN, button=1,
-            pos=window.cart_contribution_areas["wood"].center,
-        ))
-        self.assertEqual(window.source_picker["target"], ("cart_grade_1", "wood"))
-        window._draw_source_picker(self.screen)
-        self.assertEqual(set(window.source_picker_buttons), {"warehouse", "backpack"})
-        window.handle_event(pygame.event.Event(
-            pygame.MOUSEBUTTONDOWN, button=1,
-            pos=window.source_picker_buttons["backpack"].center,
-        ))
-        self.assertEqual(window.pending_contribution_source, "backpack")
-        self.assertEqual(window.contribution_dialog.maximum, 12)
-
-        with patch.object(window.contribution_dialog, "handle_event",
-                          return_value=(("cart_grade_1", "wood"), 8)):
-            window.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=(0, 0)))
-
-        self.assertIn(("stable", "cart/contribute"), self.client.calls)
-        self.assertEqual(self.client.last_payload, {
-            "resource": "wood", "quantity": 8, "source": "backpack",
-        })
-
-    def test_cart_contribution_source_picker_precedes_amount_slider(self):
-        window = self.scene.stable_window
-        window.state = self.client.get_building("stable", 1)
-        window._open_source_picker(
-            ("cart_grade_1", "wood"), "Древесина", 100,
-            [{"source": "warehouse", "label": "Склад", "available": 12},
-             {"source": "backpack", "label": "Рюкзак", "available": 12}],
-        )
-        window._draw_source_picker(self.screen)
-        self.assertEqual(set(window.source_picker_buttons), {"warehouse", "backpack"})
-
-        window.handle_event(pygame.event.Event(
-            pygame.MOUSEBUTTONDOWN, button=1,
-            pos=window.source_picker_buttons["backpack"].center,
-        ))
-
-        self.assertTrue(window.contribution_dialog.is_open)
-        self.assertEqual(window.contribution_dialog.maximum, 12)
-        self.assertEqual(window.pending_contribution_source, "backpack")
-        with patch.object(window.contribution_dialog, "handle_event",
-                          return_value=(("cart_grade_1", "wood"), 8)):
-            window.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=(0, 0)))
-        self.assertIn(("stable", "cart/contribute"), self.client.calls)
-        self.assertEqual(self.client.last_payload, {
-            "resource": "wood", "quantity": 8, "source": "backpack",
-        })
 
     def test_city_player_information_menu_and_chat_room(self):
         session = SimpleNamespace(
@@ -821,35 +778,31 @@ class CityStorageWindowTests(unittest.TestCase):
             self.scene.small_font = original_small_font
         self.assertTrue(any("Приставные деревянные денники" in text for text in rendered))
         self.assertTrue(any("Внешний сеновал" in text for text in rendered))
-        self.assertTrue(any("Древесина: 0/300" in text for text in rendered))
-        self.assertTrue(any("Внесено: 0 меди / 50 серебра" in text for text in rendered))
-        self.assertEqual(sum(text.startswith("Время улучшения: 3 ч") for text in rendered), 2)
-        self.assertNotIn("wooden_stalls", window.stall_upgrade_buttons)
-        wood_button = window.stall_contribution_buttons[("wooden_stalls", "wood")]
-        self.scene.handle_event(pygame.event.Event(
-            pygame.MOUSEBUTTONDOWN, button=1, pos=wood_button.center))
-        self.assertIsNotNone(window.source_picker)
-        window._draw_source_picker(self.screen)
-        self.scene.handle_event(pygame.event.Event(
-            pygame.MOUSEBUTTONDOWN, button=1,
-            pos=window.source_picker_buttons["warehouse"].center,
-        ))
-        self.assertTrue(window.contribution_dialog.is_open)
-        self.assertEqual(window.contribution_dialog.maximum, 300)
-        self.scene.draw(self.screen)
-        slider = window.contribution_dialog
-        self.scene.handle_event(pygame.event.Event(
-            pygame.MOUSEBUTTONDOWN, button=1, pos=(slider.track_rect.right, slider.track_rect.centery)))
-        self.scene.handle_event(pygame.event.Event(pygame.MOUSEBUTTONUP, button=1, pos=slider.track_rect.topright))
-        self.scene.handle_event(pygame.event.Event(
-            pygame.MOUSEBUTTONDOWN, button=1, pos=slider.confirm_button.center))
-        self.assertIn(("stable", "stall-upgrade/contribute"), self.client.calls)
-        window.state["stall_upgrades"]["wooden_stalls"]["ready"] = True
-        self.scene.draw(self.screen)
+        self.assertTrue(any("Древесина: склад 300/300" in text for text in rendered))
+        self.assertTrue(any("Серебро: казна 100/50" in text for text in rendered))
+        self.assertEqual(sum(text.startswith("Оплата при покупке") for text in rendered), 2)
+        self.assertEqual(window.stall_contribution_buttons, {})
+        self.assertIn("wooden_stalls", window.stall_upgrade_buttons)
         upgrade_button = window.stall_upgrade_buttons["wooden_stalls"]
         self.scene.handle_event(pygame.event.Event(
             pygame.MOUSEBUTTONDOWN, button=1, pos=upgrade_button.center))
         self.assertIn(("stable", "stall-upgrade/purchase"), self.client.calls)
+
+        window.state = self.client.get_building("stable", 1)
+        window.state["upgrade"]["ready"] = True
+        window.upgrade_tab = "building"
+        rendered.clear()
+        self.scene.small_font = Recorder()
+        try:
+            self.scene.draw(self.screen)
+        finally:
+            self.scene.small_font = original_small_font
+        self.assertEqual(window.deposit_buttons, {})
+        self.assertTrue(any("склад 5/5" in text for text in rendered))
+        self.assertTrue(any("ОПЛАТИТЬ И УЛУЧШИТЬ" in text for text in rendered))
+        self.scene.handle_event(pygame.event.Event(
+            pygame.MOUSEBUTTONDOWN, button=1, pos=window.upgrade_button.center))
+        self.assertIn(("stable", "upgrade/start"), self.client.calls)
 
     def test_stalls_tab_uses_server_capacity(self):
         window = self.scene.stable_window
@@ -940,15 +893,36 @@ class CityStorageWindowTests(unittest.TestCase):
         self.assertTrue(any("Лёгкая повозка" in text for text in rendered))
         self.assertTrue(any("Крестьянский обоз" in text for text in rendered))
         self.assertTrue(any("Слотов для товаров" in text for text in rendered))
-        self.assertIn("КУПИТЬ", rendered)
+        self.assertIn("НЕДОСТАТОЧНО", rendered)
         self.assertFalse(any(text == "20" for text in rendered))
         self.assertTrue(any("требование: уровень конюшни 1" in text for text in rendered))
-        self.assertTrue(any("Древесина:" in text for text in rendered))
-        self.assertTrue(any("Серебро:" in text for text in rendered))
+        self.assertTrue(any("Древесина на складе:" in text for text in rendered))
+        self.assertTrue(any("Серебро в казне:" in text for text in rendered))
         self.assertFalse(any("Грейд 1" in text for text in rendered))
         self.assertTrue(any("150 тайлов/час" in text for text in rendered))
         self.assertTrue(any("1 кг/20 сек (3 кг/мин)" in text for text in rendered))
         self.assertFalse(any(text.startswith("не задано") for text in rendered))
+
+    def test_purchased_cart_moves_to_transport_and_is_not_purchasable_again(self):
+        window = self.scene.stable_window
+        grade = self.client.cart_progress["grades"]["1"]
+        grade.update(wood_deposited=100, silver_deposited=10)
+        window.state = self.client.get_building("stable", 1)
+        window._sync_cart_progress()
+
+        window._building_action("cart/purchase", {"grade": 1})
+
+        self.assertTrue(window.cart_progress["grades"]["1"]["body_owned"])
+        carts = window._available_transport_carts()
+        self.assertEqual([cart["id"] for cart in carts], ["cart_grade_1"])
+        self.assertFalse(carts[0]["dispatch_available"])
+        self.assertEqual(window.message, "Лёгкая повозка куплена и добавлена в транспорт.")
+
+        window.tab = "carts"
+        window._draw_carts(self.screen)
+        self.assertNotIn(1, window.cart_purchase_buttons)
+        window._select_transport_option(("cart", None, carts[0]["id"]))
+        self.assertIn("ещё не подключена", window.message)
 
     def test_cart_grade_one_formulas_and_grade_two_gate(self):
         from core.cart_progress import cart_stats, grade_two_unlocked

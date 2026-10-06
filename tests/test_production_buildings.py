@@ -520,9 +520,9 @@ class ProductionBuildingsTests(unittest.TestCase):
                 character_id, "warehouse", STORAGE_RESOURCES_BY_ITEM_ID[item_id],
                 required + 2, 10000,
             )
-            state = self.buildings.deposit_material(character_id, "farm", item_id, 999, 10000)
+        state = self.buildings.get_state(character_id, "farm", 10000)
         self.assertTrue(state["upgrade"]["ready"])
-        self.assertTrue(all(row["in_warehouse"] == 2 for row in state["upgrade"]["materials"]))
+        self.assertTrue(all(row["in_warehouse"] == 7 for row in state["upgrade"]["materials"]))
 
         state = self.buildings.start_upgrade(character_id, "farm", 10000)
         self.assertTrue(state["upgrade"]["in_progress"])
@@ -582,7 +582,7 @@ class ProductionBuildingsTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "уже занято"):
             self.buildings.hire_worker(second, "farm", 0, "worker-x", 10000)
 
-        # Материалы приносят разные игроки, каждый из своего рюкзака; стройку запускает любой
+        # Different players stock the shared warehouse; any player can buy the upgrade.
         materials = list(upgrade_requirements(1)["materials"].items())
         for index, (item_id, required) in enumerate(materials):
             giver = first if index % 2 == 0 else second
@@ -590,8 +590,8 @@ class ProductionBuildingsTests(unittest.TestCase):
             self.buildings.deposit_to_storage(
                 giver, "warehouse", STORAGE_RESOURCES_BY_ITEM_ID[item_id], required, 10000
             )
-            state = self.buildings.deposit_material(giver, "farm", item_id, required, 10000)
-            self.assertEqual(state["upgrade"]["materials"][index]["deposited"], required)
+        state = self.buildings.get_state(second, "farm", 10000)
+        self.assertTrue(state["upgrade"]["ready"])
         state = self.buildings.start_upgrade(second, "farm", 10000)
         self.assertTrue(state["upgrade"]["in_progress"])
 
