@@ -195,3 +195,39 @@ def roads_payload():
         "tiles": [list(tile) for tile in tiles],
         "travel_seconds": len(tiles) * ROAD_SPEED_SECONDS_PER_TILE,
     }
+
+
+def route_position(building_id, progress):
+    route = next(
+        (route for route in roads_payload()["routes"]
+         if route["building_id"] == building_id),
+        None,
+    )
+    if route is None or not route["tiles"]:
+        return None
+    points = [((tile[0] + 0.5) * TILE, (tile[1] + 0.5) * TILE)
+              for tile in route["tiles"]]
+    if len(points) == 1:
+        return points[0][0], points[0][1], "s"
+
+    segments = [(start, end, math.dist(start, end))
+                for start, end in zip(points, points[1:])]
+    total = sum(length for _start, _end, length in segments)
+    if total <= 0:
+        return points[0][0], points[0][1], "s"
+    distance = max(0.0, min(1.0, float(progress))) * total
+    for start, end, length in segments:
+        if distance <= length:
+            fraction = 0.0 if length == 0 else distance / length
+            dx, dy = end[0] - start[0], end[1] - start[1]
+            if abs(dx) > abs(dy) * 2:
+                direction = "e" if dx > 0 else "w"
+            elif abs(dy) > abs(dx) * 2:
+                direction = "s" if dy > 0 else "n"
+            elif dx and dy:
+                direction = ("s" if dy > 0 else "n") + ("e" if dx > 0 else "w")
+            else:
+                direction = "s"
+            return start[0] + dx * fraction, start[1] + dy * fraction, direction
+        distance -= length
+    return points[-1][0], points[-1][1], "s"

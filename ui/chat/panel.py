@@ -39,6 +39,15 @@ class ChatPanel:
         self.error = ""
         self.elapsed = 0.0
         self.background_poller = None
+        self.presence_provider = None
+        self.travelers_provider = None
+        self.travelers = []
+        self.travelers_refreshed_at = 0.0
+        self.travelers_received_at = 0.0
+        self.convoys_provider = None
+        self.traveling_convoys = []
+        self.convoys_refreshed_at = 0.0
+        self.convoys_received_at = 0.0
         self.panel_rect = pygame.Rect(settings.CHAT_PANEL_X, settings.CHAT_PANEL_Y, settings.CHAT_PANEL_WIDTH, settings.CHAT_PANEL_HEIGHT)
         self.toggle_rect = pygame.Rect(self.panel_rect.right - 116, self.panel_rect.y + 9, 104, 26)
         self.divider_x = self.panel_rect.right - settings.CHAT_PEOPLE_WIDTH - settings.CHAT_DIVIDER_GAP * 2 - settings.CHAT_DIVIDER_WIDTH
@@ -119,7 +128,27 @@ class ChatPanel:
     def _fetch_remote_state_with_error(self):
         try:
             if hasattr(self.session, "social_snapshot"):
-                return self.session.social_snapshot(self.location), None
+                position = self.presence_provider() if self.presence_provider is not None else None
+                if position is None:
+                    state = self.session.social_snapshot(self.location)
+                else:
+                    state = self.session.social_snapshot(self.location, position=position)
+                if self.travelers_provider is not None and time.monotonic() >= self.travelers_refreshed_at:
+                    state["traveling_citizens"] = self.travelers_provider()
+                    self.travelers_refreshed_at = time.monotonic() + 2.0
+                    state["travelers_received_at"] = time.monotonic()
+                else:
+                    state["traveling_citizens"] = self.travelers
+                    state["travelers_received_at"] = self.travelers_received_at
+                if (self.convoys_provider is not None
+                        and time.monotonic() >= self.convoys_refreshed_at):
+                    state["traveling_convoys"] = self.convoys_provider()
+                    self.convoys_refreshed_at = time.monotonic() + 2.0
+                    state["convoys_received_at"] = time.monotonic()
+                else:
+                    state["traveling_convoys"] = self.traveling_convoys
+                    state["convoys_received_at"] = self.convoys_received_at
+                return state, None
             self.session.update_presence(self.location)
             occupants = sorted(self.session.list_occupants(self.location), key=lambda item: item.get("name", "").casefold())
             messages = self.session.list_messages(self.location)
@@ -130,6 +159,8 @@ class ChatPanel:
 
     def _apply_remote_state(self, state):
         self.occupants = state["occupants"]
+        self.travelers = state.get("traveling_citizens", self.travelers)
+        self.travelers_received_at = state.get("travelers_received_at", self.travelers_received_at)
         self.messages = state["messages"]
         self.message_list.set_messages(self._visible_messages())
         self.offers = state["offers"]
@@ -139,6 +170,8 @@ class ChatPanel:
             self._resolve_application_opponent(server_application)
         self.my_application = server_application if server_application is not None and server_application.get("status") == "pending" else None
         self.error = ""
+        self.traveling_convoys = state.get("traveling_convoys", self.traveling_convoys)
+        self.convoys_received_at = state.get("convoys_received_at", self.convoys_received_at)
 
     def _resolve_application_opponent(self, application):
         """Заявка игрока была принята (например, ботом по истечении срока ожидания) — запускаем бой."""

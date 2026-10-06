@@ -1,231 +1,81 @@
-# 🎮 Dual Developer Workflow - Duel Game Architecture
+# Developer Guide
 
-## Overview
+## Environment
 
-This project is structured for **2 parallel developers** to work independently without conflicts:
+The supported development setup is Python 3.13, Pygame 2.6, and PostgreSQL accessed through psycopg 3. The production database is not the local development database. Keep separate DSNs and never copy production credentials into local files.
 
-- **Dev1 (You)**: City system (tavern, blacksmith, shops), Warrior character system
-- **Dev2 (Coming soon)**: Mountain Academy, Mage character system
+Install dependencies in a virtual environment:
 
----
-
-## 📁 File Structure & Responsibilities
-
-### **Dev1 Only (City/Warrior)**
-```
-server/town/                   ← Server endpoints for city locations
-scenes/town/                   ← UI scenes for city
-core/character/warrior.py      ← Warrior class (stats, abilities)
-core/cards/warrior_card.py     ← Warrior card system
+```powershell
+py -3.13 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
 ```
 
-### **Dev2 Only (Academy/Mage)**
-```
-server/academy/                ← Server endpoints for academy
-scenes/academy/                ← UI scenes for academy  
-core/character/mage.py         ← Mage class (stats, elements)
-core/cards/magic_card.py       ← Mage card system
-core/stats/mage_stats.py       ← Mage stat progression system
-```
+The current workspace may use `.venv_313`; use the interpreter selected for that workspace if it is already configured.
 
-### **Shared/Core (Both developers coordinate)**
-```
-core/character/base.py         ← Abstract base class (DO NOT modify without approval)
-core/character/__init__.py     ← Exports
-main.py                        ← Game entry point (merge conflicts possible)
-server/main.py                 ← Server entry point (merge conflicts possible)
-```
+## Local PostgreSQL
 
----
+The default configuration in `server/config.py` is:
 
-## 🔄 Git Workflow
+- `DATABASE_URL=postgresql://game@127.0.0.1:5432/game`
+- `WORLD_ID=1`
+- `HOST=0.0.0.0`
+- `PORT=8765`
 
-### Branch Structure
-```
-main                           ← Always working, Dev1 has priority
-├── feature/town              ← Dev1 works here (warrior content)
-└── feature/academy           ← Dev2 works here (mage content)
+For local-only development, explicitly bind to loopback so the server is not exposed to the LAN:
+
+```powershell
+$env:HOST = '127.0.0.1'
+$env:PORT = '8765'
+$env:WORLD_ID = '1'
+python -m server.main
 ```
 
-### Daily Workflow
+The PostgreSQL password belongs in `%APPDATA%\postgresql\pgpass.conf`, not in `server/config.py`, `.env` committed to Git, or command history. The server applies migrations at startup; `WORLD_ID` must refer to an existing world. Confirm `/health` at `http://127.0.0.1:8765/health`.
 
-**Dev1 (Morning):**
-```bash
-# Start fresh
-git checkout main
-git pull origin main
+## Run the Client
+
+In a second terminal, from the repository root:
+
+```powershell
+python main.py --online --server http://127.0.0.1:8765
 ```
 
-**Dev2 (Morning):**
-```bash
-# Always sync with Dev1's work first
-git checkout feature/academy
-git pull origin main  # ← Get Dev1's updates
-pip install -r requirements.txt
+Use `--server http://192.168.1.230:8765` only when intentionally connecting to the Z440 server. Do not use the production URL while testing data-changing features.
+
+## Tests
+
+Run the full suite:
+
+```powershell
+python -m unittest discover -s tests -q
 ```
 
-**Dev2 (Submitting PR):**
-```bash
-git pull origin main  # Final sync
-git push origin feature/academy
-# Create Pull Request → feature/academy to main
-# Dev1 reviews and merges
+Run the relevant slice first while iterating:
+
+```powershell
+python -m unittest tests.test_city_population tests.test_world_terrain -q
+python -m unittest tests.test_combat tests.test_card_battle tests.test_physical_effects tests.test_character_stats -q
 ```
 
----
+`tests/fixtures.py` creates and drops a temporary PostgreSQL schema. Set `TEST_DATABASE_URL` to a disposable development database. Never point it at production. Some Pygame tests emit harmless libpng profile warnings.
 
-## ⚙️ Adding Dependencies
+## Change Boundaries
 
-### If you need a new package:
+- Put shared domain rules in the owning `server/`, `combat/`, or `core/` module, not in a scene renderer.
+- Keep client rendering separate from server-authoritative state.
+- Scope database queries by `world_id`; character class must not partition the shared world.
+- Add a migration for schema changes. Do not edit already-applied migrations.
+- Add or update focused tests for behavior and API contracts.
+- Do not include `bot_state.json`, `.vscode/tasks.json`, virtual environments, credentials, or generated archives in a commit.
 
-1. Add to `requirements.txt` in your branch
-2. Test it works locally
-3. During PR, include the requirement update
-4. Dev1 reviews and approves the new dependency
+## Client Package
 
-**Example:**
-```bash
-# Dev2 wants to add a magic library
-echo "magic-elements-lib==1.0.0" >> requirements.txt
-# Commit and include in PR
+Build the optional source download archive with:
+
+```powershell
+python scripts/build_client_package.py
 ```
 
----
-
-## 🛡️ Preventing Conflicts
-
-### Rule 1: Separate File Owners
-```
-✅ GOOD: core/cards/warrior_card.py (Dev1) + core/cards/magic_card.py (Dev2)
-❌ BAD:  Both editing core/cards/base.py at same time
-```
-
-### Rule 2: Extend, Don't Modify Base Classes
-```python
-# core/character/base.py (read-only after initial setup)
-class BaseCharacter(ABC):
-    @abstractmethod
-    def get_stats_names(self) -> List[str]:
-        pass
-
-# warrior.py (Dev1 extends)
-class Warrior(BaseCharacter):
-    def get_stats_names(self) -> List[str]:
-        return ["Сила", "Ловкость", "Интуиция", "Выносливость"]
-
-# mage.py (Dev2 extends)
-class Mage(BaseCharacter):
-    def get_stats_names(self) -> List[str]:
-        return ["Мудрость", "Духовность", "Выносливость"]
-```
-
-### Rule 3: Isolated Database Tables
-```sql
--- warrior_schema.py (Dev1)
-CREATE TABLE warrior_cards (...)
-
--- mage_schema.py (Dev2)
-CREATE TABLE mage_cards (...)
-```
-
----
-
-## 📊 Mage Stats System (Dev2 Reference)
-
-The mage system is prepared in `core/stats/mage_stats.py` and `core/character/mage.py`.
-
-### Base Stats (3 stats like Warrior):
-- **Wisdom (Мудрость)**: Magic damage (like Strength)
-- **Spirituality (Духовность)**: Mana pool (new stat)
-- **Endurance (Выносливость)**: Health (same as Warrior)
-
-### Element Specializations (4 elements):
-- **Earth (Земля)**
-- **Water (Вода)**
-- **Fire (Огонь)**
-- **Wind (Воздух)**
-
-### Key Functions:
-```python
-# Already implemented for Dev2:
-- minimum_endurance(level)      ← Endurance per level
-- total_stat_points(level)      ← Available points to spend
-- calculate_max_hp(endurance)   ← HP calculation
-- calculate_max_mana(spirituality)  ← Mana calculation
-- adjust_mage_stats(...)        ← Main stat adjustment (like warrior's adjust_stats)
-```
-
-**TODO for Dev2** (marked in file):
-```python
-- add_element_level()           ← Train elements in academy
-- element_affects_cards()       ← Which spells available by element
-- element_build_validation()    ← Check valid mage builds
-- element_to_card_mapping()     ← Map elements to spell cards
-```
-
----
-
-## ✅ Checklist Before Committing
-
-- [ ] All Python files compile: `python -m py_compile *.py`
-- [ ] No modifications to other dev's files
-- [ ] Only modifying files in your assigned folder
-- [ ] If you modified `core/character/base.py` → discuss with other dev
-- [ ] Git status shows only your changes: `git status`
-
----
-
-## 🚨 If You Break Something
-
-1. Don't panic! Roll back: `git revert <commit-hash>`
-2. Run tests: `python -m pytest tests/`
-3. Check game still starts: `python main.py`
-4. Inform the team
-5. Create fix in new commit
-
----
-
-## 🔗 Current Architecture
-
-### Character System
-```
-BaseCharacter (abstract)
-├── Warrior (Dev1)
-│   ├── 4 base stats (Strength, Agility, Intuition, Endurance)
-│   ├── Warriors cards
-│   └── Warrior battle system
-│
-└── Mage (Dev2)
-    ├── 3 base stats (Wisdom, Spirituality, Endurance)
-    ├── 4 elements (Earth, Water, Fire, Wind)
-    ├── Magic cards
-    └── Magic battle system
-```
-
-### Scene Routing
-```
-Main Menu
-├── "ГОРОД" (Dev1)
-│   ├── Tavern
-│   ├── Blacksmith
-│   └── Shops
-│
-└── "АКАДЕМИЯ МАГИИ" (Dev2)
-    ├── Academy Hub
-    ├── Element Training
-    └── Spell Selection
-```
-
----
-
-## 📞 Questions?
-
-- **Syntax error in your code?** → Run `python -m py_compile your_file.py`
-- **Git conflict?** → Use VS Code merge tool or ask for help
-- **Not sure if you should edit a file?** → Check this document or ask
-- **Need to modify base class?** → Discuss with other dev first
-
----
-
-**Last Updated**: 2026-09-01
-**Status**: ✅ Architecture Ready for Dev2
+It includes client code and runtime assets only. It does not contain the server, PostgreSQL data, credentials, or test files. `client_package.zip` is generated and intentionally excluded from source commits.

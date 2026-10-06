@@ -1,508 +1,68 @@
-# DUEL - Пошаговая RPG боевая система
+# Duel
 
-![Python](https://img.shields.io/badge/Python-3.9%2B-blue)
-![Pygame](https://img.shields.io/badge/Pygame-2.0%2B-green)
-![WebSocket](https://img.shields.io/badge/WebSocket-asyncio-orange)
+Duel is a multiplayer RPG with a Pygame client and a Python HTTP server. PostgreSQL is the persistent source of truth. All character classes use the same client and join the shared world selected by `WORLD_ID`; class does not create a separate map, castle, economy, or population.
 
-Многопользовательская пошаговая боевая RPG с настоящей системой валюты, инвентарем, таверной и магазином напитков.
+## Quick Start (Windows)
 
-## 🎮 Быстрый старт
+Requirements: Python 3.13, PostgreSQL, and the dependencies in `requirements.txt`.
 
-### Предварительные требования
-- Python 3.9 или выше
-- pip (менеджер пакетов)
+1. Create a virtual environment and install dependencies:
 
-### Установка
-
-```bash
-# Клонировать репозиторий
-git clone https://github.com/DasPilos/Duel.git
-cd Duel
-
-# Создать виртуальное окружение
-python -m venv .venv
-
-# Активировать окружение
-# На Windows:
-.venv\Scripts\activate
-# На Linux/Mac:
-source .venv/bin/activate
-
-# Установить зависимости
-pip install -r requirements.txt
+```powershell
+py -3.13 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
 ```
 
-### Запуск игры
+2. Configure PostgreSQL locally. The default DSN is `postgresql://game@127.0.0.1:5432/game`; put credentials in PostgreSQL's password file, never in source control. Confirm the configured world exists.
 
-#### Вариант 1: Локальный режим (один компьютер)
-```bash
-python main.py
-```
-- Откроется окно с загрузкой сцены таверны
-- Можете создавать персонажей и играть против ботов
+3. Start the local server in Terminal 1:
 
-#### Вариант 2: Online режим (с сервером)
-```bash
-# Терминал 1: Запустить сервер
+```powershell
+$env:HOST = '127.0.0.1'
+$env:PORT = '8765'
+$env:WORLD_ID = '1'
 python -m server.main
-
-# Терминал 2: Запустить клиент
-python main.py --online
 ```
 
-Откройте браузер на `http://localhost:8765` (будет открыто автоматически).
+4. Start the online client in Terminal 2:
 
-## 📚 Архитектура проекта
-
-### Структура папок
-
-```
-game/
-├── main.py                 # Точка входа (Pygame клиент)
-├── server/
-│   ├── main.py            # HTTP сервер
-│   └── database.py        # SQLite БД и бизнес-логика
-├── client/
-│   ├── session.py         # Клиентская сессия (HTTP)
-│   ├── network.py         # HTTP клиент
-│   └── credentials.py     # Сохранение учетных данных
-├── scenes/
-│   ├── title_scene.py     # Вход и регистрация
-│   ├── character_scene.py # Выбор/создание персонажа (с удалением)
-│   ├── profession_select_scene.py  # Выбор профессии (Warrior/Mage)
-│   ├── tavern_scene.py    # Таверна для воинов (ОП1)
-│   ├── backyard_scene.py  # Задний двор для воинов (ОП1)
-│   ├── duel_scene.py      # Боевая система воинов (ОП1)
-│   ├── academy/           # Школа магии для магов (ОП2)
-│   │   ├── academy_scene.py
-│   │   └── ...
-│   └── ...
-├── ui/
-│   ├── character_card.py  # Карточка персонажа
-│   ├── hud.py             # UI компоненты
-│   └── ...
-├── combat/
-│   ├── fighter.py         # Логика боя для воинов (ОП1)
-│   ├── mage.py            # Логика боя для магов (ОП2)
-│   └── ...
-├── core/
-│   ├── settings.py        # Константы и конфиг
-│   └── currency.py        # Система валюты
-├── assets/
-│   ├── images/            # Фоны и иконки
-│   └── sound/             # Музыка и звуки
-└── docs/
-    ├── FEATURE_DELETE_CHARACTER.md  # Удаление персонажа с паролем
-    ├── OPERATOR2_GUIDE.md           # Гайд для разработки магов
-    └── README.md                    # Этот файл
+```powershell
+python main.py --online --server http://127.0.0.1:8765
 ```
 
-**Легенда:**
-- ОП1 = Operator 1 (Боевая система для воинов)
-- ОП2 = Operator 2 (Боевая система для магов)
+The client defaults to local mode when `--online` is omitted. Use an explicit server URL; `127.0.0.1` is local, while `192.168.1.230` is the Z440 host on the private network.
 
-## 🎲 Игровые системы
+## Tests
 
-### 1. Система персонажей
-- **Создание персонажа:** Выбор имени и аватара
-- **Уровни:** 1-6 уровни для основных персонажей
-- **Характеристики:** HP, MP, ATK, DEF, Stamina
-- **Опыт:** Получение опыта за победы в боях
-- **Улучшения:** Тренировка характеристик (кроме Stamina - +1 за уровень)
-
-### 2. Боевая система
-- **Пошаговая система:** Игрок ходит первым, потом враг
-- **Карты боевых действий:** Атака, Защита, Спецмастерство
-- **Статистика боя:** Урон, защита, количество ходов
-- **Результаты:** Таблица статистики с историей карт
-- **Переходы:** Затухание экрана и музыки между сценами
-
-### 3. Система управления персонажами
-- **Регистрация:** E-mail/пароль (с проверкой на сервере)
-- **Создание персонажа:** Двухэтапный процесс
-  1. Ввод имени в CharacterScene
-  2. Выбор профессии (Warrior/Mage) в ProfessionSelectScene
-- **Удаление персонажа:** С двухуровневой защитой
-  - Кнопка в экране выбора персонажа
-  - Диалог с запросом пароля для подтверждения
-  - Проверка пароля на сервере
-- **Профессии:** Warrior и Mage (ОП2 разрабатывает Mage)
-
-### 3. Система валюты (трёхуровневая)
-```
-100 медяков = 1 серебро
-100 серебра = 1 золото
+```powershell
+python -m unittest discover -s tests -q
 ```
 
-**Правила:**
-- Максимум 99 медяков (автоматически конвертируются в серебро)
-- Максимум 99 серебра (автоматически конвертируются в золото)
-- Золото неограниченно
-- **Нормализация:** автоматическая конвертация на загрузку/сохранение
+For a focused check:
 
-**Награды за победы (по уровню):**
-- Уровень 1: 10 медяков
-- Уровень 2: 20 медяков
-- Уровень 3: 60 медяков
-- Уровень 4: 80 медяков
-- Уровень 5: 1 серебро + 20 медяков
-- Уровень 6+: 2 серебра
-
-### 4. Система магазина (таверна)
-**Текущие напитки:**
-- **Эль** - 20 медяков
-  - Эффект: мгновенно восстанавливает 50 HP
-  - Иконка: кружка пива (заглушка)
-  - UI: наведение подсвечивает, tooltip показывает эффект
-
-**Механика:**
-- Двойной клик для покупки (300мс интервал)
-- Проверка наличия денег
-- Добавление в инвентарь (ячейка 1)
-- Сообщение об ошибке: "безплатного пойла нет"
-
-### 5. Система инвентаря
-- **Рюкзак:** Сетка слотов (5x5 или настраиваемая)
-- **Предметы:** Оружие, броня, зелья
-- **Экипировка:** Слоты для активного использования
-- **Сохранение:** В БД с характером
-
-### 6. Система чата
-- **Локальный чат:** Общение в таверне
-- **Рейт-лимит:** 5 сообщений за 10 секунд
-- **Макс длина:** 300 символов
-- **Персонажи ботов:** Автоматические ответы
-
-## 🔗 API эндпоинты
-
-### Аутентификация
-```
-POST /api/auth/login
-POST /api/auth/register
-POST /api/auth/refresh
+```powershell
+python -m unittest tests.test_city_population tests.test_world_terrain -q
+python -m unittest tests.test_combat tests.test_card_battle tests.test_physical_effects -q
 ```
 
-### Персонажи
-```
-POST /api/characters/create
-GET /api/characters/<id>
-POST /api/characters/<id>/save
-GET /api/characters/list
-```
+Tests create temporary PostgreSQL schemas. Never set `TEST_DATABASE_URL` to production credentials or a production database.
 
-### Боевая система
-```
-POST /api/duel/start
-POST /api/duel/play_card
-POST /api/duel/finish
+## Client Package
+
+The repository contains the client source, not a committed generated ZIP. Build the downloadable source package with:
+
+```powershell
+python scripts/build_client_package.py
 ```
 
-### Магазин и напитки
-```
-GET /api/drinks              # Список напитков
-POST /api/character/buy_drink # Покупка напитка
-POST /api/character/use_drink # Использование напитка
-GET /api/character/<id>/inventory # Инвентарь
-```
-
-### Чат
-```
-POST /api/chat/send
-GET /api/chat/history
-```
-
-### Сессия пользователя
-```
-POST /api/session/character # Выбор текущего персонажа
-GET /api/session/state      # Получить состояние сессии
-POST /api/session/logout
-```
-
-## 📊 Структура БД
-
-### Таблицы SQLite
-
-**users** - Учётные записи пользователей
-```sql
-id, username, password_hash, token, token_created_at, token_expires_at
-```
-
-**characters** - Персонажи
-```sql
-id, user_id, name, level, experience, hp, max_hp, mp, max_mp, 
-atk, def, stamina, copper, silver, gold, created_at
-```
-
-**drinks** - Напитки в магазине
-```sql
-id, name, description, price_copper, price_silver, price_gold,
-effect, effect_value, created_at
-```
-
-**character_inventory** - Инвентарь персонажа
-```sql
-id, character_id, drink_id, quantity, created_at
-```
-
-**chat_history** - История сообщений
-```sql
-id, room, user_id, message, created_at
-```
-
-## 🧑‍💻 Разработка
-
-### Установка для разработки
-
-```bash
-# Установить dev зависимости
-pip install -r requirements.txt
-pip install pytest pytest-cov
-
-# Запустить тесты
-pytest tests/
-```
-
-### 📋 КРИТИЧЕСКИЕ ДОКУМЕНТЫ ДЛЯ ДВОИХ РАЗРАБОТЧИКОВ
-
-⚠️ **ОБЯЗАТЕЛЬНО ПРОЧИТАТЬ перед началом работы:**
-
-1. **[ARCHITECTURE_DUAL_SYSTEM.md](./ARCHITECTURE_DUAL_SYSTEM.md)** - Главное!
-   - Как работает ЕДИНАЯ БД для воинов и магов
-   - Как работает ЕДИНАЯ валюта (медяки видны обоим)
-   - Как разделен код между разработчиками
-   - Что можно и нельзя менять
-   - **Это основа всего!**
-
-2. **[MAGE_DEVELOPER_GUIDE.md](./MAGE_DEVELOPER_GUIDE.md)** - Для ОП2
-   - Детали системы магии
-   - Структура БД для магов
-   - API endpoints для магов
-   - Фазы разработки
-
-3. **[CONTRIBUTING.md](./CONTRIBUTING.md)** - Правила кода
-   - Git workflow
-   - Code standards
-   - Как делать pull requests
-
-### Разделение разработки между двумя операторами
-
-#### Оператор 1 (ДА) - Основная боевая система
-- ✅ Система персонажей-воинов (Warrior)
-- ✅ Боевая система пошагового боя (`scenes/duel_scene.py`)
-- ✅ Карточка статистики боя для воинов
-- ✅ AI для воинов-ботов
-
-**Ветки:** `feature/warrior-*`, `feature/warrior-stats-*`, `feature/warrior-ai-*`  
-**Основные файлы:** 
-- `core/character/warrior.py`
-- `core/stats/warrior_stats.py`
-- `scenes/duel_scene.py`
-- `ui/character_card.py`
-
-#### Оператор 2 (ОП2) - Система магии
-- 🧙 Система персонажей-магов (`core/character/mage.py`)
-- 🧙 Система магии и заклинаний (`core/magic/*`)
-- 🧙 Система элементов (Земля, Вода, Огонь, Воздух)
-- 🧙 Боевая система для магов (`scenes/mage_duel_scene.py`)
-- 🧙 AI для магических ботов
-
-**Ветки:** `feature/mage-*`, `feature/magic-system-*`, `feature/spells-*`  
-**Основные файлы:**
-- `core/character/mage.py`
-- `core/magic/spell.py`
-- `core/magic/element.py`
-- `core/magic/spellbook.py`
-- `scenes/mage_duel_scene.py`
-
-#### ОБЩЕЕ (оба работают, но осторожно!)
-
-✅ **ОБЩАЯ БД:**
-- Таблица `characters` (одна для воинов и магов)
-- Таблица `inventory` (один инвентарь для всех)
-- Таблица `battle_stats` (для всех типов боев)
-
-💰 **ЕДИНАЯ ВАЛЮТА:**
-- Медяки, Серебро, Золото видны обоим персонажам
-- Если воин заработал 10 медяков → маг их видит
-- Если маг потратит медяки → воин видит меньше
-
-🏪 **ЕДИНЫЙ МАГАЗИН:**
-- Один магазин в таверне для всех
-- Адаптируется в зависимости от типа персонажа
-
-### ⚠️ ЗОЛОТОЕ ПРАВИЛО
-
-```
-ВСЕ ДАННЫЕ НА СЕРВЕРЕ!
-Клиент - это ТОЛЬКО ВИЗУАЛИЗАЦИЯ!
-
-Никогда не считай деньги на клиенте.
-Никогда не создавай отдельную валюту для магов.
-Всегда используй методы БД для изменения состояния.
-```
-
-### Правила для избежания конфликтов
-
-1. ✅ **Читайте ARCHITECTURE_DUAL_SYSTEM.md** - это исходная истина
-2. ✅ **Каждый работает в своей ветке** - ДА в `feature/warrior-*`, ОП2 в `feature/mage-*`
-3. ✅ **Создавайте отдельные файлы** - не редактируйте код друг друга
-4. ✅ **Используйте ОБЩИЕ API БД** - не дублируйте логику
-5. ✅ **Делайте code review перед merge** - убедитесь что нет конфликтов
-6. ✅ **Коммитьте часто** - чтобы видеть прогресс друг друга
-
-**core/character.py** - Character
-- Основной класс персонажа
-- Методы: level_up(), take_damage(), heal() и т.д.
-
-**core/currency.py** - Currency
-- Управление трехуровневой валютой
-- Методы: normalize(), add(), subtract()
-- Валидация: проверка максимальных значений
-
-**client/session.py** - OnlineSession
-- Клиентская часть WebSocket сессии
-- Методы: get_character(), save_character(), add_currency()
-- Автоматическая переподключение при разрыве
-
-**server/database.py** - Database
-- SQLite управление и queries
-- Методы: get_character(), save_character(), buy_drink()
-- Нормализация валюты при загрузке/сохранении
-
-**scenes/duel_scene.py** - DuelScene
-- Управление боевой системой
-- Фазы: выбор карты → боевые действия → результаты
-- Выдача награды за победу
-
-**scenes/tavern_scene.py** - TavernScene
-- Таверна и магазин
-- Управление чатом и профилями
-- Обработка клика по магазину и напиткам
-
-**ui/tavern_shop.py** - TavernShop
-- UI магазина напитков
-- Hover эффекты и двойной клик
-- Tooltip с описанием эффектов
-
-## 🐛 Известные проблемы и TODO
-
-### ✅ Завершено
-- [x] Система персонажей и характеристик
-- [x] Боевая система (пошаговая)
-- [x] Система валюты (трёхуровневая)
-- [x] Система магазина и напитков (Эль)
-- [x] Таблица статистики боя
-- [x] Система чата в таверне
-- [x] Аутентификация и токены
-- [x] Инвентарь (основы)
-- [x] UI для карточек персонажа
-
-### 🔄 В разработке
-- [ ] Система использования напитков (восстановление HP)
-- [ ] Загрузка напитков с сервера (вместо захардкода)
-- [ ] Несколько типов напитков (Пиво, Вино, Зелья)
-- [ ] Анимация и эффекты покупки
-- [ ] Система предметов и экипировки
-- [ ] Торговля между игроками
-- [ ] Гильдии и командные бои
-- [ ] Достижения и рейтинги
-
-### 🚀 Планируется
-- [ ] Мобильное приложение
-- [ ] Кэширование на клиенте
-- [ ] WebGL рендеринг вместо Pygame
-- [ ] Синхронизация офлайн/онлайн
-- [ ] Реал-тайм мультиплеер
-- [ ] Система квестов
-- [ ] Данжи и боссы
-
-## 🎨 UI/UX
-
-### Цветовая схема
-- **Основной цвет:** #2c5aa0 (синий)
-- **Акцент:** #ff6b35 (оранжевый)
-- **Фон:** #1a1a1a (чёрный)
-- **Текст:** #ffffff (белый)
-
-### Шрифты
-- Основной: Arial, 22px
-- Заголовки: Arial Bold, 36px
-- Малый текст: Arial, 18px
-
-### Разрешение экрана
-- Мин: 1280x720
-- Оптимум: 1920x1080
-- Мах: 2560x1440
-
-## 🔐 Безопасность
-
-### Аутентификация
-- **Пароли:** Хеширование bcrypt
-- **Токены:** JWT с TTL (7 дней по умолчанию)
-- **Валидация:** На каждый запрос требуется валидный токен
-
-### Валидация входных данных
-- Имена персонажей: max 32 символа, буквы/цифры
-- Сообщения чата: max 300 символов, рейт-лимит
-- Цены напитков: только положительные числа
-
-## 📝 Логирование
-
-Логи записываются в:
-- `debug.log` - все логи приложения
-- Консоль - вывод сервера в реальном времени
-
-## 🤝 Рекомендации для новых разработчиков
-
-1. **Перед началом:**
-   - Прочитайте `ARCHITECTURE_REPORT.md`
-   - Запустите локально и поиграйте
-   - Изучите `core/settings.py` - там все константы
-
-2. **Перед редактированием:**
-   - Создайте новую ветку: `git checkout -b feature/ваша-фича`
-   - Следуйте стилю кода (PEP 8)
-   - Добавляйте комментарии к сложному коду
-
-3. **После изменений:**
-   - Протестируйте локально
-   - Создайте Pull Request с описанием
-   - Запросите review
-
-4. **Полезные команды:**
-```bash
-# Статус изменений
-git status
-
-# Просмотр логов
-git log --oneline -10
-
-# Создать ветку
-git checkout -b feature/название
-
-# Отправить на GitHub
-git push origin feature/название
-```
-
-## 📞 Поддержка
-
-Если возникли проблемы:
-1. Проверьте `debug.log`
-2. Убедитесь что установлены все зависимости: `pip list`
-3. Перезагрузите сервер
-4. Очистите кэш браузера (F5 или Ctrl+Shift+R)
-
-## 📄 Лицензия
-
-MIT License - см. LICENSE файл
-
-## 👥 Авторы
-
-- **Основной разработчик:** @DasPilos
-- **AI помощник:** Copilot
-
----
-
-**Последнее обновление:** 2026-09-02  
-**Версия:** 0.1.0 (Alpha)  
-**Статус:** Активная разработка 🚀
+This creates `client_package.zip`; the running server can serve it at `/download/client`. It is a Python source package, not a standalone executable. See [DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md) and [DEPLOYMENT_CHECKLIST.md](DEPLOYMENT_CHECKLIST.md).
+
+## Project Guides
+
+- [Architecture](ARCHITECTURE.md)
+- [Local development](DEVELOPER_GUIDE.md)
+- [Contributing, including battle math](CONTRIBUTING.md)
+- [Battle math source map](BATTLE_MATH.md)
+- [Deployment](DEPLOYMENT_CHECKLIST.md)
+- [Documentation index](DOCUMENTATION_INDEX.md)

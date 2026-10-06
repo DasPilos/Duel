@@ -261,6 +261,53 @@ class CityPopulation:
             }
         return int(math.ceil(self._travel_distances.get(building, 0) * 3600 / 300))
 
+    def get_traveling_citizens(self, character_id, now=None):
+        from server.world_roads import PRODUCTION_BUILDING_IDS, roads_payload, route_position
+
+        now = time.time() if now is None else float(now)
+        with self.db.connection() as connection:
+            world_id, _faction = self._key(connection, character_id)
+            citizens = connection.execute(
+                """SELECT id, faction, name, job_building, travel_direction, arrival_at
+                   FROM city_citizens
+                   WHERE world_id = %s AND travel_direction IS NOT NULL
+                     AND arrival_at > %s
+                   ORDER BY faction, id""",
+                (world_id, now),
+            ).fetchall()
+
+        road_buildings = {production: road for road, production in PRODUCTION_BUILDING_IDS.items()}
+        route_names = {route["building_id"]: route["name"]
+                       for route in roads_payload()["routes"]}
+        travelers = []
+        for citizen in citizens:
+            total = self._travel_seconds(citizen["job_building"])
+            if total <= 0:
+                continue
+            eta = max(0, math.ceil(float(citizen["arrival_at"]) - now))
+            direction = citizen["travel_direction"]
+            progress = eta / total if direction == "returning" else 1 - eta / total
+            road_building = road_buildings.get(citizen["job_building"], citizen["job_building"])
+            position = route_position(road_building, progress)
+            if position is None:
+                continue
+            travelers.append({
+                "id": int(citizen["id"]),
+                "faction": citizen["faction"],
+                "name": citizen["name"],
+                "job_building": citizen["job_building"],
+                "travel_direction": direction,
+                "travel_total_seconds": total,
+                "travel_seconds_left": eta,
+                "eta_seconds": eta,
+                "position_x": position[0],
+                "position_y": position[1],
+                "position_direction": position[2],
+                "route_name": route_names.get(road_building, road_building),
+                "movement_text": "Идёт на работу" if direction == "outbound" else "Возвращается в город",
+            })
+        return travelers
+
     def _release_worker(self, connection, key, citizen, now, *, clear_job=False):
         building, slot_index = citizen.get("job_building"), citizen.get("job_slot")
         if building and slot_index is not None:

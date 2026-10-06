@@ -344,6 +344,43 @@ class CityPopulationTests(unittest.TestCase):
             self.assertEqual(state["treasury_copper"], 50)
             self.assertEqual(state["personal_currency_copper"], 50)
 
+    def test_world_traveling_citizens_are_shared_between_players(self):
+        observers = []
+        for profession, character_name in (("archer", "Archer"), ("battle_mage", "Mage")):
+            observer = self.database.register(f"city-map-{profession}", "password")
+            observer_character = self.database.create_character(
+                observer["id"], character_name, profession
+            )
+            observers.append((f"city-map-{profession}", observer_character["id"]))
+
+        with running_server(self.database) as owner_client:
+            owner_client.timeout = 15
+            owner_client.login("city-overseer", "password")
+            state = owner_client.get_city_population(self.character_id)
+            citizen_id = state["citizens"][0]["id"]
+            owner_client.assign_city_citizen(self.character_id, citizen_id, "farm", 0)
+
+            owner_travelers = owner_client.get_world_traveling_citizens(self.character_id)
+            snapshots = [owner_travelers]
+            for username, observer_id in observers:
+                observer_client = type(owner_client)(owner_client.base_url)
+                observer_client.login(username, "password")
+                snapshots.append(
+                    observer_client.get_world_traveling_citizens(observer_id)
+                )
+
+        owner_citizen = next(row for row in owner_travelers if row["id"] == citizen_id)
+        for snapshot in snapshots:
+            traveler = next(row for row in snapshot if row["id"] == citizen_id)
+            self.assertEqual(traveler["travel_direction"], "outbound")
+            self.assertGreater(traveler["travel_total_seconds"], 0)
+            self.assertGreaterEqual(traveler["eta_seconds"], 0)
+            self.assertIsInstance(traveler["position_x"], float)
+            self.assertIsInstance(traveler["position_y"], float)
+            self.assertIn(traveler["position_direction"], {"n", "ne", "e", "se", "s", "sw", "w", "nw"})
+            self.assertEqual(traveler["position_x"], owner_citizen["position_x"])
+            self.assertEqual(traveler["position_y"], owner_citizen["position_y"])
+
     def test_system_user_is_not_counted_as_a_city_citizen(self):
         state = self.city.get_state(self.character_id)
         self.assertEqual(state["population"], 4)

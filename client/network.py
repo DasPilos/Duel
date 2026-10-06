@@ -2,7 +2,7 @@ import json
 from http.client import RemoteDisconnected
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 
 class ServerError(RuntimeError):
@@ -48,6 +48,12 @@ class GameClient:
         return self._request(
             "GET", f"/api/castle/{int(character_id)}/population", authenticated=True
         )["population"]
+
+    def get_world_traveling_citizens(self, character_id):
+        return self._request(
+            "GET", f"/api/world/traveling-citizens?character_id={int(character_id)}",
+            authenticated=True,
+        )["citizens"]
 
     def assign_city_citizen(self, character_id, citizen_id, building, slot_index):
         return self._request(
@@ -126,8 +132,13 @@ class GameClient:
             path += f"&before_id={before_id}"
         return self._request("GET", path, authenticated=True)["messages"]
 
-    def social_snapshot(self, location, character_id):
-        path = f"/api/social/snapshot?location={quote(location)}&character_id={character_id}"
+    def social_snapshot(self, location, character_id, position=None):
+        query = {"location": location, "character_id": int(character_id)}
+        if position:
+            for key in ("position_x", "position_y", "position_direction"):
+                if key in position:
+                    query[key] = position[key]
+        path = f"/api/social/snapshot?{urlencode(query)}"
         return self._request("GET", path, authenticated=True)
 
     def send_message(self, character_id, location, text, recipient_id=None):

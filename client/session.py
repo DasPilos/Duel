@@ -115,8 +115,8 @@ class OnlineSession:
     def list_messages(self, location, before_id=None, limit=50):
         return self.client.list_messages(location, self.character["id"], before_id, limit)
 
-    def social_snapshot(self, location):
-        return self.client.social_snapshot(location, self.character["id"])
+    def social_snapshot(self, location, position=None):
+        return self.client.social_snapshot(location, self.character["id"], position=position)
 
     def mark_chat_read(self, location, message_id):
         return self.client.mark_chat_read(self.character["id"], location, message_id)

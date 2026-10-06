@@ -272,6 +272,20 @@ class GameRequestHandler(BaseHTTPRequestHandler):
         location = query.get("location", ["tavern"])[0]
         character_id = int(query.get("character_id", [0])[0])
         _, character = self._chat_actor(token, character_id)
+        position_x = query.get("position_x", [None])[0]
+        position_y = query.get("position_y", [None])[0]
+        if location == "world_map" and position_x is not None and position_y is not None:
+            try:
+                position_x, position_y = float(position_x), float(position_y)
+            except (TypeError, ValueError):
+                raise ValueError("Некорректная позиция персонажа")
+            character = dict(character)
+            character["position_x"] = position_x
+            character["position_y"] = position_y
+            direction = query.get("position_direction", ["s"])[0]
+            character["position_direction"] = direction if direction in {
+                "n", "ne", "e", "se", "s", "sw", "w", "nw"
+            } else "s"
         if social.update_presence(token, user_id, character, location):
             self._announce_player_status(character, "присоединился к игре")
         offers = social.offers_for(character_id)
@@ -400,6 +414,14 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                     raise ValueError("Персонаж не найден")
                 state = CityPopulation(self.database).get_state(character_id)
                 self._send(200, {"population": state})
+                return
+            if path == "/api/world/traveling-citizens":
+                user_id = self.database.user_id_by_token(self._token())
+                character_id = int(self._query().get("character_id", [0])[0])
+                if self.database.get_character(user_id, character_id) is None:
+                    raise ValueError("Персонаж не найден")
+                travelers = CityPopulation(self.database).get_traveling_citizens(character_id)
+                self._send(200, {"citizens": travelers})
                 return
             if path == "/api/opponents":
                 user_id = self.database.user_id_by_token(self._token())

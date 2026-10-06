@@ -11,8 +11,9 @@ from client.structures import hydrate_structures
 from ui.hud import draw_button
 from ui.character_profile_overlay import CharacterProfileOverlay
 from ui.chat import ChatPanel
-from ui.afk_presence import draw_afk_players
+from ui.afk_presence import active_player_entities, draw_active_players, draw_afk_players
 from ui.catalog_icons import draw_building_icon
+from ui.map_travel import draw_mobile_hover_card, draw_traveling_entities, mobile_entity_at
 from ui.production_building_window import VIEWS, ProductionBuildingWindow, object_building, point_in_polygon
 
 
@@ -169,6 +170,14 @@ class WorldMapScene:
         )
         self.chat = (ChatPanel(session, "world_map", profile_overlay=self.profile_overlay)
                      if hasattr(session, "social_snapshot") else None)
+        if self.chat is not None:
+            self.chat.presence_provider = lambda: {
+                "position_x": self.player_x,
+                "position_y": self.player_y,
+                "position_direction": self.player_direction,
+            }
+            self.chat.travelers_provider = self._get_traveling_citizens
+            self.chat.convoys_provider = self._get_traveling_convoys
 
         # UI элементы
         self.player_pos_button = pygame.Rect(20, 20, 160, 45)
@@ -178,6 +187,7 @@ class WorldMapScene:
 
         # Интерактивные сущности, наведение (hover) и активное состояние (ЛКМ)
         self.hovered_entity = None
+        self.hovered_mobile_entity = None
         self.active_entity = None
         self.drag_moved = False
         self.active_window_rect = pygame.Rect(settings.WIDTH - 390, settings.HEIGHT - 255, 365, 215)
@@ -243,6 +253,28 @@ class WorldMapScene:
         window.tab = "production"
         window.is_open = True
         self.building_window = window
+
+    def _get_traveling_citizens(self):
+        client = getattr(self.session, "client", None)
+        get_travelers = getattr(client, "get_world_traveling_citizens", None)
+        character = getattr(self.session, "character", None) or {}
+        if get_travelers is None or character.get("id") is None:
+            return []
+        try:
+            return get_travelers(character["id"])
+        except (ServerError, AttributeError, KeyError, OSError):
+            return []
+
+    def _get_traveling_convoys(self):
+        client = getattr(self.session, "client", None)
+        getter = getattr(client, "get_traveling_convoys", None)
+        character = getattr(self.session, "character", None) or {}
+        if getter is None or character.get("id") is None:
+            return []
+        try:
+            return getter(character["id"])
+        except (ServerError, AttributeError, KeyError, OSError):
+            return []
 
     @staticmethod
     def cart_travel_seconds(tile_count):
@@ -956,8 +988,10 @@ class WorldMapScene:
         m_pos = pygame.mouse.get_pos()
         if self.building_window is not None or m_pos[1] <= 75 or (self.active_entity and self.active_window_rect.collidepoint(m_pos)):
             self.hovered_entity = None
+            self.hovered_mobile_entity = None
         else:
             self.hovered_entity = self._find_entity_at(m_pos)
+            self.hovered_mobile_entity = mobile_entity_at(self, m_pos, "world_map")
 
         # 6. Таймер уведомления о действии
         if self.action_notice_timer > 0:
@@ -1057,6 +1091,8 @@ class WorldMapScene:
         # 3. Игровой персонаж и эффекты клика (Dota-стиль)
         self._draw_click_effect(screen)
         self._draw_player_character(screen)
+        draw_active_players(self, screen, "world_map")
+        draw_traveling_entities(self, screen, "world_map")
         draw_afk_players(self, screen, "world_map")
 
         # 4. Всплывающие сообщения в мире ("Слишком далеко" и т.д.)
@@ -1076,7 +1112,11 @@ class WorldMapScene:
             self.building_window.draw(screen)
         if self.chat is not None:
             self.chat.draw(screen)
-        self.profile_overlay.draw(screen, opponent=self.session.character, show_player_only=True)
+        if (self.hovered_mobile_entity is not None
+                and self.hovered_mobile_entity.get("entity_kind") == "player"):
+            draw_mobile_hover_card(self, screen, self.hovered_mobile_entity)
+        else:
+            self.profile_overlay.draw(screen, opponent=self.session.character, show_player_only=True)
 
     def _draw_badge(self, screen, cx, bottom_y, text, border_color):
         """Вспомогательный метод для аккуратной плашки с текстом над объектом."""
@@ -1478,6 +1518,10 @@ class WorldMapScene:
 
     def _draw_hover_popup(self, screen, mouse_pos):
         """Отрисовывает всплывающее окно (tooltip) при наведении курсора на объект."""
+        if self.hovered_mobile_entity is not None:
+            if self.hovered_mobile_entity.get("entity_kind") != "player":
+                draw_mobile_hover_card(self, screen, self.hovered_mobile_entity)
+            return
         if self.hovered_entity is None:
             return
 

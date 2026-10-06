@@ -640,7 +640,7 @@ class TestCardBattle(unittest.TestCase):
             def award_battle_card(_card_keys):
                 return None
 
-            def report_battle_result(self, _fighter, outcome, opponent_level):
+            def report_battle_result(self, _fighter, outcome, opponent_level, _opponent_profile=None):
                 self.reported = (outcome, opponent_level)
                 return {"currency": {"copper": 20, "silver": 1, "gold": 0}, "xp": 20}
 

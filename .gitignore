@@ -6,21 +6,6 @@ backups/
 battle_archive/
 debug_*.png
 
-# Development workspace separation
-# Dev1 (City/Warrior system) - in main branch
-# Dev2 (Academy/Mage system) - in feature/academy branch
-
-# Protected Dev1 files - Dev2 should NOT modify
-!server/town/
-!scenes/town/
-!core/character/warrior.py
-!core/cards/warrior_card.py
-
-# Protected Dev2 files - Dev1 should NOT modify
-!server/academy/
-!scenes/academy/
-!core/character/mage.py
-!core/cards/magic_card.py
-!core/stats/mage_stats.py*.log
 debug_out.txt
 full_project_code.txt
+client_package.zip
