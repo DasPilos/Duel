@@ -2,7 +2,7 @@
 
 ## Current Setup
 
-Z440 runs Ollama in the existing `dc-LLM` Docker project with `qwen2.5:7b-instruct` (Q4_K_M, about 4.7 GB), fully offloaded to the RTX 3090. A cold model load can take tens of seconds; the game server starts a 2K-context warmup on a background thread at startup. A warmed short response measured about 0.25 seconds inside Ollama. The server queues commentary off the HTTP request path and keeps the model warm for 30 minutes.
+Z440 runs Ollama in the existing `dc-LLM` Docker project with `qwen2.5:7b-instruct` (Q4_K_M, about 4.7 GB), fully offloaded to the RTX 3090. A cold model load can take tens of seconds; the game server starts a 2K-context warmup on a background thread at startup. A warmed short response measured about 0.25 seconds inside Ollama. The server queues commentary off the HTTP request path and keeps the model warm for 24 hours by default.
 
 The model API must only bind to `127.0.0.1:11434`. Open WebUI can continue reaching Ollama through the Docker service name `ollama:11434`; the game server calls the loopback API. `deploy/ai/docker-compose.yml` records this secure binding and preserves the existing Docker volume names. Do not publish the Ollama API to the LAN: it has no authentication.
 
@@ -20,6 +20,7 @@ Defaults in `server/ai_commentator.py`:
 
 - URL: `http://127.0.0.1:11434/api/chat`
 - Model: `qwen2.5:7b-instruct`
+- Keep-alive: 24 hours (`OLLAMA_KEEP_ALIVE`)
 - Timeout: 20 seconds
 - Queue capacity: 32 events
 - Shared chat location: `backyard`

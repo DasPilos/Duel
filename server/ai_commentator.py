@@ -17,6 +17,7 @@ from server.database import SYSTEM_USER_ID
 LOGGER = logging.getLogger(__name__)
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434/api/chat")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5:7b-instruct")
+OLLAMA_KEEP_ALIVE = os.environ.get("OLLAMA_KEEP_ALIVE", "24h")
 COMMENTARY_LOCATION = "backyard"
 COMMENTARY_TIMEOUT_SECONDS = 60
 COMMENTARY_DEDUPE_SECONDS = 45
@@ -147,7 +148,7 @@ def _generate_comment(event):
             {"role": "user", "content": _commentary_prompt(event)},
         ],
         "stream": False,
-        "keep_alive": "30m",
+        "keep_alive": OLLAMA_KEEP_ALIVE,
         "options": {"temperature": 0.4, "top_p": 0.85, "num_ctx": 2048, "num_predict": 56},
     }
     request = urllib.request.Request(
@@ -171,7 +172,7 @@ def _warm_model():
         "model": OLLAMA_MODEL,
         "prompt": "Ответь одним словом: готово.",
         "stream": False,
-        "keep_alive": "30m",
+        "keep_alive": OLLAMA_KEEP_ALIVE,
         "options": {"temperature": 0, "num_ctx": 2048, "num_predict": 1},
     }
     request = urllib.request.Request(
