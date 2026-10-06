@@ -16,7 +16,7 @@ from server.world import run_bot_battle_tick
 from core.production_buildings import BUILDINGS
 from server.production_buildings import ProductionBuildings
 from server.city_population import CityPopulation
-from server.ai_commentator import enqueue_battle_comment
+from server.ai_commentator import enqueue_battle_comment, prewarm_local_model
 from server.world_map import terrain_payload
 from server.structures import city_structures
 from server.world_roads import roads_payload
@@ -1137,6 +1137,7 @@ class GameHTTPServer(ThreadingHTTPServer):
 def run():
     print("Подготавливаю дороги к загородным постройкам...")
     roads_payload()
+    prewarm_local_model()
     server = GameHTTPServer((config.HOST, config.PORT), GameRequestHandler)
     stop_bot_battles = threading.Event()
     restart_requested = threading.Event()

@@ -98,14 +98,34 @@ class BattleCommentatorTests(unittest.TestCase):
 
     def test_ollama_output_is_cleaned_and_bounded(self):
         response = MagicMock()
+        event = {
+            "result": "win",
+            "winner": {"name": "Лучник"},
+            "loser": {"name": "Страж"},
+        }
+        allowed_line = ai_commentator._allowed_comments(event)[0]
         response.__enter__.return_value.read.return_value = (
-            json.dumps({"message": {"content": '  "Победа!\n  '}}).encode("utf-8")
+            json.dumps({"message": {"content": f'  "{allowed_line}\n  '}}).encode("utf-8")
         )
         with patch.object(ai_commentator.urllib.request, "urlopen", return_value=response):
-            text = ai_commentator._generate_comment({"result": "draw"})
+            text = ai_commentator._generate_comment(event)
 
-        self.assertEqual(text, "Победа!")
+        self.assertEqual(text, allowed_line)
         self.assertLessEqual(len(text), ai_commentator.MAX_COMMENT_LENGTH)
+
+    def test_ollama_cannot_add_unverified_battle_claims(self):
+        response = MagicMock()
+        event = {
+            "result": "win",
+            "winner": {"name": "Лучник"},
+            "loser": {"name": "Страж"},
+        }
+        response.__enter__.return_value.read.return_value = json.dumps({
+            "message": {"content": "Лучник как всегда одержал победу после мощного выстрела."},
+        }).encode("utf-8")
+        with patch.object(ai_commentator.urllib.request, "urlopen", return_value=response):
+            with self.assertRaisesRegex(ValueError, "verified templates"):
+                ai_commentator._generate_comment(event)
 
 
 if __name__ == "__main__":

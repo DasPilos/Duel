@@ -18,7 +18,7 @@ LOGGER = logging.getLogger(__name__)
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434/api/chat")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5:7b-instruct")
 COMMENTARY_LOCATION = "backyard"
-COMMENTARY_TIMEOUT_SECONDS = 20
+COMMENTARY_TIMEOUT_SECONDS = 60
 COMMENTARY_DEDUPE_SECONDS = 45
 COMMENTARY_QUEUE_SIZE = 32
 MAX_COMMENT_LENGTH = 220
@@ -40,11 +40,10 @@ _WORKER_STARTED = False
 
 
 _SYSTEM_PROMPT = (
-    "Ты краткий комментатор фэнтези-дуэлей в русскоязычной RPG. "
-    "Событие уже подтверждено игровым сервером. Напиши одну выразительную "
-    "фразу до 20 слов, опираясь только на переданный исход и имена. "
-    "Не выдумывай карты, урон, события и числа. Не оскорбляй игроков. "
-    "Верни только текст реплики, без кавычек и пояснений."
+    "Ты выбираешь реплику комментатора для русскоязычной RPG. "
+    "Событие подтверждено сервером. Выбери ровно одну строку из allowed_lines "
+    "и верни её дословно. Не добавляй слова, детали, урон или числа. "
+    "Верни только выбранную строку, без кавычек и пояснений."
 )
 
 
@@ -118,7 +117,26 @@ def _fallback_comment(event):
 
 
 def _commentary_prompt(event):
-    return json.dumps(event, ensure_ascii=False, separators=(",", ":"))
+    return json.dumps({
+        "event": event,
+        "allowed_lines": _allowed_comments(event),
+    }, ensure_ascii=False, separators=(",", ":"))
+
+
+def _allowed_comments(event):
+    if event["result"] == "draw":
+        first, second = (player["name"] for player in event["players"])
+        return [
+            f"Ничья. Участники: {first} и {second}.",
+            f"Победителя нет: {first} и {second} сыграли вничью.",
+            f"Дуэль между {first} и {second} завершилась вничью.",
+        ]
+    winner, loser = event["winner"]["name"], event["loser"]["name"]
+    return [
+        f"Победитель дуэли: {winner}. Противник: {loser}.",
+        f"{winner} выигрывает дуэль. {loser} терпит поражение.",
+        f"Дуэль завершена. Победитель: {winner}; второй участник: {loser}.",
+    ]
 
 
 def _generate_comment(event):
@@ -130,7 +148,7 @@ def _generate_comment(event):
         ],
         "stream": False,
         "keep_alive": "30m",
-        "options": {"temperature": 0.4, "top_p": 0.85, "num_predict": 56},
+        "options": {"temperature": 0.4, "top_p": 0.85, "num_ctx": 2048, "num_predict": 56},
     }
     request = urllib.request.Request(
         OLLAMA_URL,
@@ -143,9 +161,38 @@ def _generate_comment(event):
     message = result.get("message", {}).get("content", "")
     message = re.sub(r"\s+", " ", str(message)).strip().strip("\"'` ")
     message = message[:MAX_COMMENT_LENGTH].strip()
-    if not message or "\ufffd" in message:
-        raise ValueError("Ollama returned an empty or invalid commentary")
+    if message not in _allowed_comments(event):
+        raise ValueError("Ollama returned commentary outside the verified templates")
     return message
+
+
+def _warm_model():
+    payload = {
+        "model": OLLAMA_MODEL,
+        "prompt": "Ответь одним словом: готово.",
+        "stream": False,
+        "keep_alive": "30m",
+        "options": {"temperature": 0, "num_ctx": 2048, "num_predict": 1},
+    }
+    request = urllib.request.Request(
+        OLLAMA_URL.removesuffix("/api/chat") + "/api/generate",
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=COMMENTARY_TIMEOUT_SECONDS) as response:
+            response.read()
+        LOGGER.info("Local battle commentator model is warm")
+    except Exception as error:
+        LOGGER.warning("Could not warm local battle commentator: %s", error)
+
+
+def prewarm_local_model():
+    """Warm the local model asynchronously so first battle commentary is fast."""
+    if not COMMENTARY_ENABLED:
+        return
+    threading.Thread(target=_warm_model, name="local-ai-warmup", daemon=True).start()
 
 
 def _post_comment(database, event):
