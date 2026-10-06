@@ -42,3 +42,7 @@ The source repository is canonical. `scripts/build_client_package.py` generates 
 ## Host Monitoring
 
 `ops/monitor.py` is a separate, read-only console dashboard for Ubuntu Server. It reads host counters from `/proc`, service state through `systemctl`, game errors from the journal, API health from loopback, and online count from PostgreSQL. Its optional systemd unit is documented in [SERVER_MONITOR.md](SERVER_MONITOR.md); it does not participate in the game-server request path.
+
+## Local AI Chat
+
+`server/ai_commentator.py` queues optional, server-accepted PvP outcomes for the local Ollama model and posts a single result-based sentence in the shared backyard chat. Generation runs on a daemon worker, uses a bounded queue and timeout, and falls back to deterministic text. The model has no game-state mutation or moderation authority. Keep Ollama bound to `127.0.0.1`; see [LOCAL_AI_CHAT.md](LOCAL_AI_CHAT.md).

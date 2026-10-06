@@ -67,3 +67,4 @@ This creates `client_package.zip`; the running server can serve it at `/download
 - [Deployment](DEPLOYMENT_CHECKLIST.md)
 - [Documentation index](DOCUMENTATION_INDEX.md)
 - [Z440 monitor](SERVER_MONITOR.md)
+- [Local AI battle commentator](LOCAL_AI_CHAT.md)

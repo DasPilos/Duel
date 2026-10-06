@@ -514,6 +514,34 @@ class ServerPersistenceTests(unittest.TestCase):
             with self.assertRaisesRegex(ServerError, "уже засчитан"):
                 client.report_battle_result(character["id"], "win", 1, 5, 0)
 
+    def test_human_battle_result_queues_local_chat_commentary(self):
+        previous_results = dict(GameRequestHandler.battle_result_times)
+        GameRequestHandler.battle_result_times.clear()
+        try:
+            with running_server(self.database) as attacker_client:
+                attacker_client.register("commentator-attacker", "password")
+                attacker_client.login("commentator-attacker", "password")
+                attacker = attacker_client.create_character("Лучник")
+
+                defender_client = type(attacker_client)(attacker_client.base_url)
+                defender_client.register("commentator-defender", "password")
+                defender_client.login("commentator-defender", "password")
+                defender = defender_client.create_character("Страж")
+
+                with patch("server.main.enqueue_battle_comment") as enqueue:
+                    attacker_client.report_battle_result(
+                        attacker["id"], "win", defender["level"], attacker["hp"], attacker["mp"],
+                        opponent_id=defender["id"], opponent_hp=defender["hp"],
+                        opponent_mp=defender["mp"],
+                    )
+        finally:
+            GameRequestHandler.battle_result_times.clear()
+            GameRequestHandler.battle_result_times.update(previous_results)
+
+        enqueue.assert_called_once_with(
+            self.database, attacker["id"], defender["id"], "win",
+        )
+
     def test_stat_points_can_be_spent_but_not_created(self):
         with running_server(self.database) as client:
             client.register("statuser", "password")

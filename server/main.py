@@ -16,6 +16,7 @@ from server.world import run_bot_battle_tick
 from core.production_buildings import BUILDINGS
 from server.production_buildings import ProductionBuildings
 from server.city_population import CityPopulation
+from server.ai_commentator import enqueue_battle_comment
 from server.world_map import terrain_payload
 from server.structures import city_structures
 from server.world_roads import roads_payload
@@ -168,6 +169,7 @@ class GameRequestHandler(BaseHTTPRequestHandler):
             "mp": max(0, min(int(body.get("mp", character["mp"])), character["max_mp"])),
         })
         afk_result = self._apply_afk_defender_result(character_id, body)
+        enqueue_battle_comment(self.database, character_id, body.get("opponent_id"), outcome)
         return {
             "character": saved,
             "xp": xp,

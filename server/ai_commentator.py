@@ -1,0 +1,212 @@
+"""Asynchronous, local-only battle commentary for the shared game chat."""
+
+import json
+import logging
+import os
+import queue
+import re
+import threading
+import time
+import urllib.error
+import urllib.request
+
+from server import config
+from server.database import SYSTEM_USER_ID
+
+
+LOGGER = logging.getLogger(__name__)
+OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434/api/chat")
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5:7b-instruct")
+COMMENTARY_LOCATION = "backyard"
+COMMENTARY_TIMEOUT_SECONDS = 20
+COMMENTARY_DEDUPE_SECONDS = 45
+COMMENTARY_QUEUE_SIZE = 32
+MAX_COMMENT_LENGTH = 220
+COMMENTARY_ENABLED = os.environ.get("AI_BATTLE_COMMENTARY", "1").strip().lower() not in {
+    "0", "false", "no", "off",
+}
+_PROFESSION_NAMES = {
+    "warrior": "боец",
+    "archer": "лучник",
+    "assassin": "асассин",
+    "battle_mage": "боевой маг",
+    "support_mage": "маг поддержки",
+    "harmonist": "гармонист",
+}
+_QUEUE = queue.Queue(maxsize=COMMENTARY_QUEUE_SIZE)
+_LOCK = threading.Lock()
+_RECENT_EVENTS = {}
+_WORKER_STARTED = False
+
+
+_SYSTEM_PROMPT = (
+    "Ты краткий комментатор фэнтези-дуэлей в русскоязычной RPG. "
+    "Событие уже подтверждено игровым сервером. Напиши одну выразительную "
+    "фразу до 20 слов, опираясь только на переданный исход и имена. "
+    "Не выдумывай карты, урон, события и числа. Не оскорбляй игроков. "
+    "Верни только текст реплики, без кавычек и пояснений."
+)
+
+
+def _clean_text(value, limit=48):
+    text = " ".join(str(value or "").split())
+    text = "".join(character for character in text if character.isprintable())
+    return text[:limit].strip()
+
+
+def _character_brief(character):
+    return {
+        "name": _clean_text(character.get("name"), 32) or "Игрок",
+        "class": _PROFESSION_NAMES.get(character.get("type"), "путник"),
+    }
+
+
+def _build_event(database, character_id, opponent_id, outcome):
+    if outcome not in {"win", "loss", "draw"}:
+        return None
+    try:
+        character_id, opponent_id = int(character_id), int(opponent_id)
+    except (TypeError, ValueError):
+        return None
+    if character_id <= 0 or opponent_id <= 0 or character_id == opponent_id:
+        return None
+
+    actor_record = database.get_character_for_battle(character_id)
+    opponent_record = database.get_character_for_battle(opponent_id)
+    if actor_record is None or opponent_record is None:
+        return None
+    if actor_record["user_id"] == SYSTEM_USER_ID or opponent_record["user_id"] == SYSTEM_USER_ID:
+        return None
+
+    actor = _character_brief(actor_record["character"])
+    opponent = _character_brief(opponent_record["character"])
+    if outcome == "draw":
+        return {"result": "draw", "players": [actor, opponent]}
+    winner, loser = (actor, opponent) if outcome == "win" else (opponent, actor)
+    return {"result": "win", "winner": winner, "loser": loser}
+
+
+def _battle_key(world_id, character_id, opponent_id):
+    first, second = sorted((int(character_id), int(opponent_id)))
+    return int(world_id), first, second
+
+
+def _claim_event(key, now=None):
+    now = time.monotonic() if now is None else float(now)
+    with _LOCK:
+        expired = [event_key for event_key, stamp in _RECENT_EVENTS.items()
+                   if now - stamp >= COMMENTARY_DEDUPE_SECONDS]
+        for event_key in expired:
+            del _RECENT_EVENTS[event_key]
+        previous = _RECENT_EVENTS.get(key)
+        if previous is not None and now - previous < COMMENTARY_DEDUPE_SECONDS:
+            return False
+        _RECENT_EVENTS[key] = now
+        return True
+
+
+def _release_event(key):
+    with _LOCK:
+        _RECENT_EVENTS.pop(key, None)
+
+
+def _fallback_comment(event):
+    if event["result"] == "draw":
+        first, second = event["players"]
+        return f"Бой между {first['name']} и {second['name']} завершился вничью."
+    return f"Бой завершён: победа {event['winner']['name']} над {event['loser']['name']}."
+
+
+def _commentary_prompt(event):
+    return json.dumps(event, ensure_ascii=False, separators=(",", ":"))
+
+
+def _generate_comment(event):
+    payload = {
+        "model": OLLAMA_MODEL,
+        "messages": [
+            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "user", "content": _commentary_prompt(event)},
+        ],
+        "stream": False,
+        "keep_alive": "30m",
+        "options": {"temperature": 0.4, "top_p": 0.85, "num_predict": 56},
+    }
+    request = urllib.request.Request(
+        OLLAMA_URL,
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=COMMENTARY_TIMEOUT_SECONDS) as response:
+        result = json.loads(response.read().decode("utf-8"))
+    message = result.get("message", {}).get("content", "")
+    message = re.sub(r"\s+", " ", str(message)).strip().strip("\"'` ")
+    message = message[:MAX_COMMENT_LENGTH].strip()
+    if not message or "\ufffd" in message:
+        raise ValueError("Ollama returned an empty or invalid commentary")
+    return message
+
+
+def _post_comment(database, event):
+    try:
+        comment = _generate_comment(event)
+    except Exception as error:
+        LOGGER.warning("Local battle commentator unavailable: %s", error)
+        comment = _fallback_comment(event)
+    world_id = int(database.world_id)
+    commentator_id = database.ensure_bot_character(
+        f"battle-commentator-{world_id}", "Летописец",
+    )
+    database.add_chat_message(commentator_id, COMMENTARY_LOCATION, comment)
+
+
+def _worker():
+    while True:
+        database, character_id, opponent_id, outcome, key = _QUEUE.get()
+        try:
+            _process_event(database, character_id, opponent_id, outcome, key)
+        except Exception:
+            LOGGER.exception("Could not publish local battle commentary")
+            _release_event(key)
+        finally:
+            _QUEUE.task_done()
+
+
+def _ensure_worker():
+    global _WORKER_STARTED
+    with _LOCK:
+        if _WORKER_STARTED:
+            return
+        thread = threading.Thread(target=_worker, name="local-battle-commentator", daemon=True)
+        thread.start()
+        _WORKER_STARTED = True
+
+
+def enqueue_battle_comment(database, character_id, opponent_id, outcome):
+    """Queue one server-accepted human-versus-human result without blocking HTTP."""
+    if not COMMENTARY_ENABLED or outcome not in {"win", "loss", "draw"}:
+        return False
+    try:
+        key = _battle_key(database.world_id, character_id, opponent_id)
+    except (TypeError, ValueError):
+        return False
+    if key[1] <= 0 or key[2] <= 0 or key[1] == key[2]:
+        return False
+    try:
+        _QUEUE.put_nowait((database, int(character_id), int(opponent_id), str(outcome), key))
+    except queue.Full:
+        LOGGER.warning("Local battle commentary queue is full; dropping event %s", key)
+        return False
+    _ensure_worker()
+    return True
+
+
+def _process_event(database, character_id, opponent_id, outcome, key):
+    event = _build_event(database, character_id, opponent_id, outcome)
+    if event is None:
+        _release_event(key)
+        return
+    if not _claim_event(key):
+        return
+    _post_comment(database, event)

@@ -8,6 +8,7 @@
 - [Contributing](CONTRIBUTING.md): branches, review, battle math, and server changes.
 - [Deployment Checklist](DEPLOYMENT_CHECKLIST.md): GitHub, Z440, and downloadable client release.
 - [Z440 Server Monitor](SERVER_MONITOR.md): host metrics dashboard and console service.
+- [Local AI Chat](LOCAL_AI_CHAT.md): private Ollama setup and asynchronous battle commentary.
 
 ## Systems
 
