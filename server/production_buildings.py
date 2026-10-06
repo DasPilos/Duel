@@ -134,6 +134,35 @@ def distribute_to_storage(storage, buffers, limit):
     return accepted
 
 
+def reconcile_player_harvest_claims(connection, key, resource, storage_amount):
+    """Keep personal claim quotas as allocations within, never additions to, shared stock."""
+    claims = connection.execute(
+        f"""SELECT character_id, claimable FROM building_player_resources
+            WHERE {_WHERE} AND resource = %s AND claimable > 0
+            ORDER BY character_id FOR UPDATE""",
+        (*key, resource),
+    ).fetchall()
+    total_claimable = sum(int(row["claimable"]) for row in claims)
+    available = max(0, int(storage_amount))
+    if total_claimable <= available:
+        return
+    allocated = [int(row["claimable"]) * available // total_claimable for row in claims]
+    remainder = available - sum(allocated)
+    for index, row in enumerate(claims):
+        if remainder <= 0:
+            break
+        if allocated[index] < int(row["claimable"]):
+            allocated[index] += 1
+            remainder -= 1
+    for row, amount in zip(claims, allocated):
+        if amount != int(row["claimable"]):
+            connection.execute(
+                f"""UPDATE building_player_resources SET claimable = %s
+                    WHERE {_WHERE} AND character_id = %s AND resource = %s""",
+                (amount, *key, int(row["character_id"]), resource),
+            )
+
+
 # Условие для ключа здания: (world_id, faction, building)
 _WHERE = "world_id = %s AND faction = %s AND building = %s"
 
@@ -372,6 +401,8 @@ class ProductionBuildings:
         self._sync_buffer(connection, key, now)
         state = self._state(connection, key)
         rows = self._resources(connection, key)
+        for resource, row in rows.items():
+            reconcile_player_harvest_claims(connection, key, resource, row["storage"])
         info = building_level_info(state["level"], building)
         time_left = max(0, CYCLE_DURATION_SEC - (now - state["cycle_start_time"]))
         forecast = {resource: row["buffer"] for resource, row in rows.items()}
@@ -379,22 +410,9 @@ class ProductionBuildings:
         for slot in self._slots(connection, key):
             resources = slot_resources(building, slot["slot_index"])
             harvest_bonus = _harvest_bonus_for_worker(connection, slot["worker_id"])
-            timer_sec_by_resource = {
-                resource: _resource_timer_sec(resource, harvest_bonus)
-                for resource in resources if _resource_timer_sec(resource, harvest_bonus) is not None
-            }
-            timer_sec = timer_sec_by_resource.get(resources[0], RESOURCES[resources[0]].get("timer_sec", 0))
-            resource_progress = {
-                resource: (0 if not slot["occupied"] else
-                           int((now - slot["hire_time"]) % timer_sec_by_resource[resource]))
-                for resource in resources if resource in timer_sec_by_resource
-            }
-            if slot["occupied"]:
-                for resource in resources:
-                    resource_timer = timer_sec_by_resource.get(resource)
-                    if resource_timer:
-                        forecast[resource] += math.floor(time_left / resource_timer)
             worker_name = slot["worker_id"]
+            travel_direction = None
+            arrival_at = None
             if worker_name and worker_name.startswith("player:"):
                 worker_row = connection.execute(
                     "SELECT name FROM characters WHERE id = %s",
@@ -404,12 +422,38 @@ class ProductionBuildings:
             elif worker_name and worker_name.startswith("citizen:"):
                 citizen_id = int(worker_name.split(":", 1)[1])
                 citizen_row = connection.execute(
-                    "SELECT name FROM city_citizens WHERE id = %s",
+                    """SELECT name, travel_direction, arrival_at FROM city_citizens
+                       WHERE id = %s""",
                     (citizen_id,),
                 ).fetchone()
                 worker_name = citizen_row["name"] if citizen_row else "Горожанин"
+                if citizen_row:
+                    travel_direction = citizen_row["travel_direction"]
+                    arrival_at = citizen_row["arrival_at"]
             elif worker_name and worker_name.startswith("citizen-"):
                 worker_name = f"Горожанин {worker_name.split('-', 1)[1]}"
+            travel_seconds_left = (
+                max(0, math.ceil(float(arrival_at) - now))
+                if travel_direction == "outbound" and arrival_at is not None and float(arrival_at) > now
+                else 0
+            )
+            is_travelling = travel_seconds_left > 0
+            timer_sec_by_resource = {
+                resource: _resource_timer_sec(resource, harvest_bonus)
+                for resource in resources if _resource_timer_sec(resource, harvest_bonus) is not None
+            }
+            timer_sec = timer_sec_by_resource.get(resources[0], RESOURCES[resources[0]].get("timer_sec", 0))
+            resource_progress = {
+                resource: (0 if not slot["occupied"] or is_travelling else
+                           int((now - slot["hire_time"]) % timer_sec_by_resource[resource]))
+                for resource in resources if resource in timer_sec_by_resource
+            }
+            if slot["occupied"]:
+                production_seconds_left = max(0, time_left - travel_seconds_left)
+                for resource in resources:
+                    resource_timer = timer_sec_by_resource.get(resource)
+                    if resource_timer:
+                        forecast[resource] += math.floor(production_seconds_left / resource_timer)
             slots.append({
                 "slot_index": slot["slot_index"],
                 "resource": resources[0],
@@ -418,10 +462,14 @@ class ProductionBuildings:
                 "worker_id": slot["worker_id"],
                 "worker_name": worker_name,
                 "is_player": bool(slot["worker_id"] and slot["worker_id"].startswith("player:")),
+                "travel_direction": travel_direction,
+                "is_travelling": is_travelling,
+                "travel_seconds_left": travel_seconds_left,
                 "player_id": (int(slot["worker_id"].split(":", 1)[1])
                               if slot["worker_id"] and slot["worker_id"].startswith("player:") else None),
                 "hire_time": slot["hire_time"],
-                "progress_sec": 0 if not slot["occupied"] else int((now - slot["hire_time"]) % timer_sec),
+                "progress_sec": (0 if not slot["occupied"] or is_travelling else
+                                 int((now - slot["hire_time"]) % timer_sec)),
                 "resource_progress_sec": resource_progress,
                 "timer_sec_by_resource": timer_sec_by_resource,
                 "harvest_bonus": {resource: percent for resource, percent in harvest_bonus.items()

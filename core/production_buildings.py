@@ -183,8 +183,8 @@ BUILDINGS = {
         "unit": "стойл",
         "feed_resource": "wheat",
         "feed_kg_per_horse_hour": 2,
-        "horse_base_price_silver": 50,
-        "horse_price_growth_percent": 40,
+        "horse_base_price_silver": 10,
+        "horse_price_growth_percent": 0,
         "upgrade_time_hours": 5,
         "stall_upgrades": {
             "wooden_stalls": {

@@ -132,6 +132,11 @@ class CityPopulationTests(unittest.TestCase):
             self.assertEqual(citizen["job_building"], building)
             self.assertEqual(citizen["work_status"], "В пути")
             self.assertEqual(citizen["travel_seconds_left"], 299)
+        farm_state = self.city.production.get_state(self.character_id, "farm", tick_at + 1)
+        farm_worker = farm_state["worker_slots"][0]
+        self.assertTrue(farm_worker["is_travelling"])
+        self.assertEqual(farm_worker["travel_seconds_left"], 299)
+        self.assertEqual(farm_worker["resource_progress_sec"]["wheat"], 0)
         new_citizen = next(row for row in state["citizens"] if row["id"] not in citizen_ids
                            and row["job_building"] is None)
         self.assertEqual(new_citizen["work_status"], "Свободен")

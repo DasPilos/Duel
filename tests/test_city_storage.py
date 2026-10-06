@@ -88,22 +88,22 @@ class CityStorageServerTests(unittest.TestCase):
         self.assertEqual(shared_state["level"], 2)
         self.assertEqual(sum(1 for slot in shared_state["stall_slots"] if slot["unlocked"]), 6)
 
-    def test_horse_prices_grow_by_forty_percent_and_horses_are_shared(self):
+    def test_horse_price_stays_ten_silver_and_horses_are_shared(self):
         from core.production_buildings import horse_purchase_price_silver
 
         self.assertEqual([horse_purchase_price_silver(count) for count in range(5)],
-                         [50, 70, 98, 138, 194])
+                 [10, 10, 10, 10, 10])
         with self.database.connection() as connection:
             connection.execute("UPDATE characters SET silver = 500 WHERE id = %s", (self.character_id,))
         state = self.buildings.get_state(self.character_id, "stable", 10000)
-        self.assertEqual(state["horse_price_next_silver"], 50)
-        for slot_index, price in enumerate((50, 70, 98, 138)):
+        self.assertEqual(state["horse_price_next_silver"], 10)
+        for slot_index, price in enumerate((10, 10, 10, 10)):
             state = self.buildings.purchase_horse(self.character_id, slot_index, 10001 + slot_index)
             horse = state["stall_slots"][slot_index]["horse"]
             self.assertEqual(horse["purchase_price_silver"], price)
             self.assertEqual(horse["status"], "Отдыхает")
         self.assertEqual(state["occupied_stalls"], 4)
-        self.assertEqual(state["horse_price_next_silver"], 194)
+        self.assertEqual(state["horse_price_next_silver"], 10)
         with self.assertRaisesRegex(ValueError, "Стойло ещё не открыто"):
             self.buildings.purchase_horse(self.character_id, 4, 10005)
 
@@ -111,7 +111,7 @@ class CityStorageServerTests(unittest.TestCase):
         teammate_id = self.database.create_character(teammate_user["id"], "HorseMate")["id"]
         shared = self.buildings.get_state(teammate_id, "stable", 10006)
         self.assertEqual(shared["occupied_stalls"], 4)
-        self.assertEqual(shared["stall_slots"][3]["horse"]["purchase_price_silver"], 138)
+        self.assertEqual(shared["stall_slots"][3]["horse"]["purchase_price_silver"], 10)
 
     def test_shared_stall_upgrades_require_personal_contributions(self):
         stable = self.buildings.get_state(self.character_id, "stable", 10000)
@@ -236,8 +236,8 @@ class CityStorageServerTests(unittest.TestCase):
         after_wood = self.buildings.contribute_cart(self.character_id, "wood", 100, 10001)
         self.assertEqual(after_wood["warehouse_storage"]["wood"], 0)
         self.assertEqual(after_wood["cart_progress"]["grades"]["1"]["wood_deposited"], 100)
-        after_silver = self.buildings.contribute_cart(self.character_id, "silver", 20, 10002)
-        self.assertEqual(after_silver["cart_progress"]["grades"]["1"]["silver_deposited"], 20)
+        after_silver = self.buildings.contribute_cart(self.character_id, "silver", 10, 10002)
+        self.assertEqual(after_silver["cart_progress"]["grades"]["1"]["silver_deposited"], 10)
         purchased = self.buildings.purchase_cart(self.character_id, now=10003)
         self.assertTrue(purchased["cart_progress"]["grades"]["1"]["body_owned"])
         persisted = ProductionBuildings(self.database).get_state(self.character_id, "stable", 10004)
@@ -261,10 +261,10 @@ class CityStorageServerTests(unittest.TestCase):
                              if item["item_id"] == 60), 0)
 
         after_silver = self.buildings.contribute_cart(
-            self.character_id, "silver", 20, 10002, source="treasury"
+            self.character_id, "silver", 10, 10002, source="treasury"
         )
-        self.assertEqual(after_silver["cart_progress"]["grades"]["1"]["silver_deposited"], 20)
-        self.assertEqual(after_silver["treasury_silver_available"], 0)
+        self.assertEqual(after_silver["cart_progress"]["grades"]["1"]["silver_deposited"], 10)
+        self.assertEqual(after_silver["treasury_silver_available"], 10)
         with self.database.connection() as connection:
             wallet = connection.execute(
                 "SELECT silver FROM characters WHERE id=%s", (self.character_id,)

@@ -1231,7 +1231,7 @@ class ProductionBuildingWindow:
         scene = self.scene
         pygame.draw.rect(screen, (21, 27, 29), rect, border_radius=6)
         pygame.draw.rect(screen, (94, 119, 91), rect, 1, border_radius=6)
-        screen.blit(scene.font.render("Работники объекта", True, (220, 211, 178)),
+        screen.blit(scene.font.render("Рабочие места и работники", True, (220, 211, 178)),
                     (rect.left + 12, rect.top + 12))
         header_bottom = rect.top + 42
         pygame.draw.line(screen, (67, 83, 68), (rect.left + 10, header_bottom),
@@ -1274,33 +1274,43 @@ class ProductionBuildingWindow:
                 bonus_surface = scene.grid_font.render(bonus_text, True, (117, 225, 128))
                 screen.blit(bonus_surface, (name_x + name_surface.get_width() + 10, row.top + 8))
 
-            resource_progress = slot.get("resource_progress_sec", {})
-            resource_lines = []
             resources = slot.get("resources", [slot.get("resource")])
-            for resource in resources:
-                if not resource or resource not in RESOURCES or "timer_sec" not in RESOURCES[resource]:
-                    continue
-                timer = slot.get("timer_sec_by_resource", {}).get(
-                    resource, RESOURCES[resource]["timer_sec"]
-                )
-                progress = (resource_progress.get(resource, slot.get("progress_sec", 0)) + elapsed) % timer
-                remaining = max(0, math.ceil(timer - progress))
-                hours, remainder = divmod(remaining, 3600)
+            if slot.get("is_travelling"):
+                eta = max(0, int(slot.get("travel_seconds_left", 0) - elapsed))
+                hours, remainder = divmod(eta, 3600)
                 minutes, seconds = divmod(remainder, 60)
                 clock = f"{hours}:{minutes:02d}:{seconds:02d}" if hours else f"{minutes}:{seconds:02d}"
-                resource_lines.append((resource, clock))
-            if resource_lines:
-                icon_x = row.left + 7
-                for resource, clock in resource_lines:
-                    draw_item_icon(screen, resource, (icon_x, row.top + 27), 16)
-                    text = scene.grid_font.render(
-                        f"{RESOURCES[resource]['label']} {clock}", True, (190, 205, 184)
-                    )
-                    screen.blit(text, (icon_x + 18, row.top + 29))
-                    icon_x += 22 + text.get_width() + 8
+                travel = scene.grid_font.render(
+                    f"В пути к объекту · прибытие через {clock}", True, (100, 185, 245)
+                )
+                screen.blit(travel, (row.left + 7, row.top + 29))
             else:
-                screen.blit(scene.grid_font.render("Цикл: —", True, (190, 205, 184)),
-                            (row.left + 7, row.top + 29))
+                resource_progress = slot.get("resource_progress_sec", {})
+                resource_lines = []
+                for resource in resources:
+                    if not resource or resource not in RESOURCES or "timer_sec" not in RESOURCES[resource]:
+                        continue
+                    timer = slot.get("timer_sec_by_resource", {}).get(
+                        resource, RESOURCES[resource]["timer_sec"]
+                    )
+                    progress = (resource_progress.get(resource, slot.get("progress_sec", 0)) + elapsed) % timer
+                    remaining = max(0, math.ceil(timer - progress))
+                    hours, remainder = divmod(remaining, 3600)
+                    minutes, seconds = divmod(remainder, 60)
+                    clock = f"{hours}:{minutes:02d}:{seconds:02d}" if hours else f"{minutes}:{seconds:02d}"
+                    resource_lines.append((resource, clock))
+                if resource_lines:
+                    icon_x = row.left + 7
+                    for resource, clock in resource_lines:
+                        draw_item_icon(screen, resource, (icon_x, row.top + 27), 16)
+                        text = scene.grid_font.render(
+                            f"{RESOURCES[resource]['label']} {clock}", True, (190, 205, 184)
+                        )
+                        screen.blit(text, (icon_x + 18, row.top + 29))
+                        icon_x += 22 + text.get_width() + 8
+                else:
+                    screen.blit(scene.grid_font.render("Цикл: —", True, (190, 205, 184)),
+                                (row.left + 7, row.top + 29))
 
             if is_player:
                 screen.blit(scene.grid_font.render("Всего:", True, (154, 181, 149)),
@@ -1335,7 +1345,7 @@ class ProductionBuildingWindow:
             shared_amount = int(storage.get(resource, 0))
             backpack = depositable.get(resource, {})
             text = (f"{RESOURCES[resource]['label']}: склад {shared_amount} · "
-                    f"рюкзак {backpack.get('in_backpack', 0)} · личная добыча {claimable} "
+                    f"рюкзак {backpack.get('in_backpack', 0)} · ваша доля в складе {claimable} "
                     f"(прогноз +{forecast.get(resource, 0)})")
             draw_item_icon(screen, resource, (rect.left + 12, curr_y + 2), 24)
             screen.blit(scene.small_font.render(text, True, (215, 215, 205)), (rect.left + 42, curr_y + 4))
@@ -1351,7 +1361,7 @@ class ProductionBuildingWindow:
                 self.storage_deposit_buttons[resource] = button
             if claimable > 0:
                 button = pygame.Rect(rect.left + 1296, curr_y, 150, 28)
-                draw_button(screen, button, f"ЛИЧНАЯ {claimable}", scene.small_font,
+                draw_button(screen, button, f"ДОЛЯ {claimable}", scene.small_font,
                             color=(69, 112, 67), text_color=(235, 232, 215))
                 self.claim_buttons[resource] = button
             curr_y += 30

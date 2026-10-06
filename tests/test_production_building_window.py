@@ -328,6 +328,38 @@ class ProductionBuildingWindowTests(unittest.TestCase):
         self.assertIn("Кожа: 5", rendered)
         self.assertIn("Мясо: 7", rendered)
 
+    def test_travelling_citizen_shows_arrival_eta_not_production_timer(self):
+        window = self._open("lumber_camp")
+        window.state = _payload("lumber_camp", occupied={0})
+        slot = window.state["worker_slots"][0]
+        slot.update(
+            worker_id="citizen:17", worker_name="Горожанин 5",
+            resources=["wood"], resource="wood", is_travelling=True,
+            travel_seconds_left=1080, resource_progress_sec={"wood": 0},
+        )
+        rendered = []
+        original = self.scene.grid_font
+
+        class Recorder:
+            def render(self, text, *args):
+                rendered.append(text)
+                return original.render(text, *args)
+
+            def __getattr__(self, name):
+                return getattr(original, name)
+
+        self.scene.grid_font = Recorder()
+        try:
+            window.selected_plot = 0
+            with patch("ui.production_building_window.time.monotonic",
+                       return_value=window.received_at):
+                self.scene.draw(self.screen)
+        finally:
+            self.scene.grid_font = original
+
+        self.assertIn("В пути к объекту · прибытие через 18:00", rendered)
+        self.assertFalse(any(text.startswith("Древесина ") for text in rendered))
+
     def test_storage_claim_button_requests_personal_harvest(self):
         window = self._open("wheat_farm")
         window.tab = "storage"

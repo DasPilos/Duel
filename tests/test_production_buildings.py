@@ -103,6 +103,36 @@ class ProductionBuildingsTests(unittest.TestCase):
         self.assertEqual(state["player_harvest_totals"].get("leather"), 1)
         self.assertIsNone(state["player_harvest_totals"].get("meat"))
 
+    def test_personal_harvest_claim_is_a_share_of_common_storage(self):
+        character_id = self._character("claim-share")
+        self.buildings.get_state(character_id, "barnyard", 10000)
+        with self.database.connection() as connection:
+            connection.execute(
+                "UPDATE building_resources SET storage=11 WHERE world_id=%s AND faction='light' AND building='barnyard' AND resource='meat'",
+                (self.database.world_id,),
+            )
+            connection.execute(
+                """INSERT INTO building_player_resources
+                   (world_id, faction, building, character_id, resource, claimable, total_produced)
+                   VALUES (%s, 'light', 'barnyard', %s, 'meat', 31, 31)""",
+                (self.database.world_id, character_id),
+            )
+
+        state = self.buildings.get_state(character_id, "barnyard", 10000)
+        self.assertEqual(state["storage"]["meat"], 11)
+        self.assertEqual(state["player_harvest_claims"]["meat"], 11)
+
+        with self.database.connection() as connection:
+            connection.execute(
+                "UPDATE building_resources SET storage=5 WHERE world_id=%s AND faction='light' AND building='barnyard' AND resource='meat'",
+                (self.database.world_id,),
+            )
+
+        state = self.buildings.get_state(character_id, "barnyard", 10000)
+
+        self.assertEqual(state["storage"]["meat"], 5)
+        self.assertEqual(state["player_harvest_claims"]["meat"], 5)
+
     def test_shared_building_storage_transfers_to_and_from_backpack(self):
         character_id = self._character("storemove")
         items = ItemsDatabase(self.database)
