@@ -551,7 +551,7 @@ class ProductionBuildings:
                     "id": f"cart_grade_{grade}",
                     "grade": int(grade),
                     "name": cart_grade["name"],
-                    "status": "Ž¦¨¤ ¥â ®â¯à ¢ª¨",
+                    "status": "ÐžÐ¶Ð¸Ð´Ð°ÐµÑ‚ Ð¾Ñ‚Ð¿Ñ€Ð°Ð²ÐºÐ¸",
                     "can_travel": False,
                     "dispatch_available": False,
                     "horse_slots": int(cart_grade.get("horse_count", 0)),
@@ -616,12 +616,16 @@ class ProductionBuildings:
                     "wood_in_warehouse": self._warehouse_amount(
                         connection, key, upgrade["wood_item_id"]
                     ),
-                    "wood_in_backpack": int(self._backpack_amount(
-                        connection, character_id, upgrade["wood_item_id"]
-                    )),
-                    "silver_available": silver_available,
                     "treasury_silver_available": treasury_silver_available,
                     "purchased": upgrade_id in purchased_upgrades,
+                    "wood_remaining": max(
+                        0, int(upgrade["wood_cost"])
+                        - int(contributions.get(upgrade_id, {}).get("wood_deposited", 0))
+                    ),
+                    "silver_remaining": max(
+                        0, int(upgrade["silver_cost"])
+                        - int(contributions.get(upgrade_id, {}).get("silver_deposited", 0))
+                    ),
                     "completed": upgrade_id in completed_upgrades,
                     "in_progress": (
                         upgrade_id in purchased_by_id and upgrade_id not in completed_upgrades
@@ -633,13 +637,23 @@ class ProductionBuildings:
                         and purchased_by_id[upgrade_id]["finish_at"] is not None
                         and upgrade_id not in completed_upgrades else 0
                     ),
-                    "ready": (
-                        contributions.get(upgrade_id, {}).get("wood_deposited", 0) >= upgrade["wood_cost"]
-                        and contributions.get(upgrade_id, {}).get("silver_deposited", 0) >= upgrade["silver_cost"]
+                    "can_purchase": (
+                        contributions.get(upgrade_id, {}).get("wood_deposited", 0)
+                        + self._warehouse_amount(connection, key, upgrade["wood_item_id"])
+                        >= upgrade["wood_cost"]
+                        and contributions.get(upgrade_id, {}).get("silver_deposited", 0)
+                        + treasury_silver_available >= upgrade["silver_cost"]
                     ),
                 }
                 for upgrade_id, upgrade in upgrade_config.items()
             }
+            for upgrade in stall_upgrades.values():
+                upgrade["ready"] = upgrade["purchased"] or upgrade["can_purchase"]
+            for upgrade_id, upgrade in stall_upgrades.items():
+                upgrade["can_purchase"] = upgrade["purchased"] or (
+                    upgrade["wood_in_warehouse"] >= upgrade["wood_remaining"]
+                    and treasury_silver_available >= upgrade["silver_remaining"]
+                )
             stall_slots = []
             for slot_index in range(max_stalls):
                 unlock_level = next(
