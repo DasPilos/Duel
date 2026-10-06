@@ -66,3 +66,4 @@ This creates `client_package.zip`; the running server can serve it at `/download
 - [Battle math source map](BATTLE_MATH.md)
 - [Deployment](DEPLOYMENT_CHECKLIST.md)
 - [Documentation index](DOCUMENTATION_INDEX.md)
+- [Z440 monitor](SERVER_MONITOR.md)

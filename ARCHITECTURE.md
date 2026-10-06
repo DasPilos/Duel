@@ -38,3 +38,7 @@ Battle calculations are implemented in `combat/` and verified by `tests/test_com
 ## Distribution
 
 The source repository is canonical. `scripts/build_client_package.py` generates the optional client ZIP from source and assets. Do not commit generated `client_package.zip`; rebuild it when publishing a download. The server's `/download/client` route serves the generated file if it exists.
+
+## Host Monitoring
+
+`ops/monitor.py` is a separate, read-only console dashboard for Ubuntu Server. It reads host counters from `/proc`, service state through `systemctl`, game errors from the journal, API health from loopback, and online count from PostgreSQL. Its optional systemd unit is documented in [SERVER_MONITOR.md](SERVER_MONITOR.md); it does not participate in the game-server request path.

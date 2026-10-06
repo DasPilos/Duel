@@ -7,6 +7,7 @@
 - [Developer Guide](DEVELOPER_GUIDE.md): local PostgreSQL, server/client launch, and tests.
 - [Contributing](CONTRIBUTING.md): branches, review, battle math, and server changes.
 - [Deployment Checklist](DEPLOYMENT_CHECKLIST.md): GitHub, Z440, and downloadable client release.
+- [Z440 Server Monitor](SERVER_MONITOR.md): host metrics dashboard and console service.
 
 ## Systems
 

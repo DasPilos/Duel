@@ -46,3 +46,5 @@ Transfer `client_package.zip` separately to `/home/dev-admin/game/client_package
 - Verify the deployed revision or the exact uploaded files.
 - Confirm remote `bot_state.json` and `venv/` remain untouched.
 - Tell testers whether they must download/restart the client. Client-only changes require an updated client package; server-only changes require a server restart.
+
+The optional physical-monitor dashboard setup is documented separately in [SERVER_MONITOR.md](SERVER_MONITOR.md). It uses tty2 and must not replace the game-server service.
