@@ -195,6 +195,50 @@ class CastleWindowTests(unittest.TestCase):
         self.assertNotIn("Ваши монеты: 2 серебра", rendered)
         self.assertFalse(any(text.startswith("За тик:") for text in rendered))
 
+    def test_population_uses_color_satiety_bars_and_strong_hunger_meter(self):
+        window = CastleWindow(object())
+        window.is_open = True
+        window.tab = "population"
+        window.state = {
+            "population": 4,
+            "population_capacity": 10,
+            "citizens": [
+                {"id": 1, "name": "Красная", "satiety": 8, "strong_hunger": 0,
+                 "satisfaction": "starving", "work_status": "Свободен"},
+                {"id": 2, "name": "Чёрная", "satiety": 0, "strong_hunger": 35,
+                 "satisfaction": "starving", "work_status": "Свободен"},
+                {"id": 3, "name": "Жёлтая", "satiety": 25, "strong_hunger": 0,
+                 "satisfaction": "irritated", "work_status": "Свободен"},
+                {"id": 4, "name": "Зелёная", "satiety": 31, "strong_hunger": 0,
+                 "satisfaction": "satisfied", "work_status": "Свободен"},
+            ],
+            "food_storage": {"wheat": 0, "berries": 0, "meat": 0},
+            "food_status": "В городе голод",
+            "worksites": [],
+        }
+        rendered = {}
+        original_font = window.small_font
+
+        class Recorder:
+            def render(self, text, *args):
+                rendered[text] = args[1] if len(args) > 1 else None
+                return original_font.render(text, *args)
+
+            def __getattr__(self, name):
+                return getattr(original_font, name)
+
+        window.small_font = Recorder()
+        screen = pygame.Surface((window.rect.right + 1, window.rect.bottom + 1))
+        with patch("pygame.mouse.get_pos", return_value=(0, 0)):
+            window.draw(screen)
+
+        self.assertEqual(rendered["Сытность 8%"], (226, 66, 58))
+        self.assertEqual(rendered["Сильный голод 35%"], (15, 15, 15))
+        self.assertEqual(rendered["Сытность 25%"], (232, 184, 48))
+        self.assertEqual(rendered["Сытность 31%"], (72, 174, 95))
+        self.assertFalse(any("/100" in text for text in rendered))
+        self.assertFalse(any("приёма пищи" in text for text in rendered))
+
 
 if __name__ == "__main__":
     unittest.main()

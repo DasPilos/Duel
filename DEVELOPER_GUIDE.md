@@ -66,6 +66,10 @@ python -m unittest tests.test_combat tests.test_card_battle tests.test_physical_
 
 Workers produce resources independently on per-unit timers. Each completed unit is written directly to the building's shared faction storage; there is no harvest-cycle buffer. Storage capacity is shared across the building's resources. Units that do not fit are discarded, not queued for later, and player harvest claims are granted only for units accepted into storage. Black-pit gem bonuses roll once per completed coal unit.
 
+## Citizen Rations
+
+Satiety is tracked independently per citizen from 0 to 100%. Idle citizens lose 1% every 150 seconds, citizens traveling to work or driving a convoy lose 1% every 100 seconds, and working citizens lose 1% every 60 seconds. At 30% or below a citizen automatically consumes available barn food toward 100%; partial food restores only its nutrition value (wheat 10%, berries 15%, meat 20%). At 0%, a worker returns to the city and a convoy driver turns the wagon home. Strong hunger then rises by 1% per 60 seconds; food at any point resets strong hunger and restores satiety, while reaching 100% strong hunger marks the citizen dead. Dead citizen rows are retained for convoy history but excluded from active population and work offers. The hourly city tick handles taxes and population growth only; hunger is advanced independently by the 10-second city scheduler and at work/travel state transitions.
+
 ## Change Boundaries
 
 - Put shared domain rules in the owning `server/`, `combat/`, or `core/` module, not in a scene renderer.

@@ -14,6 +14,10 @@ BASE_POPULATION_CAPACITY = 10
 FULL_MEAL_NUTRITION = 100
 FOOD_VALUE = {"wheat": 10, "berries": 15, "meat": 20}
 FOOD_SHARE = {"wheat": 3, "berries": 3, "meat": 4}
+IDLE_SATIETY_SECONDS = 150
+TRAVEL_SATIETY_SECONDS = 100
+WORK_SATIETY_SECONDS = 60
+STRONG_HUNGER_SECONDS = 60
 WORK_BUILDINGS = ("farm", "lumber_camp", "mountain_rift", "barnyard", "black_pit")
 ROAD_BUILDINGS = {
     "wheat_farm": "farm",
@@ -41,67 +45,25 @@ def meal_plan(needed, available):
     for amounts in itertools.product(*(range(limit + 1) for limit in limits)):
         nutrition = [amount * FOOD_VALUE[food] for food, amount in zip(foods, amounts)]
         total = sum(nutrition)
-        if total > needed:
-            continue
         balance_error = sum(
             abs(value * sum(FOOD_SHARE.values()) - total * FOOD_SHARE[food])
             for food, value in zip(foods, nutrition)
         )
-        score = (total, -balance_error, -sum(amounts), *(-amount for amount in amounts))
+        score = (min(total, needed), -max(0, total - needed), -balance_error,
+                 -sum(amounts), *(-amount for amount in amounts))
         if best_score is None or score > best_score:
             best_score = score
             best = dict(zip(foods, amounts))
     return best
 
 
-def post_meal_state(satiety, hunger_streak, nutrition):
-    satiety = min(FULL_MEAL_NUTRITION, max(0, int(satiety)) + max(0, int(nutrition)))
-    incomplete_meals = int(hunger_streak) + 1 if satiety < FULL_MEAL_NUTRITION else 0
-    if satiety >= FULL_MEAL_NUTRITION:
-        satisfaction = "satisfied"
-    elif incomplete_meals >= 2 and satiety < 50:
-        satisfaction = "starving"
-    else:
-        satisfaction = "irritated"
-    return satiety, incomplete_meals, satisfaction
-
-
-def food_tick_forecast(citizens, stock, tick_at, capacity):
-    remaining_stock = {food: max(0, int(stock.get(food, 0))) for food in FOOD_VALUE}
-    projected_satiety = []
-    unhappy = False
-    expected_tax_copper = 0
-    remaining_population = len(citizens)
-    for citizen in citizens:
-        elapsed_minutes = max(
-            0, int((float(tick_at) - float(citizen["satiety_updated_at"])) // 60)
-        )
-        satiety = max(0, int(citizen["satiety"]) - elapsed_minutes)
-        plan = meal_plan(FULL_MEAL_NUTRITION, remaining_stock)
-        nutrition = 0
-        for food, amount in plan.items():
-            remaining_stock[food] -= amount
-            nutrition += amount * FOOD_VALUE[food]
-        post_satiety, streak, mood = post_meal_state(
-            satiety, citizen["hunger_streak"], nutrition
-        )
-        expected_tax_copper += {"satisfied": 100, "irritated": 20, "starving": 0}[mood]
-        if mood == "starving" and nutrition == 0 and remaining_population > MIN_POPULATION:
-            remaining_population -= 1
-            continue
-        projected_satiety.append(post_satiety)
-        unhappy = unhappy or mood != "satisfied"
-
-    if any(value < 50 for value in projected_satiety):
-        food_status = "В городе голод"
-    elif any(value < FULL_MEAL_NUTRITION for value in projected_satiety):
-        food_status = "Население не доедает"
-    else:
-        food_status = "Пищи достаточно"
-
-    reserve = sum(remaining_stock[food] * value for food, value in FOOD_VALUE.items())
-    citizen_due = remaining_population < int(capacity) and not unhappy and reserve >= FULL_MEAL_NUTRITION
-    return food_status, citizen_due, expected_tax_copper
+def satisfaction_for_satiety(satiety):
+    satiety = int(satiety)
+    if satiety <= 10:
+        return "starving"
+    if satiety <= 30:
+        return "irritated"
+    return "satisfied"
 
 
 class CityPopulation:
@@ -151,8 +113,9 @@ class CityPopulation:
             """SELECT castle_level, COUNT(citizen.id) AS population,
                       COALESCE(MAX(citizen.ordinal), 0) AS max_ordinal
                FROM city_population_state state
-               LEFT JOIN city_citizens citizen
-                 ON citizen.world_id = state.world_id AND citizen.faction = state.faction
+                             LEFT JOIN city_citizens citizen
+                                 ON citizen.world_id = state.world_id AND citizen.faction = state.faction
+                                AND citizen.alive=TRUE
                WHERE state.world_id = %s AND state.faction = %s
                GROUP BY state.castle_level""",
             key,
@@ -230,13 +193,13 @@ class CityPopulation:
             for row in connection.execute(
                 """SELECT resource, storage FROM building_resources
                    WHERE world_id = %s AND faction = %s AND building = 'barn'
-                     AND resource IN ('wheat', 'berries', 'meat')""",
+                     AND resource IN ('wheat', 'berries', 'meat') FOR UPDATE""",
                 (int(world_id), DEFAULT_FACTION),
             ).fetchall()
         }
 
-    def _feed(self, connection, world_id, stock):
-        plan = meal_plan(FULL_MEAL_NUTRITION, stock)
+    def _feed(self, connection, world_id, stock, needed):
+        plan = meal_plan(needed, stock)
         nutrition = 0
         for food, quantity in plan.items():
             if quantity <= 0:
@@ -249,6 +212,150 @@ class CityPopulation:
             stock[food] = stock.get(food, 0) - quantity
             nutrition += quantity * FOOD_VALUE[food]
         return nutrition
+
+    @staticmethod
+    def _satiety_rate(citizen, convoy_driver=False):
+        if convoy_driver or citizen.get("travel_direction"):
+            return TRAVEL_SATIETY_SECONDS
+        if citizen.get("working"):
+            return WORK_SATIETY_SECONDS
+        return IDLE_SATIETY_SECONDS
+
+    def _sync_citizen_hunger(self, connection, key, citizen, now, stock=None, convoy_driver=False):
+        if not citizen.get("alive", True):
+            return None
+        previous_update = float(citizen["satiety_updated_at"])
+        now = max(float(now), previous_update)
+        remaining = now - previous_update
+        rate = self._satiety_rate(citizen, convoy_driver)
+        satiety = int(citizen["satiety"])
+        satiety_progress = float(citizen.get("satiety_progress", 0))
+        strong_hunger = int(citizen.get("strong_hunger", 0))
+        strong_hunger_progress = float(citizen.get("strong_hunger_progress", 0))
+        if stock is None:
+            stock = self._food_stock(connection, key[0])
+        reached_zero_at = previous_update if satiety == 0 else None
+        died = False
+
+        while remaining > 1e-9:
+            if satiety <= 30:
+                nutrition = self._feed(connection, key[0], stock, 100 - satiety)
+                if nutrition:
+                    satiety = min(100, satiety + nutrition)
+                    satiety_progress = 0
+                    strong_hunger = 0
+                    strong_hunger_progress = 0
+                    reached_zero_at = None
+                    continue
+
+            if satiety == 0:
+                hunger_seconds = max(
+                    0.0, (100 - strong_hunger - strong_hunger_progress)
+                    * STRONG_HUNGER_SECONDS,
+                )
+                if remaining >= hunger_seconds:
+                    remaining -= hunger_seconds
+                    strong_hunger = 100
+                    strong_hunger_progress = 0
+                    died = True
+                    break
+                hunger_units = strong_hunger_progress + remaining / STRONG_HUNGER_SECONDS
+                hunger_gain = int(hunger_units)
+                strong_hunger += hunger_gain
+                strong_hunger_progress = hunger_units - hunger_gain
+                remaining = 0
+                break
+
+            threshold = 30 if satiety > 30 else 0
+            seconds_to_threshold = max(0.0, (satiety - threshold - satiety_progress) * rate)
+            if remaining >= seconds_to_threshold:
+                remaining -= seconds_to_threshold
+                satiety = threshold
+                satiety_progress = 0
+                if satiety == 0 and reached_zero_at is None:
+                    reached_zero_at = now - remaining
+                continue
+
+            satiety_units = satiety_progress + remaining / rate
+            satiety_loss = int(satiety_units)
+            satiety -= satiety_loss
+            satiety_progress = satiety_units - satiety_loss
+            remaining = 0
+
+        if satiety <= 30:
+            nutrition = self._feed(connection, key[0], stock, 100 - satiety)
+            if nutrition:
+                satiety = min(100, satiety + nutrition)
+                satiety_progress = 0
+                strong_hunger = 0
+                strong_hunger_progress = 0
+                reached_zero_at = None
+
+        satisfaction = satisfaction_for_satiety(satiety)
+        if died:
+            if convoy_driver:
+                from server.transport import TransportService
+
+                TransportService(self.db).turn_driver_home(
+                    connection, key[0], int(citizen["id"]), reached_zero_at or now,
+                )
+            self._release_worker(connection, key, citizen, now, clear_job=True)
+            connection.execute(
+                """UPDATE city_citizens SET alive=FALSE, working=FALSE, job_building=NULL,
+                   job_slot=NULL, arrival_at=NULL, travel_direction=NULL, satiety=0,
+                   satiety_progress=0, strong_hunger=100, strong_hunger_progress=0,
+                   satiety_updated_at=%s, satisfaction='starving' WHERE id=%s""",
+                (now, int(citizen["id"])),
+            )
+            return citizen["name"]
+
+        connection.execute(
+            """UPDATE city_citizens SET satiety=%s, satiety_progress=%s,
+               strong_hunger=%s, strong_hunger_progress=%s,
+               satiety_updated_at=%s, satisfaction=%s WHERE id=%s""",
+            (satiety, satiety_progress, strong_hunger, strong_hunger_progress,
+             now, satisfaction, int(citizen["id"])),
+        )
+        citizen.update(
+            satiety=satiety, satiety_progress=satiety_progress,
+            strong_hunger=strong_hunger, strong_hunger_progress=strong_hunger_progress,
+            satiety_updated_at=now, satisfaction=satisfaction,
+        )
+        if satiety == 0 and convoy_driver:
+            from server.transport import TransportService
+
+            TransportService(self.db).turn_driver_home(
+                connection, key[0], int(citizen["id"]), reached_zero_at or now,
+            )
+        elif (satiety == 0 and citizen.get("working")
+              and citizen.get("travel_direction") != "returning"):
+            self._begin_return(connection, key, citizen, reached_zero_at or now)
+        return None
+
+    def _sync_citizens(self, connection, key, now):
+        stock = self._food_stock(connection, key[0])
+        convoy_driver_ids = {
+            int(row["driver_citizen_id"])
+            for row in connection.execute(
+                """SELECT driver_citizen_id FROM transport_convoys
+                   WHERE world_id=%s AND faction=%s AND status IN ('outbound','blocked')""",
+                key,
+            ).fetchall()
+        }
+        citizens = connection.execute(
+            """SELECT * FROM city_citizens WHERE world_id=%s AND faction=%s AND alive=TRUE
+               ORDER BY ordinal FOR UPDATE""",
+            key,
+        ).fetchall()
+        departed = []
+        for citizen in citizens:
+            name = self._sync_citizen_hunger(
+                connection, key, dict(citizen), now, stock,
+                convoy_driver=int(citizen["id"]) in convoy_driver_ids,
+            )
+            if name:
+                departed.append(name)
+        return departed
 
     def _travel_seconds(self, building):
         if self._travel_distances is None:
@@ -272,6 +379,7 @@ class CityPopulation:
                                   return_progress, return_started_at
                    FROM city_citizens
                    WHERE world_id = %s AND travel_direction IS NOT NULL
+                                         AND alive=TRUE
                      AND arrival_at > %s
                    ORDER BY faction, id""",
                 (world_id, now),
@@ -360,29 +468,46 @@ class CityPopulation:
             (arrival_at, progress, float(now), int(citizen["id"])),
         )
 
-    @staticmethod
-    def _settle_travel(connection, key, now):
-        citizens = connection.execute(
-            """SELECT id, travel_direction FROM city_citizens
+    def _settle_travel(self, connection, key, now):
+        stock = self._food_stock(connection, key[0])
+        while True:
+            citizens = connection.execute(
+                """SELECT * FROM city_citizens
                WHERE world_id = %s AND faction = %s AND travel_direction IS NOT NULL
-                 AND arrival_at <= %s FOR UPDATE""",
-            (*key, float(now)),
-        ).fetchall()
-        for citizen in citizens:
-            if citizen["travel_direction"] == "returning":
-                connection.execute(
-                    """UPDATE city_citizens SET job_building = NULL, job_slot = NULL,
-                              working = FALSE, arrival_at = NULL, travel_direction = NULL,
-                              return_progress = 1, return_started_at = NULL WHERE id = %s""",
+                 AND alive=TRUE AND arrival_at <= %s FOR UPDATE""",
+                (*key, float(now)),
+            ).fetchall()
+            if not citizens:
+                return
+            for citizen in citizens:
+                arrival_at = float(citizen["arrival_at"])
+                self._sync_citizen_hunger(connection, key, dict(citizen), arrival_at, stock)
+                current = connection.execute(
+                    "SELECT * FROM city_citizens WHERE id=%s AND alive=TRUE FOR UPDATE",
                     (int(citizen["id"]),),
-                )
-            else:
-                connection.execute(
-                    """UPDATE city_citizens SET arrival_at = NULL, travel_direction = NULL
-                              , return_progress = 1, return_started_at = NULL
-                       WHERE id = %s""",
+                ).fetchone()
+                if (current is None or not current["travel_direction"]
+                        or float(current["arrival_at"]) > now):
+                    continue
+                if current["travel_direction"] == "returning":
+                    connection.execute(
+                        """UPDATE city_citizens SET job_building=NULL,job_slot=NULL,
+                           working=FALSE,arrival_at=NULL,travel_direction=NULL,
+                           return_progress=1,return_started_at=NULL WHERE id=%s""",
+                        (int(citizen["id"]),),
+                    )
+                else:
+                    connection.execute(
+                        """UPDATE city_citizens SET arrival_at=NULL,travel_direction=NULL,
+                           return_progress=1,return_started_at=NULL WHERE id=%s""",
+                        (int(citizen["id"]),),
+                    )
+                settled = connection.execute(
+                    "SELECT * FROM city_citizens WHERE id=%s AND alive=TRUE FOR UPDATE",
                     (int(citizen["id"]),),
-                )
+                ).fetchone()
+                if settled is not None:
+                    self._sync_citizen_hunger(connection, key, dict(settled), now, stock)
 
     def _resume_worker(self, connection, key, citizen, now):
         building, slot_index = citizen.get("job_building"), citizen.get("job_slot")
@@ -415,47 +540,15 @@ class CityPopulation:
         )
 
     def _hourly_tick(self, connection, key, tick_at):
-        self._ensure_building(connection, key[0], "barn", tick_at)
-        stock = self._food_stock(connection, key[0])
         citizens = connection.execute(
-            """SELECT * FROM city_citizens WHERE world_id = %s AND faction = %s
-               ORDER BY ordinal FOR UPDATE""",
+            """SELECT satisfaction FROM city_citizens
+               WHERE world_id=%s AND faction=%s AND alive=TRUE FOR UPDATE""",
             key,
         ).fetchall()
-        departed = []
-        tax_copper = 0
-        remaining_population = len(citizens)
-        for citizen in citizens:
-            elapsed_minutes = max(
-                0, int((float(tick_at) - float(citizen["satiety_updated_at"])) // 60)
-            )
-            satiety = max(0, int(citizen["satiety"]) - elapsed_minutes)
-            fed = self._feed(connection, key[0], stock)
-            post_satiety, streak, mood = post_meal_state(
-                satiety, citizen["hunger_streak"], fed
-            )
-            tax_copper += {"satisfied": 100, "irritated": 20, "starving": 0}[mood]
-            citizen_data = dict(citizen)
-            citizen_data.update(satiety=post_satiety, hunger_streak=streak,
-                                satisfaction=mood)
-            if (mood == "starving" and citizen["working"]
-                    and citizen["travel_direction"] != "returning"):
-                self._begin_return(connection, key, citizen_data, tick_at)
-            if mood == "starving" and fed == 0 and remaining_population > MIN_POPULATION:
-                self._release_worker(connection, key, citizen_data, tick_at)
-                connection.execute("DELETE FROM city_citizens WHERE id = %s", (int(citizen["id"]),))
-                remaining_population -= 1
-                departed.append(citizen["name"])
-                continue
-            connection.execute(
-                     """UPDATE city_citizens SET satiety = %s, satiety_updated_at = %s,
-                         hunger_streak = %s, satisfaction = %s WHERE id = %s""",
-                     (citizen_data["satiety"], tick_at, streak, mood, int(citizen["id"])),
-            )
-            citizen_data["working"] = bool(citizen["working"])
-            if mood == "satisfied" and not citizen_data["working"]:
-                self._resume_worker(connection, key, citizen_data, tick_at)
-
+        tax_copper = sum(
+            {"satisfied": 100, "irritated": 20, "starving": 0}.get(row["satisfaction"], 0)
+            for row in citizens
+        )
         if tax_copper:
             connection.execute(
                 """UPDATE city_population_state SET treasury_copper = treasury_copper + %s
@@ -467,13 +560,17 @@ class CityPopulation:
             key,
         ).fetchone()
         current = connection.execute(
-            "SELECT COUNT(*) AS amount, COALESCE(MAX(ordinal), 0) AS max_ordinal FROM city_citizens WHERE world_id = %s AND faction = %s",
+            """SELECT COUNT(*) FILTER (WHERE alive=TRUE) AS amount,
+                      COALESCE(MAX(ordinal), 0) AS max_ordinal
+               FROM city_citizens WHERE world_id=%s AND faction=%s""",
             key,
         ).fetchone()
         unhappy = connection.execute(
-            "SELECT COUNT(*) AS amount FROM city_citizens WHERE world_id = %s AND faction = %s AND satisfaction <> 'satisfied'",
+            """SELECT COUNT(*) AS amount FROM city_citizens WHERE world_id=%s AND faction=%s
+               AND alive=TRUE AND satisfaction <> 'satisfied'""",
             key,
         ).fetchone()["amount"]
+        stock = self._food_stock(connection, key[0])
         food_reserve = sum(stock.get(food, 0) * value for food, value in FOOD_VALUE.items())
         if (current["amount"] < int(state["castle_level"]) * BASE_POPULATION_CAPACITY
                 and not unhappy and food_reserve >= FULL_MEAL_NUTRITION):
@@ -484,7 +581,7 @@ class CityPopulation:
                          VALUES (%s, %s, %s, %s, 100, %s, %s)""",
                      (*key, ordinal, f"Горожанин {ordinal}", tick_at, tick_at),
             )
-        return departed
+        return []
 
     def _process_due(self, key, now):
         departures = []
@@ -496,18 +593,24 @@ class CityPopulation:
             ).fetchone()
             if state is None:
                 return
-            self._settle_travel(connection, key, now)
             last_tick = float(state["last_food_tick_at"])
             while last_tick + 3600 <= now:
                 last_tick += 3600
+                self._ensure_building(connection, key[0], "barn", last_tick)
+                departures.extend(self._sync_citizens(connection, key, last_tick))
+                self._settle_travel(connection, key, last_tick)
+                departures.extend(self._sync_citizens(connection, key, last_tick))
                 departures.extend(self._hourly_tick(connection, key, last_tick))
                 connection.execute(
                     """UPDATE city_population_state SET last_food_tick_at = %s
                        WHERE world_id = %s AND faction = %s""",
                     (last_tick, *key),
                 )
+            self._ensure_building(connection, key[0], "barn", now)
+            self._settle_travel(connection, key, now)
+            departures.extend(self._sync_citizens(connection, key, now))
         for name in departures:
-            self._announce_departure(key[0], name)
+            self._announce_starvation_death(key[0], name)
 
     def tick_all(self, now=None):
         now = time.time() if now is None else float(now)
@@ -517,10 +620,10 @@ class CityPopulation:
         for key in keys:
             self._process_due(key, now)
 
-    def _announce_departure(self, world_id, name):
+    def _announce_starvation_death(self, world_id, name):
         world_db = Database(self.db.dsn, schema=self.db.schema, world_id=int(world_id))
         system_character = world_db.ensure_bot_character(f"city_population_{world_id}", "Город")
-        world_db.add_chat_message(system_character, "city", f"Горожанин покинул город (-1): {name}")
+        world_db.add_chat_message(system_character, "city", f"Горожанин умер от голода: {name}")
 
     def _payload(self, connection, key, now, character_id):
         state = connection.execute(
@@ -535,15 +638,23 @@ class CityPopulation:
         treasury = Currency().add_copper_amount(int(state["treasury_copper"]))
         personal_currency = Currency.from_dict(character_currency or {})
         citizens = connection.execute(
-            "SELECT * FROM city_citizens WHERE world_id = %s AND faction = %s ORDER BY ordinal",
+            "SELECT * FROM city_citizens WHERE world_id = %s AND faction = %s AND alive=TRUE ORDER BY ordinal",
             key,
         ).fetchall()
         food = self._food_stock(connection, key[0])
         population_capacity = int(state["castle_level"]) * BASE_POPULATION_CAPACITY
         next_tick_at = float(state["last_food_tick_at"]) + 3600
-        food_status, new_citizen_due, expected_tax_copper = food_tick_forecast(
-            citizens, food, next_tick_at, population_capacity
+        satieties = [int(row["satiety"]) for row in citizens]
+        food_status = ("В городе голод" if any(value <= 10 for value in satieties) else
+                       "Население не доедает" if any(value <= 30 for value in satieties) else
+                       "Пищи достаточно")
+        expected_tax_copper = sum(
+            {"satisfied": 100, "irritated": 20, "starving": 0}.get(row["satisfaction"], 0)
+            for row in citizens
         )
+        food_reserve = sum(food.get(item, 0) * value for item, value in FOOD_VALUE.items())
+        unhappy = any(row["satisfaction"] != "satisfied" for row in citizens)
+        new_citizen_due = len(citizens) < population_capacity and not unhappy and food_reserve >= FULL_MEAL_NUTRITION
         worksites = []
         for building in WORK_BUILDINGS:
             building_key = (key[0], key[1], building)
@@ -572,9 +683,6 @@ class CityPopulation:
         }
         for citizen in citizens:
             row = dict(citizen)
-            elapsed_minutes = max(
-                0, int((float(now) - float(row["satiety_updated_at"])) // 60)
-            )
             if int(row["id"]) in convoy_driver_ids:
                 work_status = "Ведёт повозку"
             elif row["travel_direction"] == "returning":
@@ -588,7 +696,8 @@ class CityPopulation:
             else:
                 work_status = "Свободен"
             citizen_list.append({"id": int(row["id"]), "name": row["name"],
-                                 "satiety": max(0, int(row["satiety"]) - elapsed_minutes),
+                                 "satiety": int(row["satiety"]),
+                                 "strong_hunger": int(row["strong_hunger"]),
                                  "satisfaction": row["satisfaction"], "work_status": work_status,
                                  "job_building": row["job_building"], "job_slot": row["job_slot"],
                                  "travel_seconds_left": (max(0, math.ceil(float(row["arrival_at"]) - now))
@@ -599,7 +708,6 @@ class CityPopulation:
                 "population": len(citizen_list),
                 "population_capacity": population_capacity,
                 "citizens": citizen_list, "food_storage": food,
-                "food_tick_seconds_left": max(0, math.ceil(float(state["last_food_tick_at"]) + 3600 - now)),
                 "food_status": food_status,
                 "treasury_copper": int(state["treasury_copper"]),
                 "treasury": treasury.to_dict(),
@@ -680,11 +788,27 @@ class CityPopulation:
             self._ensure_state(connection, key, now)
             self._settle_travel(connection, key, now)
             citizen = connection.execute(
-                """SELECT * FROM city_citizens WHERE id = %s AND world_id = %s AND faction = %s FOR UPDATE""",
+                """SELECT * FROM city_citizens WHERE id = %s AND world_id = %s AND faction = %s
+                   AND alive=TRUE FOR UPDATE""",
                 (int(citizen_id), *key),
             ).fetchone()
             if citizen is None:
                 raise ValueError("Горожанин не найден")
+            active_convoy = connection.execute(
+                """SELECT 1 FROM transport_convoys WHERE world_id=%s AND faction=%s
+                   AND driver_citizen_id=%s AND status IN ('outbound','blocked')""",
+                (*key, int(citizen_id)),
+            ).fetchone()
+            self._sync_citizen_hunger(
+                connection, key, dict(citizen), now,
+                self._food_stock(connection, key[0]), convoy_driver=active_convoy is not None,
+            )
+            citizen = connection.execute(
+                "SELECT * FROM city_citizens WHERE id=%s AND alive=TRUE FOR UPDATE",
+                (int(citizen_id),),
+            ).fetchone()
+            if citizen is None:
+                raise ValueError("Горожанин умер от голода")
             if citizen["satisfaction"] != "satisfied":
                 raise ValueError("Голодный горожанин не может выйти на работу")
             if citizen["job_building"] is not None:
@@ -727,8 +851,18 @@ class CityPopulation:
             key = self._key(connection, character_id)
             self._settle_travel(connection, key, now)
             citizen = connection.execute(
-                """SELECT * FROM city_citizens WHERE id = %s AND world_id = %s AND faction = %s FOR UPDATE""",
+                """SELECT * FROM city_citizens WHERE id = %s AND world_id = %s AND faction = %s
+                   AND alive=TRUE FOR UPDATE""",
                 (int(citizen_id), *key),
+            ).fetchone()
+            if citizen is None or not citizen["job_building"]:
+                raise ValueError("Горожанин сейчас не работает")
+            self._sync_citizen_hunger(
+                connection, key, dict(citizen), now, self._food_stock(connection, key[0]),
+            )
+            citizen = connection.execute(
+                "SELECT * FROM city_citizens WHERE id=%s AND alive=TRUE FOR UPDATE",
+                (int(citizen_id),),
             ).fetchone()
             if citizen is None or not citizen["job_building"]:
                 raise ValueError("Горожанин сейчас не работает")

@@ -135,12 +135,12 @@ class TransportService:
 
     def _driver_can_continue(self, connection, driver_id):
         driver = connection.execute(
-            """SELECT satisfaction, job_building, working, travel_direction
+            """SELECT alive, satisfaction, job_building, working, travel_direction
                FROM city_citizens WHERE id=%s FOR UPDATE""",
             (int(driver_id),),
         ).fetchone()
         return bool(
-            driver is not None and driver["satisfaction"] == "satisfied"
+            driver is not None and driver["alive"] and driver["satisfaction"] == "satisfied"
             and driver["job_building"] is None and not driver["working"]
             and driver["travel_direction"] is None
         )
@@ -317,6 +317,47 @@ class TransportService:
                WHERE id=%s""",
             (now, travel_seconds, now + travel_seconds, int(convoy["id"])),
         )
+
+    def turn_driver_home(self, connection, world_id, driver_id, now):
+        convoy = connection.execute(
+            """SELECT * FROM transport_convoys WHERE world_id=%s AND faction=%s
+               AND driver_citizen_id=%s AND status IN ('outbound','blocked')
+               FOR UPDATE""",
+            (int(world_id), DEFAULT_FACTION, int(driver_id)),
+        ).fetchone()
+        if convoy is None:
+            return False
+
+        phase = convoy.get("phase") or "outbound"
+        now = float(now)
+        if phase == "outbound" and float(convoy["arrival_at"]) > now:
+            total = max(1, int(convoy["travel_seconds"]))
+            progress = min(1.0, max(0.0, (now - float(convoy["started_at"])) / total))
+            return_seconds = max(1, int(math.ceil(progress * total)))
+            started_at = now - (1.0 - progress) * total
+            connection.execute(
+                """UPDATE transport_convoys SET status='outbound',phase='returning',
+                   pinned=FALSE,waiting_for_resources=FALSE,started_at=%s,arrival_at=%s
+                   WHERE id=%s""",
+                (started_at, now + return_seconds, int(convoy["id"])),
+            )
+        elif phase in ("outbound", "loading", "waiting_for_resources"):
+            connection.execute(
+                "UPDATE transport_convoys SET pinned=FALSE,waiting_for_resources=FALSE WHERE id=%s",
+                (int(convoy["id"]),),
+            )
+            self._start_return_leg(connection, convoy, now)
+        else:
+            connection.execute(
+                "UPDATE transport_convoys SET pinned=FALSE,waiting_for_resources=FALSE WHERE id=%s",
+                (int(convoy["id"]),),
+            )
+        connection.execute(
+            """UPDATE stable_horses SET status='В пути'
+               WHERE id IN (SELECT horse_id FROM transport_convoy_horses WHERE convoy_id=%s)""",
+            (int(convoy["id"]),),
+        )
+        return True
 
     def _start_unloading(self, connection, convoy, now):
         grade = CART_GRADES[str(convoy["cart_grade"])]
@@ -561,15 +602,6 @@ class TransportService:
             if active_cart:
                 raise ValueError("Повозка уже занята рейсом")
 
-            driver = connection.execute(
-                """SELECT * FROM city_citizens WHERE id=%s AND world_id=%s AND faction=%s FOR UPDATE""",
-                (driver_id, world_id, DEFAULT_FACTION),
-            ).fetchone()
-            if driver is None:
-                raise ValueError("Участник экипажа не найден")
-            if (driver["satisfaction"] != "satisfied" or driver["job_building"] is not None
-                    or driver["working"] or driver["travel_direction"] is not None):
-                raise ValueError("Участник экипажа должен быть свободным, сытым и не находиться в пути")
             active_driver = connection.execute(
                 """SELECT 1 FROM transport_convoys WHERE world_id=%s AND faction=%s
                    AND driver_citizen_id=%s AND status IN ('outbound','blocked')""",
@@ -577,6 +609,30 @@ class TransportService:
             ).fetchone()
             if active_driver:
                 raise ValueError("Этот горожанин уже ведёт повозку")
+
+            driver = connection.execute(
+                """SELECT * FROM city_citizens WHERE id=%s AND world_id=%s AND faction=%s
+                   AND alive=TRUE FOR UPDATE""",
+                (driver_id, world_id, DEFAULT_FACTION),
+            ).fetchone()
+            if driver is None:
+                raise ValueError("Участник экипажа не найден")
+            from server.city_population import CityPopulation
+
+            population = CityPopulation(self.db)
+            population._sync_citizen_hunger(
+                connection, (world_id, DEFAULT_FACTION), dict(driver), now,
+                population._food_stock(connection, world_id),
+            )
+            driver = connection.execute(
+                "SELECT * FROM city_citizens WHERE id=%s AND alive=TRUE FOR UPDATE",
+                (driver_id,),
+            ).fetchone()
+            if driver is None:
+                raise ValueError("Участник экипажа умер от голода")
+            if (driver["satisfaction"] != "satisfied" or driver["job_building"] is not None
+                    or driver["working"] or driver["travel_direction"] is not None):
+                raise ValueError("Участник экипажа должен быть свободным, сытым и не находиться в пути")
 
             horses = connection.execute(
                 """SELECT id, name, breed, status FROM stable_horses

@@ -19,9 +19,9 @@ TABS = (
     ("upgrades", "УЛУЧШЕНИЯ"),
 )
 MOOD_LABELS = {
-    "satisfied": ("Доволен", (100, 215, 125)),
-    "irritated": ("Раздражён", (240, 205, 85)),
-    "starving": ("Голодает", (240, 100, 90)),
+    "satisfied": ("Сыт", (100, 215, 125)),
+    "irritated": ("Проголодался", (240, 205, 85)),
+    "starving": ("Голоден", (240, 100, 90)),
 }
 FOOD_STATUS_COLORS = {
     "Пищи достаточно": (115, 215, 125),
@@ -327,7 +327,7 @@ class CastleWindow:
             amount_surface = self.font.render(str(amount), True, (232, 225, 205))
             screen.blit(amount_surface, (coin_x + 26, top + 1))
             coin_x += 82
-        seconds = state.get("tax_tick_seconds_left", state.get("food_tick_seconds_left", 0))
+        seconds = state.get("tax_tick_seconds_left", 0)
         expected_tax = state.get("expected_tax_text", "0 меди")
         screen.blit(self.small_font.render(
             f"До сбора налогов: {_format_clock(seconds)} (ожидается: {expected_tax})",
@@ -383,13 +383,13 @@ class CastleWindow:
         left = self.rect.left + 28
         top = self.rect.top + 137
         food = state.get("food_storage", {})
-        summary = (f"Население: {state.get('population', 0)} / {state.get('population_capacity', 10)}"
-                   f"     До приёма пищи: {_format_clock(state.get('food_tick_seconds_left', 0))}")
+        summary = (f"Население: {state.get('population', 0)} / "
+                   f"{state.get('population_capacity', 10)}")
         growth_eta = state.get("new_citizen_eta_seconds")
         if growth_eta is not None:
             elapsed = time.monotonic() - self.last_refresh
             growth_eta = max(0, int(growth_eta - elapsed))
-            summary += f"  (Новый горожанин уже в пути: {_format_clock(growth_eta)})"
+            summary += f"  (Следующий житель: {_format_clock(growth_eta)})"
         screen.blit(self.font.render(summary, True, (225, 216, 187)), (left, top))
         food_text = (f"Амбар: пшеница {food.get('wheat', 0)} · ягоды {food.get('berries', 0)}"
                      f" · мясо {food.get('meat', 0)}")
@@ -409,8 +409,27 @@ class CastleWindow:
             screen.blit(self.small_font.render(citizen["name"], True, (226, 225, 211)),
                         (row.left + 10, row.top + 8))
             satiety = int(citizen.get("satiety", 0))
-            screen.blit(self.small_font.render(f"Сытность: {satiety}/100", True, (200, 202, 190)),
-                        (row.left + 220, row.top + 8))
+            strong_hunger = int(citizen.get("strong_hunger", 0))
+            if satiety == 0:
+                meter_label = f"Сильный голод {strong_hunger}%"
+                meter_color = (15, 15, 15)
+            else:
+                meter_label = f"Сытность {satiety}%"
+                meter_color = ((226, 66, 58) if satiety <= 10 else
+                               (232, 184, 48) if satiety <= 30 else
+                               (72, 174, 95))
+            screen.blit(self.small_font.render(meter_label, True, meter_color),
+                        (row.left + 220, row.top + 3))
+            meter = pygame.Rect(row.left + 220, row.top + 24, 150, 8)
+            pygame.draw.rect(screen, (95, 98, 91), meter, border_radius=3)
+            meter_value = strong_hunger if satiety == 0 else satiety
+            fill = meter.copy()
+            fill.width = round((meter.width - 2) * max(0, min(100, meter_value)) / 100)
+            fill.left += 1
+            fill.top += 1
+            fill.height -= 2
+            if fill.width:
+                pygame.draw.rect(screen, meter_color, fill, border_radius=2)
             mood, mood_color = MOOD_LABELS.get(citizen.get("satisfaction"), ("—", (180, 180, 180)))
             screen.blit(self.small_font.render(f"Довольство: {mood}", True, mood_color),
                         (row.left + 405, row.top + 8))

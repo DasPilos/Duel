@@ -531,7 +531,7 @@ class ProductionBuildings:
                  "satisfaction": row["satisfaction"]}
                 for row in connection.execute(
                     """SELECT id,name,satiety,satisfaction FROM city_citizens
-                       WHERE world_id=%s AND faction=%s AND satisfaction='satisfied'
+                              WHERE world_id=%s AND faction=%s AND alive=TRUE AND satisfaction='satisfied'
                                                  AND job_building IS NULL AND working=FALSE AND travel_direction IS NULL
                        ORDER BY ordinal""",
                     key[:2],

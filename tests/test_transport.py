@@ -265,10 +265,31 @@ class TransportServiceTests(unittest.TestCase):
         self.assertEqual(returning["direction"], "returning")
         self.assertEqual(returning["cargo"][0]["resource_id"], "wood")
 
+    def test_starving_convoy_driver_turns_the_wagon_toward_city(self):
+        service = TransportService(self.database)
+        convoy = service.dispatch(self.character_id, self._payload(), now=self.now + 1)
+        with self.database.connection() as connection:
+            connection.execute(
+                """UPDATE city_citizens SET satiety=1,satiety_progress=0,
+                   satiety_updated_at=%s WHERE id=%s""",
+                (self.now + 1, self.driver_id),
+            )
+
+        CityPopulation(self.database).tick_all(now=self.now + 102)
+
+        returning = next(
+            row for row in service.get_world_convoys(self.character_id, now=self.now + 102)
+            if row["id"] == convoy["id"]
+        )
+        self.assertFalse(returning["pinned"])
+        self.assertEqual(returning["phase"], "returning")
+        self.assertEqual(returning["direction"], "returning")
+
     def test_starving_driver_is_not_offered_or_dispatchable(self):
         with self.database.connection() as connection:
             connection.execute(
-                "UPDATE city_citizens SET satisfaction='starving' WHERE id=%s", (self.driver_id,),
+                "UPDATE city_citizens SET satiety=10,satisfaction='starving' WHERE id=%s",
+                (self.driver_id,),
             )
         stable = self.production.get_state(self.character_id, "stable", now=self.now + 2)
         self.assertNotIn(self.driver_id, [row["id"] for row in stable["available_cart_drivers"]])
