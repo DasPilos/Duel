@@ -253,6 +253,10 @@ class InventoryWindow:
         character = self.session.character
         character["equipment_bonuses"] = dict(self.bonuses)
         character["equipment"] = dict(self.equipment)
+        character["inventory"] = {
+            str(item["slot_index"]): dict(item)
+            for item in state.get("inventory", [])
+        }
         character["carried_weight_kg"] = float(state.get("carried_weight_kg", 0))
         updated = state.get("character")
         if updated:

@@ -10,7 +10,6 @@ import pygame
 from client.network import ServerError
 from core import settings
 from core.production_buildings import (
-    CYCLE_DURATION_SEC,
     RESOURCES,
     building_config,
     building_level_info,
@@ -157,7 +156,7 @@ def point_in_polygon(point, polygon):
 class ProductionBuildingWindow:
     LEFT_COLUMN = 300
     WORKER_PANEL_WIDTH = 300
-    WORKER_ROW_HEIGHT = 64
+    WORKER_ROW_HEIGHT = 88
     HOUSE_SIZE = 28
     REFRESH_SECONDS = 5
     # Лес: внутреннее кольцо (чаща и большие поляны) занимает такую долю радиуса
@@ -325,23 +324,23 @@ class ProductionBuildingWindow:
 
     def production_desc(self, level):
         info = building_level_info(level, self.building)
-        per_cycle = ", ".join(
-            f"{RESOURCES[resource]['label'].lower()} {CYCLE_DURATION_SEC // RESOURCES[resource]['timer_sec']}"
+        per_unit = ", ".join(
+            f"{RESOURCES[resource]['label'].lower()} 1 ед. за {RESOURCES[resource]['timer_sec']} с"
             for resource in self.resources
             if "timer_sec" in RESOURCES[resource]
         )
         bonus = building_config(self.building).get("bonus")
-        chance = bonus["cycle_chance"].get(int(level), 0) if bonus else 0
+        chance = bonus["unit_bonus_chance"].get(int(level), 0) if bonus else 0
         if chance:
             gems = ", ".join(
                 f"{RESOURCES[gem]['label'].lower()} {weight}%" for gem, weight in bonus["weights"][int(level)].items()
             )
-            per_cycle += (
-                f". Шанс камня {chance * 100:g}% за цикл отгрузки на всю копь, если работает "
-                f"хотя бы 1 горожанин и склад не переполнен ({gems}; каждый 1 кг)"
+            per_unit += (
+                f". Бонусный самоцвет: шанс {chance * 100:g}% на каждую добытую единицу угля "
+                f"({gems}; каждый 1 кг)"
             )
         return (
-            f"Горожанин за цикл {CYCLE_DURATION_SEC // 60} мин: {per_cycle}. "
+            f"Горожанин: {per_unit or 'ресурсы не добываются'}. "
             f"Склад: {info['storage']}. Горожан: {info['max_workers']}."
         )
 
@@ -351,7 +350,8 @@ class ProductionBuildingWindow:
             return "ожидание рабочего"
         if self.storage_total() >= state["storage"]["limit"]:
             return "склад заполнен"
-        return format_clock(state["cycle_seconds_left"] - self._since_received())
+        seconds = state.get("next_harvest_seconds")
+        return "—" if seconds is None else format_clock(seconds - self._since_received())
 
     def status(self):
         """Возвращает (статус, цвет)."""
@@ -1308,23 +1308,20 @@ class ProductionBuildingWindow:
                         )
                         screen.blit(text, (icon_x + 18, row.top + 29))
                         icon_x += 22 + text.get_width() + 8
-                else:
-                    screen.blit(scene.grid_font.render("Цикл: —", True, (190, 205, 184)),
-                                (row.left + 7, row.top + 29))
 
             if is_player:
                 screen.blit(scene.grid_font.render("Всего:", True, (154, 181, 149)),
-                            (row.left + 7, row.top + 46))
+                            (row.left + 7, row.top + 66))
                 icon_x = row.left + 55
                 for resource in resources:
                     if resource not in RESOURCES:
                         continue
-                    draw_item_icon(screen, resource, (icon_x, row.top + 45), 14)
+                    draw_item_icon(screen, resource, (icon_x, row.top + 65), 14)
                     label = scene.grid_font.render(
                         f"{RESOURCES[resource]['label']}: {lifetime.get(resource, 0)}",
                         True, (154, 181, 149),
                     )
-                    screen.blit(label, (icon_x + 16, row.top + 47))
+                    screen.blit(label, (icon_x + 16, row.top + 67))
                     icon_x += 20 + label.get_width() + 7
         screen.set_clip(previous_clip)
 
@@ -1332,7 +1329,6 @@ class ProductionBuildingWindow:
         scene = self.scene
         rect = self.rect
         storage = self._state().get("storage", {})
-        forecast = self._state().get("forecast", {})
         player_claims = self._state().get("player_harvest_claims", {})
         depositable = self._state().get("storage_depositable", {})
         self.storage_withdraw_buttons = {}
@@ -1345,8 +1341,7 @@ class ProductionBuildingWindow:
             shared_amount = int(storage.get(resource, 0))
             backpack = depositable.get(resource, {})
             text = (f"{RESOURCES[resource]['label']}: склад {shared_amount} · "
-                    f"рюкзак {backpack.get('in_backpack', 0)} · ваша доля в складе {claimable} "
-                    f"(прогноз +{forecast.get(resource, 0)})")
+                    f"рюкзак {backpack.get('in_backpack', 0)} · ваша доля в складе {claimable}")
             draw_item_icon(screen, resource, (rect.left + 12, curr_y + 2), 24)
             screen.blit(scene.small_font.render(text, True, (215, 215, 205)), (rect.left + 42, curr_y + 4))
             if shared_amount > 0:

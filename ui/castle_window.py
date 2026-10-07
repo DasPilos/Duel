@@ -30,7 +30,7 @@ FOOD_STATUS_COLORS = {
 }
 WORK_COLORS = {"Свободен": (120, 195, 230), "Занят": (120, 215, 130),
                "В пути": (90, 165, 245), "Возвращается": (235, 170, 105),
-               "В городе": (220, 185, 115)}
+               "В городе": (220, 185, 115), "Ведёт повозку": (215, 176, 112)}
 WORKSITE_LABELS = {
     "farm": "Ферма", "lumber_camp": "Лесопилка", "mountain_rift": "Рудник",
     "barnyard": "Зверинец", "black_pit": "Чёрная яма",
@@ -156,6 +156,9 @@ class CastleWindow:
             citizen = next((item for item in (self.state or {}).get("citizens", [])
                             if item["id"] == citizen_id), None)
             if citizen is None:
+                return
+            if citizen.get("work_status") == "Ведёт повозку":
+                self.message = "Участник экипажа занят транспортным рейсом."
                 return
             if citizen.get("job_building"):
                 if citizen.get("travel_direction") == "returning":
@@ -423,8 +426,11 @@ class CastleWindow:
             screen.blit(self.small_font.render(work_label, True, WORK_COLORS.get(work_status, (200, 200, 200))),
                         (row.left + 635, row.top + 8))
             action_rect = pygame.Rect(row.right - 142, row.top + 3, 132, 28)
-            self.citizen_actions[int(citizen["id"])] = action_rect
-            label = ("ДОМОЙ" if citizen.get("job_building") else "НАЗНАЧИТЬ")
+            is_convoy_driver = work_status == "Ведёт повозку"
+            if not is_convoy_driver:
+                self.citizen_actions[int(citizen["id"])] = action_rect
+            label = ("В РЕЙСЕ" if is_convoy_driver else
+                     "ДОМОЙ" if citizen.get("job_building") else "НАЗНАЧИТЬ")
             if citizen.get("travel_direction") == "returning":
                 label = "В ПУТИ ДОМОЙ"
             draw_button(screen, action_rect, label, self.small_font,

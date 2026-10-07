@@ -542,6 +542,25 @@ class ServerPersistenceTests(unittest.TestCase):
             self.database, attacker["id"], defender["id"], "win",
         )
 
+    def test_world_announcements_are_visible_in_every_location_and_server_only(self):
+        with running_server(self.database) as client:
+            client.register("world-announcement-reader", "password")
+            client.login("world-announcement-reader", "password")
+            character = client.create_character("Читатель")
+            narrator_id = self.database.ensure_bot_character("world-narrator-test", "Летописец")
+            self.database.add_chat_message(
+                narrator_id,
+                "world",
+                "Запасы зерна в городе подходят к концу.",
+            )
+
+            for location in ("tavern", "city", "backyard", "world_map", "character_room"):
+                messages = client.list_messages(location, character["id"])
+                self.assertTrue(any(message["text"] == "Запасы зерна в городе подходят к концу." for message in messages))
+
+            with self.assertRaisesRegex(ServerError, "только сервер"):
+                client.send_message(character["id"], "world", "Поддельное объявление")
+
     def test_stat_points_can_be_spent_but_not_created(self):
         with running_server(self.database) as client:
             client.register("statuser", "password")

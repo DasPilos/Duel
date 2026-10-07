@@ -15,14 +15,12 @@ from core.cart_progress import CART_GRADES, DEFAULT_CART_PROGRESS, RESOURCE_ITEM
 from core.currency import Currency
 from core.production_buildings import (
     BUILDINGS,
-    CYCLE_DURATION_SEC,
     RESOURCES,
     building_config,
     building_level_info,
     building_resources,
     horse_purchase_price_silver,
     PRODUCTION_ITEM_IDS,
-    plot_stage,
     slot_resources,
     upgrade_requirements,
 )
@@ -117,18 +115,18 @@ def _new_units(building, slot, now, harvest_bonus=None):
     return added, credited
 
 
-def distribute_to_storage(storage, buffers, limit):
-    """Сколько каждого ресурса попадёт на склад: при нехватке места — пропорционально буферам."""
+def distribute_to_storage(storage, incoming, limit):
+    """Accept each produced resource immediately, proportionally when shared storage is nearly full."""
     free = max(0, limit - sum(storage.values()))
-    total = sum(buffers.values())
+    total = sum(incoming.values())
     if total <= free:
-        return dict(buffers)
-    accepted = {resource: buffers[resource] * free // total for resource in buffers}
+        return dict(incoming)
+    accepted = {resource: incoming[resource] * free // total for resource in incoming}
     leftover = free - sum(accepted.values())
-    for resource in buffers:
+    for resource in incoming:
         if leftover <= 0:
             break
-        if accepted[resource] < buffers[resource]:
+        if accepted[resource] < incoming[resource]:
             accepted[resource] += 1
             leftover -= 1
     return accepted
@@ -174,10 +172,10 @@ class ProductionBuildings:
         self.db = database
         self.rng = rng or random.Random()
 
-    def _cycle_bonus(self, building, level):
-        """Случайная добыча за цикл отгрузки: один бросок на всё здание, вид — по весам уровня; None, если не выпало."""
+    def _bonus_resource(self, building, level):
+        """Optional resource bonus for one newly mined coal unit."""
         bonus = building_config(building).get("bonus")
-        chance = bonus["cycle_chance"].get(int(level), 0) if bonus else 0
+        chance = bonus["unit_bonus_chance"].get(int(level), 0) if bonus else 0
         if not chance or self.rng.random() >= chance:
             return None
         weights = bonus["weights"][int(level)]
@@ -189,6 +187,25 @@ class ProductionBuildings:
         if row is None:
             raise ValueError("Персонаж не найден")
         return row["world_id"], DEFAULT_FACTION, building
+
+    @staticmethod
+    def _state(connection, key):
+        return connection.execute(f"SELECT * FROM building_states WHERE {_WHERE}", key).fetchone()
+
+    @staticmethod
+    def _resources(connection, key):
+        rows = connection.execute(
+            f"SELECT resource, storage, buffer FROM building_resources WHERE {_WHERE}", key
+        ).fetchall()
+        return {row["resource"]: row for row in rows}
+
+    @staticmethod
+    def _slots(connection, key):
+        return connection.execute(
+            f"""SELECT slot_index, occupied, worker_id, hire_time, credited
+                FROM building_worker_slots WHERE {_WHERE} ORDER BY slot_index""",
+            key,
+        ).fetchall()
 
     def active_player_work(self, character_id):
         player_worker_id = f"player:{int(character_id)}"
@@ -219,30 +236,23 @@ class ProductionBuildings:
     def _ensure(self, connection, key, now):
         building = key[2]
         connection.execute(
-            """
-            INSERT INTO building_states (world_id, faction, building, level, cycle_start_time)
-            VALUES (%s, %s, %s, 1, %s)
-            ON CONFLICT (world_id, faction, building) DO NOTHING
-            """,
+            """INSERT INTO building_states (world_id, faction, building, level, cycle_start_time)
+               VALUES (%s, %s, %s, 1, %s) ON CONFLICT (world_id, faction, building) DO NOTHING""",
             (*key, now),
         )
         for resource in building_resources(building):
             connection.execute(
-                """
-                INSERT INTO building_resources (world_id, faction, building, resource)
-                VALUES (%s, %s, %s, %s)
-                ON CONFLICT (world_id, faction, building, resource) DO NOTHING
-                """,
+                """INSERT INTO building_resources (world_id, faction, building, resource)
+                   VALUES (%s, %s, %s, %s)
+                   ON CONFLICT (world_id, faction, building, resource) DO NOTHING""",
                 (*key, resource),
             )
         level = self._state(connection, key)["level"]
         for slot_index in range(building_level_info(level, building)["max_workers"]):
             connection.execute(
-                """
-                INSERT INTO building_worker_slots (world_id, faction, building, slot_index)
-                VALUES (%s, %s, %s, %s)
-                ON CONFLICT (world_id, faction, building, slot_index) DO NOTHING
-                """,
+                """INSERT INTO building_worker_slots (world_id, faction, building, slot_index)
+                   VALUES (%s, %s, %s, %s)
+                   ON CONFLICT (world_id, faction, building, slot_index) DO NOTHING""",
                 (*key, slot_index),
             )
         if building == "stable":
@@ -258,154 +268,122 @@ class ProductionBuildings:
                      json.dumps(progress["upgrades"])),
                 )
 
-    @staticmethod
-    def _state(connection, key):
-        return connection.execute(f"SELECT * FROM building_states WHERE {_WHERE}", key).fetchone()
-
-    @staticmethod
-    def _resources(connection, key):
-        rows = connection.execute(
-            f"SELECT resource, storage, buffer FROM building_resources WHERE {_WHERE}", key
-        ).fetchall()
-        return {row["resource"]: row for row in rows}
-
-    @staticmethod
-    def _slots(connection, key):
-        return connection.execute(
-            f"""
-            SELECT slot_index, occupied, worker_id, hire_time, credited FROM building_worker_slots
-            WHERE {_WHERE} ORDER BY slot_index
-            """,
-            key,
-        ).fetchall()
-
-    @staticmethod
-    def _add_to_buffers(connection, key, amounts):
-        for resource, amount in amounts.items():
-            if amount:
-                connection.execute(
-                    f"UPDATE building_resources SET buffer = buffer + %s WHERE {_WHERE} AND resource = %s",
-                    (amount, *key, resource),
-                )
-
     def _advance(self, connection, key, now):
-        """Доводит состояние до now; циклы до окончания стройки считаются по старому уровню."""
+        """Accrue completed worker units directly to storage up to the current time."""
         finish_at = self._state(connection, key)["upgrade_finish_at"]
         if finish_at is not None and finish_at <= now:
-            self._process_due_cycles(connection, key, finish_at)
+            self._sync_harvest(connection, key, finish_at)
             connection.execute(
                 f"UPDATE building_states SET level = level + 1, upgrade_finish_at = NULL WHERE {_WHERE}", key
             )
             self._ensure(connection, key, finish_at)
-        self._process_due_cycles(connection, key, now)
+        self._sync_harvest(connection, key, now)
 
-    def _sync_buffer(self, connection, key, now):
-        """Переносит готовые единицы работающих горожан в буфер и запоминает, сколько уже учтено."""
+    def _sync_harvest(self, connection, key, now):
+        """Credit each completed unit directly to shared storage; never queue new buffer."""
         building = key[2]
+        rows = self._resources(connection, key)
+        storage = {resource: int(row["storage"]) for resource, row in rows.items()}
+        incoming = {resource: int(row["buffer"]) for resource, row in rows.items()}
         added = {}
+        player_added = {}
+        level = int(self._state(connection, key)["level"])
+        storage_limit = int(building_level_info(level, building)["storage"])
         for slot in self._slots(connection, key):
-            if not slot["occupied"]:
+            if not slot["occupied"] or slot["hire_time"] is None:
                 continue
             harvest_bonus = _harvest_bonus_for_worker(connection, slot["worker_id"])
             fresh, credited = _new_units(building, slot, now, harvest_bonus)
-            if not fresh:
-                continue
             for resource, amount in fresh.items():
                 added[resource] = added.get(resource, 0) + amount
+                incoming[resource] = incoming.get(resource, 0) + amount
                 worker_id = slot["worker_id"] or ""
                 if worker_id.startswith("player:"):
                     character_id = int(worker_id.split(":", 1)[1])
+                    resource_players = player_added.setdefault(resource, {})
+                    resource_players[character_id] = resource_players.get(character_id, 0) + amount
                     connection.execute(
                         """
                         INSERT INTO building_player_resources
                             (world_id, faction, building, character_id, resource, buffered, total_produced)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        VALUES (%s, %s, %s, %s, %s, 0, %s)
                         ON CONFLICT (world_id, faction, building, character_id, resource)
-                        DO UPDATE SET buffered = building_player_resources.buffered + EXCLUDED.buffered,
-                                      total_produced = building_player_resources.total_produced + EXCLUDED.total_produced
+                        DO UPDATE SET total_produced = building_player_resources.total_produced + EXCLUDED.total_produced
                         """,
-                        (*key, character_id, resource, amount, amount),
+                        (*key, character_id, resource, amount),
                     )
             connection.execute(
                 f"UPDATE building_worker_slots SET credited = %s::jsonb WHERE {_WHERE} AND slot_index = %s",
                 (json.dumps(credited), *key, slot["slot_index"]),
             )
-        self._add_to_buffers(connection, key, added)
+        if building == "black_pit":
+            for _ in range(added.get("coal", 0)):
+                bonus = self._bonus_resource(building, level)
+                if bonus:
+                    incoming[bonus] = incoming.get(bonus, 0) + 1
 
-    def _unload(self, connection, key, now):
-        building = key[2]
-        self._sync_buffer(connection, key, now)
-        rows = self._resources(connection, key)
-        storage = {resource: row["storage"] for resource, row in rows.items()}
-        buffers = {resource: row["buffer"] for resource, row in rows.items()}
-        level = self._state(connection, key)["level"]
-        limit = building_level_info(level, building)["storage"]
-        # Излишек сверх общего лимита склада сгорает
-        accepted = distribute_to_storage(storage, buffers, limit)
-        # Один бросок на цикл: нужен хотя бы один работавший горожанин и место на складе
-        worked = sum(buffers.values()) > 0 or any(slot["occupied"] for slot in self._slots(connection, key))
-        if worked and sum(storage.values()) + sum(accepted.values()) < limit:
-            found = self._cycle_bonus(building, level)
-            if found:
-                accepted[found] += 1
-        for resource in rows:
+        accepted = distribute_to_storage(storage, incoming, storage_limit)
+        for resource, amount in accepted.items():
             player_rows = connection.execute(
                 f"""SELECT character_id, buffered FROM building_player_resources
-                    WHERE {_WHERE} AND resource = %s AND buffered > 0 ORDER BY character_id""",
-                (*key, resource),
+                    WHERE {_WHERE} AND resource=%s AND (buffered > 0 OR character_id = ANY(%s))
+                    ORDER BY character_id FOR UPDATE""",
+                (*key, resource, list(player_added.get(resource, {}))),
             ).fetchall()
-            player_total = sum(row["buffered"] for row in player_rows)
-            buffer_total = buffers[resource]
-            player_accepted = (player_total if accepted[resource] >= buffer_total else
-                               player_total * accepted[resource] // buffer_total if buffer_total else 0)
-            remaining_player_accepted = player_accepted
-            for index, player_row in enumerate(player_rows):
-                if index == len(player_rows) - 1:
-                    amount = min(player_row["buffered"], remaining_player_accepted)
-                else:
-                    amount = min(
-                        player_row["buffered"],
-                        player_accepted * player_row["buffered"] // max(1, player_total),
-                    )
-                if amount > 0:
-                    connection.execute(
-                        """
-                        UPDATE building_player_resources
-                        SET claimable = claimable + %s
-                        WHERE world_id = %s AND faction = %s AND building = %s
-                          AND character_id = %s AND resource = %s
-                        """,
-                        (amount, *key, player_row["character_id"], resource),
-                    )
-                    remaining_player_accepted -= amount
+            player_buffered = {
+                int(row["character_id"]): int(row["buffered"])
+                for row in player_rows
+            }
+            for character_id, fresh in player_added.get(resource, {}).items():
+                player_buffered[character_id] = player_buffered.get(character_id, 0) + fresh
+            player_total = sum(player_buffered.values())
+            incoming_total = int(incoming.get(resource, 0))
+            player_accepted = (player_total if amount >= incoming_total else
+                               player_total * amount // incoming_total if incoming_total else 0)
+            claims = {
+                character_id: (buffered * player_accepted // player_total if player_total else 0)
+                for character_id, buffered in player_buffered.items()
+            }
+            leftover = player_accepted - sum(claims.values())
+            for character_id, buffered in sorted(player_buffered.items()):
+                if leftover <= 0:
+                    break
+                if claims[character_id] < buffered:
+                    claims[character_id] += 1
+                    leftover -= 1
+            for character_id in player_buffered:
+                claim = claims[character_id]
+                connection.execute(
+                    f"""UPDATE building_player_resources
+                        SET claimable=claimable+%s, buffered=0
+                        WHERE {_WHERE} AND character_id=%s AND resource=%s""",
+                    (claim, *key, character_id, resource),
+                )
             connection.execute(
-                f"""UPDATE building_player_resources SET buffered = 0
-                    WHERE {_WHERE} AND resource = %s""",
+                f"""UPDATE building_player_resources SET buffered=0
+                    WHERE {_WHERE} AND resource=%s""",
                 (*key, resource),
             )
             connection.execute(
-                f"UPDATE building_resources SET storage = storage + %s, buffer = 0 WHERE {_WHERE} AND resource = %s",
-                (accepted[resource], *key, resource),
+                f"""UPDATE building_resources SET storage=storage+%s, buffer=0
+                    WHERE {_WHERE} AND resource=%s""",
+                (amount, *key, resource),
             )
-        connection.execute(f"UPDATE building_states SET cycle_start_time = %s WHERE {_WHERE}", (now, *key))
-
-    def _process_due_cycles(self, connection, key, now):
-        """Выгружает каждый завершённый цикл на его точной границе — как выгрузка по расписанию."""
-        boundary = float(self._state(connection, key)["cycle_start_time"]) + CYCLE_DURATION_SEC
-        while boundary <= now:
-            self._unload(connection, key, boundary)
-            boundary += CYCLE_DURATION_SEC
+        connection.execute(
+            f"UPDATE building_resources SET buffer=0 WHERE {_WHERE}", key
+        )
+        connection.execute(
+            f"UPDATE building_player_resources SET buffered=0 WHERE {_WHERE}", key
+        )
 
     def _payload(self, connection, key, character_id, now):
         building = key[2]
-        self._sync_buffer(connection, key, now)
+        self._sync_harvest(connection, key, now)
         state = self._state(connection, key)
         rows = self._resources(connection, key)
         for resource, row in rows.items():
             reconcile_player_harvest_claims(connection, key, resource, row["storage"])
         info = building_level_info(state["level"], building)
-        time_left = max(0, CYCLE_DURATION_SEC - (now - state["cycle_start_time"]))
-        forecast = {resource: row["buffer"] for resource, row in rows.items()}
         slots = []
         for slot in self._slots(connection, key):
             resources = slot_resources(building, slot["slot_index"])
@@ -448,12 +426,6 @@ class ProductionBuildings:
                            int((now - slot["hire_time"]) % timer_sec_by_resource[resource]))
                 for resource in resources if resource in timer_sec_by_resource
             }
-            if slot["occupied"]:
-                production_seconds_left = max(0, time_left - travel_seconds_left)
-                for resource in resources:
-                    resource_timer = timer_sec_by_resource.get(resource)
-                    if resource_timer:
-                        forecast[resource] += math.floor(production_seconds_left / resource_timer)
             slots.append({
                 "slot_index": slot["slot_index"],
                 "resource": resources[0],
@@ -475,6 +447,11 @@ class ProductionBuildings:
                 "harvest_bonus": {resource: percent for resource, percent in harvest_bonus.items()
                                    if resource in resources},
             })
+        next_harvest_seconds = min((
+            max(0, timer - slot["resource_progress_sec"].get(resource, 0))
+            for slot in slots if slot["occupied"] and not slot["is_travelling"]
+            for resource, timer in slot["timer_sec_by_resource"].items()
+        ), default=None)
         player_claim_rows = connection.execute(
             f"""SELECT resource, claimable FROM building_player_resources
                 WHERE {_WHERE} AND character_id = %s AND claimable > 0""",
@@ -538,22 +515,55 @@ class ProductionBuildings:
         stall_upgrades = None
         cart_progress = None
         available_carts = []
+        available_cart_drivers = []
         treasury_silver_available = 0
         backpack_resource_amounts = {}
         if building == "stable":
+            active_convoys = connection.execute(
+                """SELECT id, cart_id, driver_citizen_id, status FROM transport_convoys
+                   WHERE world_id = %s AND faction = %s AND status IN ('outbound','blocked')""",
+                key[:2],
+            ).fetchall()
+            convoy_by_cart = {row["cart_id"]: row for row in active_convoys}
+            busy_driver_ids = {int(row["driver_citizen_id"]) for row in active_convoys}
+            available_cart_drivers = [
+                {"id": int(row["id"]), "name": row["name"], "satiety": int(row["satiety"]),
+                 "satisfaction": row["satisfaction"]}
+                for row in connection.execute(
+                    """SELECT id,name,satiety,satisfaction FROM city_citizens
+                       WHERE world_id=%s AND faction=%s AND satisfaction='satisfied'
+                                                 AND job_building IS NULL AND working=FALSE AND travel_direction IS NULL
+                       ORDER BY ordinal""",
+                    key[:2],
+                ).fetchall()
+                if int(row["id"]) not in busy_driver_ids
+            ]
+            resting_horse_count = connection.execute(
+                """SELECT COUNT(*) AS count FROM stable_horses
+                   WHERE world_id=%s AND faction=%s AND building='stable' AND status='Отдыхает'""",
+                key[:2],
+            ).fetchone()["count"]
             cart_progress = self._cart_progress(connection, key)
             for grade, progress in cart_progress["grades"].items():
                 if not progress.get("body_owned"):
                     continue
                 cart_grade = CART_GRADES[grade]
                 stats = cart_stats(progress.get("upgrades", {}))
+                active_convoy = convoy_by_cart.get(f"cart_grade_{grade}")
+                can_travel = (
+                    active_convoy is None
+                    and resting_horse_count >= int(cart_grade.get("horse_count", 0))
+                    and bool(available_cart_drivers)
+                )
                 available_carts.append({
                     "id": f"cart_grade_{grade}",
                     "grade": int(grade),
                     "name": cart_grade["name"],
-                    "status": "Ожидает отправки",
-                    "can_travel": False,
-                    "dispatch_available": False,
+                    "status": ("Ожидает разгрузки" if active_convoy and active_convoy["status"] == "blocked"
+                               else "В пути" if active_convoy else "Свободна"),
+                    "can_travel": can_travel,
+                    "dispatch_available": can_travel,
+                    "sprite_key": cart_grade.get("sprite_key", "light"),
                     "horse_slots": int(cart_grade.get("horse_count", 0)),
                     "resource_slots": int(cart_grade.get("resource_slots", 0)),
                     "capacity_kg": stats["capacity_kg"],
@@ -670,6 +680,7 @@ class ProductionBuildings:
                         "name": horses_by_slot[slot_index]["name"],
                         "breed": horses_by_slot[slot_index]["breed"],
                         "status": horses_by_slot[slot_index]["status"],
+                        "can_travel": horses_by_slot[slot_index]["status"] == "Отдыхает",
                         "purchase_price_silver": horses_by_slot[slot_index]["purchase_price_silver"],
                     },
                 })
@@ -686,6 +697,7 @@ class ProductionBuildings:
             "stall_upgrades": stall_upgrades,
             "cart_progress": cart_progress,
             "available_carts": available_carts,
+            "available_cart_drivers": available_cart_drivers,
             "backpack_resource_amounts": backpack_resource_amounts,
             "treasury_silver_available": treasury_silver_available,
             "silver_available": silver_available if building == "stable" else None,
@@ -697,18 +709,16 @@ class ProductionBuildings:
             "feed_resource_label": RESOURCES.get(building_config(building).get("feed_resource"), {}).get("label"),
             "feed_consumption_kg_per_hour": feed_consumption,
             "workers": sum(1 for slot in slots if slot["occupied"]),
-            "cycle_start_time": state["cycle_start_time"],
-            "cycle_duration_sec": CYCLE_DURATION_SEC,
-            "cycle_seconds_left": int(time_left),
-            "stage": plot_stage(state["cycle_start_time"], now),
+            "stage": min(
+                3, sum(int(row["storage"]) for row in rows.values()) * 4 // max(1, info["storage"]),
+            ),
+            "next_harvest_seconds": next_harvest_seconds,
             "storage": {**storage, "limit": info["storage"]},
             "storage_total": sum(storage.values()),
             "storage_depositable": storage_depositable,
             "storage_withdrawable": storage_withdrawable,
             **carry_state,
             "warehouse_storage": self._warehouse_storage(connection, key) if building == "stable" else None,
-            "buffer": {resource: row["buffer"] for resource, row in rows.items()},
-            "forecast": forecast,
             "worker_slots": slots,
             "player_work": player_work,
             "player_harvest_claims": player_harvest_claims,
@@ -1009,7 +1019,14 @@ class ProductionBuildings:
     def get_state(self, character_id, building, now=None):
         now = _timestamp(now)
         with self._transaction(character_id, building, now) as (connection, key):
-            return self._payload(connection, key, character_id, now)
+            state = self._payload(connection, key, character_id, now)
+        if building == "stable":
+            from server.transport import TransportService
+
+            state["transport_convoys"] = TransportService(self.db).get_world_convoys(
+                character_id, now=now,
+            )
+        return state
 
     def hire_worker(self, character_id, building, slot_index, worker_id, now=None):
         now = _timestamp(now)
@@ -1038,11 +1055,7 @@ class ProductionBuildings:
                 raise ValueError("Место на участке пустое")
             if (slot["worker_id"] or "").startswith("player:"):
                 raise ValueError("Игрок должен сам завершить работу")
-            # Целые единицы — в буфер, незавершённый остаток сгорает
-            fresh, _credited = _new_units(
-                building, slot, now, _harvest_bonus_for_worker(connection, slot["worker_id"])
-            )
-            self._add_to_buffers(connection, key, fresh)
+            self._sync_harvest(connection, key, now)
             connection.execute(
                 f"""
                 UPDATE building_worker_slots SET occupied = 0, worker_id = NULL, hire_time = NULL, credited = '{{}}'::jsonb
@@ -1066,7 +1079,7 @@ class ProductionBuildings:
             if assigned:
                 if assigned["building"] != building or assigned["slot_index"] != slot_index:
                     raise ValueError("Вы уже работаете на другом объекте")
-                self._sync_buffer(connection, key, now)
+                self._sync_harvest(connection, key, now)
                 connection.execute(
                     f"""UPDATE building_worker_slots
                         SET occupied = 0, worker_id = NULL, hire_time = NULL, credited = '{{}}'::jsonb
@@ -1081,7 +1094,7 @@ class ProductionBuildings:
             info = building_level_info(self._state(connection, key)["level"], building)
             if sum(resource["storage"] for resource in self._resources(connection, key).values()) >= info["storage"]:
                 raise ValueError("Склад переполнен, нельзя начать добычу")
-            self._sync_buffer(connection, key, now)
+            self._sync_harvest(connection, key, now)
             connection.execute(
                 f"""UPDATE building_worker_slots
                     SET occupied = 1, worker_id = %s, hire_time = %s, credited = '{{}}'::jsonb

@@ -45,4 +45,4 @@ The source repository is canonical. `scripts/build_client_package.py` generates 
 
 ## Local AI Chat
 
-`server/ai_commentator.py` queues optional, server-accepted PvP outcomes for the local Ollama model and posts a single result-based sentence in the shared backyard chat. Generation runs on a daemon worker, uses a bounded queue and timeout, and falls back to deterministic text. The model has no game-state mutation or moderation authority. Keep Ollama bound to `127.0.0.1`; see [LOCAL_AI_CHAT.md](LOCAL_AI_CHAT.md).
+`server/ai_commentator.py` queues server-accepted PvP outcomes and verified world-state transitions for the local Ollama model. `server/world_events.py` watches hunger and production storage transitions in the background. Messages go to the server-only `world` feed, which is merged into each location's chat history. Generation runs on a daemon worker, uses a bounded queue and timeout, and validates AI text against server-generated lines. The model has no game-state mutation or moderation authority. Keep Ollama bound to `127.0.0.1`; see [LOCAL_AI_CHAT.md](LOCAL_AI_CHAT.md).

@@ -45,7 +45,7 @@ class BattleCommentatorTests(unittest.TestCase):
             queued = ai_commentator.enqueue_battle_comment(self.database, 10, 20, "win")
 
         self.assertTrue(queued)
-        self.assertEqual(put_event.call_args.args[0][:4], (self.database, 10, 20, "win"))
+        self.assertEqual(put_event.call_args.args[0][:5], ("battle", self.database, 10, 20, "win"))
 
     def test_unknown_result_is_not_queued(self):
         with patch.object(ai_commentator._QUEUE, "put_nowait") as put_event:
@@ -71,7 +71,7 @@ class BattleCommentatorTests(unittest.TestCase):
 
         self.assertEqual(text, "Бой завершён: победа Лучник над Страж.")
 
-    def test_server_accepted_event_is_posted_to_backyard_chat(self):
+    def test_server_accepted_event_is_posted_to_world_chat(self):
         key = ai_commentator._battle_key(1, 10, 20)
         with patch.object(ai_commentator, "_generate_comment", return_value="Лучник празднует победу!"):
             ai_commentator._process_event(self.database, 10, 20, "win", key)
@@ -81,7 +81,7 @@ class BattleCommentatorTests(unittest.TestCase):
         )
         self.database.add_chat_message.assert_called_once_with(
             self.database.ensure_bot_character.return_value,
-            "backyard",
+            "world",
             "Лучник празднует победу!",
         )
 
@@ -94,6 +94,58 @@ class BattleCommentatorTests(unittest.TestCase):
         self.assertEqual(
             self.database.add_chat_message.call_args.args[2],
             "Бой завершён: победа Страж над Лучник.",
+        )
+
+    def test_world_comment_is_published_to_the_global_feed(self):
+        lines = ["Город испытывает нехватку пищи.", "Запасы еды в городе на исходе."]
+        with patch.object(ai_commentator, "_generate_allowed_line", return_value=lines[1]):
+            ai_commentator._post_world_comment(
+                self.database, "food:shortage", {"status": "shortage"}, lines,
+            )
+
+        self.database.ensure_bot_character.assert_called_once_with(
+            "world-narrator-1", "Летописец",
+        )
+        self.database.add_chat_message.assert_called_once_with(
+            self.database.ensure_bot_character.return_value, "world", lines[1],
+        )
+
+    def test_world_event_queue_is_nonblocking_and_server_scoped(self):
+        lines = ["Склад предприятия заполнен."]
+        with patch.object(ai_commentator._QUEUE, "put_nowait") as put_event, \
+                patch.object(ai_commentator, "_ensure_worker"):
+            queued = ai_commentator.enqueue_world_comment(
+                self.database, "storage-full:farm", {"building": "farm"}, lines,
+            )
+
+        self.assertTrue(queued)
+        task = put_event.call_args.args[0]
+        self.assertEqual(task[0], "world")
+        self.assertEqual(task[1:5], (
+            self.database, "storage-full:farm", {"building": "farm"}, tuple(lines),
+        ))
+
+    def test_world_event_queue_rejects_empty_templates(self):
+        with patch.object(ai_commentator._QUEUE, "put_nowait") as put_event:
+            queued = ai_commentator.enqueue_world_comment(
+                self.database, "invalid", {}, [],
+            )
+
+        self.assertFalse(queued)
+        put_event.assert_not_called()
+
+    def test_world_event_worker_posts_the_allowlisted_line_once(self):
+        lines = ["Жители недоедают.", "В городе нехватка пищи."]
+        with patch.object(ai_commentator, "_generate_allowed_line", return_value=lines[1]):
+            ai_commentator._post_world_comment(
+                self.database, "food:shortage", {"event": "food_shortage"}, lines,
+            )
+
+        self.database.ensure_bot_character.assert_called_once_with(
+            "world-narrator-1", "Летописец",
+        )
+        self.database.add_chat_message.assert_called_once_with(
+            self.database.ensure_bot_character.return_value, "world", lines[1],
         )
 
     def test_ollama_output_is_cleaned_and_bounded(self):

@@ -1,4 +1,5 @@
 import math
+import time
 import unittest
 from types import SimpleNamespace
 
@@ -13,6 +14,72 @@ from tests.fixtures import create_test_database, drop_test_database, running_ser
 
 
 class WorldTerrainTests(unittest.TestCase):
+    def test_resting_pinned_convoy_hover_shows_rest_not_returning(self):
+        from ui.map_travel import traveling_entities
+
+        convoy = {
+            "id": 3, "cart_name": "Лёгкая повозка", "cart_sprite_key": "light",
+            "destination_building_id": "wheat_farm", "phase": "resting",
+            "status": "Отдых экипажа", "movement_text": "Отдых экипажа",
+            "direction": "outbound", "progress_percent": 0,
+            "seconds_remaining": 600, "travel_seconds": 600,
+            "cargo": [], "horses": [{"name": "Лошадь 1"}],
+        }
+        route = {"building_id": "wheat_farm", "name": "Крестьянское поселение",
+                 "tiles": [[10, 10], [11, 10]]}
+        scene = SimpleNamespace(
+            chat=SimpleNamespace(traveling_convoys=[convoy], travelers=[],
+                                 convoys_received_at=time.monotonic()),
+            road_routes=[route], tile_size=32,
+        )
+
+        entity = traveling_entities(scene)[0]
+
+        self.assertEqual(entity["movement_text"], "Отдых экипажа")
+        self.assertLessEqual(entity["eta_seconds"], 600)
+        self.assertEqual(entity["position_x"], (10.5 * 32))
+
+    def test_convoy_hover_eta_uses_hours_minutes_seconds_without_daily_wrap(self):
+        from ui.map_travel import _format_eta, _format_phase_eta
+
+        self.assertEqual(_format_eta(89999), "24:59:59")
+        self.assertEqual(_format_eta(61), "00:01:01")
+        self.assertEqual(_format_eta(-1), "00:00:00")
+        self.assertEqual(
+            _format_phase_eta({"phase": "loading", "eta_seconds": 3600}),
+            "До конца погрузки: 01:00:00",
+        )
+        self.assertEqual(
+            _format_phase_eta({"phase": "unloading", "eta_seconds": 61}),
+            "До конца разгрузки: 00:01:01",
+        )
+        self.assertEqual(
+            _format_phase_eta({"phase": "outbound", "eta_seconds": 60}),
+            "До прибытия: 00:01:00",
+        )
+
+    def test_convoy_draws_grade_specific_wagon_harness_horse_and_driver(self):
+        pygame.init()
+        pygame.display.set_mode((640, 640), pygame.HIDDEN)
+        from ui.map_travel import draw_traveling_entities
+
+        route = {"building_id": "lumber_camp", "name": "Лесопилка", "tiles": [[10, 10], [11, 10]]}
+        convoy = {
+            "cart_sprite_key": "peasant", "destination_building_id": "lumber_camp",
+            "seconds_remaining": 5, "travel_seconds": 10, "progress_percent": 50,
+            "direction": "outbound", "cargo": [], "horses": [{"name": "Рыжий"}],
+        }
+        scene = SimpleNamespace(
+            chat=SimpleNamespace(traveling_convoys=[convoy], travelers=[],
+                                 convoys_received_at=time.monotonic()),
+            road_routes=[route], tile_size=32, grid_font=pygame.font.SysFont(None, 16),
+            world_to_screen=lambda x, y: (x, y),
+        )
+        screen = pygame.Surface((640, 640))
+        draw_traveling_entities(scene, screen)
+
+        self.assertFalse(screen.get_bounding_rect().size == (0, 0))
+
     def test_afk_presence_survives_ttl_and_is_cleared_on_reconnect(self):
         previous_presence = dict(presence.PRESENCE)
         presence.PRESENCE.clear()

@@ -18,7 +18,7 @@ LOGGER = logging.getLogger(__name__)
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434/api/chat")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5:7b-instruct")
 OLLAMA_KEEP_ALIVE = os.environ.get("OLLAMA_KEEP_ALIVE", "24h")
-COMMENTARY_LOCATION = "backyard"
+COMMENTARY_LOCATION = "world"
 COMMENTARY_TIMEOUT_SECONDS = 60
 COMMENTARY_DEDUPE_SECONDS = 45
 COMMENTARY_QUEUE_SIZE = 32
@@ -140,12 +140,15 @@ def _allowed_comments(event):
     ]
 
 
-def _generate_comment(event):
+def _generate_allowed_line(context, allowed_lines):
     payload = {
         "model": OLLAMA_MODEL,
         "messages": [
             {"role": "system", "content": _SYSTEM_PROMPT},
-            {"role": "user", "content": _commentary_prompt(event)},
+            {"role": "user", "content": json.dumps({
+                "event": context,
+                "allowed_lines": list(allowed_lines),
+            }, ensure_ascii=False, separators=(",", ":"))},
         ],
         "stream": False,
         "keep_alive": OLLAMA_KEEP_ALIVE,
@@ -162,9 +165,13 @@ def _generate_comment(event):
     message = result.get("message", {}).get("content", "")
     message = re.sub(r"\s+", " ", str(message)).strip().strip("\"'` ")
     message = message[:MAX_COMMENT_LENGTH].strip()
-    if message not in _allowed_comments(event):
+    if message not in allowed_lines:
         raise ValueError("Ollama returned commentary outside the verified templates")
     return message
+
+
+def _generate_comment(event):
+    return _generate_allowed_line(event, _allowed_comments(event))
 
 
 def _warm_model():
@@ -209,11 +216,35 @@ def _post_comment(database, event):
     database.add_chat_message(commentator_id, COMMENTARY_LOCATION, comment)
 
 
+def _post_world_comment(database, event_key, context, allowed_lines):
+    key = ("world", int(database.world_id), str(event_key))
+    if not _claim_event(key):
+        return
+    try:
+        comment = _generate_allowed_line(context, allowed_lines)
+    except Exception as error:
+        LOGGER.warning("Local world narrator unavailable: %s", error)
+        comment = allowed_lines[0]
+    try:
+        narrator_id = database.ensure_bot_character(
+            f"world-narrator-{int(database.world_id)}", "Летописец",
+        )
+        database.add_chat_message(narrator_id, "world", comment)
+    except Exception:
+        _release_event(key)
+        raise
+
+
 def _worker():
     while True:
-        database, character_id, opponent_id, outcome, key = _QUEUE.get()
+        task = _QUEUE.get()
+        task_type = task[0]
+        key = task[-1]
         try:
-            _process_event(database, character_id, opponent_id, outcome, key)
+            if task_type == "battle":
+                _process_event(*task[1:])
+            else:
+                _post_world_comment(*task[1:-1])
         except Exception:
             LOGGER.exception("Could not publish local battle commentary")
             _release_event(key)
@@ -242,9 +273,26 @@ def enqueue_battle_comment(database, character_id, opponent_id, outcome):
     if key[1] <= 0 or key[2] <= 0 or key[1] == key[2]:
         return False
     try:
-        _QUEUE.put_nowait((database, int(character_id), int(opponent_id), str(outcome), key))
+        _QUEUE.put_nowait(("battle", database, int(character_id), int(opponent_id), str(outcome), key))
     except queue.Full:
         LOGGER.warning("Local battle commentary queue is full; dropping event %s", key)
+        return False
+    _ensure_worker()
+    return True
+
+
+def enqueue_world_comment(database, event_key, context, allowed_lines):
+    """Queue a server-observed world event for the server-only global chat feed."""
+    if not COMMENTARY_ENABLED or not event_key:
+        return False
+    lines = tuple(str(line).strip()[:MAX_COMMENT_LENGTH] for line in allowed_lines)
+    if not 1 <= len(lines) <= 5 or any(not line for line in lines):
+        return False
+    key = ("world", int(database.world_id), str(event_key))
+    try:
+        _QUEUE.put_nowait(("world", database, str(event_key), context, lines, key))
+    except queue.Full:
+        LOGGER.warning("Local world narrator queue is full; dropping event %s", key)
         return False
     _ensure_worker()
     return True

@@ -8,9 +8,11 @@ The model API must only bind to `127.0.0.1:11434`. Open WebUI can continue reach
 
 ## Behavior
 
-After `/api/battle/result` accepts and saves a human-versus-human result, the server queues one commentary event. The worker reads both characters from the current PostgreSQL world, derives the winner from the accepted `win`, `loss`, or `draw`, asks the local model to choose from server-generated Russian lines, and posts the validated line as `Летописец` to the shared `backyard` chat. Model output outside that exact allowlist is rejected. The event is deduplicated by world and participant pair. NPC battles are ignored.
+After `/api/battle/result` accepts and saves a human-versus-human result, the server queues one commentary event. The worker reads both characters from the current PostgreSQL world, derives the winner from the accepted `win`, `loss`, or `draw`, asks the local model to choose from server-generated Russian lines, and posts the validated line as `Летописец` to the global `world` feed. Model output outside that exact allowlist is rejected. The event is deduplicated by world and participant pair. NPC battles are ignored.
 
-Only names, classes, and the accepted result are sent to the local model. It does not receive chat history, equipment, inventory, credentials, or database rows. It cannot edit state, decide battle results, award items, delete messages, or mute/ban anyone. If the model is unavailable or times out, the server posts a deterministic result-only line. A bounded queue prevents model latency from delaying the battle HTTP response.
+The background world watcher samples every 30 seconds through the existing city/production services. It announces transitions into hunger/food shortage, food recovery, and a previously non-full enterprise store becoming full. It establishes a baseline without announcing existing state at server startup. Each transition has a cooldown and is queued away from HTTP handlers. Future raid/cart events should use this same event path only after their server-authoritative mechanics exist.
+
+Only names, classes, and the accepted result are sent to the battle commentator. World announcements send only the event type, verified storage/food facts, and an allowlist of server-generated lines. The model does not receive chat history, equipment, inventory, credentials, or raw database rows. It cannot edit state, decide battle results, award items, delete messages, or mute/ban anyone. If the model is unavailable or times out, the server posts a deterministic result-only line. A bounded queue prevents model latency from delaying HTTP responses.
 
 This is battle commentary, not a general conversational chat bot and not an autonomous moderator. Moderation should be a separate shadow-mode feature with human review.
 
@@ -23,7 +25,7 @@ Defaults in `server/ai_commentator.py`:
 - Keep-alive: 24 hours (`OLLAMA_KEEP_ALIVE`)
 - Timeout: 20 seconds
 - Queue capacity: 32 events
-- Shared chat location: `backyard`
+- Shared chat feed: `world`, automatically included in every location's history
 - Disable the feature with `AI_BATTLE_COMMENTARY=0` in the game-server environment.
 
 Set `OLLAMA_URL` or `OLLAMA_MODEL` in the game-server service environment only when intentionally changing the local endpoint/model. Keep the service bound to loopback.

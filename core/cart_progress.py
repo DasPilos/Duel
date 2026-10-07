@@ -25,6 +25,7 @@ CART_GRADES = {
     "1": {
         "name": "Лёгкая повозка",
         "researched": True,
+        "sprite_key": "light",
         "wood_cost": 100,
         "silver_cost": 10,
         "required_stable_level": 1,
@@ -42,6 +43,7 @@ CART_GRADES = {
     "2": {
         "name": "Крестьянский обоз",
         "researched": False,
+        "sprite_key": "peasant",
         "blueprint_cost": None,
         "upgrade_limit": 3,
     },
@@ -78,7 +80,13 @@ WAREHOUSE_RESOURCE_LABELS = {
 }
 
 RESOURCE_ITEM_IDS = {
+    "berries": 62,
+    "wheat": 63,
+    "meat": 67,
     "wood": 60,
+    "coal": 68,
+    "stone": 69,
+    "iron": 10,
     "iron_ingot": 73,
     "board": 61,
     "flax": 64,

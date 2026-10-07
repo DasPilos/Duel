@@ -303,7 +303,7 @@ class ProductionBuildingsTests(unittest.TestCase):
             )
             client.disconnect({**character, "zone": "tavern"})
 
-        for location in ("tavern", "backyard", "city", "world_map", "character_room"):
+        for location in ("tavern", "backyard", "city", "world_map", "character_room", "world"):
             messages = self.database.get_chat_history(character["id"], location)
             status_texts = [message["text"] for message in messages if message["text"].startswith("[ИГРОК] ")]
             self.assertEqual(status_texts, [
@@ -370,20 +370,20 @@ class ProductionBuildingsTests(unittest.TestCase):
 
     # ---------- поселение ----------
 
-    def test_control_example_forecast_and_fire(self):
+    def test_control_example_direct_harvest_and_fire(self):
         character_id = self._character()
         self.buildings.hire_worker(character_id, "farm", 0, "worker-0", 10000)
         self.buildings.hire_worker(character_id, "farm", 1, "worker-1", 13600)
 
         state = self.buildings.get_state(character_id, "farm", 15400)
-        self.assertEqual(state["buffer"]["wheat"], 50)
-        self.assertEqual(state["forecast"]["wheat"], 74)
+        self.assertEqual(state["storage"]["wheat"], 50)
+        self.assertNotIn("buffer", state)
         self.assertEqual(state["worker_slots"][0]["progress_sec"], 80)
         self.assertEqual(state["worker_slots"][1]["progress_sec"], 120)
 
         state = self.buildings.fire_worker(character_id, "farm", 1, 15400)
-        self.assertEqual(state["buffer"]["wheat"], 50)
-        self.assertEqual(state["forecast"]["wheat"], 62)
+        self.assertEqual(state["storage"]["wheat"], 50)
+        self.assertNotIn("buffer", state)
         self.assertFalse(state["worker_slots"][1]["occupied"])
 
     def test_state_survives_new_database_wrapper(self):
@@ -391,19 +391,61 @@ class ProductionBuildingsTests(unittest.TestCase):
         self.buildings.hire_worker(character_id, "farm", 0, "worker-0", 10000)
 
         state = ProductionBuildings(self.database).get_state(character_id, "farm", 10140)
-        self.assertEqual(state["buffer"]["wheat"], 1)
+        self.assertEqual(state["storage"]["wheat"], 1)
+        self.assertNotIn("buffer", state)
         self.assertEqual(state["worker_slots"][0]["worker_id"], "worker-0")
 
-    def test_cycle_unload_keeps_worker_timer_running(self):
+    def test_harvested_unit_goes_directly_to_storage_without_buffer(self):
+        character_id = self._character("direct-harvest")
+        self.buildings.hire_worker(character_id, "farm", 0, "worker-0", 10000)
+
+        state = self.buildings.get_state(character_id, "farm", 10140)
+
+        self.assertEqual(state["storage"]["wheat"], 1)
+        self.assertNotIn("buffer", state)
+
+    def test_direct_harvest_keeps_worker_timer_running(self):
         character_id = self._character()
         self.buildings.hire_worker(character_id, "farm", 0, "worker-0", 10000)
 
         state = self.buildings.get_state(character_id, "farm", 17200)
         self.assertEqual(state["storage"]["wheat"], 51)
-        self.assertEqual(state["buffer"]["wheat"], 0)
-        self.assertEqual(state["forecast"]["wheat"], 51)
-        self.assertEqual(state["cycle_start_time"], 17200)
+        self.assertNotIn("buffer", state)
+        self.assertEqual(state["worker_slots"][0]["progress_sec"], 60)
         self.assertTrue(state["worker_slots"][0]["occupied"])
+
+    def test_worker_payload_reports_next_unit_timer(self):
+        character_id = self._character("cycle-yield")
+        self.buildings.hire_worker(character_id, "farm", 0, "citizen-1", 10000)
+
+        state = self.buildings.get_state(character_id, "farm", 10730)
+
+        worker = state["worker_slots"][0]
+        self.assertEqual(state["storage"]["wheat"], 5)
+        self.assertEqual(worker["progress_sec"], 30)
+        self.assertEqual(state["next_harvest_seconds"], 110)
+
+    def test_direct_harvest_does_not_exceed_shared_storage_capacity(self):
+        character_id = self._character("cycle-capacity")
+        self.buildings.get_state(character_id, "farm", 10000)
+        self.buildings.hire_worker(character_id, "farm", 0, "citizen-1", 10000)
+        self.buildings.hire_worker(character_id, "farm", 1, "citizen-2", 10000)
+        with self.database.connection() as connection:
+            connection.execute(
+                "UPDATE building_resources SET storage=498, buffer=4 WHERE world_id=%s AND faction='light' AND building='farm' AND resource='wheat'",
+                (self.database.world_id,),
+            )
+
+        state = self.buildings.get_state(character_id, "farm", 11000)
+
+        self.assertEqual(state["storage"]["wheat"], 500)
+        self.assertNotIn("buffer", state)
+        with self.database.connection() as connection:
+            buffer = connection.execute(
+                "SELECT buffer FROM building_resources WHERE world_id=%s AND faction='light' AND building='farm' AND resource='wheat'",
+                (self.database.world_id,),
+            ).fetchone()["buffer"]
+        self.assertEqual(buffer, 0)
 
     def test_player_replaces_worker_and_claims_only_harvest_that_fits(self):
         character_id = self._character("player-worker")
@@ -466,15 +508,14 @@ class ProductionBuildingsTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Склад переполнен"):
             self.buildings.toggle_player_worker(character_id, "farm", 0, 10001)
 
-    def test_offline_cycles_unload_on_exact_boundaries(self):
+    def test_offline_harvest_accrues_directly_on_next_access(self):
         character_id = self._character()
         self.buildings.hire_worker(character_id, "farm", 0, "worker-0", 10000)
         self.buildings.hire_worker(character_id, "farm", 1, "worker-1", 10000)
 
         state = self.buildings.get_state(character_id, "farm", 10000 + 6 * 7200 + 100)
         self.assertEqual(state["storage"]["wheat"], 500)
-        self.assertEqual(state["cycle_start_time"], 10000 + 6 * 7200)
-        self.assertEqual(state["buffer"]["wheat"], 2)
+        self.assertNotIn("buffer", state)
 
     def test_flax_and_cotton_use_their_own_timers(self):
         character_id = self._character()
@@ -485,7 +526,10 @@ class ProductionBuildingsTests(unittest.TestCase):
         self.assertEqual(state["worker_slots"][12]["resource"], "cotton")
 
         state = self.buildings.get_state(character_id, "farm", 10000 + 980)
-        self.assertEqual(state["buffer"], {"wheat": 0, "flax": 2, "cotton": 1})
+        self.assertEqual(state["storage"]["wheat"], 0)
+        self.assertEqual(state["storage"]["flax"], 2)
+        self.assertEqual(state["storage"]["cotton"], 1)
+        self.assertNotIn("buffer", state)
         self.assertEqual(state["max_workers"], 13)
         self.assertEqual(state["storage"]["limit"], 4500)
 
@@ -504,14 +548,14 @@ class ProductionBuildingsTests(unittest.TestCase):
         accepted = distribute_to_storage(storage, {"wheat": 60, "flax": 30, "cotton": 10}, 500)
         self.assertEqual(accepted, {"wheat": 30, "flax": 15, "cotton": 5})
 
-    def test_upgrade_needs_deposited_materials_and_finishes_on_time(self):
+    def test_upgrade_purchases_materials_from_shared_warehouse_and_finishes_on_time(self):
         character_id = self._character()
         items = ItemsDatabase(self.database)
         materials = upgrade_requirements(1)["materials"]
 
-        with self.assertRaisesRegex(ValueError, "не все материалы"):
+        with self.assertRaisesRegex(ValueError, "Недостаточно ресурсов на общем складе"):
             self.buildings.start_upgrade(character_id, "farm", 10000)
-        with self.assertRaisesRegex(ValueError, "Нечего сдать"):
+        with self.assertRaisesRegex(ValueError, "Отдельные взносы отключены"):
             self.buildings.deposit_material(character_id, "farm", 60, 5, 10000)
 
         for item_id, required in materials.items():
@@ -536,7 +580,7 @@ class ProductionBuildingsTests(unittest.TestCase):
         self.assertFalse(state["upgrade"]["in_progress"])
         self.assertTrue(all(row["deposited"] == 0 for row in state["upgrade"]["materials"]))
 
-    def test_overflow_burns_excess_buffer(self):
+    def test_overflow_does_not_create_a_buffer(self):
         character_id = self._character()
         self.buildings.hire_worker(character_id, "farm", 0, "worker-0", 10000)
         with self.database.connection() as connection:
@@ -546,7 +590,7 @@ class ProductionBuildingsTests(unittest.TestCase):
 
         state = self.buildings.get_state(character_id, "farm", 17200)
         self.assertEqual(state["storage"]["wheat"], 500)
-        self.assertEqual(state["buffer"]["wheat"], 0)
+        self.assertNotIn("buffer", state)
 
     def test_parallel_requests_count_harvest_once(self):
         character_id = self._character()
@@ -566,7 +610,9 @@ class ProductionBuildingsTests(unittest.TestCase):
             thread.join()
 
         self.assertEqual(errors, [])
-        self.assertEqual(self.buildings.get_state(character_id, "farm", 10000 + 10 * 140)["buffer"]["wheat"], 10)
+        state = self.buildings.get_state(character_id, "farm", 10000 + 10 * 140)
+        self.assertEqual(state["storage"]["wheat"], 10)
+        self.assertNotIn("buffer", state)
 
     def test_buildings_are_shared_by_all_players_of_faction(self):
         items = ItemsDatabase(self.database)
@@ -624,7 +670,9 @@ class ProductionBuildingsTests(unittest.TestCase):
         self.assertEqual(state["max_workers"], 6)
 
         state = self.buildings.get_state(character_id, "lumber_camp", 10000 + 720)
-        self.assertEqual(state["buffer"], {"wood": 3, "berries": 2})
+        self.assertEqual(state["storage"]["wood"], 3)
+        self.assertEqual(state["storage"]["berries"], 2)
+        self.assertNotIn("buffer", state)
 
         # Через полный цикл: 7200/240 = 30 древесины, 7200/360 = 20 ягод
         state = self.buildings.get_state(character_id, "lumber_camp", 17200)
@@ -680,10 +728,14 @@ class ProductionBuildingsTests(unittest.TestCase):
         # Промежуточный запрос не должен считать единицы дважды
         self.buildings.get_state(character_id, "barnyard", 10500)
         state = self.buildings.get_state(character_id, "barnyard", 10000 + 1380)
-        self.assertEqual(state["buffer"], {"leather": 3, "meat": 2})
+        self.assertEqual(state["storage"]["leather"], 3)
+        self.assertEqual(state["storage"]["meat"], 2)
+        self.assertNotIn("buffer", state)
 
         state = self.buildings.fire_worker(character_id, "barnyard", 0, 10000 + 1400)
-        self.assertEqual(state["buffer"], {"leather": 3, "meat": 2})
+        self.assertEqual(state["storage"]["leather"], 3)
+        self.assertEqual(state["storage"]["meat"], 2)
+        self.assertNotIn("buffer", state)
 
     def test_barnyard_full_cycle(self):
         character_id = self._character()
@@ -703,7 +755,7 @@ class ProductionBuildingsTests(unittest.TestCase):
 
     # ---------- чёрная копь ----------
 
-    def test_black_pit_gem_once_per_cycle_for_whole_mine(self):
+    def test_black_pit_gem_bonus_rolls_for_each_mined_coal_unit(self):
         gems = ("jet", "malachite", "topaz", "garnet", "emerald", "ruby", "sapphire", "diamond")
         lucky = ProductionBuildings(self.database, rng=_Sequence([0.0]))
         first, second = self._character("miner"), self._character("digger")
@@ -714,19 +766,20 @@ class ProductionBuildingsTests(unittest.TestCase):
         state = lucky.get_state(first, "black_pit", 17200)
         self.assertEqual(state["storage"]["coal"], 12)
         self.assertEqual(sum(state["storage"][gem] for gem in gems), 0)
+        self.assertNotIn("buffer", state)
 
-        # 3 уровень: двое горняков, но камень один на цикл и только при отгрузке
+        # Per-unit direct accrual: deterministic success grants a gem for each coal unit.
         self._reset("black_pit")
         self._set_level(second, "black_pit", 3)
         lucky.hire_worker(second, "black_pit", 0, "a", 10000)
         lucky.hire_worker(second, "black_pit", 1, "b", 10000)
         state = lucky.get_state(second, "black_pit", 10000 + 3600)
-        self.assertEqual(sum(state["buffer"][gem] for gem in gems), 0)
+        self.assertNotIn("buffer", state)
         state = lucky.get_state(second, "black_pit", 17200)
         self.assertEqual(state["storage"]["coal"], 24)
-        self.assertEqual(state["storage"]["jet"], 1)
+        self.assertEqual(state["storage"]["jet"], 24)
         state = lucky.get_state(second, "black_pit", 10000 + 2 * 7200)
-        self.assertEqual(state["storage"]["jet"], 2)
+        self.assertEqual(state["storage"]["jet"], 48)
 
     def test_black_pit_gem_kind_by_level_weights(self):
         diamonds = ProductionBuildings(self.database, rng=_Sequence([0.0, 0.99]))
@@ -734,7 +787,7 @@ class ProductionBuildingsTests(unittest.TestCase):
         self._set_level(character_id, "black_pit", 10)
         diamonds.hire_worker(character_id, "black_pit", 0, "m", 10000)
         state = diamonds.get_state(character_id, "black_pit", 17200)
-        self.assertEqual(state["storage"]["diamond"], 1)
+        self.assertEqual(state["storage"]["diamond"], 12)
         self.assertEqual(state["storage"]["limit"], 12000)
 
     def test_black_pit_no_gem_without_workers_full_storage_or_luck(self):

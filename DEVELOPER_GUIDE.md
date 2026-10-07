@@ -62,6 +62,11 @@ python -m unittest tests.test_combat tests.test_card_battle tests.test_physical_
 `tests/fixtures.py` creates and drops a temporary PostgreSQL schema. Set `TEST_DATABASE_URL` to a disposable development database. Never point it at production. Some Pygame tests emit harmless libpng profile warnings.
 
 ## Change Boundaries
+## Production Buildings
+
+Workers produce resources independently on per-unit timers. Each completed unit is written directly to the building's shared faction storage; there is no harvest-cycle buffer. Storage capacity is shared across the building's resources. Units that do not fit are discarded, not queued for later, and player harvest claims are granted only for units accepted into storage. Black-pit gem bonuses roll once per completed coal unit.
+
+## Change Boundaries
 
 - Put shared domain rules in the owning `server/`, `combat/`, or `core/` module, not in a scene renderer.
 - Keep client rendering separate from server-authoritative state.

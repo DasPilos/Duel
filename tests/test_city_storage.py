@@ -301,6 +301,7 @@ class FakeStorageClient:
         self.warehouse_storage = {"wood": 12, "board": 4, "flax": 9}
         self.treasury_silver_available = 100
         self.action_error = None
+        self.dispatch_payload = None
 
     def get_building(self, building, _character_id):
         if building == "stable":
@@ -321,7 +322,7 @@ class FakeStorageClient:
                 "cart_progress": deepcopy(self.cart_progress),
                 "available_carts": ([{
                     "id": "cart_grade_1", "grade": 1, "name": "Лёгкая повозка",
-                    "status": "Ожидает отправки", "can_travel": False,
+                    "status": "Свободна", "can_travel": False,
                     "dispatch_available": False, "horse_slots": 1, "resource_slots": 1,
                     "capacity_kg": 300, "seconds_per_tile": 23.9473,
                     "status_message": "Отправка транспортных рейсов ещё не подключена.",
@@ -411,6 +412,10 @@ class FakeStorageClient:
                 grade["silver_deposited"] = 10
                 grade["body_owned"] = True
         return self.get_building(building, _character_id)
+
+    def dispatch_transport(self, _character_id, payload):
+        self.dispatch_payload = payload
+        return {"building": self.get_building("stable", _character_id), "convoy": {"id": 1}}
 
 
 class CityStorageWindowTests(unittest.TestCase):
@@ -864,6 +869,198 @@ class CityStorageWindowTests(unittest.TestCase):
             self.scene.small_font = original
         self.assertIn("У вас нет свободных лошадей", rendered)
 
+    def test_resting_horse_without_availability_flag_is_selectable(self):
+        window = self.scene.stable_window
+        window.state = {"stall_slots": [{
+            "unlocked": True,
+            "horse": {"id": 7, "name": "Лошадь 7", "status": "Отдыхает"},
+        }]}
+
+        self.assertEqual([horse["id"] for horse in window._available_transport_horses()], [7])
+
+    def test_crew_picker_uses_population_free_status(self):
+        window = self.scene.stable_window
+        window.state = {"transport_convoys": [{"driver_citizen_id": 14}]}
+        self.client.get_city_population = lambda _character_id: {"citizens": [
+            {"id": 11, "name": "Горожанин 11", "work_status": "Свободен",
+             "satisfaction": "satisfied", "satiety": 94},
+            {"id": 12, "name": "Горожанин 12", "work_status": "Свободен",
+             "satisfaction": "starving", "satiety": 8},
+            {"id": 13, "name": "Горожанин 13", "work_status": "Занят",
+             "satisfaction": "satisfied", "satiety": 94},
+            {"id": 14, "name": "Горожанин 14", "work_status": "Свободен",
+             "satisfaction": "satisfied", "satiety": 94},
+        ]}
+
+        window._sync_transport_drivers()
+
+        self.assertEqual(
+            [driver["id"] for driver in window.state["available_cart_drivers"]], [11],
+        )
+
+    def test_wheat_slot_renders_icon_and_allows_dispatch_with_stale_cart_flag(self):
+        window = self.scene.stable_window
+        window.state = {
+            "available_carts": [{
+                "id": "cart_grade_1", "name": "Лёгкая повозка", "status": "Свободна",
+                "can_travel": False, "dispatch_available": False,
+                "horse_slots": 1, "resource_slots": 1, "capacity_kg": 300,
+                "seconds_per_tile": 24,
+            }],
+            "stall_slots": [{"unlocked": True, "horse": {
+                "id": 7, "name": "Лошадь 7", "status": "Отдыхает", "can_travel": True,
+            }}],
+            "available_cart_drivers": [{"id": 11, "name": "Горожанин 11"}],
+            "transport_convoys": [],
+        }
+        window.routes = [{
+            "building_id": "wheat_farm", "name": "Пшеничная ферма",
+            "distance_tiles": 50.11,
+            "resources": [{"id": "wheat", "label": "Пшеница"}],
+        }]
+        window.transport_draft = {
+            "cart_id": "cart_grade_1", "horse_ids": [7],
+            "driver_citizen_id": 11, "destination_id": "wheat_farm",
+            "resource_ids": ["wheat"],
+        }
+        rendered = []
+        original_font = self.scene.small_font
+
+        class Recorder:
+            def render(self, text, *args):
+                rendered.append(str(text))
+                return original_font.render(text, *args)
+
+            def __getattr__(self, name):
+                return getattr(original_font, name)
+
+        self.scene.small_font = Recorder()
+        try:
+            with patch("ui.stable_window.draw_item_icon") as draw_item_icon:
+                window._draw_transport(self.screen)
+        finally:
+            self.scene.small_font = original_font
+
+        self.assertTrue(window._transport_can_start())
+        self.assertTrue(any(call.args[1] == 63 for call in draw_item_icon.call_args_list))
+        self.assertIn("Пшеница", rendered)
+
+    def test_transport_tab_lists_owned_idle_cart_as_free(self):
+        self.client.cart_progress["grades"]["1"]["body_owned"] = True
+        window = self.scene.stable_window
+        window.state = self.client.get_building("stable", 1)
+        rendered = []
+        original_small = self.scene.small_font
+        original_font = self.scene.font
+
+        class Recorder:
+            def __init__(self, wrapped):
+                self.wrapped = wrapped
+
+            def render(self, text, *args):
+                rendered.append(str(text))
+                return self.wrapped.render(text, *args)
+
+            def __getattr__(self, name):
+                return getattr(self.wrapped, name)
+
+        self.scene.small_font = Recorder(original_small)
+        self.scene.font = Recorder(original_font)
+        try:
+            window._draw_transport(self.screen)
+        finally:
+            self.scene.small_font = original_small
+            self.scene.font = original_font
+
+        self.assertTrue(any("Куплено повозок: 1" in text for text in rendered))
+        self.assertIn("Свободна", rendered)
+        self.assertIn("Вид сверху", rendered)
+        self.assertIn("Информация о рейсе", rendered)
+        self.assertNotIn("Пока нет купленных повозок", rendered)
+
+    def test_transport_dispatch_submits_selected_crew_and_cargo(self):
+        window = self.scene.stable_window
+        window.is_open = True
+        window.state = self.client.get_building("stable", 1)
+        window.state["available_carts"] = [{
+            "id": "cart_grade_1", "name": "Лёгкая повозка", "status": "Свободна",
+            "can_travel": False, "dispatch_available": False,
+            "dispatch_available": True, "horse_slots": 1, "resource_slots": 1,
+        }]
+        window.state["stall_slots"][0]["horse"] = {
+            "id": 12, "name": "Лошадь 1", "can_travel": True,
+        }
+        window.state["available_cart_drivers"] = [{"id": 42, "name": "Участник экипажа"}]
+        window.routes = [{
+            "building_id": "lumber_camp", "name": "Лесопилка",
+            "distance_tiles": 12.5,
+            "resources": [{"id": "wood", "label": "Древесина"}],
+        }]
+        window.transport_draft = {
+            "cart_id": "cart_grade_1", "horse_ids": [12],
+            "driver_citizen_id": 42, "destination_id": "lumber_camp",
+            "resource_ids": ["wood"], "pinned": True,
+        }
+        window.transport_start_button = pygame.Rect(20, 20, 240, 38)
+
+        window.handle_event(pygame.event.Event(
+            pygame.MOUSEBUTTONDOWN, button=1, pos=window.transport_start_button.center,
+        ))
+
+        self.assertEqual(self.client.dispatch_payload, {
+            "cart_id": "cart_grade_1", "horse_ids": [12],
+            "driver_citizen_id": 42, "destination_building_id": "lumber_camp",
+            "resource_ids": ["wood"], "pinned": True,
+        })
+        self.assertIsNone(window.transport_draft["cart_id"])
+
+    def test_repeat_route_checkbox_toggles_draft(self):
+        window = self.scene.stable_window
+        window.state = self.client.get_building("stable", 1)
+        window.state["available_carts"] = [{
+            "id": "cart_grade_1", "name": "Лёгкая повозка", "status": "Свободна",
+            "can_travel": True, "dispatch_available": True,
+            "horse_slots": 1, "resource_slots": 1,
+        }]
+        window.routes = [{
+            "building_id": "lumber_camp", "name": "Лесопилка",
+            "distance_tiles": 12.5,
+            "resources": [{"id": "wood", "label": "Древесина"}],
+        }]
+        window.transport_draft.update({
+            "cart_id": "cart_grade_1", "destination_id": "lumber_camp",
+            "resource_ids": ["wood"],
+        })
+
+        window._draw_transport(self.screen)
+        window.handle_event(pygame.event.Event(
+            pygame.MOUSEBUTTONDOWN, button=1, pos=window.transport_pin_draft_button.center,
+        ))
+
+        self.assertTrue(window.transport_draft["pinned"])
+
+    def test_active_pinned_route_can_be_unpinned(self):
+        window = self.scene.stable_window
+        window.state = self.client.get_building("stable", 1)
+        window.state["available_carts"] = [{
+            "id": "cart_grade_1", "name": "Лёгкая повозка", "status": "В пути",
+            "can_travel": False, "dispatch_available": False,
+            "horse_slots": 1, "resource_slots": 1,
+        }]
+        window.state["transport_convoys"] = [{
+            "id": 55, "cart_id": "cart_grade_1", "status": "В пути", "pinned": True,
+            "horses": [], "seconds_remaining": 60,
+        }]
+
+        window._draw_transport(self.screen)
+        button = window.transport_pin_buttons[55]
+        window.handle_event(pygame.event.Event(
+            pygame.MOUSEBUTTONDOWN, button=1, pos=button.center,
+        ))
+
+        self.assertEqual(self.client.calls[-1], ("stable", "transport/pin"))
+        self.assertEqual(self.client.last_payload, {"convoy_id": 55, "pinned": False})
+
     def test_carts_tab_renders_grades_stock_and_selectable_nodes(self):
         window = self.scene.stable_window
         window.open()
@@ -922,7 +1119,7 @@ class CityStorageWindowTests(unittest.TestCase):
         window._draw_carts(self.screen)
         self.assertNotIn(1, window.cart_purchase_buttons)
         window._select_transport_option(("cart", None, carts[0]["id"]))
-        self.assertIn("ещё не подключена", window.message)
+        self.assertEqual(window.message, "Для рейса нужна свободная отдыхающая лошадь.")
 
     def test_cart_grade_one_formulas_and_grade_two_gate(self):
         from core.cart_progress import cart_stats, grade_two_unlocked

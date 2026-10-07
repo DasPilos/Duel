@@ -295,7 +295,7 @@ class CityPopulationTests(unittest.TestCase):
         state = self.city.recall_citizen(self.character_id, citizen_id, now)
         citizen = next(row for row in state["citizens"] if row["id"] == citizen_id)
         self.assertEqual(citizen["work_status"], "Возвращается")
-        self.assertEqual(citizen["travel_seconds_left"], 12)
+        self.assertEqual(citizen["travel_seconds_left"], 1)
 
         state = self.city.get_state(self.character_id, now + 24)
         citizen = next(row for row in state["citizens"] if row["id"] == citizen_id)

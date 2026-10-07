@@ -19,14 +19,10 @@ def _payload(building, level=1, occupied=(), stage=1):
         "level": level,
         "max_workers": info["max_workers"],
         "workers": len([index for index in occupied if index < info["max_workers"]]),
-        "cycle_start_time": time.time() - 1900,
-        "cycle_duration_sec": 7200,
-        "cycle_seconds_left": 7200 - 1900,
+        "next_harvest_seconds": 1900,
         "stage": stage,
         "storage_total": 0,
         "storage": {**{resource: 0 for resource in resources}, "limit": info["storage"]},
-        "buffer": {resource: 0 for resource in resources},
-        "forecast": {resource: 0 for resource in resources},
         "worker_slots": [
             {"slot_index": index, "resource": slot_resource(building, index), "occupied": index in occupied,
              "worker_id": f"citizen-{index}" if index in occupied else None,
@@ -38,10 +34,11 @@ def _payload(building, level=1, occupied=(), stage=1):
             "time_seconds": requirements["time_seconds"],
             "materials": [
                 {"item_id": item_id, "name": f"Материал {item_id}", "icon": None,
-                 "required": required, "deposited": 0, "in_backpack": 3}
+                 "required": required, "deposited": 0, "remaining": required,
+                 "in_warehouse": required, "in_backpack": 3}
                 for item_id, required in requirements["materials"].items()
             ],
-            "ready": False,
+            "ready": True,
             "in_progress": False,
             "finish_at": None,
             "seconds_left": None,
@@ -271,7 +268,7 @@ class ProductionBuildingWindowTests(unittest.TestCase):
         self.assertIsNone(window.pending_worker_action)
         self.assertEqual(self.client.calls, [])
 
-    def test_worker_table_shows_cycle_countdowns_and_lifetime_total(self):
+    def test_worker_table_shows_unit_countdowns_and_lifetime_total(self):
         window = self._open("barnyard")
         window.state = _payload("barnyard", occupied={0})
         slot = window.state["worker_slots"][0]
@@ -327,6 +324,7 @@ class ProductionBuildingWindowTests(unittest.TestCase):
         self.assertTrue(any(text == "Всего:" for text in rendered))
         self.assertIn("Кожа: 5", rendered)
         self.assertIn("Мясо: 7", rendered)
+        self.assertFalse(any("За цикл" in text for text in rendered))
 
     def test_travelling_citizen_shows_arrival_eta_not_production_timer(self):
         window = self._open("lumber_camp")
@@ -410,24 +408,13 @@ class ProductionBuildingWindowTests(unittest.TestCase):
         self.assertEqual(self.client.calls, [("farm", "storage/deposit", None)])
         self.assertEqual(self.client.last_payload, {"resource": "wheat", "quantity": 6})
 
-    def test_deposit_button_sends_material_to_server(self):
+    def test_upgrade_button_spends_shared_storage_directly(self):
         window = self._open("lumber_camp")
         window.tab = "upgrade"
         self.scene.draw(self.screen)
-        item_id, button = next(iter(window.deposit_buttons.items()))
-        self._click(button.center)
-        self.assertTrue(window.contribution_dialog.is_open)
-        self.assertEqual(window.contribution_dialog.maximum, 3)
-        self.scene.draw(self.screen)
-        dialog = window.contribution_dialog
-        slider_x = dialog.track_rect.left + dialog.track_rect.width // 2
-        self._click((slider_x, dialog.track_rect.centery))
-        self.scene.handle_event(pygame.event.Event(
-            pygame.MOUSEBUTTONUP, button=1, pos=(slider_x, dialog.track_rect.centery)))
-        self.assertEqual(dialog.quantity, 2)
-        self._click(dialog.confirm_button.center)
-        self.assertEqual(self.client.calls, [("lumber_camp", "upgrade/deposit", item_id)])
-        self.assertEqual(self.client.last_payload["quantity"], 2)
+        self.assertEqual(window.deposit_buttons, {})
+        self._click(window.upgrade_button.center)
+        self.assertEqual(self.client.calls, [("lumber_camp", "upgrade/start", None)])
 
     def test_rift_mines_draw_and_respond_to_clicks(self):
         window = self._open("mountain_rift")
@@ -440,7 +427,8 @@ class ProductionBuildingWindowTests(unittest.TestCase):
         geometry = window.plot_geometry()
         self._click(geometry[0]["center"])
         self._confirm_worker_action(window)
-        self.assertEqual(self.client.calls, [("mountain_rift", "workers/hire", 0)])
+        self.assertEqual(self.client.city_calls, [("assign", "mountain_rift", 0, 1)])
+        self.assertEqual(self.client.calls, [])
         self._click(geometry[1]["center"])
         self.assertEqual(window.message, "Прииск камня откроется на 2 уровне")
 
@@ -453,7 +441,8 @@ class ProductionBuildingWindowTests(unittest.TestCase):
         small = window.plot_geometry()[0]["rect"].copy()
         self._click(small.center)
         self._confirm_worker_action(window)
-        self.assertEqual(self.client.calls, [("barnyard", "workers/hire", 0)])
+        self.assertEqual(self.client.city_calls, [("assign", "barnyard", 0, 1)])
+        self.assertEqual(self.client.calls, [])
         window.state = _payload("barnyard", level=10, occupied=set(range(10)))
         self.scene.draw(self.screen)
         big = window.plot_geometry()[0]["rect"]
@@ -467,7 +456,8 @@ class ProductionBuildingWindowTests(unittest.TestCase):
             self.scene.draw(self.screen)
         window.tab = "production"
         self.assertNotIn("Шанс", window.production_desc(1))
-        self.assertIn("Шанс камня 5% за цикл отгрузки на всю копь", window.production_desc(3))
+        self.assertIn("шанс 0.43% на каждую добытую единицу угля", window.production_desc(3))
+        self.assertIn("100%", window.production_desc(3))
         self.assertIn("алмаз 8%", window.production_desc(10))
         geometry = window.plot_geometry()
         self.assertEqual(len(geometry), 10)
@@ -475,7 +465,8 @@ class ProductionBuildingWindowTests(unittest.TestCase):
         self.assertEqual(max(range(10), key=lambda index: geometry[index]["rect"].width), 9)
         self._click(geometry[0]["center"])
         self._confirm_worker_action(window)
-        self.assertEqual(self.client.calls, [("black_pit", "workers/hire", 0)])
+        self.assertEqual(self.client.city_calls, [("assign", "black_pit", 0, 1)])
+        self.assertEqual(self.client.calls, [])
         self._click(geometry[1]["center"])
         self.assertEqual(window.message, "Копанка (уголь) откроется на 2 уровне")
         # Все 4 стадии вагонетки рисуются

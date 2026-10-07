@@ -21,6 +21,7 @@ from core.production_buildings import BUILDINGS
 from ui.catalog_icons import draw_building_icon, draw_item_icon
 from ui.hud import draw_button
 from ui.material_contribution_dialog import MaterialContributionDialog
+from ui.map_travel import draw_convoy_sprite_group
 
 RESOURCE_COLORS = {
     "wheat": (207, 173, 71), "berries": (154, 75, 135), "flax": (113, 153, 111),
@@ -77,11 +78,16 @@ class StableWindow:
         self.transport_scroll = 0
         self.stall_scroll = 0
         self.message = None
-        self.transport_draft = {"cart_id": None, "horse_ids": [], "destination_id": None, "resource_ids": []}
+        self.transport_draft = {
+            "cart_id": None, "horse_ids": [], "driver_citizen_id": None,
+            "destination_id": None, "resource_ids": [], "pinned": False,
+        }
         self.transport_popup = None
         self.transport_popup_rect = pygame.Rect(0, 0, 0, 0)
         self.transport_popup_options = {}
         self.transport_buttons = {}
+        self.transport_pin_buttons = {}
+        self.transport_pin_draft_button = pygame.Rect(0, 0, 240, 28)
         self.transport_start_button = pygame.Rect(0, 0, 240, 38)
         self.destination_state = None
         self.deposit_buttons = {}
@@ -145,6 +151,43 @@ class StableWindow:
         self.cart_progress = deepcopy(server_progress)
         self.cart_progress["selected_grade"] = selected_grade
 
+    def _sync_transport_drivers(self):
+        client = self.scene.session.client
+        getter = getattr(client, "get_city_population", None)
+        character_id = self.scene.session.character.get("id")
+        if getter is None or character_id is None or self.state is None:
+            return
+        try:
+            population = getter(character_id)
+        except (ServerError, AttributeError, KeyError, OSError):
+            return
+        busy_ids = {
+            int(convoy["driver_citizen_id"])
+            for convoy in self.state.get("transport_convoys", [])
+            if convoy.get("driver_citizen_id") is not None
+        }
+        self.state["available_cart_drivers"] = [
+            {"id": int(citizen["id"]), "name": citizen["name"],
+             "satiety": int(citizen.get("satiety", 0)),
+             "satisfaction": citizen.get("satisfaction")}
+            for citizen in population.get("citizens", [])
+            if citizen.get("work_status") == "Свободен"
+            and citizen.get("satisfaction") == "satisfied"
+            and int(citizen["id"]) not in busy_ids
+        ]
+        available_horses = self._available_transport_horses()
+        for cart in self._available_transport_carts():
+            cart_is_busy = cart.get("id") in {
+                convoy.get("cart_id") for convoy in self.state.get("transport_convoys", [])
+            }
+            ready = (
+                not cart_is_busy
+                and len(available_horses) >= int(cart.get("horse_slots", 0))
+                and bool(self.state["available_cart_drivers"])
+            )
+            cart["can_travel"] = ready
+            cart["dispatch_available"] = ready
+
     def handle_event(self, event):
         if self.source_picker is not None:
             self._handle_source_picker_event(event)
@@ -205,15 +248,26 @@ class StableWindow:
                 self.tab = key
                 return
         if self.tab == "transport":
+            for convoy_id, button in self.transport_pin_buttons.items():
+                if not button.collidepoint(event.pos):
+                    continue
+                convoy = next((row for row in (self.state or {}).get("transport_convoys", [])
+                               if int(row.get("id", 0)) == convoy_id), None)
+                if convoy is not None:
+                    self._building_action("transport/pin", {
+                        "convoy_id": convoy_id, "pinned": not convoy.get("pinned", False),
+                    })
+                return
+            if self.transport_pin_draft_button.collidepoint(event.pos):
+                self.transport_draft["pinned"] = not self.transport_draft.get("pinned", False)
+                return
             for field, button in self.transport_buttons.items():
                 if button.collidepoint(event.pos):
                     self.transport_popup = field
                     return
             if self.transport_start_button.collidepoint(event.pos):
                 if self._transport_can_start():
-                    self.message = "Серверная отправка транспортных рейсов ещё не подключена."
-                elif self._selected_transport_cart():
-                    self.message = "Повозка куплена, но серверная отправка транспортных рейсов ещё не подключена."
+                    self._dispatch_transport()
                 return
         if self.tab == "routes":
             for index, rect in enumerate(self._route_row_rects()):
@@ -266,13 +320,40 @@ class StableWindow:
                 "stable", self.scene.session.character["id"], action, payload
             )
             self._sync_cart_progress()
+            self._sync_transport_drivers()
             self.state_received_at = time.monotonic()
             self.message = None
             if action == "cart/contribute":
                 self.message = "Взнос внесён со склада." if payload.get("resource") == "wood" else "Серебро внесено."
             elif action == "cart/purchase":
                 self.message = "Лёгкая повозка куплена и добавлена в транспорт."
+            elif action == "transport/pin":
+                self.message = "Маршрут будет повторяться." if payload.get("pinned") else "Повтор маршрута отключён."
         except (ServerError, AttributeError, KeyError, OSError) as error:
+            self.message = str(error)
+
+    def _dispatch_transport(self):
+        payload = {
+            "cart_id": self.transport_draft["cart_id"],
+            "horse_ids": self.transport_draft["horse_ids"],
+            "driver_citizen_id": self.transport_draft["driver_citizen_id"],
+            "destination_building_id": self.transport_draft["destination_id"],
+            "resource_ids": self.transport_draft["resource_ids"],
+            "pinned": self.transport_draft.get("pinned", False),
+        }
+        try:
+            response = self.scene.session.client.dispatch_transport(
+                self.scene.session.character["id"], payload,
+            )
+            self.state = response["building"]
+            self._sync_cart_progress()
+            self.state_received_at = time.monotonic()
+            self.message = "Повозка отправлена по маршруту."
+            self.transport_draft = {
+                "cart_id": None, "horse_ids": [], "driver_citizen_id": None,
+                "destination_id": None, "resource_ids": [], "pinned": False,
+            }
+        except (ServerError, AttributeError, KeyError, OSError, ValueError) as error:
             self.message = str(error)
 
     def _open_source_picker(self, target, label, remaining, sources):
@@ -365,6 +446,7 @@ class StableWindow:
                     "stable", self.scene.session.character["id"]
                 )
                 self._sync_cart_progress()
+                self._sync_transport_drivers()
                 self.state_received_at = time.monotonic()
                 self.last_state_refresh = self.state_received_at
                 if self.tab == "upgrades" and self.upgrade_tab == "transport":
@@ -541,7 +623,14 @@ class StableWindow:
 
     def _available_transport_horses(self):
         return [slot["horse"] for slot in (self.state or {}).get("stall_slots", [])
-                if slot.get("unlocked") and slot.get("horse")]
+                if slot.get("unlocked") and slot.get("horse")
+                and self._horse_can_travel(slot["horse"])]
+
+    @staticmethod
+    def _horse_can_travel(horse):
+        return bool(horse.get(
+            "can_travel", str(horse.get("status", "")).strip() == "Отдыхает",
+        ))
 
     def _selected_transport_cart(self):
         cart_id = self.transport_draft["cart_id"]
@@ -562,6 +651,9 @@ class StableWindow:
             return [(horse["id"], horse.get("name", "Лошадь"))
                     for horse in self._available_transport_horses()
                     if horse.get("id") not in selected]
+        if kind == "driver":
+            return [(driver["id"], driver.get("name", "Участник экипажа"))
+                for driver in (self.state or {}).get("available_cart_drivers", [])]
         if kind == "destination":
             return [(route["building_id"], route["name"]) for route in self.routes]
         route = self._selected_transport_route() or {}
@@ -575,17 +667,18 @@ class StableWindow:
             self.transport_draft = {
                 "cart_id": value,
                 "horse_ids": [None] * max(0, int((cart or {}).get("horse_slots", 0))),
+                "driver_citizen_id": None,
                 "destination_id": None,
                 "resource_ids": [],
+                "pinned": False,
             }
             self.destination_state = None
             if cart and not cart.get("dispatch_available", False):
-                self.message = cart.get(
-                    "status_message",
-                    "Повозка куплена. Отправка транспортных рейсов ещё не подключена.",
-                )
+                self.message = self._cart_block_message(cart)
         elif kind == "horse":
             self.transport_draft["horse_ids"][slot_index] = value
+        elif kind == "driver":
+            self.transport_draft["driver_citizen_id"] = value
         elif kind == "destination":
             self.transport_draft["destination_id"] = value
             route = self._selected_transport_route()
@@ -605,18 +698,32 @@ class StableWindow:
 
     def _transport_can_start(self):
         cart = self._selected_transport_cart()
-        if not cart or not cart.get("can_travel", False):
+        if not cart:
             return False
         horse_ids = self.transport_draft["horse_ids"]
         horses = self._available_transport_horses()
         selected_horses = [next((horse for horse in horses if horse.get("id") == horse_id), None)
                            for horse_id in horse_ids]
-        if not horse_ids or any(not horse or not horse.get("can_travel", False) for horse in selected_horses):
+        if not horse_ids or any(not horse or not self._horse_can_travel(horse)
+                    for horse in selected_horses):
+            return False
+        drivers = (self.state or {}).get("available_cart_drivers", [])
+        if not any(int(driver.get("id", 0)) == int(self.transport_draft["driver_citizen_id"] or 0)
+                   for driver in drivers):
             return False
         if not self._selected_transport_route():
             return False
         resource_ids = self.transport_draft["resource_ids"]
         return bool(resource_ids) and all(resource_id is not None for resource_id in resource_ids)
+
+    def _cart_block_message(self, cart):
+        if cart.get("status") != "Свободна":
+            return f"Повозка сейчас: {cart.get('status')}."
+        if not self._available_transport_horses():
+            return "Для рейса нужна свободная отдыхающая лошадь."
+        if not (self.state or {}).get("available_cart_drivers"):
+            return "Для рейса нужен свободный сытый участник экипажа."
+        return cart.get("status_message", "Сначала соберите свободный экипаж.")
 
     def _draw_transport_popup(self, screen, builder):
         if self.transport_popup is None:
@@ -633,13 +740,14 @@ class StableWindow:
         screen.blit(shade, (0, 0))
         pygame.draw.rect(screen, (31, 34, 30), popup, border_radius=5)
         pygame.draw.rect(screen, (174, 145, 91), popup, 2, border_radius=5)
-        title = {"cart": "Выбор повозки", "horse": "Выбор лошади",
+        title = {"cart": "Выбор повозки", "horse": "Выбор лошади", "driver": "Выбор экипажа",
                  "destination": "Пункт назначения", "resource": "Ресурс для погрузки"}[kind]
         screen.blit(scene.font.render(title, True, (226, 210, 177)), (popup.left + 18, popup.top + 16))
         self.transport_popup_options = {}
         if not items:
             message = ("У вас нет свободного транспорта" if kind == "cart"
                        else "У вас нет свободных лошадей" if kind == "horse"
+                       else "Нет подходящего экипажа" if kind == "driver"
                        else "Нет доступных вариантов")
             label = scene.small_font.render(message, True, (188, 181, 163))
             screen.blit(label, label.get_rect(center=(popup.centerx, popup.centery + 12)))
@@ -654,9 +762,31 @@ class StableWindow:
         panel = pygame.Rect(self.rect.left + 24, self.rect.top + self.HEADER_HEIGHT + 18,
                             self.rect.width - 48, self.rect.height - self.HEADER_HEIGHT - 42)
         self._panel(screen, panel, "Транспортные рейсы")
+        self.transport_pin_buttons = {}
         carts = self._available_transport_carts()
         convoys = (self.state or {}).get("transport_convoys", [])
-        traveling = [convoy for convoy in convoys if convoy.get("status") == "В пути"]
+        traveling = [
+            convoy for convoy in convoys
+            if convoy.get("status") not in (
+                "Ожидает разгрузки", "Ожидает места для разгрузки",
+            ) and convoy.get("phase") in ("outbound", "returning")
+            or convoy.get("status") == "В пути"
+        ]
+        convoy_by_cart = {
+            convoy.get("cart_id"): convoy for convoy in convoys
+            if convoy.get("cart_id") is not None
+        }
+        rows = []
+        for cart in carts:
+            convoy = convoy_by_cart.get(cart.get("id"))
+            rows.append({
+                **(convoy or {}),
+                "cart_name": cart.get("name", "Повозка"),
+                "status": convoy.get("status", "В пути") if convoy else cart.get("status", "Свободна"),
+                "horse_slots": cart.get("horse_slots", 0),
+            })
+        rows.extend(convoy for convoy in convoys
+                    if convoy.get("cart_id") not in {cart.get("id") for cart in carts})
         summary_y = panel.top + 44
         summary_width = (panel.width - 36) // 3
         summary_labels = (
@@ -674,29 +804,39 @@ class StableWindow:
         table = pygame.Rect(panel.left + 12, summary_y + 46, panel.width - 24, 232)
         y = self._table_header(screen, table, table.top, (
             ("Повозка / маршрут", table.left + 12, "left"), ("Груз", table.left + 430, "left"),
-            ("Лошади: сытость", table.left + 760, "left"), ("Прогресс", table.left + 1080, "left"),
-            ("Осталось", table.right - 14, "right"),
+            ("Лошади", table.left + 760, "left"), ("Статус", table.left + 950, "left"),
+            ("Повтор", table.right - 190, "left"), ("Осталось", table.right - 14, "right"),
         ))
-        if not convoys:
-            empty = scene.small_font.render("Сейчас нет повозок в пути", True, (151, 150, 136))
+        if not rows:
+            empty = scene.small_font.render("Пока нет купленных повозок", True, (151, 150, 136))
             screen.blit(empty, empty.get_rect(center=(table.centerx, y + 72)))
         else:
-            for index, convoy in enumerate(convoys[:4]):
+            for index, convoy in enumerate(rows[:4]):
                 row = pygame.Rect(table.left + 1, y, table.width - 2, 43)
                 pygame.draw.rect(screen, (41, 43, 37) if index % 2 == 0 else (35, 38, 33), row)
-                satiety = ", ".join(str(horse.get("satiety", "—"))
-                                    for horse in convoy.get("horses", [])) or "—"
+                horse_names = ", ".join(horse.get("name", "Лошадь")
+                                         for horse in convoy.get("horses", [])) or "—"
                 values = (
                     f"{convoy.get('cart_name', 'Повозка')} / {convoy.get('destination_name', '—')}",
                     f"{convoy.get('cargo_kg', '—')} / {convoy.get('capacity_kg', '—')} кг",
-                    satiety,
-                    f"{convoy.get('progress_percent', '—')}%",
+                    f"{convoy.get('driver_name', '—')} / {horse_names}",
+                    convoy.get("status", "Свободна"),
+                    "",
                     _format_duration(convoy["seconds_remaining"])
                     if convoy.get("seconds_remaining") is not None else "—",
                 )
                 positions = (row.left + 12, row.left + 430, row.left + 760,
-                             row.left + 1080, row.right - 14)
+                             row.left + 950, row.right - 190, row.right - 14)
                 for column, (value, x) in enumerate(zip(values, positions)):
+                    if column == 4 and convoy.get("id") is not None:
+                        button = pygame.Rect(row.right - 190, row.top + 7, 104, row.height - 14)
+                        pinned = bool(convoy.get("pinned", False))
+                        draw_button(screen, button, "✓ Закреплён" if pinned else "○ Закрепить",
+                                    scene.small_font,
+                                    color=(66, 105, 70) if pinned else (49, 52, 47),
+                                    text_color=(225, 236, 216) if pinned else (185, 182, 166))
+                        self.transport_pin_buttons[int(convoy["id"])] = button
+                        continue
                     label = scene.small_font.render(str(value), True, (205, 199, 182))
                     target = label.get_rect(midleft=(x, row.centery)) if column < 4 else label.get_rect(midright=(x, row.centery))
                     screen.blit(label, target)
@@ -713,7 +853,7 @@ class StableWindow:
 
         if cart and not cart.get("dispatch_available", False):
             notice = scene.small_font.render(
-                cart.get("status_message", "Повозка куплена; отправка рейсов ещё не подключена."),
+                self._cart_block_message(cart),
                 True, (205, 174, 112),
             )
             screen.blit(notice, (builder.left + 12, builder.top + 42))
@@ -744,29 +884,136 @@ class StableWindow:
                         text_color=(224, 211, 178) if horses else (151, 150, 138))
             self.transport_buttons[("horse", slot_index)] = button
 
+        drivers = (self.state or {}).get("available_cart_drivers", [])
+        driver = next((item for item in drivers
+                       if item.get("id") == self.transport_draft["driver_citizen_id"]), None)
+        driver_button = pygame.Rect(builder.left + 184, button_y + 48, 250, 31)
+        draw_button(screen, driver_button,
+                    driver.get("name", "Выбрать экипаж") if driver else "Выбрать экипаж",
+                    scene.small_font, color=(67, 64, 50) if drivers else (45, 47, 42),
+                    text_color=(224, 211, 178) if drivers else (151, 150, 138))
+        self.transport_buttons[("driver", None)] = driver_button
+
         if route and cart:
             labels = {item["id"]: item["label"] for item in route.get("resources", [])}
             for slot_index, resource_id in enumerate(self.transport_draft["resource_ids"]):
-                x = destination_button.left + (slot_index % 2) * 152
+                x = builder.left + 452 + (slot_index % 2) * 152
                 y = button_y + 48 + (slot_index // 2) * 35
                 button = pygame.Rect(x, y, 144, 31)
                 label = labels.get(resource_id, f"Ресурс {slot_index + 1}: выбрать")
-                draw_button(screen, button, label, scene.small_font, color=(67, 64, 50))
+                resource = next((item for item in route.get("resources", [])
+                                 if item.get("id") == resource_id), None)
+                draw_button(screen, button, "", scene.small_font, color=(67, 64, 50))
+                if resource_id is None:
+                    label = f"Слот {slot_index + 1}: выбрать"
+                item_id = RESOURCE_ITEM_IDS.get(resource_id)
+                if item_id is not None:
+                    draw_item_icon(screen, item_id,
+                                   (button.left + 5, button.centery - 16), 32)
+                text = scene.small_font.render(label, True, (224, 211, 178))
+                screen.blit(text, text.get_rect(midleft=(button.left + 41, button.centery)))
                 self.transport_buttons[("resource", slot_index)] = button
 
-        summary_x = builder.left + 620
-        summary_y = button_y + 2
+        self.transport_pin_draft_button = pygame.Rect(0, 0, 0, 0)
         if cart and route:
-            distance_text = f"Маршрут: {route['distance_tiles']:.2f} тайла"
+            self.transport_pin_draft_button = pygame.Rect(builder.left + 12, button_y + 84, 250, 28)
+            checkbox = pygame.Rect(self.transport_pin_draft_button.left,
+                                   self.transport_pin_draft_button.centery - 9, 18, 18)
+            pygame.draw.rect(screen, (35, 38, 33), checkbox, border_radius=2)
+            pygame.draw.rect(screen, (194, 161, 103), checkbox, 1, border_radius=2)
+            if self.transport_draft.get("pinned", False):
+                pygame.draw.line(screen, (132, 207, 121), checkbox.topleft,
+                                 checkbox.bottomright, 2)
+                pygame.draw.line(screen, (132, 207, 121), checkbox.topright,
+                                 checkbox.bottomleft, 2)
+            screen.blit(scene.small_font.render("Повторять маршрут до отмены", True,
+                                                (211, 204, 184)),
+                        (checkbox.right + 8, checkbox.top + 1))
+
+        preview_top = button_y + (116 if cart and route else 88)
+        preview_bottom = builder.bottom - 56
+        preview_height = max(72, preview_bottom - preview_top)
+        preview_width = min(570, (builder.width - 40) // 2)
+        preview = pygame.Rect(builder.left + 12, preview_top, preview_width, preview_height)
+        details = pygame.Rect(preview.right + 12, preview.top,
+                              builder.right - preview.right - 24, preview.height)
+        pygame.draw.rect(screen, (37, 40, 35), preview, border_radius=4)
+        pygame.draw.rect(screen, (72, 74, 63), preview, 1, border_radius=4)
+        screen.blit(scene.small_font.render("Вид сверху", True, (185, 178, 157)),
+                    (preview.left + 10, preview.top + 8))
+
+        sprite_key = (cart or {}).get("sprite_key", "light")
+        sprite_size = max(48, min(112, preview.height - 32))
+        sprite_center = (preview.left + preview.width // 2, preview.centery + 6)
+        sprite_points = draw_convoy_sprite_group(
+            screen, sprite_center, sprite_key, "w", sprite_size,
+        )
+        horse = next((item for item in horses
+                      if item.get("id") in self.transport_draft["horse_ids"]), None)
+        selected_resources = self.transport_draft["resource_ids"]
+        slot_count = max(0, int((cart or {}).get("resource_slots", len(selected_resources))))
+        slot_size = 32
+        slot_center = sprite_points["wagon"]
+        slot_gap = 4
+        for slot_index in range(slot_count):
+            slot_left = slot_center[0] - (slot_count * (slot_size + slot_gap) - slot_gap) / 2
+            slot_rect = pygame.Rect(round(slot_left + slot_index * (slot_size + slot_gap)),
+                                    round(slot_center[1] - slot_size / 2), slot_size, slot_size)
+            pygame.draw.rect(screen, (31, 34, 30), slot_rect, border_radius=2)
+            pygame.draw.rect(screen, (194, 161, 103), slot_rect, 1, border_radius=2)
+            resource_id = selected_resources[slot_index] if slot_index < len(selected_resources) else None
+            item_id = RESOURCE_ITEM_IDS.get(resource_id)
+            if item_id is not None:
+                draw_item_icon(screen, item_id, slot_rect.topleft, slot_size)
+            else:
+                pygame.draw.line(screen, (127, 112, 83), slot_rect.topleft,
+                                 slot_rect.bottomright, 1)
+                pygame.draw.line(screen, (127, 112, 83), slot_rect.topright,
+                                 slot_rect.bottomleft, 1)
+
+        self._draw_convoy_marker(screen, scene, sprite_points["horse"], "Лошадь",
+                                 horse.get("name", "не выбрана") if horse else "не выбрана")
+        driver = next((item for item in drivers
+                       if item.get("id") == self.transport_draft["driver_citizen_id"]), None)
+        self._draw_convoy_marker(screen, scene,
+                                 (sprite_points["wagon"][0] - sprite_size * 0.16,
+                                  sprite_points["wagon"][1] - sprite_size * 0.28),
+                     "Экипаж", driver.get("name", "не выбран") if driver else "не выбран")
+        self._draw_convoy_marker(screen, scene,
+                                 (sprite_points["wagon"][0],
+                                  sprite_points["wagon"][1] + sprite_size * 0.30),
+                                 "Груз", f"слотов: {slot_count}")
+
+        pygame.draw.rect(screen, (43, 46, 41), details, border_radius=4)
+        pygame.draw.rect(screen, (82, 82, 69), details, 1, border_radius=4)
+        screen.blit(scene.font.render("Информация о рейсе", True, (222, 204, 166)),
+                    (details.left + 12, details.top + 9))
+        if cart and route:
+            distance_text = f"{route['distance_tiles']:.2f} тайла"
             seconds_per_tile = cart.get("seconds_per_tile")
-            time_text = (f"В пути без груза: {_format_duration(route['distance_tiles'] * seconds_per_tile)}"
-                         if seconds_per_tile is not None else "Время пути: —")
+            time_text = (_format_duration(route["distance_tiles"] * seconds_per_tile)
+                         if seconds_per_tile is not None else "—")
         else:
-            distance_text, time_text = "Маршрут: не выбран", "Время пути: —"
-        capacity_text = f"Грузоподъёмность: {cart.get('capacity_kg', '—') if cart else '—'} кг"
-        for index, text in enumerate((capacity_text, distance_text, time_text)):
-            screen.blit(scene.small_font.render(text, True, (195, 189, 170)),
-                        (summary_x, summary_y + index * 28))
+            distance_text, time_text = "не выбран", "—"
+        resource_labels = {item["id"]: item["label"]
+                           for item in (route or {}).get("resources", [])}
+        cargo_text = ", ".join(resource_labels.get(value, value)
+                                for value in selected_resources if value) or "не загружен"
+        info_lines = (
+            f"Повозка: {(cart or {}).get('name', 'не выбрана')}",
+            f"Маршрут: {(route or {}).get('name', 'не выбран')} · {distance_text}",
+            f"В пути без груза: {time_text}",
+            f"Экипаж: {driver.get('name', 'не выбран') if driver else 'не выбран'}",
+            f"Лошадь: {horse.get('name', 'не выбрана') if horse else 'не выбрана'}",
+            f"Груз: {cargo_text} · {len([value for value in selected_resources if value])}/{slot_count} слота",
+            f"Грузоподъёмность: {(cart or {}).get('capacity_kg', '—')} кг",
+        )
+        for index, text in enumerate(info_lines):
+            line_y = details.top + 37 + index * 20
+            if line_y + 18 > details.bottom - 4:
+                break
+            screen.blit(scene.small_font.render(text, True, (198, 193, 177)),
+                        (details.left + 12, line_y))
 
         ready = self._transport_can_start()
         self.transport_start_button.topleft = (builder.right - 264, builder.bottom - 48)
@@ -774,6 +1021,15 @@ class StableWindow:
                     color=(68, 132, 76) if ready else (48, 52, 46),
                     text_color=(239, 245, 226) if ready else (143, 145, 134))
         self._draw_transport_popup(screen, builder)
+
+    @staticmethod
+    def _draw_convoy_marker(screen, scene, center, title, value):
+        text = scene.small_font.render(f"{title}: {value}", True, (228, 218, 192))
+        marker = pygame.Rect(0, 0, text.get_width() + 10, text.get_height() + 4)
+        marker.midbottom = (round(center[0]), round(center[1]))
+        pygame.draw.rect(screen, (28, 31, 28), marker, border_radius=2)
+        pygame.draw.rect(screen, (101, 98, 81), marker, 1, border_radius=2)
+        screen.blit(text, (marker.left + 5, marker.top + 2))
 
     def _draw_carts(self, screen):
         scene = self.scene

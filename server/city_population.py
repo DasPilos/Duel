@@ -268,7 +268,8 @@ class CityPopulation:
         with self.db.connection() as connection:
             world_id, _faction = self._key(connection, character_id)
             citizens = connection.execute(
-                """SELECT id, faction, name, job_building, travel_direction, arrival_at
+                     """SELECT id, faction, name, job_building, travel_direction, arrival_at,
+                                  return_progress, return_started_at
                    FROM city_citizens
                    WHERE world_id = %s AND travel_direction IS NOT NULL
                      AND arrival_at > %s
@@ -281,12 +282,21 @@ class CityPopulation:
                        for route in roads_payload()["routes"]}
         travelers = []
         for citizen in citizens:
-            total = self._travel_seconds(citizen["job_building"])
-            if total <= 0:
+            full_route_seconds = self._travel_seconds(citizen["job_building"])
+            if full_route_seconds <= 0:
                 continue
             eta = max(0, math.ceil(float(citizen["arrival_at"]) - now))
             direction = citizen["travel_direction"]
-            progress = eta / total if direction == "returning" else 1 - eta / total
+            if direction == "returning":
+                return_progress = min(1.0, max(0.0, float(citizen["return_progress"])))
+                total = max(1, math.ceil(full_route_seconds * return_progress))
+                elapsed = (max(0.0, now - float(citizen["return_started_at"]))
+                           if citizen["return_started_at"] is not None
+                           else max(0.0, total - eta))
+                progress = return_progress * max(0.0, 1.0 - elapsed / total)
+            else:
+                total = full_route_seconds
+                progress = 1 - eta / total
             road_building = road_buildings.get(citizen["job_building"], citizen["job_building"])
             position = route_position(road_building, progress)
             if position is None:
@@ -312,7 +322,7 @@ class CityPopulation:
         building, slot_index = citizen.get("job_building"), citizen.get("job_slot")
         if building and slot_index is not None:
             building_key = self._ensure_building(connection, key[0], building, now)
-            self.production._sync_buffer(connection, building_key, now)
+            self.production._sync_harvest(connection, building_key, now)
             connection.execute(
                 """UPDATE building_worker_slots
                    SET occupied = 0, worker_id = NULL, hire_time = NULL, credited = '{}'::jsonb
@@ -323,7 +333,8 @@ class CityPopulation:
         if clear_job:
             connection.execute(
                 """UPDATE city_citizens SET job_building = NULL, job_slot = NULL,
-                   working = FALSE, arrival_at = NULL, travel_direction = NULL WHERE id = %s""",
+                   working = FALSE, arrival_at = NULL, travel_direction = NULL,
+                   return_progress = 1, return_started_at = NULL WHERE id = %s""",
                 (int(citizen["id"]),),
             )
         else:
@@ -333,12 +344,20 @@ class CityPopulation:
             )
 
     def _begin_return(self, connection, key, citizen, now):
+        full_route_seconds = self._travel_seconds(citizen["job_building"])
+        progress = 1.0
+        if (citizen.get("travel_direction") == "outbound"
+                and citizen.get("arrival_at") is not None and full_route_seconds > 0):
+            outbound_started_at = float(citizen["arrival_at"]) - full_route_seconds
+            progress = min(1.0, max(0.0, (float(now) - outbound_started_at) / full_route_seconds))
+        return_seconds = max(1, int(math.ceil(full_route_seconds * progress)))
         self._release_worker(connection, key, citizen, now)
-        arrival_at = now + self._travel_seconds(citizen["job_building"])
+        arrival_at = now + return_seconds
         connection.execute(
             """UPDATE city_citizens SET working = TRUE, arrival_at = %s,
-               travel_direction = 'returning' WHERE id = %s""",
-            (arrival_at, int(citizen["id"])),
+               travel_direction = 'returning', return_progress = %s,
+               return_started_at = %s WHERE id = %s""",
+            (arrival_at, progress, float(now), int(citizen["id"])),
         )
 
     @staticmethod
@@ -353,12 +372,14 @@ class CityPopulation:
             if citizen["travel_direction"] == "returning":
                 connection.execute(
                     """UPDATE city_citizens SET job_building = NULL, job_slot = NULL,
-                       working = FALSE, arrival_at = NULL, travel_direction = NULL WHERE id = %s""",
+                              working = FALSE, arrival_at = NULL, travel_direction = NULL,
+                              return_progress = 1, return_started_at = NULL WHERE id = %s""",
                     (int(citizen["id"]),),
                 )
             else:
                 connection.execute(
                     """UPDATE city_citizens SET arrival_at = NULL, travel_direction = NULL
+                              , return_progress = 1, return_started_at = NULL
                        WHERE id = %s""",
                     (int(citizen["id"]),),
                 )
@@ -388,7 +409,8 @@ class CityPopulation:
         )
         connection.execute(
             """UPDATE city_citizens SET working = TRUE, arrival_at = %s,
-               travel_direction = 'outbound' WHERE id = %s""",
+                    travel_direction = 'outbound', return_progress = 1,
+                    return_started_at = NULL WHERE id = %s""",
             (arrival_at, int(citizen["id"])),
         )
 
@@ -416,7 +438,8 @@ class CityPopulation:
             citizen_data = dict(citizen)
             citizen_data.update(satiety=post_satiety, hunger_streak=streak,
                                 satisfaction=mood)
-            if mood == "starving" and citizen["working"]:
+            if (mood == "starving" and citizen["working"]
+                    and citizen["travel_direction"] != "returning"):
                 self._begin_return(connection, key, citizen_data, tick_at)
             if mood == "starving" and fed == 0 and remaining_population > MIN_POPULATION:
                 self._release_worker(connection, key, citizen_data, tick_at)
@@ -539,12 +562,22 @@ class CityPopulation:
                               "capacity": building_level_info(level, building)["max_workers"],
                               "travel_seconds": self._travel_seconds(building)})
         citizen_list = []
+        convoy_driver_ids = {
+            int(row["driver_citizen_id"])
+            for row in connection.execute(
+                """SELECT driver_citizen_id FROM transport_convoys
+                   WHERE world_id=%s AND faction=%s AND status IN ('outbound','blocked')""",
+                key,
+            ).fetchall()
+        }
         for citizen in citizens:
             row = dict(citizen)
             elapsed_minutes = max(
                 0, int((float(now) - float(row["satiety_updated_at"])) // 60)
             )
-            if row["travel_direction"] == "returning":
+            if int(row["id"]) in convoy_driver_ids:
+                work_status = "Ведёт повозку"
+            elif row["travel_direction"] == "returning":
                 work_status = "Возвращается"
             elif row["travel_direction"] == "outbound":
                 work_status = "В пути"
@@ -656,6 +689,12 @@ class CityPopulation:
                 raise ValueError("Голодный горожанин не может выйти на работу")
             if citizen["job_building"] is not None:
                 raise ValueError("Горожанин уже назначен на работу")
+            if connection.execute(
+                """SELECT 1 FROM transport_convoys WHERE world_id=%s AND faction=%s
+                   AND driver_citizen_id=%s AND status IN ('outbound','blocked')""",
+                (*key, int(citizen_id)),
+            ).fetchone():
+                raise ValueError("Участник экипажа занят транспортным рейсом")
             building_key = self._ensure_building(connection, key[0], building, now)
             slot = connection.execute(
                 """SELECT occupied FROM building_worker_slots
@@ -675,7 +714,8 @@ class CityPopulation:
             )
             connection.execute(
                 """UPDATE city_citizens SET job_building = %s, job_slot = %s,
-                         working = TRUE, arrival_at = %s, travel_direction = 'outbound' WHERE id = %s""",
+                         working = TRUE, arrival_at = %s, travel_direction = 'outbound',
+                         return_progress = 1, return_started_at = NULL WHERE id = %s""",
                 (building, slot_index, arrival_at, int(citizen_id)),
             )
         return self.get_state(character_id, now)

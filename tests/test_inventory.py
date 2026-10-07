@@ -159,6 +159,44 @@ class InventoryTests(unittest.TestCase):
         self.assertFalse(self.items.add_to_inventory(self.character_id, 60, 1))
         self.assertEqual(self.items.get_inventory_state(self.character_id)["carried_weight_kg"], 24)
 
+    def test_inventory_snapshot_refreshes_card_profile_with_full_item_weights(self):
+        from types import SimpleNamespace
+        from ui.inventory_window import InventoryWindow
+
+        window = InventoryWindow.__new__(InventoryWindow)
+        window.session = SimpleNamespace(character={"id": self.character_id, "inventory": {}})
+        window.inventory = {}
+        window.equipment = {}
+        window.bonuses = {}
+        window.capacity = BACKPACK_SIZE
+        window.selected = None
+        window._apply_state({
+            "inventory": [{"slot_index": 0, "item_id": 60, "name": "Древесина",
+                            "weight": 4.0, "quantity": 2}],
+            "equipment": {"weapon": {"item_id": 90, "weight": 1.0}},
+            "bonuses": {},
+            "capacity": BACKPACK_SIZE,
+            "carried_weight_kg": 9.0,
+        })
+
+        self.assertEqual(window.session.character["inventory"]["0"]["weight"], 4.0)
+        self.assertEqual(window.session.character["carried_weight_kg"], 9.0)
+
+    def test_carried_weight_includes_backpack_and_equipment_once(self):
+        self.set_strength(100)
+        self.assertTrue(self.items.grant_base_equipment(self.character_id))
+        inventory = self.items.get_inventory(self.character_id)
+        self.assertEqual(len(inventory), 4)
+        self.assertEqual(self.items.get_inventory_state(self.character_id)["carried_weight_kg"], 4.0)
+
+        self.items.equip_item(self.character_id, inventory[0]["slot_index"])
+        state = self.items.get_inventory_state(self.character_id)
+
+        self.assertEqual(len(state["inventory"]), 3)
+        self.assertEqual(set(state["equipment"]), {"weapon", "shield"})
+        self.assertTrue(state["equipment"]["shield"].get("_two_handed_shadow"))
+        self.assertEqual(state["carried_weight_kg"], 4.0)
+
     def test_battle_reward_stays_unclaimed_when_it_exceeds_carry_capacity(self):
         self.assertTrue(self.items.add_to_inventory(self.character_id, 60, 6))
         reward_id = self.items.add_reward(self.character_id, 60, 1)

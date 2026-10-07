@@ -17,6 +17,9 @@ from core.production_buildings import BUILDINGS
 from server.production_buildings import ProductionBuildings
 from server.city_population import CityPopulation
 from server.ai_commentator import enqueue_battle_comment, prewarm_local_model
+from server.world_events import run_world_event_watcher
+from server.transport import TransportService
+from server.world_events import run_world_event_watcher
 from server.world_map import terrain_payload
 from server.structures import city_structures
 from server.world_roads import roads_payload
@@ -97,8 +100,7 @@ class GameRequestHandler(BaseHTTPRequestHandler):
 
     def _announce_player_status(self, character, status):
         text = f"[ИГРОК] {character['name']} {status}"
-        for location in self.CHAT_LOCATIONS:
-            self.database.add_chat_message(character["id"], location, text)
+        self.database.add_chat_message(character["id"], "world", text)
 
     @staticmethod
     def _validate_client_character_update(current, payload):
@@ -333,6 +335,8 @@ class GameRequestHandler(BaseHTTPRequestHandler):
             raise ValueError(validation_error)
         self._check_chat_rate(character["id"])
         location = str(body.get("location", "tavern"))
+        if location == "world":
+            raise ValueError("В мировой канал может писать только сервер")
         if self.database.is_muted(character["id"], location):
             raise ValueError("Вы временно не можете отправлять сообщения")
         recipient_id = body.get("recipient_id")
@@ -424,6 +428,14 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                     raise ValueError("Персонаж не найден")
                 travelers = CityPopulation(self.database).get_traveling_citizens(character_id)
                 self._send(200, {"citizens": travelers})
+                return
+            if path == "/api/world/traveling-convoys":
+                user_id = self.database.user_id_by_token(self._token())
+                character_id = int(self._query().get("character_id", [0])[0])
+                if self.database.get_character(user_id, character_id) is None:
+                    raise ValueError("Персонаж не найден")
+                convoys = TransportService(self.database).get_world_convoys(character_id)
+                self._send(200, {"convoys": convoys})
                 return
             if path == "/api/opponents":
                 user_id = self.database.user_id_by_token(self._token())
@@ -699,6 +711,16 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                     )
                 elif action == "cart/purchase" and building == "stable":
                     state = buildings.purchase_cart(character_id, body.get("grade", 1))
+                elif action == "transport/dispatch" and building == "stable":
+                    convoy = TransportService(self.database).dispatch(character_id, body)
+                    state = ProductionBuildings(self.database).get_state(character_id, "stable")
+                    self._send(201, {"building": state, "convoy": convoy})
+                    return
+                elif action == "transport/pin" and building == "stable":
+                    TransportService(self.database).set_pinned(
+                        character_id, body.get("convoy_id"), body.get("pinned", False),
+                    )
+                    state = ProductionBuildings(self.database).get_state(character_id, "stable")
                 elif action == "horse/purchase" and building == "stable":
                     state = buildings.purchase_horse(character_id, body.get("slot_index"))
                 else:
@@ -1162,6 +1184,20 @@ def run():
         daemon=True,
     )
     population_thread.start()
+    world_event_thread = threading.Thread(
+        target=run_world_event_watcher,
+        args=(GameRequestHandler.database, stop_bot_battles),
+        name="world-event-watcher",
+        daemon=True,
+    )
+    world_event_thread.start()
+    world_events_thread = threading.Thread(
+        target=run_world_event_watcher,
+        args=(GameRequestHandler.database, stop_bot_battles),
+        name="world-event-watcher",
+        daemon=True,
+    )
+    world_events_thread.start()
     print(f"Game server: http://{config.HOST}:{config.PORT}")
     try:
         server.serve_forever()
@@ -1172,6 +1208,8 @@ def run():
         bot_battle_thread.join(timeout=2)
         restart_thread.join(timeout=2)
         population_thread.join(timeout=2)
+        world_event_thread.join(timeout=2)
+        world_events_thread.join(timeout=2)
         server.server_close()
     if restart_requested.is_set():
         raise SystemExit(1)

@@ -62,6 +62,20 @@ class CharacterStatTests(unittest.TestCase):
             "HP": 30,
         })
 
+    def test_profile_recovers_weight_when_server_snapshot_has_zero(self):
+        profile = normalize_character_profile({
+            "id": 1,
+            "name": "Носильщик",
+            "carried_weight_kg": 0,
+            "inventory": {"0": {"weight": 2.5, "quantity": 2}},
+            "equipment": {
+                "weapon": {"weight": 4},
+                "shield": {"weight": 4, "_two_handed_shadow": True},
+            },
+        })
+
+        self.assertEqual(profile["carried_weight_kg"], 9.0)
+
     def test_endurance_cannot_increase_manually(self):
         state = adjust_stats(
             {"strength": 5, "agility": 5, "intuition": 5, "endurance": 5},

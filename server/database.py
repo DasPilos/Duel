@@ -472,7 +472,7 @@ class Database:
                 FROM chat_messages
                 JOIN characters ON characters.id = chat_messages.sender_character_id
                 WHERE chat_messages.world_id = %s
-                  AND chat_messages.location = %s
+                                    AND chat_messages.location IN (%s, 'world')
                   AND chat_messages.created_at >= %s
                   AND chat_messages.deleted_at IS NULL
                   AND (chat_messages.recipient_character_id IS NULL

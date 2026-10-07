@@ -7,6 +7,7 @@ from combat.character_stats import (
     minimum_endurance,
 )
 from combat.mechanics import get_critical_chance, get_dodge_chance, get_critical_damage_multiplier, weapon_damage_range
+from core.carry_weight import carried_weight_kg
 
 
 DEFAULT_STATS = {
@@ -103,6 +104,14 @@ def normalize_character_profile(profile, *, title=None, kind="player"):
     profile_dict["title"] = title
     if not profile_dict["stats"]:
         profile_dict["stats"] = dict(DEFAULT_STATS)
+
+    inventory = profile_dict.get("inventory", {})
+    inventory_items = list(inventory.values()) if isinstance(inventory, dict) else list(inventory or [])
+    equipment = profile_dict.get("equipment", {})
+    reported_weight = float(profile_dict.get("carried_weight_kg", 0) or 0)
+    calculated_weight = carried_weight_kg(inventory_items, equipment)
+    if reported_weight <= 0 < calculated_weight:
+        profile_dict["carried_weight_kg"] = calculated_weight
 
     return profile_dict
 

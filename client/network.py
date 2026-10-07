@@ -55,6 +55,18 @@ class GameClient:
             authenticated=True,
         )["citizens"]
 
+    def get_traveling_convoys(self, character_id):
+        return self._request(
+            "GET", f"/api/world/traveling-convoys?character_id={int(character_id)}",
+            authenticated=True,
+        )["convoys"]
+
+    def dispatch_transport(self, character_id, payload):
+        return self._request(
+            "POST", f"/api/buildings/stable/{int(character_id)}/transport/dispatch",
+            payload, authenticated=True,
+        )
+
     def assign_city_citizen(self, character_id, citizen_id, building, slot_index):
         return self._request(
             "POST", f"/api/castle/{int(character_id)}/citizens/{int(citizen_id)}/assign",
