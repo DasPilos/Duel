@@ -220,6 +220,7 @@ class TransportServiceTests(unittest.TestCase):
         unload_end = return_end + unloading["seconds_remaining"] + 1
         resting = service.get_world_convoys(self.character_id, now=unload_end)[0]
         self.assertEqual(resting["phase"], "resting")
+        self.assertEqual(resting["direction"], "returning")
         self.assertEqual(resting["seconds_remaining"], 600)
         self.assertEqual(resting["cargo"], [])
         with self.database.connection() as connection:

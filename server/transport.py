@@ -729,7 +729,7 @@ class TransportService:
                 eta = max(0, int(math.ceil(float(row["arrival_at"]) - now)))
                 total = max(1, int(row["travel_seconds"]))
                 phase_progress = min(1.0, max(0.0, (now - float(row["started_at"])) / total))
-                direction = "returning" if phase == "returning" else "outbound"
+                direction = "returning" if phase in ("returning", "unloading", "resting") else "outbound"
                 if phase in ("loading", "waiting_for_resources"):
                     progress = 1.0
                 elif phase in ("unloading", "resting"):
