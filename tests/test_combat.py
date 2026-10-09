@@ -2,7 +2,7 @@ import unittest
 from types import SimpleNamespace
 
 from combat.fighter import Fighter
-from combat.progression import apply_xp, battle_xp, xp_to_next
+from combat.progression import apply_xp, battle_currency_reward, battle_xp, xp_to_next
 from combat.group_battle import is_afk_draw, split_balanced_teams, visible_group_targets
 from combat.mechanics import get_critical_chance, get_critical_damage_multiplier
 from scenes.duel_commentator import DuelCommentator
@@ -53,6 +53,11 @@ class TestFighter(unittest.TestCase):
         self.assertEqual(battle_xp(7, 1, "win"), 0)
         self.assertEqual(battle_xp(1, 1, "draw"), 8)
         self.assertEqual(battle_xp(1, 1, "loss"), 5)
+        self.assertEqual(battle_currency_reward(5, 5), (40, 0))
+        self.assertEqual(battle_currency_reward(6, 5), (60, 0))
+        self.assertEqual(battle_currency_reward(5, 6), (12, 0))
+        self.assertEqual(battle_currency_reward(7, 5), (80, 0))
+        self.assertEqual(battle_currency_reward(5, 7), (0, 0))
 
     def test_progression_level_up_keeps_hp_during_battle(self):
         fighter = Fighter("Тест")

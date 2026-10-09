@@ -151,6 +151,12 @@ class IconCache:
             pygame.draw.polygon(icon, (90, 200, 240), points)
             pygame.draw.polygon(icon, (190, 240, 255), [p(32, 8), p(40, 26), p(32, 56), p(24, 26)])
             pygame.draw.polygon(icon, outline, points, max(1, int(2 * s)))
+        elif key in ("citizen", "villager", "human"):
+            body_color = (157, 177, 143)
+            pygame.draw.circle(icon, outline, p(32, 18), int(10 * s))
+            pygame.draw.circle(icon, body_color, p(32, 18), int(8 * s))
+            pygame.draw.rect(icon, outline, r(15, 31, 34, 27), border_radius=max(2, int(9 * s)))
+            pygame.draw.rect(icon, body_color, r(18, 33, 28, 25), border_radius=max(2, int(7 * s)))
         elif key == "scroll":
             pygame.draw.rect(icon, (225, 205, 160), r(16, 14, 32, 36))
             pygame.draw.rect(icon, (170, 130, 80), r(12, 10, 40, 8), border_radius=4)

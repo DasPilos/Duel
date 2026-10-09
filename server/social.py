@@ -21,6 +21,7 @@ def _cleanup():
 update_presence = presence.update_presence
 mark_afk = presence.mark_afk
 get_character_presence = presence.get_character_presence
+remove_character_presence = presence.remove_character_presence
 update_afk_character = presence.update_afk_character
 occupants = presence.occupants
 

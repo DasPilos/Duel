@@ -1,3 +1,4 @@
+import json
 import unittest
 from copy import deepcopy
 from types import SimpleNamespace
@@ -6,7 +7,7 @@ from unittest.mock import patch
 import pygame
 
 from core import settings
-from core.cart_progress import DEFAULT_CART_PROGRESS
+from core.cart_progress import CART_GRADES, DEFAULT_CART_PROGRESS
 from core.production_buildings import building_resources, upgrade_requirements
 from server.items_database import ItemsDatabase
 from server.production_buildings import ProductionBuildings, STORAGE_RESOURCES_BY_ITEM_ID
@@ -17,6 +18,7 @@ BARN_GOODS = ("berries", "wheat", "meat")
 WAREHOUSE_GOODS = (
     "wood", "board", "flax", "cotton", "leather", "coal", "stone", "iron", "mithril", "obsidian",
     "iron_ingot", "steel", "hard_leather", "thick_leather", "cloth", "stone_block",
+    "jet", "malachite", "topaz", "garnet", "emerald", "ruby", "sapphire", "diamond",
 )
 
 
@@ -26,6 +28,13 @@ class CityStorageServerTests(unittest.TestCase):
         self.buildings = ProductionBuildings(self.database)
         user = self.database.register("keeper", "password")
         self.character_id = self.database.create_character(user["id"], "Keeper")["id"]
+        with self.database.connection() as connection:
+            connection.execute(
+                """INSERT INTO city_population_state (world_id, faction, castle_level, last_food_tick_at)
+                   VALUES (%s, 'light', 4, 0) ON CONFLICT (world_id, faction)
+                   DO UPDATE SET castle_level = 4""",
+                (self.database.world_id,),
+            )
         with self.database.connection() as connection:
             connection.execute(
                 "UPDATE characters SET stats_json = %s WHERE id = %s",
@@ -42,17 +51,76 @@ class CityStorageServerTests(unittest.TestCase):
         items.add_to_inventory(character_id, item_id, quantity)
         return self.buildings.deposit_to_storage(character_id, "warehouse", resource, quantity, now)
 
+    def _set_city_level(self, level):
+        with self.database.connection() as connection:
+            connection.execute(
+                "UPDATE city_population_state SET castle_level=%s WHERE world_id=%s AND faction='light'",
+                (int(level), self.database.world_id),
+            )
+
     def test_goods_lists_and_capacity(self):
         barn = self.buildings.get_state(self.character_id, "barn", 10000)
         self.assertEqual(barn["storage"], {**{good: 0 for good in BARN_GOODS}, "limit": 1000})
         self.assertEqual(barn["worker_slots"], [])
         warehouse = self.buildings.get_state(self.character_id, "warehouse", 10000)
-        self.assertEqual(warehouse["storage"], {**{good: 0 for good in WAREHOUSE_GOODS}, "limit": 2000})
+        self.assertEqual(warehouse["storage"], {**{good: 0 for good in WAREHOUSE_GOODS}, "limit": 1000})
         self.assertEqual(building_resources("barn"), BARN_GOODS)
+
+    def test_level_one_storage_only_exposes_and_accepts_initial_resources(self):
+        self._set_city_level(1)
+        barn = self.buildings.get_state(self.character_id, "barn", 10000)
+        warehouse = self.buildings.get_state(self.character_id, "warehouse", 10000)
+        self.assertEqual(barn["storage"], {"wheat": 0, "limit": 1000})
+        self.assertEqual(warehouse["storage"], {"wood": 0, "limit": 1000})
+
+        items = ItemsDatabase(self.database)
+        items.add_to_inventory(self.character_id, 62, 5)
+        with self.assertRaisesRegex(ValueError, "ещё не открыт"):
+            self.buildings.deposit_to_storage(self.character_id, "barn", "berries", 5, 10001)
+        with self.database.connection() as connection:
+            connection.execute(
+                """UPDATE building_resources SET storage=5 WHERE world_id=%s AND faction='light'
+                   AND building='warehouse' AND resource='iron'""",
+                (self.database.world_id,),
+            )
+        with self.assertRaisesRegex(ValueError, "ещё не открыт"):
+            self.buildings.withdraw_from_storage(self.character_id, "warehouse", "iron", 1, 10002)
+        warehouse = self.buildings.get_state(self.character_id, "warehouse", 10003)
+        self.assertEqual(warehouse["storage"], {"wood": 0, "limit": 1000})
+        self.assertEqual(warehouse["storage_total"], 0)
+        self._set_city_level(3)
+        self.assertNotIn(
+            "diamond", self.buildings.get_state(self.character_id, "warehouse", 10004)["storage"]
+        )
+        self._set_city_level(4)
+        self.assertIn(
+            "diamond", self.buildings.get_state(self.character_id, "warehouse", 10005)["storage"]
+        )
+
+    def test_each_city_storage_resource_has_its_own_capacity(self):
+        items = ItemsDatabase(self.database)
+        items.add_to_inventory(self.character_id, 63, 1000)
+        self.buildings.deposit_to_storage(self.character_id, "barn", "wheat", 1000, 10000)
+        items.add_to_inventory(self.character_id, 62, 1000)
+        barn = self.buildings.deposit_to_storage(
+            self.character_id, "barn", "berries", 1000, 10001
+        )
+        self.assertEqual((barn["storage"]["wheat"], barn["storage"]["berries"]), (1000, 1000))
+        self.assertEqual(barn["storage_total"], 2000)
+
+        with self.database.connection() as connection:
+            connection.execute(
+                """UPDATE building_resources SET storage=1000 WHERE world_id=%s AND faction='light'
+                   AND building='warehouse' AND resource='wood'""",
+                (self.database.world_id,),
+            )
+        warehouse = self._deposit_warehouse(self.character_id, 10, 1, 10003)
+        self.assertEqual((warehouse["storage"]["wood"], warehouse["storage"]["iron"]), (1000, 1))
+        self.assertEqual(warehouse["storage_total"], 1001)
 
     def test_upgrade_levels_and_max_level(self):
         items = ItemsDatabase(self.database)
-        expected = {"barn": (1000, 1500, 2000, 2700, 4000), "warehouse": (2000, 3000, 5000, 7000, 10000)}
+        expected = {"barn": (1000, 1500, 2000, 2700, 4000), "warehouse": (1000, 3000, 5000, 7000, 10000)}
         for building, capacities in expected.items():
             now = 10000
             for level in range(1, 5):
@@ -70,6 +138,20 @@ class CityStorageServerTests(unittest.TestCase):
     def test_stable_building_upgrade_takes_five_hours(self):
         self.assertEqual(upgrade_requirements(1, "stable")["time_seconds"], 5 * 3600)
         self.assertEqual(upgrade_requirements(1, "farm")["time_seconds"], 2 * 3600)
+
+    def test_player_cannot_replace_a_citizen_in_an_occupied_work_slot(self):
+        self.buildings.get_state(self.character_id, "farm", 10000)
+        self.buildings.hire_worker(self.character_id, "farm", 0, "citizen-1", 10001)
+
+        with self.assertRaisesRegex(ValueError, "занято горожанином"):
+            self.buildings.toggle_player_worker(self.character_id, "farm", 0, 10002)
+
+        state = self.buildings.get_state(self.character_id, "farm", 10003)
+        self.assertEqual(state["worker_slots"][0]["worker_id"], "citizen-1")
+        self.assertFalse(state["worker_slots"][1]["occupied"])
+        state = self.buildings.toggle_player_worker(self.character_id, "farm", 1, 10004)
+        self.assertEqual(state["worker_slots"][0]["worker_id"], "citizen-1")
+        self.assertEqual(state["worker_slots"][1]["worker_id"], f"player:{self.character_id}")
 
     def test_shared_stable_capacity_increases_by_two_per_level(self):
         user = self.database.register("stablemate", "password")
@@ -126,6 +208,74 @@ class CityStorageServerTests(unittest.TestCase):
         self.assertEqual(shared["occupied_stalls"], 4)
         self.assertEqual(shared["stall_slots"][3]["horse"]["purchase_price_silver"], 10)
 
+    def test_horse_satiety_uses_wheat_and_idle_or_work_rate(self):
+        self.buildings.get_state(self.character_id, "barn", 10000)
+        with self.database.connection() as connection:
+            connection.execute(
+                "UPDATE city_population_state SET treasury_copper=1000 "
+                "WHERE world_id=%s AND faction='light'",
+                (self.database.world_id,),
+            )
+        self.buildings.purchase_horse(self.character_id, 0, now=10000)
+        with self.database.connection() as connection:
+            horse_id = connection.execute(
+                "SELECT id FROM stable_horses WHERE world_id=%s AND faction='light' AND slot_index=0",
+                (self.database.world_id,),
+            ).fetchone()["id"]
+            connection.execute(
+                "UPDATE building_resources SET storage=CASE WHEN resource='wheat' THEN 0 ELSE 5 END "
+                "WHERE world_id=%s AND faction='light' AND building='barn' "
+                "AND resource IN ('wheat', 'berries', 'meat')",
+                (self.database.world_id,),
+            )
+
+        idle = self.buildings.get_state(self.character_id, "stable", 20500)
+        horse = idle["stall_slots"][0]["horse"]
+        self.assertEqual(horse["satiety"], 30)
+
+        with self.database.connection() as connection:
+            connection.execute(
+                "UPDATE building_resources SET storage=3 WHERE world_id=%s AND faction='light' "
+                "AND building='barn' AND resource='wheat'",
+                (self.database.world_id,),
+            )
+        fed_at_rest = self.buildings.get_state(self.character_id, "stable", 20500)
+        self.assertEqual(fed_at_rest["stall_slots"][0]["horse"]["satiety"], 60)
+
+        with self.database.connection() as connection:
+            connection.execute("UPDATE stable_horses SET status='В пути' WHERE id=%s", (horse_id,))
+            connection.execute(
+                "UPDATE building_resources SET storage=0 WHERE world_id=%s AND faction='light' "
+                "AND building='barn' AND resource='wheat'",
+                (self.database.world_id,),
+            )
+        working = self.buildings.get_state(self.character_id, "stable", 22300)
+        self.assertEqual(working["stall_slots"][0]["horse"]["satiety"], 30)
+
+        with self.database.connection() as connection:
+            connection.execute(
+                "UPDATE building_resources SET storage=3 WHERE world_id=%s AND faction='light' "
+                "AND building='barn' AND resource='wheat'",
+                (self.database.world_id,),
+            )
+        fed_on_route = self.buildings.get_state(self.character_id, "stable", 22300)
+        self.assertEqual(fed_on_route["stall_slots"][0]["horse"]["satiety"], 60)
+        with self.database.connection() as connection:
+            wheat = connection.execute(
+                "SELECT storage FROM building_resources WHERE world_id=%s AND faction='light' "
+                "AND building='barn' AND resource='wheat'",
+                (self.database.world_id,),
+            ).fetchone()["storage"]
+        self.assertEqual(wheat, 0)
+        with self.database.connection() as connection:
+            other_food = connection.execute(
+                "SELECT resource, storage FROM building_resources WHERE world_id=%s "
+                "AND faction='light' AND building='barn' AND resource IN ('berries', 'meat')",
+                (self.database.world_id,),
+            ).fetchall()
+        self.assertEqual({row["resource"]: row["storage"] for row in other_food},
+                         {"berries": 5, "meat": 5})
+
     def test_shared_stall_upgrade_checks_and_debits_common_balances(self):
         stable = self.buildings.get_state(self.character_id, "stable", 10000)
         with self.database.connection() as connection:
@@ -160,6 +310,120 @@ class CityStorageServerTests(unittest.TestCase):
         self.assertEqual(shared["stall_capacity"], stable["stall_capacity"] + 1)
         self.assertTrue(shared["stall_upgrades"]["wooden_stalls"]["completed"])
         self.assertTrue(shared["stall_slots"][4]["unlocked"])
+
+    def test_farm_upgrade_chain_adds_first_field_worker_plough_and_level_two(self):
+        farm = self.buildings.get_state(self.character_id, "farm", 10000)
+        self.assertEqual(farm["max_workers"], 2)
+        with self.database.connection() as connection:
+            connection.execute(
+                "UPDATE city_population_state SET treasury_copper=10000 "
+                "WHERE world_id=%s AND faction='light'",
+                (self.database.world_id,),
+            )
+
+        ration = self.buildings.purchase_farm_upgrade(self.character_id, "ration", now=10001)
+        self.assertEqual(ration["farm_upgrades"]["active_upgrade_id"], "ration")
+        self.assertEqual(ration["farm_upgrades"]["seconds_left"], 1800)
+        self.assertEqual(len(ration["worker_slots"]), 2)
+        ration_done = self.buildings.get_state(self.character_id, "farm", 11801)
+        self.assertTrue(ration_done["farm_upgrades"]["completed"]["ration"])
+        self.assertEqual(ration_done["max_workers"], 3)
+        ration_slot = next(slot for slot in ration_done["worker_slots"] if slot["slot_index"] == 1000)
+        self.assertEqual(ration_slot["resources"], ["wheat"])
+        from server.city_population import CityPopulation
+
+        governor = CityPopulation(self.database).get_state(self.character_id, now=11801)
+        farm_worksite = next(site for site in governor["worksites"] if site["building"] == "farm")
+        self.assertEqual(farm_worksite["capacity"], 3)
+        self.buildings.hire_worker(self.character_id, "farm", 1000, "citizen:1", now=11802)
+        assigned = self.buildings.get_state(self.character_id, "farm", 11802)
+        self.assertEqual(assigned["workers"], 1)
+
+        with self.database.connection() as connection:
+            connection.execute(
+                "UPDATE building_resources SET storage=100 WHERE world_id=%s AND faction='light' "
+                "AND building='warehouse' AND resource='wood'",
+                (self.database.world_id,),
+            )
+            connection.execute(
+                "UPDATE city_population_state SET treasury_copper=2000 "
+                "WHERE world_id=%s AND faction='light'",
+                (self.database.world_id,),
+            )
+        plough = self.buildings.purchase_farm_upgrade(self.character_id, "wooden_plough", now=11803)
+        self.assertEqual(plough["farm_upgrades"]["seconds_left"], 3600)
+        plough_done = self.buildings.get_state(self.character_id, "farm", 15403)
+        self.assertTrue(plough_done["farm_upgrades"]["wooden_plough"])
+        self.assertEqual(plough_done["worker_slots"][0]["timer_sec_by_resource"]["wheat"], 133)
+
+        with self.database.connection() as connection:
+            connection.execute(
+                "UPDATE building_resources SET storage=200 WHERE world_id=%s AND faction='light' "
+                "AND building='warehouse' AND resource='wood'",
+                (self.database.world_id,),
+            )
+            connection.execute(
+                "UPDATE city_population_state SET treasury_copper=5000 "
+                "WHERE world_id=%s AND faction='light'",
+                (self.database.world_id,),
+            )
+        level_two = self.buildings.purchase_farm_upgrade(self.character_id, "farm_level_2", now=15404)
+        self.assertEqual(level_two["farm_upgrades"]["seconds_left"], 7200)
+        completed = self.buildings.get_state(self.character_id, "farm", 22604)
+        self.assertEqual(completed["level"], 2)
+        self.assertTrue(completed["farm_upgrades"]["completed"]["farm_level_2"])
+        self.assertEqual(completed["storage"]["limit"], 800)
+        self.assertEqual(completed["max_workers"], 5)
+        self.assertEqual(
+            [slot["slot_index"] for slot in completed["worker_slots"]],
+            [0, 1, 2, 3, 1000],
+        )
+        self.assertEqual(completed["worker_slots"][2]["resources"], ["wheat"])
+        governor = CityPopulation(self.database).get_state(self.character_id, now=22604)
+        farm_worksite = next(site for site in governor["worksites"] if site["building"] == "farm")
+        self.assertEqual(farm_worksite["capacity"], 5)
+
+        with self.database.connection() as connection:
+            connection.execute(
+                "UPDATE city_population_state SET treasury_copper=3000 "
+                "WHERE world_id=%s AND faction='light'",
+                (self.database.world_id,),
+            )
+        ration_level_two = self.buildings.purchase_farm_upgrade(
+            self.character_id, "ration_level_2", now=22605,
+        )
+        self.assertEqual(ration_level_two["farm_upgrades"]["seconds_left"], 1800)
+        ration_level_two_done = self.buildings.get_state(self.character_id, "farm", 24405)
+        self.assertTrue(ration_level_two_done["farm_upgrades"]["completed"]["ration_level_2"])
+        second_field_slot = next(
+            slot for slot in ration_level_two_done["worker_slots"] if slot["slot_index"] == 1001
+        )
+        self.assertEqual(second_field_slot["resources"], ["wheat"])
+        self.assertEqual(ration_level_two_done["max_workers"], 6)
+        governor = CityPopulation(self.database).get_state(self.character_id, now=24405)
+        farm_worksite = next(site for site in governor["worksites"] if site["building"] == "farm")
+        self.assertEqual(farm_worksite["capacity"], 6)
+
+        with self.database.connection() as connection:
+            connection.execute(
+                "UPDATE building_resources SET storage=100 WHERE world_id=%s AND faction='light' "
+                "AND building='warehouse' AND resource='wood'",
+                (self.database.world_id,),
+            )
+            connection.execute(
+                "UPDATE city_population_state SET treasury_copper=2000 "
+                "WHERE world_id=%s AND faction='light'",
+                (self.database.world_id,),
+            )
+        handle = self.buildings.purchase_farm_upgrade(
+            self.character_id, "wooden_handle", now=24406,
+        )
+        self.assertEqual(handle["farm_upgrades"]["seconds_left"], 3600)
+        handle_done = self.buildings.get_state(self.character_id, "farm", 28006)
+        self.assertTrue(handle_done["farm_upgrades"]["completed"]["wooden_handle"])
+        self.assertEqual(handle_done["worker_slots"][0]["timer_sec_by_resource"]["wheat"], 122)
+        governor = CityPopulation(self.database).get_state(self.character_id, now=28006)
+        self.assertAlmostEqual(governor["city_resource_income_per_hour"]["wheat"], 3600 / 122)
 
     def test_stall_purchase_never_debits_backpack_directly(self):
         items = ItemsDatabase(self.database)
@@ -226,17 +490,135 @@ class CityStorageServerTests(unittest.TestCase):
                 "UPDATE city_population_state SET treasury_copper=1000 WHERE world_id=%s AND faction='light'",
                 (self.database.world_id,),
             )
-        purchased = self.buildings.purchase_cart(self.character_id, now=10003)
-        self.assertTrue(purchased["cart_progress"]["grades"]["1"]["body_owned"])
+        purchased = self.buildings.purchase_cart(self.character_id, now=10004)
+        grade = purchased["cart_progress"]["grades"]["1"]
+        self.assertFalse(grade["body_owned"])
+        self.assertEqual(grade["body_finish_at"], 12404)
         self.assertEqual(purchased["warehouse_storage"]["wood"], 0)
         self.assertEqual(purchased["treasury_silver_available"], 0)
         self.assertEqual(purchased["silver_available"], 50)
-        self.assertEqual(len(purchased["available_carts"]), 1)
-        self.assertEqual(purchased["available_carts"][0]["id"], "cart_grade_1")
-        self.assertFalse(purchased["available_carts"][0]["dispatch_available"])
-        persisted = ProductionBuildings(self.database).get_state(self.character_id, "stable", 10004)
+        self.assertEqual(purchased["available_carts"], [])
+
+        for order_time in range(10005, 10009):
+            with self.database.connection() as connection:
+                connection.execute(
+                    "UPDATE building_resources SET storage=100 WHERE world_id=%s AND faction='light' "
+                    "AND building='warehouse' AND resource='wood'",
+                    (self.database.world_id,),
+                )
+                connection.execute(
+                    "UPDATE city_population_state SET treasury_copper=1000 "
+                    "WHERE world_id=%s AND faction='light'",
+                    (self.database.world_id,),
+                )
+            self.buildings.purchase_cart(self.character_id, now=order_time)
+
+        queue_full = self.buildings.get_state(self.character_id, "stable", 10008)
+        self.assertEqual(
+            len(queue_full["cart_progress"]["grades"]["1"]["production_orders"]), 5
+        )
+        with self.assertRaisesRegex(ValueError, r"заполнена \(5/5\)"):
+            self.buildings.purchase_cart(self.character_id, now=10009)
+        persisted = ProductionBuildings(self.database).get_state(self.character_id, "stable", 12403)
+        self.assertFalse(persisted["cart_progress"]["grades"]["1"]["body_owned"])
+        self.assertEqual(persisted["available_carts"], [])
+        persisted = ProductionBuildings(self.database).get_state(self.character_id, "stable", 12404)
         self.assertTrue(persisted["cart_progress"]["grades"]["1"]["body_owned"])
         self.assertEqual(len(persisted["available_carts"]), 1)
+        self.assertEqual(persisted["cart_progress"]["grades"]["1"]["body_count"], 1)
+        completed_all = self.buildings.get_state(self.character_id, "stable", 12408)
+        self.assertEqual(completed_all["cart_progress"]["grades"]["1"]["body_count"], 5)
+        self.assertEqual(
+            [cart["id"] for cart in completed_all["available_carts"]],
+            ["cart_grade_1", "cart_grade_1~2", "cart_grade_1~3", "cart_grade_1~4", "cart_grade_1~5"],
+        )
+
+    def test_cart_maintenance_charges_active_time_and_repairs_with_wood(self):
+        now = 10000
+        self.buildings.get_state(self.character_id, "stable", now)
+        self.buildings.get_state(self.character_id, "warehouse", now)
+        with self.database.connection() as connection:
+            connection.execute(
+                """UPDATE stable_cart_progress SET body_owned=TRUE, body_count=1
+                   WHERE world_id=%s AND faction='light' AND building='stable' AND grade=1""",
+                (self.database.world_id,),
+            )
+            connection.execute(
+                """UPDATE building_resources SET storage=3 WHERE world_id=%s AND faction='light'
+                   AND building='warehouse' AND resource='wood'""",
+                (self.database.world_id,),
+            )
+            stable_key = (self.database.world_id, "light", "stable")
+            self.buildings._advance_cart_maintenance(connection, stable_key, now, [])
+            self.buildings._advance_cart_maintenance(connection, stable_key, now + 3600, [])
+            idle_stock = connection.execute(
+                """SELECT storage FROM building_resources WHERE world_id=%s AND faction='light'
+                   AND building='warehouse' AND resource='wood'""",
+                (self.database.world_id,),
+            ).fetchone()["storage"]
+        self.assertEqual(idle_stock, 3)
+
+        active_convoy = [{
+            "cart_id": "cart_grade_1", "status": "outbound", "phase": "outbound",
+            "started_at": now + 3600, "arrival_at": now + 7200,
+        }]
+        with self.database.connection() as connection:
+            self.buildings._advance_cart_maintenance(
+                connection, stable_key, now + 7200, active_convoy,
+            )
+            stock_after_paid_hour = connection.execute(
+                """SELECT storage FROM building_resources WHERE world_id=%s AND faction='light'
+                   AND building='warehouse' AND resource='wood'""",
+                (self.database.world_id,),
+            ).fetchone()["storage"]
+        self.assertEqual(stock_after_paid_hour, 1)
+
+        active_convoy[0].update(started_at=now + 7200, arrival_at=now + 10800)
+        with self.database.connection() as connection:
+            self.buildings._advance_cart_maintenance(
+                connection, stable_key, now + 10800, active_convoy,
+            )
+            row = connection.execute(
+                """SELECT cart_wear_json FROM stable_cart_progress
+                   WHERE world_id=%s AND faction='light' AND building='stable' AND grade=1""",
+                (self.database.world_id,),
+            ).fetchone()
+            self.assertEqual(row["cart_wear_json"]["cart_grade_1"]["durability"], 99.0)
+            connection.execute(
+                """UPDATE building_resources SET storage=1 WHERE world_id=%s AND faction='light'
+                   AND building='warehouse' AND resource='wood'""",
+                (self.database.world_id,),
+            )
+
+        repaired = self.buildings.repair_cart(
+            self.character_id, "cart_grade_1", now=now + 10801,
+        )
+        cart = repaired["available_carts"][0]
+        self.assertEqual(cart["durability"], 100)
+        self.assertFalse(cart["broken"])
+        self.assertEqual(repaired["warehouse_storage"]["wood"], 0)
+
+        with self.database.connection() as connection:
+            connection.execute(
+                """UPDATE stable_cart_progress SET cart_wear_json=%s::jsonb
+                   WHERE world_id=%s AND faction='light' AND building='stable' AND grade=1""",
+                (json.dumps({"cart_grade_1": {"durability": 0, "updated_at": now + 10802}}),
+                 self.database.world_id),
+            )
+            connection.execute(
+                """UPDATE building_resources SET storage=100 WHERE world_id=%s AND faction='light'
+                   AND building='warehouse' AND resource='wood'""",
+                (self.database.world_id,),
+            )
+        broken = self.buildings.get_state(self.character_id, "stable", now + 10802)
+        self.assertEqual(broken["available_carts"][0]["status"], "Сломана")
+        self.assertFalse(broken["available_carts"][0]["dispatch_available"])
+        self.assertEqual(broken["available_carts"][0]["repair_wood_cost"], 100)
+        repaired = self.buildings.repair_cart(
+            self.character_id, "cart_grade_1", now=now + 10803,
+        )
+        self.assertEqual(repaired["available_carts"][0]["durability"], 100)
+        self.assertEqual(repaired["warehouse_storage"]["wood"], 0)
 
     def test_cart_purchase_rejects_shortage_without_partial_debit(self):
         with self.database.connection() as connection:
@@ -245,7 +627,7 @@ class CityStorageServerTests(unittest.TestCase):
                 (self.database.world_id,),
             )
         with self.assertRaisesRegex(ValueError, "Недостаточно ресурсов на общем складе"):
-            self.buildings.purchase_cart(self.character_id, now=10003)
+            self.buildings.purchase_cart(self.character_id, now=10004)
         state = self.buildings.get_state(self.character_id, "stable", 10004)
         self.assertFalse(state["cart_progress"]["grades"]["1"]["body_owned"])
         self.assertEqual(state["treasury_silver_available"], 5)
@@ -307,6 +689,7 @@ class FakeStorageClient:
         if building == "stable":
             return {
                 "building": "stable", "level": 1, "stall_capacity": 4, "max_workers": 0,
+                "server_time": 0,
                 "occupied_stalls": 0, "feed_consumption_kg_per_hour": 0,
                 "feed_resource_label": "Пшеница",
                 "stall_slots": [
@@ -349,7 +732,7 @@ class FakeStorageClient:
                                            "deposited": 0, "in_warehouse": 5}]},
             }
         goods = BARN_GOODS if building == "barn" else WAREHOUSE_GOODS
-        limit = 1000 if building == "barn" else 2000
+        limit = 1000
         state = {
             "building": building, "level": 1, "max_workers": 0, "cycle_start_time": 0, "cycle_duration_sec": 7200,
             "storage": {**{good: 0 for good in goods}, "limit": limit}, "buffer": {}, "forecast": {},
@@ -373,10 +756,12 @@ class FakeStorageClient:
         resource_item_ids = {"wood": 60, "board": 61, "flax": 64, "leather": 66,
                              "iron_ingot": 73, "steel": 74}
         backpack = {60: 12, 73: 7, 61: 4, 64: 9, 74: 2, 66: 6}
-        free = max(0, limit - sum(state["storage"].get(good, 0) for good in goods))
         state["storage_depositable"] = {
             resource: {"item_id": item_id, "in_backpack": backpack.get(item_id, 0),
-                       "max_deposit": min(backpack.get(item_id, 0), free)}
+                       "max_deposit": min(
+                           backpack.get(item_id, 0),
+                           max(0, limit - state["storage"].get(resource, 0)),
+                       )}
             for resource, item_id in resource_item_ids.items() if resource in goods
         }
         item_weights = {60: 4.0, 61: 6.0, 62: 2.0, 63: 2.0, 64: 3.0, 65: 4.0,
@@ -410,7 +795,7 @@ class FakeStorageClient:
                 self.treasury_silver_available -= silver_due
                 grade["wood_deposited"] = 100
                 grade["silver_deposited"] = 10
-                grade["body_owned"] = True
+                grade["body_finish_at"] = 2400
         return self.get_building(building, _character_id)
 
     def dispatch_transport(self, _character_id, payload):
@@ -430,6 +815,40 @@ class CityStorageWindowTests(unittest.TestCase):
     def tearDown(self):
         pygame.quit()
 
+    def test_storage_meter_uses_requested_fill_bands(self):
+        from ui.storage_meter import storage_fill_color
+
+        self.assertEqual(storage_fill_color(200, 1000), (218, 69, 65))
+        self.assertEqual(storage_fill_color(210, 1000), (232, 191, 67))
+        self.assertEqual(storage_fill_color(400, 1000), (232, 191, 67))
+        self.assertEqual(storage_fill_color(410, 1000), (75, 190, 100))
+        self.assertEqual(storage_fill_color(700, 1000), (75, 190, 100))
+        self.assertEqual(storage_fill_color(710, 1000), (116, 218, 245))
+        self.assertEqual(storage_fill_color(1000, 1000), (116, 218, 245))
+
+    def test_storage_meter_marks_fill_stage_boundaries(self):
+        from ui.storage_meter import draw_storage_meter
+
+        surface = pygame.Surface((60, 10))
+        rect = pygame.Rect(0, 0, 60, 10)
+        draw_storage_meter(surface, rect, 0, 1000)
+        inner = rect.inflate(-2, -2)
+        for boundary in (0.20, 0.40, 0.70):
+            marker_x = inner.x + round(inner.width * boundary)
+            self.assertEqual(surface.get_at((marker_x, inner.centery))[:3], (150, 163, 164))
+
+    def test_charging_storage_meter_flashes_green_and_white(self):
+        from ui.storage_meter import draw_storage_meter
+
+        surface = pygame.Surface((60, 10))
+        rect = pygame.Rect(0, 0, 60, 10)
+        with patch("ui.storage_meter.pygame.time.get_ticks", return_value=0):
+            draw_storage_meter(surface, rect, 800, 1000, charging=True)
+        self.assertEqual(surface.get_at((20, 5))[:3], (48, 225, 105))
+        with patch("ui.storage_meter.pygame.time.get_ticks", return_value=350):
+            draw_storage_meter(surface, rect, 800, 1000, charging=True)
+        self.assertEqual(surface.get_at((20, 5))[:3], (246, 255, 250))
+
     def test_cart_purchase_debits_shared_balances_without_contribution_dialog(self):
         window = self.scene.stable_window
         self.client.warehouse_storage["wood"] = 100
@@ -448,7 +867,10 @@ class CityStorageWindowTests(unittest.TestCase):
         self.assertIn(("stable", "cart/purchase"), self.client.calls)
         self.assertEqual(self.client.warehouse_storage["wood"], 0)
         self.assertEqual(self.client.treasury_silver_available, 0)
-        self.assertTrue(self.client.cart_progress["grades"]["1"]["body_owned"])
+        self.assertFalse(self.client.cart_progress["grades"]["1"]["body_owned"])
+        self.assertEqual(self.client.cart_progress["grades"]["1"]["body_finish_at"], 2400)
+        window._draw_carts(self.screen)
+        self.assertNotIn(1, window.cart_purchase_buttons)
 
     def test_cart_shortage_does_not_offer_backpack_contribution(self):
         window = self.scene.stable_window
@@ -460,6 +882,46 @@ class CityStorageWindowTests(unittest.TestCase):
         self.assertNotIn(1, window.cart_purchase_buttons)
         self.assertIsNone(window.source_picker)
         self.assertFalse(any(action == "cart/purchase" for _, action in self.client.calls))
+
+    def test_transport_picker_hides_cart_already_on_route(self):
+        window = self.scene.stable_window
+        self.client.cart_progress["grades"]["1"]["body_owned"] = True
+        window.state = self.client.get_building("stable", 1)
+        window.state["transport_convoys"] = [{"cart_id": "cart_grade_1"}]
+        window.transport_popup = ("cart", None)
+
+        self.assertEqual(window._transport_popup_items(), [])
+        window._select_transport_option(("cart", None, "cart_grade_1"))
+
+        self.assertIsNone(window.transport_draft["cart_id"])
+        self.assertEqual(window.message, "Повозка уже занята рейсом.")
+        self.assertFalse(window._transport_can_start())
+
+    def test_transport_resource_picker_hides_city_locked_resources(self):
+        window = self.scene.stable_window
+        window.state = self.client.get_building("stable", 1)
+        window.state["city_upgrade"] = {"city_level": 1}
+        window.routes = [{
+            "building_id": "lumber_camp", "name": "Лесопилка",
+            "resources": [
+                {"id": "wood", "label": "Древесина"},
+                {"id": "berries", "label": "Ягоды"},
+                {"id": "flax", "label": "Лён"},
+            ],
+        }]
+        window.destination_state = {
+            "storage": {"wood": 20, "berries": 10, "flax": 5, "limit": 1000},
+        }
+        window.transport_draft["destination_id"] = "lumber_camp"
+        window.transport_popup = ("resource", 0)
+
+        self.assertEqual(window._transport_popup_items(), [("wood", "Древесина")])
+
+        window.state["city_upgrade"]["city_level"] = 2
+        self.assertEqual(
+            window._transport_popup_items(),
+            [("wood", "Древесина"), ("berries", "Ягоды"), ("flax", "Лён")],
+        )
 
     def test_barn_and_warehouse_windows(self):
         for building, opener, window in (
@@ -566,6 +1028,7 @@ class CityStorageWindowTests(unittest.TestCase):
     def test_storage_tab_shows_only_goods_and_capacity(self):
         window = self.scene.barn_window
         self.scene._open_barn()
+        window.state["storage"] = {"wheat": 0, "limit": 1000}
         rendered = []
         original = self.scene.font
 
@@ -582,10 +1045,41 @@ class CityStorageWindowTests(unittest.TestCase):
             self.scene.draw(self.screen)
         finally:
             self.scene.font = original
-        for text in ("Уровень 1", "Товары:", "Заполнен: 0 / 1000", "Ягоды", "Пшеница", "Мясо"):
+        for text in ("Уровень 1", "Товары:", "Пшеница", "0 / 1000"):
             self.assertIn(text, rendered)
-        self.assertEqual(rendered.count("0"), 3)
-        self.assertEqual(window.production_desc(2), "Вместимость: 1500 продукции")
+        self.assertNotIn("Ягоды", rendered)
+        self.assertNotIn("Мясо", rendered)
+        self.assertEqual(window.production_desc(2), "Вместимость каждого товара: 1500 продукции")
+
+    def test_storage_meter_replaces_backpack_label_and_matches_row_height(self):
+        from ui.city_storage_window import draw_storage_meter as _draw_meter
+        from unittest.mock import patch
+
+        window = self.scene.barn_window
+        window.state = self.client.get_building("barn", 1)
+        window.state["storage"] = {"wheat": 900, "limit": 1000}
+        rendered = []
+        original = self.scene.small_font
+
+        class Recorder:
+            def render(self, text, *args):
+                rendered.append(str(text))
+                return original.render(text, *args)
+
+            def __getattr__(self, name):
+                return getattr(original, name)
+
+        self.scene.small_font = Recorder()
+        try:
+            with patch("ui.city_storage_window.draw_storage_meter", wraps=_draw_meter) as meter:
+                window._draw_storage_tab(self.screen, 100)
+        finally:
+            self.scene.small_font = original
+
+        meter_rect = meter.call_args.args[1]
+        self.assertEqual(meter_rect.height, 18)
+        self.assertGreater(meter_rect.width, 200)
+        self.assertFalse(any(text.startswith("Рюкзак:") for text in rendered))
 
     def test_stable_is_server_placed_rendered_and_reachable(self):
         stable = next(obj for obj in self.scene.objects if obj["id"] == "stable_building")
@@ -596,18 +1090,235 @@ class CityStorageWindowTests(unittest.TestCase):
         self.scene.draw(self.screen)
 
     def test_resident_houses_block_movement_as_population_grows(self):
-        from scenes.city.rendering import CITIZEN_HOUSE_LOTS
-
         first_house = self.scene._citizen_house_solid_rects()[0]
         self.assertTrue(self.scene._check_collision(*first_house.center))
         self.assertFalse(self.scene._check_collision(first_house.left - 16, first_house.centery))
+        first_lot = self.scene.citizen_house_lots[0]
+        roof_center = (
+            (first_lot[0] + first_lot[2] / 2) * self.scene.tile_size,
+            first_lot[1] * self.scene.tile_size - self.scene.tile_size // 4,
+        )
+        self.assertTrue(self.scene._check_collision(*roof_center))
 
-        tile_x, tile_y, width_tiles, depth_tiles, _floors = CITIZEN_HOUSE_LOTS[4]
-        fifth_house_center = (tile_x * self.scene.tile_size + width_tiles * self.scene.tile_size // 2,
-                              tile_y * self.scene.tile_size + depth_tiles * self.scene.tile_size // 2)
+        fifth_house = self.scene.citizen_house_lots[4]
+        fifth_house_center = (
+            (fifth_house[0] + fifth_house[2] / 2) * self.scene.tile_size,
+            (fifth_house[1] + fifth_house[3] / 2) * self.scene.tile_size,
+        )
         self.assertFalse(self.scene._check_collision(*fifth_house_center))
         self.scene.city_population_count = 5
         self.assertTrue(self.scene._check_collision(*fifth_house_center))
+
+    def test_resident_house_lots_avoid_buildings_and_roads_across_city(self):
+        lots = self.scene.citizen_house_lots
+        centers = []
+        for tile_x, tile_y, width, depth, _floors in lots:
+            centers.append((tile_x + width / 2, tile_y + depth / 2))
+            roof_bounds = pygame.Rect(tile_x - 1, tile_y - 1, width + 2, depth + 1)
+            for object_data in self.scene.objects:
+                building = pygame.Rect(
+                    object_data["tile_x"], object_data["tile_y"],
+                    object_data["tile_w"], object_data["tile_h"],
+                ).inflate(2, 2)
+                self.assertFalse(roof_bounds.colliderect(building))
+            for x in range(roof_bounds.left, roof_bounds.right):
+                for y in range(roof_bounds.top, roof_bounds.bottom):
+                    on_road = (
+                        (40 <= x <= 59 and 40 <= y <= 59)
+                        or 47 <= x <= 52 or 47 <= y <= 52
+                        or (x >= 80 and 44 <= y <= 55)
+                    )
+                    self.assertFalse(on_road)
+        quadrant_counts = (
+            sum(x < 50 and y < 50 for x, y in centers),
+            sum(x >= 50 and y < 50 for x, y in centers),
+            sum(x < 50 and y >= 50 for x, y in centers),
+            sum(x >= 50 and y >= 50 for x, y in centers),
+        )
+        self.assertTrue(all(count >= 2 for count in quadrant_counts))
+
+    def test_resident_house_wall_is_opaque_beneath_roof(self):
+        tile_x, tile_y, width, depth, _floors = self.scene.citizen_house_lots[0]
+        self.scene.camera_x = (tile_x + width / 2) * self.scene.tile_size
+        self.scene.camera_y = (tile_y + depth / 2) * self.scene.tile_size
+        self.screen.fill((0, 0, 0))
+        self.scene._draw_citizen_houses(self.screen)
+        sx, sy = self.scene.world_to_screen(
+            tile_x * self.scene.tile_size, tile_y * self.scene.tile_size,
+        )
+        wall_pixel = (sx + 8, sy + depth * self.scene.tile_size * 3 // 4)
+        self.assertNotEqual(self.screen.get_at(wall_pixel)[:3], (0, 0, 0))
+
+    def test_city_palisade_visual_advances_through_ap_phases(self):
+        import time
+
+        phases = (
+            (100, []),
+            (1000, [False, False, False, False]),
+            (1900, [True, False, False, False]),
+            (2800, [True, True, True, False]),
+        )
+        for elapsed, expected_sections in phases:
+            with self.subTest(elapsed=elapsed):
+                self.scene.city_upgrade_state = {
+                    "city_level": 1,
+                    "active": True,
+                    "started_at": time.time() - elapsed,
+                }
+                with patch.object(
+                    self.scene, "_draw_palisade_section",
+                    wraps=self.scene._draw_palisade_section,
+                ) as draw_section:
+                    self.scene._draw_city_upgrade_construction(self.screen)
+                actual_sections = [call.args[-1] for call in draw_section.call_args_list]
+                self.assertEqual(actual_sections, expected_sections)
+
+        self.scene.city_upgrade_state = {"city_level": 2, "active": False}
+        with patch.object(
+            self.scene, "_draw_palisade_section",
+            wraps=self.scene._draw_palisade_section,
+        ) as draw_section:
+            self.scene._draw_city_upgrade_construction(self.screen)
+        self.assertEqual(
+            [call.kwargs.get("complete", call.args[-1] if call.args else None)
+             for call in draw_section.call_args_list],
+            [True] * 4,
+        )
+
+    def test_global_city_home_count_follows_l1_and_l2_only(self):
+        from scenes.city.exterior import draw_city_exterior
+        from scenes.city.sprite_modules import draw_residence
+
+        rect = pygame.Rect(80, 80, 480, 480)
+        with patch("scenes.city.exterior.draw_residence", wraps=draw_residence) as draw_house:
+            draw_city_exterior(self.screen, rect, {"city_level": 1, "population": 10})
+            self.assertEqual(draw_house.call_count, 4)
+            draw_house.reset_mock()
+            draw_city_exterior(self.screen, rect, {"city_level": 2, "population": 4})
+            self.assertEqual(draw_house.call_count, 7)
+            draw_house.reset_mock()
+            draw_city_exterior(self.screen, rect, {"city_level": 10, "population": 10})
+            self.assertEqual(draw_house.call_count, 7)
+
+    def test_global_ap_starts_with_trenches_before_log_staging(self):
+        from scenes import city
+
+        rect = pygame.Rect(80, 80, 480, 480)
+        with patch("scenes.city.exterior._draw_trench") as trench, \
+                patch("scenes.city.exterior._draw_work_logs") as logs:
+            city.exterior.draw_city_exterior(
+                self.screen, rect,
+                {"city_level": 1, "active": True, "phase_index": 0},
+            )
+        trench.assert_called_once()
+        logs.assert_not_called()
+
+        with patch("scenes.city.exterior._draw_trench") as trench, \
+                patch("scenes.city.exterior._draw_work_logs") as logs:
+            city.exterior.draw_city_exterior(
+                self.screen, rect,
+                {"city_level": 1, "active": True, "phase_index": 1},
+            )
+        trench.assert_not_called()
+        logs.assert_called_once()
+
+    def test_city_visuals_are_limited_to_l1_and_l2(self):
+        from scenes.city.sprite_modules import city_visual_tier
+
+        self.assertEqual([city_visual_tier(level) for level in (1, 2, 3, 10)],
+                         [1, 2, 2, 2])
+
+    def test_purchased_cart_is_hidden_from_buy_tab_and_available_in_transport(self):
+        window = self.scene.stable_window
+        self.client.cart_progress["grades"]["1"]["body_owned"] = True
+        window.state = self.client.get_building("stable", 1)
+        window.state["available_carts"] = [{
+            "id": "cart_grade_1", "status": "Свободна", "can_travel": True,
+            "dispatch_available": True, "horse_slots": 1, "resource_slots": 1,
+            "capacity_kg": 300, "seconds_per_tile": 7.2,
+        }]
+        window._sync_cart_progress()
+        rendered = []
+        original = self.scene.small_font
+
+        class Recorder:
+            def render(self, text, *args):
+                rendered.append(str(text))
+                return original.render(text, *args)
+
+            def __getattr__(self, name):
+                return getattr(original, name)
+
+        self.scene.small_font = Recorder()
+        try:
+            window._draw_carts(self.screen)
+        finally:
+            self.scene.small_font = original
+        self.assertTrue(any(text.startswith("Новых повозок нет") for text in rendered))
+        self.assertNotIn("Лёгкая повозка", rendered)
+        self.assertNotIn("КУПЛЕНО", rendered)
+        self.assertFalse(any("на складе:" in text or "в казне:" in text for text in rendered))
+        self.assertEqual(
+            [cart["id"] for cart in window._available_transport_carts()],
+            ["cart_grade_1"],
+        )
+
+    def test_cart_fleet_shows_wear_in_one_row_and_repair_action(self):
+        window = self.scene.stable_window
+        window.is_open = True
+        window.tab = "carts"
+        self.client.cart_progress["grades"]["1"].update(body_owned=True, body_count=2)
+        window.state = self.client.get_building("stable", 1)
+        window.state["available_carts"] = [
+            {
+                "id": "cart_grade_1", "grade": 1, "instance": 1,
+                "name": "Лёгкая повозка", "sprite_key": "light", "status": "Сломана",
+                "durability": 0, "max_durability": 100, "broken": True,
+                "repair_wood_cost": 100, "maintenance_wood_per_hour": 0,
+            },
+            {
+                "id": "cart_grade_1~2", "grade": 1, "instance": 2,
+                "name": "Лёгкая повозка", "sprite_key": "light", "status": "В пути",
+                "durability": 65, "max_durability": 100, "broken": False,
+                "repair_wood_cost": 35, "maintenance_wood_per_hour": 2,
+            },
+        ]
+        window._sync_cart_progress()
+        window._draw_carts(self.screen)
+
+        cards = window.cart_card_rects
+        self.assertEqual(set(cards), {"cart_grade_1", "cart_grade_1~2"})
+        self.assertEqual(cards["cart_grade_1"].top, cards["cart_grade_1~2"].top)
+        self.assertIn("cart_grade_1", window.cart_repair_buttons)
+        self.assertNotIn("cart_grade_1~2", window.cart_repair_buttons)
+        with patch.object(window, "_building_action") as building_action:
+            window.handle_event(pygame.event.Event(
+                pygame.MOUSEBUTTONDOWN, button=1,
+                pos=window.cart_repair_buttons["cart_grade_1"].center,
+            ))
+        building_action.assert_called_once_with(
+            "cart/repair", {"cart_id": "cart_grade_1"},
+        )
+
+    def test_resident_houses_follow_population_without_opening_castle(self):
+        self.client.population = 10
+        self.client.get_city_population = lambda _character_id: {
+            "population": self.client.population,
+        }
+        from scenes.city_scene import CityScene
+
+        scene = CityScene(SimpleNamespace(
+            character={"id": 1, "name": "Тест"}, client=self.client,
+        ))
+        self.assertFalse(scene.castle_menu_open)
+        self.assertEqual(scene.city_population_count, 10)
+        self.assertEqual(len(scene._citizen_house_solid_rects()), 10)
+
+        self.client.population = 7
+        scene.city_population_refresh_at = 0
+        scene.update(0)
+        self.assertEqual(scene.city_population_count, 7)
+        self.assertEqual(len(scene._citizen_house_solid_rects()), 7)
 
     def test_stable_menu_has_name_and_level_header(self):
         self.scene.stable_window.open()
@@ -700,6 +1411,120 @@ class CityStorageWindowTests(unittest.TestCase):
             self.assertFalse(any("ОРУЖЕЙНАЯ КУЗНИЦА" in text for text in rendered))
         finally:
             self.scene.badge_font = original
+
+    def test_workshop_tabs_show_cart_specs_and_start_production(self):
+        self.assertEqual(self.scene.workshop_modal_rect.size, self.scene.stable_window.rect.size)
+        expected_tabs = {
+            "helmets", "armor", "gloves", "plates", "shoes",
+            "leatherworker", "carts", "upgrades", "storage",
+        }
+        self.assertEqual(set(self.scene.workshop_tabs), expected_tabs)
+        tab_rects = list(self.scene.workshop_tabs.values())
+        self.assertEqual(tab_rects[0].left, self.scene.workshop_modal_rect.left + 24)
+        self.assertEqual(tab_rects[-1].right, self.scene.workshop_modal_rect.right - 24)
+        self.assertTrue(all(first.right + 8 == second.left
+                            for first, second in zip(tab_rects, tab_rects[1:])))
+
+        rendered = []
+        original_small = self.scene.small_font
+        original_font = self.scene.font
+
+        class Recorder:
+            def __init__(self, wrapped):
+                self.wrapped = wrapped
+
+            def render(self, text, *args):
+                rendered.append(str(text))
+                return self.wrapped.render(text, *args)
+
+            def __getattr__(self, name):
+                return getattr(self.wrapped, name)
+
+        self.scene.small_font = Recorder(original_small)
+        self.scene.font = Recorder(original_font)
+        try:
+            self.scene.workshop_menu_open = True
+            self.scene.workshop_tab = "storage"
+            self.scene.draw(self.screen)
+            self.assertTrue(any("СКЛАД ГОТОВОЙ ПРОДУКЦИИ ПУСТ" in text for text in rendered))
+            self.assertTrue(any("ПРОЦЕСС РАБОТЫ МАСТЕРСКОЙ" in text for text in rendered))
+
+            self.scene.workshop_tab = "carts"
+            self.client.warehouse_storage["wood"] = 100
+            self.client.treasury_silver_available = 10
+            self.client.cart_progress["grades"]["1"].update(body_owned=True, body_count=1)
+            self.scene._refresh_workshop_state()
+            self.scene.draw(self.screen)
+            self.assertIsNotNone(self.scene.workshop_cart_button)
+            self.assertTrue(any("Лёгкая повозка" in text for text in rendered))
+            self.assertTrue(any("Цена:" == text for text in rendered))
+            self.assertTrue(any("100/100" == text for text in rendered))
+            self.assertTrue(any("10/10" == text for text in rendered))
+            self.assertFalse(any("(склад)" in text or "(казна)" in text for text in rendered))
+            self.assertTrue(any("Производство: 40 минут" in text for text in rendered))
+            self.assertTrue(any("Грузоподъёмность" in text for text in rendered))
+            self.assertTrue(any("Кучер" in text for text in rendered))
+            self.assertTrue(any("Упряжка" in text for text in rendered))
+            self.assertTrue(any("Погрузка: 60 кг/мин" in text for text in rendered))
+            self.assertTrue(any("Разгрузка: 40 кг/мин" in text for text in rendered))
+            self.assertFalse(any("ОТКРЫТЬ ТРАНСПОРТ" in text or "ГОТОВА К ОТПРАВКЕ" in text
+                                 for text in rendered))
+            cart_catalog = dict(CART_GRADES)
+            cart_catalog["3"] = {**CART_GRADES["1"], "name": "Тестовая повозка"}
+            with patch("scenes.city.modals.CART_GRADES", cart_catalog):
+                self.scene.draw(self.screen)
+            first_lot = self.scene.workshop_cart_lot_rects[1]
+            second_lot = self.scene.workshop_cart_lot_rects[3]
+            self.assertEqual(first_lot.top, second_lot.top)
+            self.assertEqual(first_lot.right + 10, second_lot.left)
+            self.scene.handle_event(pygame.event.Event(
+                pygame.MOUSEBUTTONDOWN, button=1,
+                pos=self.scene.workshop_cart_button.center,
+            ))
+            self.assertTrue(self.scene.workshop_menu_open)
+            self.assertFalse(self.scene.stable_menu_open)
+            self.assertTrue(self.client.cart_progress["grades"]["1"]["body_owned"])
+            self.assertIsNotNone(self.client.cart_progress["grades"]["1"]["body_finish_at"])
+            self.assertEqual(self.client.warehouse_storage["wood"], 0)
+            self.assertEqual(self.client.treasury_silver_available, 0)
+            self.assertEqual(self.scene.workshop_state["queue"][0]["item_name"], "Лёгкая повозка")
+            rendered.clear()
+            self.scene.draw(self.screen)
+            self.assertTrue(any("ОЧЕРЕДЬ: 1 / 5" in text for text in rendered))
+            self.assertTrue(any("ОБЩЕЕ ВРЕМЯ: 40:00" in text for text in rendered))
+            self.assertTrue(any("В ПРОИЗВОДСТВЕ: Лёгкая повозка" in text for text in rendered))
+            self.assertTrue(any("До готовности: 40:00" in text for text in rendered))
+            self.client.warehouse_storage["wood"] = 100
+            self.client.treasury_silver_available = 10
+            self.scene.draw(self.screen)
+            self.assertIsNotNone(self.scene.workshop_cart_button)
+            self.scene.workshop_state["queue"] = [{"item_name": "Заказ"}] * 5
+            self.scene.draw(self.screen)
+            self.assertIsNotNone(self.scene.workshop_cart_button)
+        finally:
+            self.scene.small_font = original_small
+            self.scene.font = original_font
+
+    def test_workshop_cart_icons_use_one_tile_size(self):
+        from ui.map_travel import draw_transport_cart_icon
+
+        self.scene.workshop_menu_open = True
+        self.scene.workshop_tab = "carts"
+        self.scene.workshop_state.update({
+            "queue": [{
+                "grade": 1,
+                "item_name": "Лёгкая повозка",
+                "seconds_left": 1200,
+                "duration_seconds": 2400,
+            }],
+            "queue_limit": 5,
+        })
+        with patch("scenes.city.modals.draw_transport_cart_icon",
+                   wraps=draw_transport_cart_icon) as draw_cart:
+            self.scene.draw(self.screen)
+
+        icon_sizes = [call.args[3] for call in draw_cart.call_args_list]
+        self.assertGreaterEqual(icon_sizes.count(32), 3)
 
     def test_stable_tabs_and_route_selection(self):
         window = self.scene.stable_window
@@ -821,6 +1646,33 @@ class CityStorageWindowTests(unittest.TestCase):
         self.scene.handle_event(pygame.event.Event(
             pygame.MOUSEBUTTONDOWN, button=1, pos=window.stall_buy_buttons[0].center))
         self.assertIn(("stable", "horse/purchase"), self.client.calls)
+
+    def test_stable_stall_shows_each_horses_satiety_meter(self):
+        window = self.scene.stable_window
+        window.state = self.client.get_building("stable", 1)
+        window.state["stall_slots"][0]["horse"] = {
+            "id": 7, "name": "Лошадь 1", "breed": "Рабочая",
+            "status": "Отдыхает", "satiety": 25,
+        }
+        rendered = []
+        original_font = self.scene.small_font
+
+        class Recorder:
+            def render(self, text, *args):
+                rendered.append((str(text), args[1] if len(args) > 1 else None))
+                return original_font.render(text, *args)
+
+            def __getattr__(self, name):
+                return getattr(original_font, name)
+
+        self.scene.small_font = Recorder()
+        try:
+            window._draw_stalls(self.screen)
+        finally:
+            self.scene.small_font = original_font
+
+        satiety = next(color for text, color in rendered if text == "Сытность 25%")
+        self.assertEqual(satiety, (232, 184, 48))
 
     def test_transport_empty_popups_for_carts_and_horses(self):
         window = self.scene.stable_window
@@ -972,7 +1824,7 @@ class CityStorageWindowTests(unittest.TestCase):
             self.scene.small_font = original_small
             self.scene.font = original_font
 
-        self.assertTrue(any("Куплено повозок: 1" in text for text in rendered))
+        self.assertTrue(any("Повозок в городе: 1" in text for text in rendered))
         self.assertIn("Свободна", rendered)
         self.assertIn("Вид сверху", rendered)
         self.assertIn("Информация о рейсе", rendered)
@@ -1013,6 +1865,50 @@ class CityStorageWindowTests(unittest.TestCase):
             "resource_ids": ["wood"], "pinned": True,
         })
         self.assertIsNone(window.transport_draft["cart_id"])
+
+    def test_disabled_dispatch_explains_missing_cargo_slot(self):
+        window = self.scene.stable_window
+        window.state = self.client.get_building("stable", 1)
+        window.state["available_carts"] = [{
+            "id": "cart_grade_1", "name": "Лёгкая повозка", "status": "Свободна",
+            "can_travel": True, "dispatch_available": True,
+            "horse_slots": 1, "resource_slots": 1,
+        }]
+        window.state["stall_slots"][0]["horse"] = {
+            "id": 12, "name": "Лошадь 1", "can_travel": True,
+        }
+        window.state["available_cart_drivers"] = [{"id": 42, "name": "Горожанин 12"}]
+        window.routes = [{
+            "building_id": "lumber_camp", "name": "Лесопилка",
+            "distance_tiles": 12.5, "resources": [{"id": "wood", "label": "Древесина"}],
+        }]
+        window.transport_draft = {
+            "cart_id": "cart_grade_1", "horse_ids": [12],
+            "driver_citizen_id": 42, "destination_id": "lumber_camp",
+            "resource_ids": [None], "pinned": False,
+        }
+
+        reasons = window._transport_block_reasons()
+        self.assertEqual(reasons, ["Выберите груз для слота 1."])
+        rendered = []
+        original_small = self.scene.small_font
+
+        class Recorder:
+            def render(self, text, *args):
+                rendered.append(str(text))
+                return original_small.render(text, *args)
+
+            def __getattr__(self, name):
+                return getattr(original_small, name)
+
+        self.scene.small_font = Recorder()
+        try:
+            window._draw_transport_block_tooltip(
+                self.screen, pygame.Rect(600, 700, 240, 38), reasons
+            )
+        finally:
+            self.scene.small_font = original_small
+        self.assertIn("Выберите груз для слота 1.", rendered)
 
     def test_repeat_route_checkbox_toggles_draft(self):
         window = self.scene.stable_window
@@ -1061,7 +1957,7 @@ class CityStorageWindowTests(unittest.TestCase):
         self.assertEqual(self.client.calls[-1], ("stable", "transport/pin"))
         self.assertEqual(self.client.last_payload, {"convoy_id": 55, "pinned": False})
 
-    def test_carts_tab_renders_grades_stock_and_selectable_nodes(self):
+    def test_carts_tab_renders_fleet_row_and_compact_purchase(self):
         window = self.scene.stable_window
         window.open()
         self.scene.stable_menu_open = True
@@ -1087,20 +1983,16 @@ class CityStorageWindowTests(unittest.TestCase):
         finally:
             self.scene.small_font = original
             self.scene.font = original_font
+        self.assertIn("Состояние повозок", rendered)
+        self.assertIn("Пока нет изготовленных повозок.", rendered)
         self.assertTrue(any("Лёгкая повозка" in text for text in rendered))
-        self.assertTrue(any("Крестьянский обоз" in text for text in rendered))
-        self.assertTrue(any("Слотов для товаров" in text for text in rendered))
-        self.assertIn("НЕДОСТАТОЧНО", rendered)
-        self.assertFalse(any(text == "20" for text in rendered))
-        self.assertTrue(any("требование: уровень конюшни 1" in text for text in rendered))
-        self.assertTrue(any("Древесина на складе:" in text for text in rendered))
-        self.assertTrue(any("Серебро в казне:" in text for text in rendered))
-        self.assertFalse(any("Грейд 1" in text for text in rendered))
-        self.assertTrue(any("150 тайлов/час" in text for text in rendered))
-        self.assertTrue(any("1 кг/20 сек (3 кг/мин)" in text for text in rendered))
-        self.assertFalse(any(text.startswith("не задано") for text in rendered))
+        self.assertFalse(any("Крестьянский обоз" in text for text in rendered))
+        self.assertTrue(any("100 древесины + 10 серебра" in text for text in rendered))
+        self.assertIn("ИЗГОТОВИТЬ", rendered)
+        self.assertFalse(any("Слотов для товаров" in text for text in rendered))
+        self.assertFalse(any("500 тайлов/час" in text for text in rendered))
 
-    def test_purchased_cart_moves_to_transport_and_is_not_purchasable_again(self):
+    def test_cart_stays_unavailable_until_production_completes(self):
         window = self.scene.stable_window
         grade = self.client.cart_progress["grades"]["1"]
         grade.update(wood_deposited=100, silver_deposited=10)
@@ -1109,17 +2001,174 @@ class CityStorageWindowTests(unittest.TestCase):
 
         window._building_action("cart/purchase", {"grade": 1})
 
-        self.assertTrue(window.cart_progress["grades"]["1"]["body_owned"])
+        self.assertFalse(window.cart_progress["grades"]["1"]["body_owned"])
+        self.assertEqual(window.cart_progress["grades"]["1"]["body_finish_at"], 2400)
         carts = window._available_transport_carts()
-        self.assertEqual([cart["id"] for cart in carts], ["cart_grade_1"])
-        self.assertFalse(carts[0]["dispatch_available"])
-        self.assertEqual(window.message, "Лёгкая повозка куплена и добавлена в транспорт.")
+        self.assertEqual(carts, [])
+        self.assertEqual(window.message, "Заказ принят. Повозка появится в транспорте через 40 минут.")
 
         window.tab = "carts"
         window._draw_carts(self.screen)
         self.assertNotIn(1, window.cart_purchase_buttons)
+        grade["body_owned"] = True
+        grade["body_finish_at"] = None
+        window.state = self.client.get_building("stable", 1)
+        window._sync_cart_progress()
+        carts = window._available_transport_carts()
+        self.assertEqual([cart["id"] for cart in carts], ["cart_grade_1"])
+        self.assertFalse(carts[0]["dispatch_available"])
         window._select_transport_option(("cart", None, carts[0]["id"]))
         self.assertEqual(window.message, "Для рейса нужна свободная отдыхающая лошадь.")
+
+    def test_transport_table_lists_all_owned_carts_and_their_details(self):
+        window = self.scene.stable_window
+        window.state = self.client.get_building("stable", 1)
+        window.state["available_carts"] = [
+            {"id": "cart_grade_1", "name": "Лёгкая повозка", "status": "В пути",
+             "can_travel": False, "horse_slots": 1, "resource_slots": 1, "capacity_kg": 300},
+            {"id": "cart_grade_2", "name": "Крестьянский обоз", "status": "Свободна",
+             "can_travel": True, "horse_slots": 2, "resource_slots": 2, "capacity_kg": 450},
+        ]
+        window.state["transport_convoys"] = [{
+            "id": 17, "cart_id": "cart_grade_1", "cart_name": "Лёгкая повозка",
+            "destination_name": "Крестьянское поселение", "cargo_kg": 150,
+            "capacity_kg": 300, "driver_name": "Горожанин 1", "horses": [{"name": "Лошадь 1"}],
+            "status": "Едет к объекту", "seconds_remaining": 900, "pinned": True,
+        }]
+        rendered = []
+        original_font, original_small, original_tiny = (
+            self.scene.font, self.scene.small_font, window.tiny_font,
+        )
+
+        class Recorder:
+            def __init__(self, font):
+                self.font = font
+
+            def render(self, text, *args):
+                rendered.append(str(text))
+                return self.font.render(text, *args)
+
+            def __getattr__(self, name):
+                return getattr(self.font, name)
+
+        self.scene.font = Recorder(original_font)
+        self.scene.small_font = Recorder(original_small)
+        window.tiny_font = Recorder(original_small)
+        try:
+            window._draw_transport(self.screen)
+        finally:
+            self.scene.font = original_font
+            self.scene.small_font = original_small
+            window.tiny_font = original_tiny
+
+        self.assertIn("Повозок в городе: 2", rendered)
+        self.assertIn("Лёгкая повозка", rendered)
+        self.assertIn("Крестьянский обоз", rendered)
+        self.assertIn("Маршрут: Крестьянское поселение", rendered)
+        self.assertIn("150 / 300 кг", rendered)
+        self.assertIn("0 / 450 кг", rendered)
+        self.assertEqual(len(window.transport_timeline_rects), 5)
+        self.assertEqual(len({rect.width for rect in window.transport_timeline_rects}), 1)
+
+    def test_transport_table_scrolls_to_third_cart(self):
+        window = self.scene.stable_window
+        window.is_open = True
+        window.state = self.client.get_building("stable", 1)
+        window.state["available_carts"] = [
+            {"id": f"cart_grade_{grade}", "name": f"Повозка {grade}",
+             "status": "Свободна", "can_travel": True, "horse_slots": 1,
+             "resource_slots": 1, "capacity_kg": 300}
+            for grade in range(1, 4)
+        ]
+        window.state["transport_convoys"] = []
+        window.transport_scroll = 0
+        rendered = []
+        original_font, original_small = self.scene.font, self.scene.small_font
+
+        class Recorder:
+            def __init__(self, font):
+                self.font = font
+
+            def render(self, text, *args):
+                rendered.append(str(text))
+                return self.font.render(text, *args)
+
+            def __getattr__(self, name):
+                return getattr(self.font, name)
+
+        self.scene.font = Recorder(original_font)
+        self.scene.small_font = Recorder(original_small)
+        try:
+            window._draw_transport(self.screen)
+            self.assertIn("Повозка 1", rendered)
+            self.assertIn("Повозка 2", rendered)
+            self.assertNotIn("Повозка 3", rendered)
+
+            rendered.clear()
+            window.handle_event(pygame.event.Event(pygame.MOUSEWHEEL, y=-1))
+            window._draw_transport(self.screen)
+        finally:
+            self.scene.font = original_font
+            self.scene.small_font = original_small
+
+        self.assertEqual(window.transport_scroll, 1)
+        self.assertNotIn("Повозка 1", rendered)
+        self.assertIn("Повозка 2", rendered)
+        self.assertIn("Повозка 3", rendered)
+        self.assertEqual(len({rect.height for rect in window.transport_timeline_rects}), 1)
+
+    def test_transport_route_timeline_colors_completed_current_and_future_stages(self):
+        window = self.scene.stable_window
+        window.state = self.client.get_building("stable", 1)
+        window.state["available_carts"] = [{
+            "id": "cart_grade_1", "name": "Лёгкая повозка", "status": "В пути",
+            "can_travel": False, "horse_slots": 1, "resource_slots": 1, "capacity_kg": 300,
+        }]
+        window.state["transport_convoys"] = [{
+            "id": 21, "cart_id": "cart_grade_1", "cart_name": "Лёгкая повозка",
+            "destination_name": "Крестьянское поселение", "cargo_kg": 100,
+            "capacity_kg": 300, "driver_name": "Горожанин 1", "horses": [],
+            "status": "Погрузка", "phase": "loading", "seconds_remaining": 125,
+            "cycle_seconds_remaining": 900, "pinned": True,
+            "route_stages": [
+                {"phase": "outbound", "label": "В поселение", "seconds": 0, "state": "complete"},
+                {"phase": "loading", "label": "Погрузка", "seconds": 125, "state": "current"},
+                {"phase": "returning", "label": "В город", "seconds": 600, "state": "future"},
+                {"phase": "unloading", "label": "Разгрузка", "seconds": 170, "state": "future"},
+            ],
+        }]
+        rendered_colors = {}
+        original_font, original_small, original_tiny = (
+            self.scene.font, self.scene.small_font, window.tiny_font,
+        )
+
+        class Recorder:
+            def __init__(self, font):
+                self.font = font
+
+            def render(self, text, *args):
+                rendered_colors[str(text)] = args[1] if len(args) > 1 else None
+                return self.font.render(text, *args)
+
+            def __getattr__(self, name):
+                return getattr(self.font, name)
+
+        self.scene.font = Recorder(original_font)
+        self.scene.small_font = Recorder(original_small)
+        window.tiny_font = Recorder(original_tiny)
+        try:
+            window._draw_transport(self.screen)
+        finally:
+            self.scene.font = original_font
+            self.scene.small_font = original_small
+            window.tiny_font = original_tiny
+
+        self.assertEqual(rendered_colors["В поселение"], (143, 148, 143))
+        self.assertEqual(rendered_colors["Погрузка"], (139, 224, 145))
+        self.assertEqual(rendered_colors["В город"], (139, 190, 231))
+        self.assertEqual(rendered_colors["Разгрузка"], (139, 190, 231))
+        self.assertIn("00:02:05", rendered_colors)
+        self.assertIn("00:15:00", rendered_colors)
 
     def test_cart_grade_one_formulas_and_grade_two_gate(self):
         from core.cart_progress import cart_stats, grade_two_unlocked
@@ -1127,12 +2176,31 @@ class CityStorageWindowTests(unittest.TestCase):
         levels = {"wheels": 3, "sides": 3, "axles": 3}
         stats = cart_stats(levels)
         self.assertEqual(stats["capacity_kg"], 450)
-        self.assertAlmostEqual(stats["seconds_per_tile"], 17.9473)
+        self.assertAlmostEqual(stats["seconds_per_tile"], 1.2)
+        self.assertEqual(stats["empty_tiles_per_hour"], 3000)
         self.assertEqual(stats["full_load_speed_penalty_percent"], 40)
         progress = {"grades": {"1": {"upgrades": {"wheels": 3, "sides": 3, "axles": 2}}}}
         self.assertFalse(grade_two_unlocked(progress))
         progress["grades"]["1"]["upgrades"]["axles"] = 3
         self.assertTrue(grade_two_unlocked(progress))
+
+    def test_light_cart_revised_base_spec(self):
+        from core.cart_progress import CART_GRADES, cart_load_speed_ratio, cart_stats
+
+        grade = CART_GRADES["1"]
+        stats = cart_stats({"wheels": 0, "sides": 0, "axles": 0})
+        self.assertEqual(stats["empty_tiles_per_hour"], 500)
+        self.assertEqual(stats["seconds_per_tile"], 7.2)
+        self.assertEqual(stats["capacity_kg"], 300)
+        self.assertEqual(stats["full_load_speed_penalty_percent"], 70)
+        self.assertEqual(grade["resource_slots"], 1)
+        self.assertEqual(grade["horse_count"], 1)
+        self.assertEqual(grade["villagers_required"], 1)
+        self.assertEqual(grade["load_kg_per_minute"], 60)
+        self.assertEqual(grade["load_kg_per_20_seconds"], 20)
+        self.assertEqual(cart_load_speed_ratio(0, 300, 70), 1.0)
+        self.assertAlmostEqual(cart_load_speed_ratio(150, 300, 70), 0.65)
+        self.assertAlmostEqual(cart_load_speed_ratio(300, 300, 70), 0.3)
 
 
 if __name__ == "__main__":

@@ -5,6 +5,7 @@ import math
 import random
 from functools import lru_cache
 
+from core.city_progression import COUNTRY_BUILDING_UNLOCK_LEVELS, unlocked_country_buildings
 from core.production_buildings import RESOURCES, building_resources
 from server.structures import WORLD_OBJECTS
 from server.world_map import OBSTACLES, TILE, _edge_distance, point_in_polygon
@@ -19,7 +20,7 @@ CITY_GATES = {
     "west": (60, 53),
     "south": (67, 60),
 }
-COUNTRY_BUILDINGS = ("wheat_farm", "lumber_camp", "mountain_rift", "barnyard", "black_pit")
+COUNTRY_BUILDINGS = tuple(COUNTRY_BUILDING_UNLOCK_LEVELS)
 FORCED_GATES = {"black_pit": "west"}
 PRODUCTION_BUILDING_IDS = {"wheat_farm": "farm"}
 
@@ -188,8 +189,12 @@ def build_country_roads():
     return tuple(routes), tuple(sorted(all_tiles, key=lambda tile: (tile[1], tile[0])))
 
 
-def roads_payload():
+def roads_payload(city_level=1):
     routes, tiles = build_country_roads()
+    unlocked = set(unlocked_country_buildings(city_level))
+    routes = tuple(route for route in routes if route["building_id"] in unlocked)
+    tiles = tuple(sorted({tuple(tile) for route in routes for tile in route["tiles"]},
+                         key=lambda tile: (tile[1], tile[0])))
     return {
         "routes": [dict(route) for route in routes],
         "tiles": [list(tile) for tile in tiles],
@@ -197,9 +202,9 @@ def roads_payload():
     }
 
 
-def route_position(building_id, progress):
+def route_position(building_id, progress, city_level=1):
     route = next(
-        (route for route in roads_payload()["routes"]
+        (route for route in roads_payload(city_level)["routes"]
          if route["building_id"] == building_id),
         None,
     )

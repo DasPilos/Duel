@@ -5,9 +5,11 @@ import pygame
 from core import settings
 from core.carry_weight import character_movement_speed_multiplier
 from core.currency import Currency
+from core.cart_progress import CART_GRADES
+from client.network import ServerError
 from scenes.city.buildings import CityBuildingsMixin
-from scenes.city.rendering import CITIZEN_HOUSE_LOTS, CityRenderMixin
-from scenes.city.modals import CityModalsMixin
+from scenes.city.rendering import CityRenderMixin, build_citizen_house_lots
+from scenes.city.modals import CityModalsMixin, WORKSHOP_TABS
 from scenes.city.hud import CityHudMixin
 from ui.city_storage_window import CityStorageWindow
 from ui.castle_window import CastleWindow
@@ -18,6 +20,8 @@ from ui.afk_presence import draw_afk_players
 
 
 class CityScene(CityBuildingsMixin, CityRenderMixin, CityModalsMixin, CityHudMixin):
+    CITY_POPULATION_REFRESH_SECONDS = 10.0
+
     """
     Сцена локации Города Радбург (Город Света).
     Размер сетки: 100х100 тайлов (3200х3200 px).
@@ -151,14 +155,18 @@ class CityScene(CityBuildingsMixin, CityRenderMixin, CityModalsMixin, CityHudMix
 
         # Интерактивные объекты города: Кристалл Жизни и Главный замок
         self._init_city_objects()
+        self.citizen_house_lots = build_citizen_house_lots(self.objects)
 
         # Модальное окно заглушки Главного Замка
         self.castle_menu_open = False
         self.city_population_count = 4
+        self.city_upgrade_state = {}
         self.castle_window = CastleWindow(self)
         self.castle_modal_rect = self.castle_window.rect
         self.castle_back_button = self.castle_window.close_button
         self.castle_close_button = self.castle_window.close_button
+        self.city_population_refresh_at = 0.0
+        self._refresh_city_population(force=True)
 
         # Городские хранилища (Амбар, Склад): состояние и улучшение на сервере
         self.barn_menu_open = False
@@ -197,9 +205,26 @@ class CityScene(CityBuildingsMixin, CityRenderMixin, CityModalsMixin, CityHudMix
 
         # Модальное окно заглушки Городской Мастерской
         self.workshop_menu_open = False
-        self.workshop_modal_rect = pygame.Rect(settings.WIDTH // 2 - 340, settings.HEIGHT // 2 - 250, 680, 500)
-        self.workshop_back_button = pygame.Rect(self.workshop_modal_rect.centerx - 140, self.workshop_modal_rect.bottom - 62, 280, 44)
+        self.workshop_modal_rect = pygame.Rect(settings.WIDTH // 2 - 800, settings.HEIGHT // 2 - 450, 1600, 900)
         self.workshop_close_button = pygame.Rect(self.workshop_modal_rect.right - 42, self.workshop_modal_rect.top + 14, 28, 28)
+        self.workshop_back_button = self.workshop_close_button
+        self.workshop_tab_labels = dict(WORKSHOP_TABS)
+        self.workshop_tab = "helmets"
+        self.workshop_tabs = {}
+        tab_gap = 8
+        tab_width = (self.workshop_modal_rect.width - 48 - tab_gap * (len(WORKSHOP_TABS) - 1)) // len(WORKSHOP_TABS)
+        for index, (key, _label) in enumerate(WORKSHOP_TABS):
+            left = self.workshop_modal_rect.left + 24 + index * (tab_width + tab_gap)
+            width = (self.workshop_modal_rect.right - 24 - left
+                     if index == len(WORKSHOP_TABS) - 1 else tab_width)
+            self.workshop_tabs[key] = pygame.Rect(left, self.workshop_modal_rect.top + 70, width, 34)
+        self.workshop_cart_button = None
+        self.workshop_cart_buttons = {}
+        self.workshop_cart_scroll = 0
+        self.workshop_message = None
+        self.workshop_last_refresh = 0.0
+        self.workshop_state_received_at = 0.0
+        self.workshop_state = {"queue": [], "queue_limit": 5, "warehouse": []}
 
         # Модальное окно заглушки Городских Казарм
         self.barracks_menu_open = False
@@ -543,7 +568,7 @@ class CityScene(CityBuildingsMixin, CityRenderMixin, CityModalsMixin, CityHudMix
             if not self._is_within_one_tile(self.active_entity):
                 self._add_floating_message("Подойдите к дверям мастерской (тайл 23/16)", self.player_x, self.player_y - 34, (255, 120, 90))
                 return
-            self.workshop_menu_open = True
+            self._open_workshop()
             return
 
         if eid == "barracks_building":
@@ -610,6 +635,68 @@ class CityScene(CityBuildingsMixin, CityRenderMixin, CityModalsMixin, CityHudMix
         self._refresh_forge_state()
         self.last_forge_refresh = time.time()
         self.last_forge_tick = time.time()
+
+    def _open_workshop(self):
+        self.workshop_menu_open = True
+        self.workshop_message = None
+        self._refresh_workshop_state()
+
+    def _refresh_workshop_state(self):
+        if not hasattr(self, "session") or self.session is None:
+            return
+        try:
+            state = self.session.client.get_building(
+                "stable", self.session.character["id"]
+            )
+        except Exception as error:
+            self.workshop_message = str(error)
+            return
+
+        grade = state.get("cart_progress", {}).get("grades", {}).get("1", {})
+        finish_at = grade.get("body_finish_at")
+        server_time = float(state.get("server_time", time.time()))
+        cart_progress = state.get("cart_progress", {})
+        queue = []
+        for grade_key, grade_progress in cart_progress.get("grades", {}).items():
+            orders = list(grade_progress.get("production_orders", []))
+            if not orders and grade_progress.get("body_finish_at") is not None:
+                orders = [{"finish_at": grade_progress["body_finish_at"]}]
+            for order in orders:
+                order_finish = float(order["finish_at"])
+                order_grade = int(order.get("grade", grade_key))
+                queue.append({
+                    "order_id": order.get("order_id"),
+                    "grade": order_grade,
+                    "item_name": CART_GRADES.get(str(order_grade), {}).get("name", "Повозка"),
+                    "finish_at": order_finish,
+                    "duration_seconds": int(
+                        CART_GRADES.get(str(order_grade), {}).get("production_seconds", 40 * 60)
+                    ),
+                    "seconds_left": max(0, int(order_finish - server_time)),
+                })
+        queue.sort(key=lambda order: order["finish_at"])
+        self.workshop_state.update({
+            "body_owned": bool(grade.get("body_owned")),
+            "body_finish_at": finish_at,
+            "server_time": server_time,
+            "received_monotonic": time.monotonic(),
+            "grade": grade,
+            "cart_progress": cart_progress,
+            "warehouse_storage": state.get("warehouse_storage", {}) or {},
+            "treasury_silver_available": int(state.get("treasury_silver_available", 0)),
+            "queue_limit": 5,
+            "queue": queue,
+        })
+        self.workshop_state_received_at = time.monotonic()
+        self.workshop_last_refresh = self.workshop_state_received_at
+        self.workshop_message = None
+
+    def _order_workshop_cart(self, grade=1):
+        self.stable_window._building_action("cart/purchase", {"grade": int(grade)})
+        message = self.stable_window.message
+        if self.stable_window.state is not None:
+            self._refresh_workshop_state()
+        self.workshop_message = message
 
     def _refresh_forge_state(self):
         if not hasattr(self, "session") or self.session is None:
@@ -820,10 +907,28 @@ class CityScene(CityBuildingsMixin, CityRenderMixin, CityModalsMixin, CityHudMix
                 if event.key in (pygame.K_ESCAPE, pygame.K_RETURN, pygame.K_SPACE):
                     self.workshop_menu_open = False
                     return
+            elif event.type == pygame.MOUSEWHEEL:
+                if self.workshop_tab == "carts":
+                    self.workshop_cart_scroll = max(0, self.workshop_cart_scroll - event.y * 48)
+                return
+            elif event.type == pygame.MOUSEBUTTONDOWN and event.button in (4, 5):
+                if self.workshop_tab == "carts":
+                    direction = -1 if event.button == 4 else 1
+                    self.workshop_cart_scroll = max(0, self.workshop_cart_scroll + direction * 48)
+                return
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 if self.workshop_back_button.collidepoint(event.pos) or self.workshop_close_button.collidepoint(event.pos):
                     self.workshop_menu_open = False
                     return
+                for tab, button in self.workshop_tabs.items():
+                    if button.collidepoint(event.pos):
+                        self.workshop_tab = tab
+                        return
+                if self.workshop_tab == "carts":
+                    for grade, button in self.workshop_cart_buttons.items():
+                        if button.collidepoint(event.pos):
+                            self._order_workshop_cart(grade)
+                            return
             return
 
         # 6. Если открыто модальное меню казарм
@@ -927,7 +1032,7 @@ class CityScene(CityBuildingsMixin, CityRenderMixin, CityModalsMixin, CityHudMix
                     elif clicked_entity.get("id") == "forge_building":
                         self._open_forge()
                     elif clicked_entity.get("id") == "workshop_building":
-                        self.workshop_menu_open = True
+                        self._open_workshop()
                     elif clicked_entity.get("id") == "barracks_building":
                         self.barracks_menu_open = True
                     elif clicked_entity.get("id") == "engineering_building":
@@ -991,7 +1096,36 @@ class CityScene(CityBuildingsMixin, CityRenderMixin, CityModalsMixin, CityHudMix
         if saved_profile is not None:
             self.profile_overlay.update_profile(saved_profile)
 
+    def _refresh_city_population(self, force=False):
+        now = time.monotonic()
+        if self.castle_window.is_open and not force:
+            return False
+        if not force and now < self.city_population_refresh_at:
+            return False
+        self.city_population_refresh_at = now + self.CITY_POPULATION_REFRESH_SECONDS
+        try:
+            state = self.session.client.get_city_population(
+                self.session.character["id"]
+            )
+        except (ServerError, AttributeError, KeyError, OSError, TypeError, ValueError):
+            return False
+        self.city_population_count = max(0, int(state.get("population", self.city_population_count)))
+        self.city_upgrade_state = dict(state.get("city_upgrade", {}))
+        return True
+
     def update(self, dt):
+        self._refresh_city_population()
+        if self.workshop_menu_open:
+            now = time.monotonic()
+            queue = self.workshop_state.get("queue", [])
+            elapsed = now - self.workshop_state.get("received_monotonic", now)
+            server_time = self.workshop_state.get("server_time", time.time())
+            for order in queue:
+                order["seconds_left"] = max(0, int(
+                    float(order["finish_at"]) - server_time - elapsed
+                ))
+            if now - self.workshop_last_refresh >= 5:
+                self._refresh_workshop_state()
         if self.chat is not None:
             self.chat.update(dt)
         # 1. Движение персонажа
@@ -1104,7 +1238,7 @@ class CityScene(CityBuildingsMixin, CityRenderMixin, CityModalsMixin, CityHudMix
 
         # 7. Вход в мастерскую при наступлении на дверь (тайл 23/16)
         if pgx == 23 and pgy == 16 and not self.workshop_menu_open:
-            self.workshop_menu_open = True
+            self._open_workshop()
             self.player_target = None
             self.player_state = "idle"
             self.player_x = 22 * self.tile_size + 16
@@ -1233,14 +1367,15 @@ class CityScene(CityBuildingsMixin, CityRenderMixin, CityModalsMixin, CityHudMix
                 if self.show_grid:
                     pygame.draw.rect(screen, (58, 66, 76), rect, 1)
 
-        # 2. Дома жителей у главного замка
-        self._draw_citizen_houses(screen)
-
-        # 3. Объекты города: Главный Замок, Таверна и Кристалл Жизни
+        # 2. Объекты города: Главный Замок, Таверна и Кристалл Жизни
         self._draw_city_objects(screen)
+
+        # 3. Дома жителей поверх фона и позади крепостных стен.
+        self._draw_citizen_houses(screen)
 
         # 4. Внешние крепостные стены и 4 ворот
         self._draw_walls_and_gates(screen)
+        self._draw_city_upgrade_construction(screen)
 
         # 5. Эффекты клика и персонаж
         self._draw_click_effect(screen)

@@ -5,8 +5,57 @@ import math
 CYCLE_DURATION_SEC = 7200
 # Стадии участка внутри цикла (по 30 минут)
 PLOT_STAGE_COUNT = 4
+FARM_RATION_SLOT_BASE = 1000
+FARM_UPGRADES = {
+    "ration": {
+        "name": "Самозахват",
+        "requirement": "Нет",
+        "result": "+1 место на первом поле пшеницы",
+        "silver_cost": 30,
+        "materials": {},
+        "time_seconds": 30 * 60,
+        "plot_index": 0,
+    },
+    "wooden_plough": {
+        "name": "Усиленный деревянный плуг",
+        "requirement": "Нет",
+        "result": "+5% к скорости производства пшеницы",
+        "speed_bonus_percent": 5,
+        "silver_cost": 20,
+        "materials": {"wood": 100},
+        "time_seconds": 60 * 60,
+    },
+    "farm_level_2": {
+        "name": "Улучшить Крестьянское поселение",
+        "requirement": "Самозахват и усиленный деревянный плуг",
+        "result": "Крестьянское поселение — уровень 2",
+        "silver_cost": 50,
+        "materials": {"wood": 200},
+        "time_seconds": 120 * 60,
+        "required_farm_level": 1,
+    },
+    "ration_level_2": {
+        "name": "Раздать пай",
+        "requirement": "Крестьянское поселение — уровень 2",
+        "result": "+1 место на втором поле пшеницы",
+        "silver_cost": 30,
+        "materials": {},
+        "time_seconds": 30 * 60,
+        "plot_index": 1,
+        "required_farm_level": 2,
+    },
+    "wooden_handle": {
+        "name": "Деревянная рукоять",
+        "requirement": "Крестьянское поселение — уровень 2",
+        "result": "+8% к скорости производства пшеницы",
+        "speed_bonus_percent": 8,
+        "silver_cost": 20,
+        "materials": {"wood": 100},
+        "time_seconds": 60 * 60,
+        "required_farm_level": 2,
+    },
+}
 
-# Ресурс: название и секунд на 1 единицу у одного горожанина
 RESOURCES = {
     "wheat": {"label": "Пшеница", "timer_sec": 140},
     "flax": {"label": "Лён", "timer_sec": 480},
@@ -20,7 +69,6 @@ RESOURCES = {
     "leather": {"label": "Кожа", "timer_sec": 460},
     "meat": {"label": "Мясо", "timer_sec": 680},
     "coal": {"label": "Уголь", "timer_sec": 600},
-    # Драгоценные камни не добываются напрямую: выпадают с шансом вместе с углём; каждый весит 1 кг
     "jet": {"label": "Гагат", "weight_kg": 1},
     "malachite": {"label": "Малахит", "weight_kg": 1},
     "topaz": {"label": "Топаз", "weight_kg": 1},
@@ -29,7 +77,6 @@ RESOURCES = {
     "ruby": {"label": "Рубин", "weight_kg": 1},
     "sapphire": {"label": "Сапфир", "weight_kg": 1},
     "diamond": {"label": "Алмаз", "weight_kg": 1},
-    # Обработанные материалы городского склада (пока не производятся)
     "board": {"label": "Доска"},
     "iron_ingot": {"label": "Железо"},
     "steel": {"label": "Сталь"},
@@ -67,9 +114,16 @@ MAX_BUILDING_LEVEL = max(BUILDING_LEVELS)
 BUILDINGS = {
     "farm": {
         "name": "Крестьянское поселение",
+        "levels": {
+            level: {
+                "storage": info["storage"],
+                "max_workers": info["max_workers"] + (1 if level >= 2 else 0),
+            }
+            for level, info in BUILDING_LEVELS.items()
+        },
         "plots": (
             (1, 2, "wheat", "field"),
-            (2, 1, "wheat", "field"),
+            (2, 2, "wheat", "field"),
             (3, 1, "flax", "field"),
             (4, 1, "wheat", "field"), (4, 1, "flax", "field"),
             (5, 2, "wheat", "field"),
@@ -175,12 +229,12 @@ BUILDINGS = {
         "stored": (
             "wood", "board", "flax", "cotton", "leather", "coal", "stone", "iron", "mithril", "obsidian",
             "iron_ingot", "steel", "hard_leather", "thick_leather", "cloth", "stone_block",
+            "jet", "malachite", "topaz", "garnet", "emerald", "ruby", "sapphire", "diamond",
         ),
         "levels": {level: {"storage": storage, "max_workers": 0} for level, storage in
-                   ((1, 2000), (2, 3000), (3, 5000), (4, 7000), (5, 10000))},
+                   ((1, 1000), (2, 3000), (3, 5000), (4, 7000), (5, 10000))},
         "plots": (),
     },
-    # Стойла — общий ресурс фракции; +2 места на каждое улучшение здания.
     "stable": {
         "name": "Конюшня",
         "unit": "стойл",
@@ -264,6 +318,25 @@ def building_resources(building):
     return tuple(dict.fromkeys(resources))
 
 
+def building_resources_for_level(building, level):
+    """Resources available from plots and bonuses unlocked at this building level."""
+    level = max(1, int(level))
+    config = building_config(building)
+    available = set(config.get("stored", ()))
+    for plot_level, _places, resource, _kind in config["plots"]:
+        if plot_level <= level:
+            available.update(_plot_resources((plot_level, _places, resource, _kind)))
+    bonus = config.get("bonus")
+    if bonus:
+        available.update(
+            resource
+            for bonus_level, resources in bonus["weights"].items()
+            if int(bonus_level) <= level
+            for resource in resources
+        )
+    return tuple(resource for resource in building_resources(building) if resource in available)
+
+
 def plot_slot_ranges(building):
     """Для каждого участка — индексы слотов горожан, которые на нём работают."""
     ranges = []
@@ -275,6 +348,11 @@ def plot_slot_ranges(building):
 
 
 def slot_resources(building, slot_index):
+    if building == "farm" and int(slot_index) >= FARM_RATION_SLOT_BASE:
+        plot_index = int(slot_index) - FARM_RATION_SLOT_BASE
+        plots = building_config(building)["plots"]
+        if 0 <= plot_index < len(plots):
+            return _plot_resources(plots[plot_index])
     for plot, slots in zip(building_config(building)["plots"], plot_slot_ranges(building)):
         if slot_index in slots:
             return _plot_resources(plot)

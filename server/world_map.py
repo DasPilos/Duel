@@ -182,9 +182,9 @@ def is_passable(x, y):
     )
 
 
-def terrain_payload():
+def terrain_payload(city_level=1):
     from server.structures import world_structures
     from server.world_roads import roads_payload
 
-    return {"obstacles": [dict(obstacle) for obstacle in OBSTACLES], **world_structures(),
-            "roads": roads_payload()}
+    return {"obstacles": [dict(obstacle) for obstacle in OBSTACLES],
+            **world_structures(city_level), "roads": roads_payload(city_level)}

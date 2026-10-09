@@ -11,14 +11,26 @@ import time
 from copy import deepcopy
 from contextlib import contextmanager
 
-from core.cart_progress import CART_GRADES, DEFAULT_CART_PROGRESS, RESOURCE_ITEM_IDS, cart_stats
+from core.cart_progress import (
+    CART_GRADES,
+    CART_MAX_DURABILITY,
+    CART_REPAIR_WOOD_PER_DURABILITY,
+    CART_WOOD_MAINTENANCE_PER_HOUR,
+    DEFAULT_CART_PROGRESS,
+    RESOURCE_ITEM_IDS,
+    cart_stats,
+)
+from core.city_progression import city_storage_resources
 from core.currency import Currency
 from core.production_buildings import (
     BUILDINGS,
+    FARM_RATION_SLOT_BASE,
+    FARM_UPGRADES,
     RESOURCES,
     building_config,
     building_level_info,
     building_resources,
+    building_resources_for_level,
     horse_purchase_price_silver,
     PRODUCTION_ITEM_IDS,
     slot_resources,
@@ -26,6 +38,7 @@ from core.production_buildings import (
 )
 from server.database import lock_character
 from server.items_database import ItemsDatabase
+from server.city_upgrade import city_upgrade_payload
 
 # Пока в игре одна фракция; когда появится выбор фракции, её нужно хранить у персонажа
 DEFAULT_FACTION = "light"
@@ -116,49 +129,12 @@ def _new_units(building, slot, now, harvest_bonus=None):
 
 
 def distribute_to_storage(storage, incoming, limit):
-    """Accept each produced resource immediately, proportionally when shared storage is nearly full."""
-    free = max(0, limit - sum(storage.values()))
-    total = sum(incoming.values())
-    if total <= free:
-        return dict(incoming)
-    accepted = {resource: incoming[resource] * free // total for resource in incoming}
-    leftover = free - sum(accepted.values())
-    for resource in incoming:
-        if leftover <= 0:
-            break
-        if accepted[resource] < incoming[resource]:
-            accepted[resource] += 1
-            leftover -= 1
-    return accepted
-
-
-def reconcile_player_harvest_claims(connection, key, resource, storage_amount):
-    """Keep personal claim quotas as allocations within, never additions to, shared stock."""
-    claims = connection.execute(
-        f"""SELECT character_id, claimable FROM building_player_resources
-            WHERE {_WHERE} AND resource = %s AND claimable > 0
-            ORDER BY character_id FOR UPDATE""",
-        (*key, resource),
-    ).fetchall()
-    total_claimable = sum(int(row["claimable"]) for row in claims)
-    available = max(0, int(storage_amount))
-    if total_claimable <= available:
-        return
-    allocated = [int(row["claimable"]) * available // total_claimable for row in claims]
-    remainder = available - sum(allocated)
-    for index, row in enumerate(claims):
-        if remainder <= 0:
-            break
-        if allocated[index] < int(row["claimable"]):
-            allocated[index] += 1
-            remainder -= 1
-    for row, amount in zip(claims, allocated):
-        if amount != int(row["claimable"]):
-            connection.execute(
-                f"""UPDATE building_player_resources SET claimable = %s
-                    WHERE {_WHERE} AND character_id = %s AND resource = %s""",
-                (amount, *key, int(row["character_id"]), resource),
-            )
+    """Accept each produced resource up to its own capacity."""
+    capacity = max(0, int(limit))
+    return {
+        resource: min(max(0, int(amount)), max(0, capacity - int(storage.get(resource, 0))))
+        for resource, amount in incoming.items()
+    }
 
 
 # Условие для ключа здания: (world_id, faction, building)
@@ -198,6 +174,49 @@ class ProductionBuildings:
             f"SELECT resource, storage, buffer FROM building_resources WHERE {_WHERE}", key
         ).fetchall()
         return {row["resource"]: row for row in rows}
+
+    @staticmethod
+    def _farm_upgrades(connection, key):
+        row = connection.execute(
+            f"SELECT farm_upgrades_json FROM building_states WHERE {_WHERE}", key
+        ).fetchone()
+        upgrades = {} if row is None else row["farm_upgrades_json"] or {}
+        if isinstance(upgrades, str):
+            upgrades = json.loads(upgrades)
+        return {
+            "ration_plots": sorted(set(int(value) for value in upgrades.get("ration_plots", []))),
+            "wooden_plough": bool(upgrades.get("wooden_plough", False)),
+            "wooden_handle": bool(upgrades.get("wooden_handle", False)),
+        }
+
+    def _farm_upgrade_payload(self, connection, key, state, now):
+        upgrades = self._farm_upgrades(connection, key)
+        finish_at = state["farm_upgrade_finish_at"]
+        return {
+            "completed": {
+                "ration": 0 in upgrades["ration_plots"],
+                "ration_level_2": 1 in upgrades["ration_plots"],
+                "wooden_plough": upgrades["wooden_plough"],
+                "wooden_handle": upgrades["wooden_handle"],
+                "farm_level_2": int(state["level"]) >= 2,
+            },
+            "ration_plots": upgrades["ration_plots"],
+            "wooden_plough": upgrades["wooden_plough"],
+            "wooden_handle": upgrades["wooden_handle"],
+            "active_upgrade_id": state["farm_upgrade_id"],
+            "active_plot_index": state["farm_upgrade_plot_index"],
+            "finish_at": finish_at,
+            "seconds_left": (max(0, int(float(finish_at) - float(now)))
+                             if finish_at is not None else 0),
+        }
+
+    @staticmethod
+    def _city_level(connection, world_id, faction):
+        row = connection.execute(
+            "SELECT castle_level FROM city_population_state WHERE world_id=%s AND faction=%s",
+            (int(world_id), str(faction)),
+        ).fetchone()
+        return 1 if row is None else int(row["castle_level"])
 
     @staticmethod
     def _slots(connection, key):
@@ -255,6 +274,16 @@ class ProductionBuildings:
                    ON CONFLICT (world_id, faction, building, slot_index) DO NOTHING""",
                 (*key, slot_index),
             )
+        if building == "farm":
+            farm_upgrades = self._farm_upgrades(connection, key)
+            for plot_index in farm_upgrades.get("ration_plots", []):
+                extra_slot = FARM_RATION_SLOT_BASE + int(plot_index)
+                connection.execute(
+                    """INSERT INTO building_worker_slots (world_id, faction, building, slot_index)
+                       VALUES (%s, %s, %s, %s)
+                       ON CONFLICT (world_id, faction, building, slot_index) DO NOTHING""",
+                    (*key, extra_slot),
+                )
         if building == "stable":
             for grade, progress in DEFAULT_CART_PROGRESS["grades"].items():
                 connection.execute(
@@ -277,7 +306,145 @@ class ProductionBuildings:
                 f"UPDATE building_states SET level = level + 1, upgrade_finish_at = NULL WHERE {_WHERE}", key
             )
             self._ensure(connection, key, finish_at)
+        if key[2] == "farm":
+            self._complete_farm_upgrade(connection, key, now)
         self._sync_harvest(connection, key, now)
+        if key[2] == "stable":
+            self._complete_cart_production(connection, key, now)
+
+    @staticmethod
+    def _complete_cart_production(connection, key, now):
+        rows = connection.execute(
+            f"""SELECT id, grade FROM stable_cart_production_orders
+                WHERE {_WHERE} AND finish_at <= %s ORDER BY finish_at, id FOR UPDATE""",
+            (*key, float(now)),
+        ).fetchall()
+        for row in rows:
+            connection.execute(
+                f"""UPDATE stable_cart_progress
+                    SET body_count=body_count + 1, body_owned=TRUE,
+                        wood_deposited=0, silver_deposited=0
+                    WHERE {_WHERE} AND grade=%s""",
+                (*key, int(row["grade"])),
+            )
+            connection.execute(
+                "DELETE FROM stable_cart_production_orders WHERE id=%s",
+                (int(row["id"]),),
+            )
+
+    def _complete_farm_upgrade(self, connection, key, now):
+        state = self._state(connection, key)
+        finish_at = state["farm_upgrade_finish_at"]
+        if finish_at is None or float(finish_at) > float(now):
+            return
+        finish_at = float(finish_at)
+        self._sync_harvest(connection, key, finish_at)
+        upgrades = self._farm_upgrades(connection, key)
+        upgrade_id = state["farm_upgrade_id"]
+        if upgrade_id in ("ration", "ration_level_2"):
+            plot_index = int(state["farm_upgrade_plot_index"])
+            upgrades["ration_plots"] = sorted(set(upgrades["ration_plots"]) | {plot_index})
+        elif upgrade_id == "wooden_plough":
+            upgrades["wooden_plough"] = True
+            connection.execute(
+                f"""UPDATE building_worker_slots SET hire_time=%s, credited='{{}}'::jsonb
+                    WHERE {_WHERE} AND occupied=1""",
+                (finish_at, *key),
+            )
+        elif upgrade_id == "wooden_handle":
+            upgrades["wooden_handle"] = True
+            connection.execute(
+                f"""UPDATE building_worker_slots SET hire_time=%s, credited='{{}}'::jsonb
+                    WHERE {_WHERE} AND occupied=1""",
+                (finish_at, *key),
+            )
+        elif upgrade_id == "farm_level_2":
+            connection.execute(
+                f"UPDATE building_states SET level=2 WHERE {_WHERE}", key
+            )
+        connection.execute(
+            f"""UPDATE building_states SET farm_upgrades_json=%s::jsonb,
+                farm_upgrade_id=NULL, farm_upgrade_plot_index=NULL,
+                farm_upgrade_finish_at=NULL WHERE {_WHERE}""",
+            (json.dumps(upgrades, ensure_ascii=False), *key),
+        )
+        self._ensure(connection, key, finish_at)
+
+    def _sync_horse_satiety(self, connection, key, now, horse_ids=None):
+        from server.city_population import IDLE_SATIETY_SECONDS, WORK_SATIETY_SECONDS
+
+        self._ensure(connection, (int(key[0]), key[1], "barn"), now)
+        sql = f"""SELECT id, status, satiety, satiety_progress, satiety_updated_at
+                  FROM stable_horses WHERE {_WHERE}"""
+        params = list(key)
+        if horse_ids is not None:
+            sql += " AND id = ANY(%s)"
+            params.append([int(horse_id) for horse_id in horse_ids])
+        horses = connection.execute(sql + " FOR UPDATE", params).fetchall()
+        if not horses:
+            return
+
+        wheat = connection.execute(
+            """SELECT storage FROM building_resources
+               WHERE world_id=%s AND faction=%s AND building='barn' AND resource='wheat' FOR UPDATE""",
+            key[:2],
+        ).fetchone()
+        wheat_stock = 0 if wheat is None else int(wheat["storage"])
+        initial_wheat = wheat_stock
+        for horse in horses:
+            previous_update = float(horse["satiety_updated_at"] or now)
+            remaining = max(0.0, float(now) - previous_update)
+            rate = (IDLE_SATIETY_SECONDS if horse["status"] == "Отдыхает"
+                    else WORK_SATIETY_SECONDS)
+            satiety = int(horse["satiety"])
+            satiety_progress = float(horse["satiety_progress"] or 0)
+
+            while remaining > 1e-9:
+                if satiety <= 30 and wheat_stock > 0:
+                    portions = min(wheat_stock, math.ceil((100 - satiety) / 10))
+                    wheat_stock -= portions
+                    satiety = min(100, satiety + portions * 10)
+                    satiety_progress = 0
+                    continue
+                if satiety <= 0:
+                    satiety = 0
+                    satiety_progress = 0
+                    break
+
+                threshold = 30 if satiety > 30 else 0
+                time_to_threshold = max(
+                    0.0, (satiety - threshold - satiety_progress) * rate
+                )
+                if remaining >= time_to_threshold:
+                    remaining -= time_to_threshold
+                    satiety = threshold
+                    satiety_progress = 0
+                    continue
+
+                units = satiety_progress + remaining / rate
+                loss = int(units)
+                satiety = max(0, satiety - loss)
+                satiety_progress = units - loss
+                remaining = 0
+
+            if satiety <= 30 and wheat_stock > 0:
+                portions = min(wheat_stock, math.ceil((100 - satiety) / 10))
+                wheat_stock -= portions
+                satiety = min(100, satiety + portions * 10)
+                satiety_progress = 0
+            connection.execute(
+                """UPDATE stable_horses SET satiety=%s, satiety_progress=%s,
+                   satiety_updated_at=%s WHERE id=%s""",
+                (satiety, satiety_progress, float(now), int(horse["id"])),
+            )
+
+        consumed = initial_wheat - wheat_stock
+        if consumed and wheat is not None:
+            connection.execute(
+                """UPDATE building_resources SET storage=storage-%s
+                   WHERE world_id=%s AND faction=%s AND building='barn' AND resource='wheat'""",
+                (consumed, *key[:2]),
+            )
 
     def _sync_harvest(self, connection, key, now):
         """Credit each completed unit directly to shared storage; never queue new buffer."""
@@ -286,13 +453,26 @@ class ProductionBuildings:
         storage = {resource: int(row["storage"]) for resource, row in rows.items()}
         incoming = {resource: int(row["buffer"]) for resource, row in rows.items()}
         added = {}
-        player_added = {}
         level = int(self._state(connection, key)["level"])
         storage_limit = int(building_level_info(level, building)["storage"])
         for slot in self._slots(connection, key):
             if not slot["occupied"] or slot["hire_time"] is None:
                 continue
             harvest_bonus = _harvest_bonus_for_worker(connection, slot["worker_id"])
+            if building == "farm":
+                upgrades = self._farm_upgrades(connection, key)
+                if (upgrades["wooden_plough"] or upgrades["wooden_handle"]) and "wheat" in slot_resources(
+                    building, slot["slot_index"]
+                ):
+                    harvest_bonus = dict(harvest_bonus)
+                    farm_speed_bonus = sum(
+                        int(FARM_UPGRADES[upgrade_id]["speed_bonus_percent"])
+                        for upgrade_id, completed in (
+                            ("wooden_plough", upgrades["wooden_plough"]),
+                            ("wooden_handle", upgrades["wooden_handle"]),
+                        ) if completed
+                    )
+                    harvest_bonus["wheat"] = int(harvest_bonus.get("wheat", 0)) + farm_speed_bonus
             fresh, credited = _new_units(building, slot, now, harvest_bonus)
             for resource, amount in fresh.items():
                 added[resource] = added.get(resource, 0) + amount
@@ -300,8 +480,6 @@ class ProductionBuildings:
                 worker_id = slot["worker_id"] or ""
                 if worker_id.startswith("player:"):
                     character_id = int(worker_id.split(":", 1)[1])
-                    resource_players = player_added.setdefault(resource, {})
-                    resource_players[character_id] = resource_players.get(character_id, 0) + amount
                     connection.execute(
                         """
                         INSERT INTO building_player_resources
@@ -317,53 +495,18 @@ class ProductionBuildings:
                 (json.dumps(credited), *key, slot["slot_index"]),
             )
         if building == "black_pit":
-            for _ in range(added.get("coal", 0)):
+            coal_room = max(0, storage_limit - int(storage.get("coal", 0)))
+            accepted_coal = min(
+                max(0, int(incoming.get("coal", 0))),
+                coal_room,
+            )
+            for _ in range(accepted_coal):
                 bonus = self._bonus_resource(building, level)
                 if bonus:
                     incoming[bonus] = incoming.get(bonus, 0) + 1
 
         accepted = distribute_to_storage(storage, incoming, storage_limit)
         for resource, amount in accepted.items():
-            player_rows = connection.execute(
-                f"""SELECT character_id, buffered FROM building_player_resources
-                    WHERE {_WHERE} AND resource=%s AND (buffered > 0 OR character_id = ANY(%s))
-                    ORDER BY character_id FOR UPDATE""",
-                (*key, resource, list(player_added.get(resource, {}))),
-            ).fetchall()
-            player_buffered = {
-                int(row["character_id"]): int(row["buffered"])
-                for row in player_rows
-            }
-            for character_id, fresh in player_added.get(resource, {}).items():
-                player_buffered[character_id] = player_buffered.get(character_id, 0) + fresh
-            player_total = sum(player_buffered.values())
-            incoming_total = int(incoming.get(resource, 0))
-            player_accepted = (player_total if amount >= incoming_total else
-                               player_total * amount // incoming_total if incoming_total else 0)
-            claims = {
-                character_id: (buffered * player_accepted // player_total if player_total else 0)
-                for character_id, buffered in player_buffered.items()
-            }
-            leftover = player_accepted - sum(claims.values())
-            for character_id, buffered in sorted(player_buffered.items()):
-                if leftover <= 0:
-                    break
-                if claims[character_id] < buffered:
-                    claims[character_id] += 1
-                    leftover -= 1
-            for character_id in player_buffered:
-                claim = claims[character_id]
-                connection.execute(
-                    f"""UPDATE building_player_resources
-                        SET claimable=claimable+%s, buffered=0
-                        WHERE {_WHERE} AND character_id=%s AND resource=%s""",
-                    (claim, *key, character_id, resource),
-                )
-            connection.execute(
-                f"""UPDATE building_player_resources SET buffered=0
-                    WHERE {_WHERE} AND resource=%s""",
-                (*key, resource),
-            )
             connection.execute(
                 f"""UPDATE building_resources SET storage=storage+%s, buffer=0
                     WHERE {_WHERE} AND resource=%s""",
@@ -372,22 +515,36 @@ class ProductionBuildings:
         connection.execute(
             f"UPDATE building_resources SET buffer=0 WHERE {_WHERE}", key
         )
-        connection.execute(
-            f"UPDATE building_player_resources SET buffered=0 WHERE {_WHERE}", key
-        )
 
     def _payload(self, connection, key, character_id, now):
         building = key[2]
         self._sync_harvest(connection, key, now)
         state = self._state(connection, key)
         rows = self._resources(connection, key)
-        for resource, row in rows.items():
-            reconcile_player_harvest_claims(connection, key, resource, row["storage"])
+        city_level = self._city_level(connection, key[0], key[1])
+        accessible_resources = self._accessible_resources(connection, key)
         info = building_level_info(state["level"], building)
+        farm_upgrades = self._farm_upgrades(connection, key) if building == "farm" else None
+        farm_upgrade_progress = self._farm_upgrade_payload(connection, key, state, now) if building == "farm" else None
+        if building == "farm":
+            info = dict(info)
+            info["max_workers"] += len(farm_upgrades["ration_plots"])
         slots = []
         for slot in self._slots(connection, key):
             resources = slot_resources(building, slot["slot_index"])
             harvest_bonus = _harvest_bonus_for_worker(connection, slot["worker_id"])
+            if (building == "farm"
+                    and (farm_upgrades["wooden_plough"] or farm_upgrades["wooden_handle"])
+                    and "wheat" in resources):
+                harvest_bonus = dict(harvest_bonus)
+                farm_speed_bonus = sum(
+                    int(FARM_UPGRADES[upgrade_id]["speed_bonus_percent"])
+                    for upgrade_id, completed in (
+                        ("wooden_plough", farm_upgrades["wooden_plough"]),
+                        ("wooden_handle", farm_upgrades["wooden_handle"]),
+                    ) if completed
+                )
+                harvest_bonus["wheat"] = int(harvest_bonus.get("wheat", 0)) + farm_speed_bonus
             worker_name = slot["worker_id"]
             travel_direction = None
             arrival_at = None
@@ -452,12 +609,6 @@ class ProductionBuildings:
             for slot in slots if slot["occupied"] and not slot["is_travelling"]
             for resource, timer in slot["timer_sec_by_resource"].items()
         ), default=None)
-        player_claim_rows = connection.execute(
-            f"""SELECT resource, claimable FROM building_player_resources
-                WHERE {_WHERE} AND character_id = %s AND claimable > 0""",
-            (*key, int(character_id)),
-        ).fetchall()
-        player_harvest_claims = {row["resource"]: row["claimable"] for row in player_claim_rows}
         player_total_rows = connection.execute(
             f"""SELECT resource, total_produced FROM building_player_resources
                 WHERE {_WHERE} AND character_id = %s AND total_produced > 0""",
@@ -486,15 +637,16 @@ class ProductionBuildings:
                 "total_produced": {resource: player_harvest_totals.get(resource, 0)
                                    for resource in work_resources},
             }
-        storage = {resource: row["storage"] for resource, row in rows.items()}
+        storage = {resource: rows[resource]["storage"] for resource in accessible_resources
+               if resource in rows}
         storage_depositable = {}
         storage_withdrawable = {}
         carry_state = ItemsDatabase.carry_weight_state(connection, character_id)
-        free_storage = max(0, info["storage"] - sum(storage.values()))
-        for resource in building_resources(building):
+        for resource in accessible_resources:
             item_id = STORAGE_ITEM_IDS.get(resource)
             if item_id is not None:
                 in_backpack = self._backpack_amount(connection, character_id, item_id)
+                free_storage = max(0, info["storage"] - int(rows[resource]["storage"]))
                 storage_depositable[resource] = {
                     "item_id": item_id,
                     "in_backpack": in_backpack,
@@ -519,11 +671,14 @@ class ProductionBuildings:
         treasury_silver_available = 0
         backpack_resource_amounts = {}
         if building == "stable":
+            self._sync_horse_satiety(connection, key, now)
             active_convoys = connection.execute(
-                """SELECT id, cart_id, driver_citizen_id, status FROM transport_convoys
+                """SELECT id, cart_id, driver_citizen_id, status, phase, started_at, arrival_at
+                   FROM transport_convoys
                    WHERE world_id = %s AND faction = %s AND status IN ('outbound','blocked')""",
                 key[:2],
             ).fetchall()
+            self._advance_cart_maintenance(connection, key, now, active_convoys)
             convoy_by_cart = {row["cart_id"]: row for row in active_convoys}
             busy_driver_ids = {int(row["driver_citizen_id"]) for row in active_convoys}
             available_cart_drivers = [
@@ -545,32 +700,67 @@ class ProductionBuildings:
             ).fetchone()["count"]
             cart_progress = self._cart_progress(connection, key)
             for grade, progress in cart_progress["grades"].items():
-                if not progress.get("body_owned"):
+                body_count = max(
+                    int(progress.get("body_count", 0)),
+                    1 if progress.get("body_owned") else 0,
+                )
+                if body_count <= 0:
                     continue
                 cart_grade = CART_GRADES[grade]
                 stats = cart_stats(progress.get("upgrades", {}))
-                active_convoy = convoy_by_cart.get(f"cart_grade_{grade}")
-                can_travel = (
-                    active_convoy is None
-                    and resting_horse_count >= int(cart_grade.get("horse_count", 0))
-                    and bool(available_cart_drivers)
-                )
-                available_carts.append({
-                    "id": f"cart_grade_{grade}",
-                    "grade": int(grade),
-                    "name": cart_grade["name"],
-                    "status": ("Ожидает разгрузки" if active_convoy and active_convoy["status"] == "blocked"
-                               else "В пути" if active_convoy else "Свободна"),
-                    "can_travel": can_travel,
-                    "dispatch_available": can_travel,
-                    "sprite_key": cart_grade.get("sprite_key", "light"),
-                    "horse_slots": int(cart_grade.get("horse_count", 0)),
-                    "resource_slots": int(cart_grade.get("resource_slots", 0)),
-                    "capacity_kg": stats["capacity_kg"],
-                    "seconds_per_tile": stats["seconds_per_tile"],
-                    "empty_tiles_per_hour": stats["empty_tiles_per_hour"],
-                    "full_load_speed_penalty_percent": stats["full_load_speed_penalty_percent"],
-                })
+                for instance in range(1, body_count + 1):
+                    cart_id = (f"cart_grade_{grade}" if instance == 1
+                               else f"cart_grade_{grade}~{instance}")
+                    active_convoy = convoy_by_cart.get(cart_id)
+                    wear = progress.get("wear", {}).get(cart_id, {})
+                    durability = max(0.0, min(
+                        float(CART_MAX_DURABILITY),
+                        float(wear.get("durability", CART_MAX_DURABILITY)),
+                    ))
+                    broken = durability <= 0
+                    is_working = (
+                        active_convoy is not None
+                        and (active_convoy.get("phase") or "outbound") != "resting"
+                    )
+                    can_travel = (
+                        not broken
+                        and
+                        active_convoy is None
+                        and resting_horse_count >= int(cart_grade.get("horse_count", 0))
+                        and bool(available_cart_drivers)
+                    )
+                    status = (
+                        "Сломана" if broken else
+                        "Стоит" if active_convoy and active_convoy.get("phase") == "resting" else
+                        "Ожидает разгрузки" if active_convoy and active_convoy["status"] == "blocked" else
+                        "В пути" if active_convoy else "Свободна"
+                    )
+                    available_carts.append({
+                        "id": cart_id,
+                        "grade": int(grade),
+                        "instance": instance,
+                        "name": cart_grade["name"],
+                        "status": status,
+                        "durability": durability,
+                        "max_durability": CART_MAX_DURABILITY,
+                        "broken": broken,
+                        "maintenance_wood_per_hour": (
+                            CART_WOOD_MAINTENANCE_PER_HOUR
+                            if is_working and not broken else 0
+                        ),
+                        "repair_wood_cost": int(math.ceil(
+                            CART_MAX_DURABILITY - durability
+                        )) * CART_REPAIR_WOOD_PER_DURABILITY,
+                        "can_travel": can_travel,
+                        "dispatch_available": can_travel,
+                        "sprite_key": cart_grade.get("sprite_key", "light"),
+                        "horse_slots": int(cart_grade.get("horse_count", 0)),
+                        "resource_slots": int(cart_grade.get("resource_slots", 0)),
+                        "capacity_kg": stats["capacity_kg"],
+                        "seconds_per_tile": stats["seconds_per_tile"],
+                        "empty_tiles_per_hour": stats["empty_tiles_per_hour"],
+                        "full_load_speed_penalty_percent": stats["full_load_speed_penalty_percent"],
+                    })
             level_tables = building_config(building)["levels"]
             upgrade_config = building_config(building)["stall_upgrades"]
             purchased_rows = connection.execute(
@@ -608,7 +798,8 @@ class ProductionBuildings:
             )
             stall_capacity = info["stall_capacity"] + stall_capacity_bonus
             horse_rows = connection.execute(
-                f"""SELECT id, slot_index, name, breed, status, purchase_price_silver
+                f"""SELECT id, slot_index, name, breed, status, purchase_price_silver,
+                           satiety, satiety_progress
                     FROM stable_horses WHERE {_WHERE} ORDER BY id""",
                 key,
             ).fetchall()
@@ -680,17 +871,27 @@ class ProductionBuildings:
                         "name": horses_by_slot[slot_index]["name"],
                         "breed": horses_by_slot[slot_index]["breed"],
                         "status": horses_by_slot[slot_index]["status"],
+                        "satiety": int(horses_by_slot[slot_index]["satiety"]),
+                        "satiety_progress": float(horses_by_slot[slot_index]["satiety_progress"]),
                         "can_travel": horses_by_slot[slot_index]["status"] == "Отдыхает",
                         "purchase_price_silver": horses_by_slot[slot_index]["purchase_price_silver"],
                     },
                 })
             feed_consumption = occupied_stalls * building_config(building)["feed_kg_per_horse_hour"]
+        elif building == "farm":
+            treasury_row = connection.execute(
+                "SELECT treasury_copper FROM city_population_state WHERE world_id=%s AND faction=%s",
+                key[:2],
+            ).fetchone()
+            treasury_silver_available = (0 if treasury_row is None else
+                                         int(treasury_row["treasury_copper"]) // Currency.COPPER_PER_SILVER)
         return {
             "building": building,
             "faction": key[1],
             "server_time": now,
             "level": state["level"],
             "max_workers": info["max_workers"],
+            "farm_upgrades": farm_upgrade_progress,
             "stall_capacity": stall_capacity if building == "stable" else info.get("stall_capacity"),
             "stall_capacity_bonus": stall_capacity_bonus if building == "stable" else 0,
             "stall_slots": stall_slots,
@@ -710,18 +911,22 @@ class ProductionBuildings:
             "feed_consumption_kg_per_hour": feed_consumption,
             "workers": sum(1 for slot in slots if slot["occupied"]),
             "stage": min(
-                3, sum(int(row["storage"]) for row in rows.values()) * 4 // max(1, info["storage"]),
+                max((int(storage.get(resource, 0)) * 4 // max(1, info["storage"])
+                     for resource in accessible_resources), default=0), 3,
             ),
             "next_harvest_seconds": next_harvest_seconds,
             "storage": {**storage, "limit": info["storage"]},
             "storage_total": sum(storage.values()),
+            "storage_full": bool(storage) and all(
+                int(storage.get(resource, 0)) >= info["storage"] for resource in accessible_resources
+            ),
+            "city_upgrade": city_upgrade_payload(connection, key[:2], now),
             "storage_depositable": storage_depositable,
             "storage_withdrawable": storage_withdrawable,
             **carry_state,
-            "warehouse_storage": self._warehouse_storage(connection, key) if building == "stable" else None,
+            "warehouse_storage": self._warehouse_storage(connection, key) if building in ("stable", "farm") else None,
             "worker_slots": slots,
             "player_work": player_work,
-            "player_harvest_claims": player_harvest_claims,
             "player_harvest_totals": player_harvest_totals,
             "resource_timer_sec": {
                 resource: (_resource_timer_sec(resource, player_work_slot.get("harvest_bonus", {}))
@@ -754,6 +959,15 @@ class ProductionBuildings:
             (key[0], key[1]),
         ).fetchall()
         return {row["resource"]: row["storage"] for row in rows}
+
+    def _accessible_resources(self, connection, key):
+        building = key[2]
+        state = self._state(connection, key)
+        return city_storage_resources(
+            building,
+            self._city_level(connection, key[0], key[1]),
+            building_resources_for_level(building, int(state["level"])),
+        )
 
     def _debit_warehouse_items(self, connection, key, item_costs, now):
         costs = {}
@@ -819,8 +1033,8 @@ class ProductionBuildings:
     def _cart_progress(connection, key):
         progress = deepcopy(DEFAULT_CART_PROGRESS)
         rows = connection.execute(
-            f"""SELECT grade, blueprint_owned, body_owned, wood_deposited,
-                       silver_deposited, upgrades_json
+            f"""SELECT grade, blueprint_owned, body_owned, body_count, body_finish_at, wood_deposited,
+                  silver_deposited, upgrades_json, cart_wear_json
                 FROM stable_cart_progress WHERE {_WHERE}""",
             key,
         ).fetchall()
@@ -829,14 +1043,176 @@ class ProductionBuildings:
             upgrades = row["upgrades_json"] or {}
             if isinstance(upgrades, str):
                 upgrades = json.loads(upgrades)
+            wear = row["cart_wear_json"] or {}
+            if isinstance(wear, str):
+                wear = json.loads(wear)
             progress["grades"][grade].update({
                 "blueprint_owned": row["blueprint_owned"],
                 "body_owned": row["body_owned"],
+                "body_count": max(
+                    int(row["body_count"] or 0), 1 if row["body_owned"] else 0
+                ),
+                "body_finish_at": row["body_finish_at"],
                 "wood_deposited": row["wood_deposited"],
                 "silver_deposited": row["silver_deposited"],
                 "upgrades": dict(upgrades),
+                "wear": dict(wear),
             })
+        orders = connection.execute(
+            f"""SELECT id, grade, created_at, finish_at FROM stable_cart_production_orders
+                WHERE {_WHERE} ORDER BY finish_at, id""",
+            key,
+        ).fetchall()
+        for row in orders:
+            grade = str(row["grade"])
+            order = {
+                "order_id": int(row["id"]),
+                "grade": int(row["grade"]),
+                "created_at": float(row["created_at"]),
+                "finish_at": float(row["finish_at"]),
+            }
+            grade_progress = progress["grades"][grade]
+            grade_progress["production_orders"].append(order)
+            current_finish = grade_progress.get("body_finish_at")
+            if current_finish is None or order["finish_at"] < float(current_finish):
+                grade_progress["body_finish_at"] = order["finish_at"]
         return progress
+
+    def _advance_cart_maintenance(self, connection, key, now, active_convoys=None):
+        now = float(now)
+        if active_convoys is None:
+            active_convoys = connection.execute(
+                """SELECT cart_id, status, phase, started_at, arrival_at
+                   FROM transport_convoys WHERE world_id=%s AND faction=%s
+                     AND status IN ('outbound','blocked')""",
+                key[:2],
+            ).fetchall()
+        convoy_by_cart = {row["cart_id"]: row for row in active_convoys}
+        carts = connection.execute(
+            f"""SELECT grade, body_owned, body_count, cart_wear_json
+                FROM stable_cart_progress WHERE {_WHERE} FOR UPDATE""",
+            key,
+        ).fetchall()
+        if not carts:
+            return
+
+        warehouse_key = (int(key[0]), key[1], "warehouse")
+        if convoy_by_cart:
+            self._ensure(connection, warehouse_key, now)
+        wood_row = connection.execute(
+            """SELECT storage FROM building_resources
+                    WHERE world_id=%s AND faction=%s AND building=%s AND resource='wood'
+               FOR UPDATE""",
+            warehouse_key,
+        ).fetchone()
+        wood_available = 0 if wood_row is None else int(wood_row["storage"])
+        wood_spent = 0
+
+        for cart_row in carts:
+            wear_json = cart_row["cart_wear_json"] or {}
+            if isinstance(wear_json, str):
+                wear_json = json.loads(wear_json)
+            wear_json = dict(wear_json)
+            count = max(int(cart_row["body_count"] or 0), 1 if cart_row["body_owned"] else 0)
+            for instance in range(1, count + 1):
+                cart_id = (f"cart_grade_{cart_row['grade']}" if instance == 1
+                           else f"cart_grade_{cart_row['grade']}~{instance}")
+                record = dict(wear_json.get(cart_id, {}))
+                durability = max(0.0, min(
+                    float(CART_MAX_DURABILITY),
+                    float(record.get("durability", CART_MAX_DURABILITY)),
+                ))
+                last_updated = float(record.get("updated_at", now))
+                fraction = max(0.0, float(record.get("wood_fraction", 0.0)))
+                convoy = convoy_by_cart.get(cart_id)
+                if convoy and durability > 0 and (convoy.get("phase") or "outbound") != "resting":
+                    phase_started = float(convoy["started_at"])
+                    work_start = max(last_updated, phase_started)
+                    if convoy["status"] == "blocked":
+                        work_end = now
+                    else:
+                        work_end = min(now, float(convoy["arrival_at"]))
+                    elapsed = max(0.0, work_end - work_start)
+                    due = fraction + elapsed * CART_WOOD_MAINTENANCE_PER_HOUR / 3600
+                    whole_due = int(math.floor(due + 1e-9))
+                    paid = min(whole_due, wood_available)
+                    if paid:
+                        wood_available -= paid
+                        wood_spent += paid
+                    if paid < whole_due:
+                        durability = max(0.0, durability - (due - paid))
+                        fraction = 0.0
+                    else:
+                        fraction = due - whole_due
+                record.update({
+                    "durability": round(durability, 4),
+                    "updated_at": now,
+                    "wood_fraction": round(fraction, 6),
+                })
+                wear_json[cart_id] = record
+            connection.execute(
+                f"""UPDATE stable_cart_progress SET cart_wear_json=%s::jsonb
+                    WHERE {_WHERE} AND grade=%s""",
+                (json.dumps(wear_json), *key, int(cart_row["grade"])),
+            )
+
+        if wood_spent:
+            connection.execute(
+                """UPDATE building_resources SET storage=storage-%s
+                         WHERE world_id=%s AND faction=%s AND building=%s AND resource='wood'""",
+                (wood_spent, *warehouse_key),
+            )
+
+    def repair_cart(self, character_id, cart_id, now=None):
+        now = _timestamp(now)
+        cart_id = str(cart_id)
+        cart_type, separator, instance_value = cart_id.partition("~")
+        try:
+            grade = int(cart_type.rsplit("_", 1)[1])
+            instance = int(instance_value) if separator else 1
+        except (IndexError, ValueError):
+            raise ValueError("Выбрана неизвестная повозка")
+        if instance < 1 or cart_type != f"cart_grade_{grade}":
+            raise ValueError("Выбрана неизвестная повозка")
+
+        with self._transaction(character_id, "stable", now) as (connection, key):
+            self._advance_cart_maintenance(connection, key, now)
+            row = connection.execute(
+                f"""SELECT body_owned, body_count, cart_wear_json FROM stable_cart_progress
+                    WHERE {_WHERE} AND grade=%s FOR UPDATE""",
+                (*key, grade),
+            ).fetchone()
+            if row is None or instance > max(
+                int(row["body_count"] or 0), 1 if row["body_owned"] else 0
+            ):
+                raise ValueError("Эта повозка ещё не куплена")
+            wear = row["cart_wear_json"] or {}
+            if isinstance(wear, str):
+                wear = json.loads(wear)
+            wear = dict(wear)
+            record = dict(wear.get(cart_id, {}))
+            durability = max(0.0, min(
+                float(CART_MAX_DURABILITY),
+                float(record.get("durability", CART_MAX_DURABILITY)),
+            ))
+            missing = max(0, int(math.ceil(CART_MAX_DURABILITY - durability)))
+            if missing <= 0:
+                raise ValueError("Повозка не нуждается в ремонте")
+            wood_cost = missing * CART_REPAIR_WOOD_PER_DURABILITY
+            self._debit_warehouse_items(
+                connection, key, {STORAGE_ITEM_IDS["wood"]: wood_cost}, now,
+            )
+            wear[cart_id] = {
+                "durability": float(CART_MAX_DURABILITY),
+                "updated_at": now,
+                "wood_fraction": 0.0,
+            }
+            connection.execute(
+                f"""UPDATE stable_cart_progress SET cart_wear_json=%s::jsonb
+                    WHERE {_WHERE} AND grade=%s""",
+                (json.dumps(wear), *key, grade),
+            )
+            return self._payload(connection, key, character_id, now)
 
     def contribute_cart(self, character_id, resource, quantity, now=None, source=None):
         raise ValueError(
@@ -851,18 +1227,23 @@ class ProductionBuildings:
         with self._transaction(character_id, "stable", now) as (connection, key):
             config = CART_GRADES[str(grade_id)]
             progress = connection.execute(
-                f"""SELECT wood_deposited, silver_deposited, body_owned
+                f"""SELECT grade
                     FROM stable_cart_progress WHERE {_WHERE} AND grade = %s FOR UPDATE""",
                 (*key, grade_id),
             ).fetchone()
-            if progress["body_owned"]:
-                raise ValueError("Лёгкая повозка уже куплена")
+            queue_count = connection.execute(
+                f"""SELECT COUNT(*) AS count FROM stable_cart_production_orders
+                    WHERE {_WHERE}""",
+                key,
+            ).fetchone()["count"]
+            if int(queue_count) >= 5:
+                raise ValueError("Очередь производства повозок заполнена (5/5)")
             stable_level = int(self._state(connection, key)["level"])
             if stable_level < int(config.get("required_stable_level", 1)):
                 raise ValueError("Недостаточный уровень конюшни для покупки повозки")
 
-            wood_due = max(0, int(config["wood_cost"]) - int(progress["wood_deposited"]))
-            silver_due = max(0, int(config["silver_cost"]) - int(progress["silver_deposited"]))
+            wood_due = int(config["wood_cost"])
+            silver_due = int(config["silver_cost"])
             self._debit_warehouse_items(
                 connection, key, {STORAGE_ITEM_IDS["wood"]: wood_due}, now,
             )
@@ -871,9 +1252,15 @@ class ProductionBuildings:
             )
             connection.execute(
                 f"""UPDATE stable_cart_progress
-                    SET body_owned = TRUE, wood_deposited = %s, silver_deposited = %s
+                    SET wood_deposited = 0, silver_deposited = 0
                     WHERE {_WHERE} AND grade = %s""",
-                (int(config["wood_cost"]), int(config["silver_cost"]), *key, grade_id),
+                (*key, grade_id),
+            )
+            connection.execute(
+                f"""INSERT INTO stable_cart_production_orders
+                    (world_id, faction, building, grade, created_at, finish_at)
+                    VALUES (%s, %s, %s, %s, %s, %s)""",
+                (*key, grade_id, now, now + int(config.get("production_seconds", 40 * 60))),
             )
             return self._payload(connection, key, character_id, now)
 
@@ -920,13 +1307,15 @@ class ProductionBuildings:
             raise ValueError("Некорректный ресурс или количество")
 
         with self._transaction(character_id, building, now) as (connection, key):
+            if resource not in self._accessible_resources(connection, key):
+                raise ValueError("Этот ресурс ещё не открыт для здания или города")
             state = self._state(connection, key)
             storage_rows = self._resources(connection, key)
             stock = storage_rows.get(resource)
             if stock is None:
                 raise ValueError("Ресурс отсутствует в хранилище")
             limit = building_level_info(state["level"], building)["storage"]
-            free_capacity = max(0, limit - sum(row["storage"] for row in storage_rows.values()))
+            free_capacity = max(0, limit - int(stock["storage"]))
             backpack_quantity = self._backpack_amount(connection, character_id, item_id)
             amount = min(quantity, backpack_quantity, free_capacity)
             if amount <= 0:
@@ -952,6 +1341,8 @@ class ProductionBuildings:
             raise ValueError("Некорректный ресурс или количество")
 
         with self._transaction(character_id, building, now) as (connection, key):
+            if resource not in self._accessible_resources(connection, key):
+                raise ValueError("Этот ресурс ещё не открыт для здания или города")
             stock = self._resources(connection, key).get(resource)
             if stock is None or int(stock["storage"]) <= 0:
                 raise ValueError("На складе нет этого ресурса")
@@ -1089,10 +1480,14 @@ class ProductionBuildings:
                 return self._payload(connection, key, character_id, now)
 
             slot = self._slot(connection, key, slot_index)
-            if slot["occupied"] and (slot["worker_id"] or "").startswith("player:"):
-                raise ValueError("Это место занято другим игроком")
+            if slot["occupied"]:
+                if (slot["worker_id"] or "").startswith("player:"):
+                    raise ValueError("Это место занято другим игроком")
+                raise ValueError("Это место уже занято горожанином")
             info = building_level_info(self._state(connection, key)["level"], building)
-            if sum(resource["storage"] for resource in self._resources(connection, key).values()) >= info["storage"]:
+            resource_rows = self._resources(connection, key)
+            if all(int(resource_rows[resource]["storage"]) >= info["storage"]
+                   for resource in slot_resources(building, slot_index)):
                 raise ValueError("Склад переполнен, нельзя начать добычу")
             self._sync_harvest(connection, key, now)
             connection.execute(
@@ -1100,45 +1495,6 @@ class ProductionBuildings:
                     SET occupied = 1, worker_id = %s, hire_time = %s, credited = '{{}}'::jsonb
                     WHERE {_WHERE} AND slot_index = %s""",
                 (player_worker_id, now, *key, slot_index),
-            )
-            return self._payload(connection, key, character_id, now)
-
-    def claim_player_harvest(self, character_id, building, resource, quantity, now=None):
-        now = _timestamp(now)
-        resource = str(resource)
-        quantity = int(quantity)
-        item_id = PRODUCTION_ITEM_IDS.get(resource)
-        if item_id is None or quantity <= 0:
-            raise ValueError("Некорректный ресурс или количество")
-        with self._transaction(character_id, building, now) as (connection, key):
-            if resource not in building_resources(building):
-                raise ValueError("Этот ресурс не производится в здании")
-            claim = connection.execute(
-                f"""SELECT claimable FROM building_player_resources
-                    WHERE {_WHERE} AND character_id = %s AND resource = %s FOR UPDATE""",
-                (*key, int(character_id), resource),
-            ).fetchone()
-            if claim is None or claim["claimable"] <= 0:
-                raise ValueError("Нет выгруженной личной добычи для забора")
-            stock = connection.execute(
-                f"SELECT storage FROM building_resources WHERE {_WHERE} AND resource = %s FOR UPDATE",
-                (*key, resource),
-            ).fetchone()
-            if stock is None or stock["storage"] <= 0:
-                raise ValueError("Ресурс больше не находится на складе")
-            requested = min(quantity, claim["claimable"], stock["storage"])
-            added = ItemsDatabase.add_to_inventory_up_to(connection, character_id, item_id, requested)
-            if added <= 0:
-                raise ValueError("В рюкзаке нет места для этого ресурса")
-            connection.execute(
-                f"""UPDATE building_resources SET storage = storage - %s
-                    WHERE {_WHERE} AND resource = %s""",
-                (added, *key, resource),
-            )
-            connection.execute(
-                f"""UPDATE building_player_resources SET claimable = claimable - %s
-                    WHERE {_WHERE} AND character_id = %s AND resource = %s""",
-                (added, *key, int(character_id), resource),
             )
             return self._payload(connection, key, character_id, now)
 
@@ -1167,6 +1523,58 @@ class ProductionBuildings:
             connection.execute(
                 f"UPDATE building_states SET upgrade_finish_at = %s WHERE {_WHERE}",
                 (now + requirements["time_seconds"], *key),
+            )
+            return self._payload(connection, key, character_id, now)
+
+    def purchase_farm_upgrade(self, character_id, upgrade_id, now=None, plot_index=None):
+        now = _timestamp(now)
+        upgrade_id = str(upgrade_id)
+        upgrade = FARM_UPGRADES.get(upgrade_id)
+        if upgrade is None:
+            raise ValueError("Неизвестное улучшение фермы")
+        with self._transaction(character_id, "farm", now) as (connection, key):
+            state = self._state(connection, key)
+            if state["farm_upgrade_id"] is not None:
+                raise ValueError("Улучшение фермы уже выполняется")
+            if state["upgrade_finish_at"] is not None:
+                raise ValueError("Сначала завершите текущее улучшение здания")
+            progress = self._farm_upgrades(connection, key)
+            required_farm_level = int(upgrade.get("required_farm_level", 1))
+            if int(state["level"]) < required_farm_level:
+                raise ValueError("Это улучшение доступно только на втором уровне поселения")
+            if upgrade_id in ("ration", "ration_level_2"):
+                expected_plot_index = int(upgrade["plot_index"])
+                plot_index = expected_plot_index if plot_index is None else int(plot_index)
+                if plot_index != expected_plot_index:
+                    raise ValueError("Улучшение относится к другому полю пшеницы")
+                if plot_index in progress["ration_plots"]:
+                    raise ValueError("На этом поле уже выдан дополнительный паёк")
+            elif upgrade_id == "wooden_plough":
+                if progress["wooden_plough"]:
+                    raise ValueError("Усиленный деревянный плуг уже установлен")
+            elif upgrade_id == "wooden_handle":
+                if progress["wooden_handle"]:
+                    raise ValueError("Деревянная рукоять уже установлена")
+            elif upgrade_id == "farm_level_2":
+                if int(state["level"]) >= 2:
+                    raise ValueError("Крестьянское поселение уже достигло уровня 2")
+                if 0 not in progress["ration_plots"] or not progress["wooden_plough"]:
+                    raise ValueError("Сначала завершите «Раздать пай» и установите плуг")
+
+            self._debit_treasury(
+                connection, key, Currency.to_copper(silver=int(upgrade["silver_cost"])),
+            )
+            material_costs = {
+                STORAGE_ITEM_IDS[resource]: int(amount)
+                for resource, amount in upgrade["materials"].items()
+            }
+            self._debit_warehouse_items(connection, key, material_costs, now)
+            connection.execute(
+                f"""UPDATE building_states SET farm_upgrade_id=%s,
+                    farm_upgrade_plot_index=%s, farm_upgrade_finish_at=%s
+                    WHERE {_WHERE}""",
+                (upgrade_id, plot_index if upgrade_id in ("ration", "ration_level_2") else None,
+                 now + int(upgrade["time_seconds"]), *key),
             )
             return self._payload(connection, key, character_id, now)
 
@@ -1245,10 +1653,11 @@ class ProductionBuildings:
                 """
                 INSERT INTO stable_horses
                     (world_id, faction, building, slot_index, name, breed,
-                     status, purchase_price_silver, purchased_by, purchased_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                     status, purchase_price_silver, purchased_by, purchased_at,
+                     satiety, satiety_progress, satiety_updated_at)
+                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 100, 0, %s)
                 """,
                 (*key, slot_index, f"Лошадь {horse_count + 1}", "Рабочая", "Отдыхает",
-                 price, int(character_id), now),
+                  price, int(character_id), now, now),
             )
             return self._payload(connection, key, character_id, now)

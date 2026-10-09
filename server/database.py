@@ -316,6 +316,9 @@ class Database:
                 "DELETE FROM characters WHERE id = %s",
                 (character_id,),
             )
+        from server.social import remove_character_presence
+
+        remove_character_presence(character_id)
     
     def delete_character_with_password(self, user_id, character_id, password):
         """Delete a character with password verification"""
@@ -908,6 +911,84 @@ class Database:
                     "created_at": row["created_at"],
                 }
             return None
+
+    def save_battle_archive(self, character_id, opponent_id, outcome, replay):
+        if outcome not in ("win", "draw", "loss"):
+            raise ValueError("Некорректный исход боя")
+        if not isinstance(replay, dict) or not replay.get("id"):
+            raise ValueError("Некорректная запись боя")
+        player = replay.get("player")
+        enemy = replay.get("enemy")
+        if not isinstance(player, dict) or not isinstance(enemy, dict):
+            raise ValueError("В записи боя отсутствуют участники")
+        try:
+            replay_json = json.dumps(replay, ensure_ascii=False, allow_nan=False)
+            player_level = max(1, int(player["level"]))
+            opponent_level = max(1, int(enemy["level"]))
+            turns = max(0, int(replay.get("turns", 0)))
+        except (KeyError, TypeError, ValueError) as error:
+            raise ValueError("Некорректные данные записи боя") from error
+        now = time.time()
+        with self.connection() as connection:
+            character = connection.execute(
+                "SELECT name FROM characters WHERE id=%s AND world_id=%s",
+                (int(character_id), self.world_id),
+            ).fetchone()
+            if character is None:
+                raise ValueError("Персонаж не найден")
+            opponent_character_id = None
+            if opponent_id is not None:
+                opponent_row = connection.execute(
+                    "SELECT id FROM characters WHERE id=%s AND world_id=%s",
+                    (int(opponent_id), self.world_id),
+                ).fetchone()
+                if opponent_row is not None:
+                    opponent_character_id = int(opponent_row["id"])
+            connection.execute(
+                """INSERT INTO battle_archive
+                   (world_id,battle_key,player_character_id,opponent_character_id,
+                    player_name,opponent_name,player_level,opponent_level,winner_name,
+                    outcome,turns,replay_json,created_at)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s)
+                   ON CONFLICT (world_id,battle_key) DO NOTHING""",
+                (self.world_id, str(replay["id"]), int(character_id), opponent_character_id,
+                 character["name"], str(enemy.get("name", "Противник")), player_level,
+                 opponent_level, str(replay.get("winner", "")), outcome, turns,
+                 replay_json, now),
+            )
+            row = connection.execute(
+                "SELECT id FROM battle_archive WHERE world_id=%s AND battle_key=%s",
+                (self.world_id, str(replay["id"])),
+            ).fetchone()
+        return int(row["id"])
+
+    def list_battle_archive(self, limit=50, offset=0):
+        limit = max(1, min(100, int(limit)))
+        offset = max(0, int(offset))
+        with self.connection() as connection:
+            total = int(connection.execute(
+                "SELECT COUNT(*) AS amount FROM battle_archive WHERE world_id=%s",
+                (self.world_id,),
+            ).fetchone()["amount"])
+            rows = connection.execute(
+                """SELECT id,battle_key,player_name,opponent_name,player_level,
+                          opponent_level,winner_name,outcome,turns,created_at
+                   FROM battle_archive WHERE world_id=%s
+                   ORDER BY created_at DESC,id DESC LIMIT %s OFFSET %s""",
+                (self.world_id, limit, offset),
+            ).fetchall()
+        return {"battles": [dict(row) for row in rows], "total": total,
+                "limit": limit, "offset": offset}
+
+    def get_battle_archive(self, archive_id):
+        with self.connection() as connection:
+            row = connection.execute(
+                """SELECT id,battle_key,player_name,opponent_name,player_level,
+                          opponent_level,winner_name,outcome,turns,created_at,replay_json
+                   FROM battle_archive WHERE world_id=%s AND id=%s""",
+                (self.world_id, int(archive_id)),
+            ).fetchone()
+        return None if row is None else dict(row)
 
     @staticmethod
     def _validate_character(character):

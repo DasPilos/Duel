@@ -65,6 +65,7 @@ This creates `client_package.zip`; the running server can serve it at `/download
 - [Contributing, including battle math](CONTRIBUTING.md)
 - [Battle math source map](BATTLE_MATH.md)
 - [Deployment](DEPLOYMENT_CHECKLIST.md)
+- [Latest Release Notes](docs/RELEASE_NOTES_2026-10-09.md)
 - [Documentation index](DOCUMENTATION_INDEX.md)
 - [Z440 monitor](SERVER_MONITOR.md)
 - [Local AI battle commentator](LOCAL_AI_CHAT.md)

@@ -191,11 +191,11 @@ class TavernShop:
                 screen.blit(name_surf, name_rect)
 
                 coin = "gold" if drink["price"] >= 10000 else ("silver" if drink["price"] >= 100 else "copper")
-                draw_item_icon(screen, coin, (name_rect.right + 6, rect.centery - 10), 20)
+                draw_item_icon(screen, coin, (name_rect.right + 6, rect.centery - 16), 32)
 
                 price_text = Currency.format_amount(drink["price"])
                 price_surf = self.small_font.render(price_text, True, (255, 225, 120))
-                screen.blit(price_surf, (name_rect.right + 30, name_rect.top))
+                screen.blit(price_surf, (name_rect.right + 44, name_rect.top))
             
             # Tooltip при наведении
             if self.hovered_drink_index >= 0 and self.hovered_drink_index < len(self.drinks):

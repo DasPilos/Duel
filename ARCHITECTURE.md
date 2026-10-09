@@ -25,6 +25,26 @@ Citizen travel state is persisted in `city_citizens` (`travel_direction`, `arriv
 
 Player presence is separate: social snapshots refresh live player positions in the in-memory presence service. Presence has a TTL and is not a persistent character-position write on every frame.
 
+## City Production and Transport
+
+City population, food balance, work assignments, city upgrades, production storage,
+and transport live in PostgreSQL services under `server/`. Every worker, including
+the player, deposits accepted production into the same building storage. There are
+no personal harvest quotas; storage visibility and transfers are checked against
+both city-level and building-level unlocks.
+
+Farm slots follow the plot ranges in `core/production_buildings.py`. Level 1 has a
+500-unit store and two places on wheat field one. Samozakhvat adds a place there;
+the +5% wooden plough and Samozakhvat unlock farm level 2, whose 800-unit store
+opens wheat field two with two places. Level-two “Раздать пай” adds a place to
+field two. The separate wooden handle adds +8% wheat speed; together with the
+plough the bonus is +13%. The level-two ration slot remains attached to field two.
+
+Stable cart instances are world/faction state. Active convoys consume 2 wood/hour
+from the shared warehouse; idle or resting carts consume none. Durability and repair
+costs are persisted in `stable_cart_progress.cart_wear_json`, and dispatch rejects
+broken carts. Migrations run in order at server startup.
+
 ## Persistence
 
 PostgreSQL is configured by `DATABASE_URL`; `WORLD_ID` defaults to 1. On Windows, libpq reads passwords from `%APPDATA%\postgresql\pgpass.conf`. Passwords, database dumps, `bot_state.json`, and virtual environments do not belong in commits. `cards.sqlite3` is a static client catalog; it is not the authoritative game database.

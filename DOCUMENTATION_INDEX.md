@@ -8,12 +8,16 @@
 - [Contributing](CONTRIBUTING.md): branches, review, battle math, and server changes.
 - [Deployment Checklist](DEPLOYMENT_CHECKLIST.md): GitHub, Z440, and downloadable client release.
 - [Z440 Server Monitor](SERVER_MONITOR.md): host metrics dashboard and console service.
+- [Release Notes 2026-10-09](docs/RELEASE_NOTES_2026-10-09.md): changes since the shared repository/Z440 baseline.
 - [Local AI Chat](LOCAL_AI_CHAT.md): private Ollama setup and asynchronous battle commentary.
 
 ## Systems
 
 - [Battle Math](BATTLE_MATH.md): current implementation sources and executable tests.
 - [City Population](ARCHITECTURE.md#persistence): PostgreSQL-backed shared city state; implementation in `server/city_population.py`.
+- [City System](docs/CITY_SYSTEM.md): city scene, citizen jobs, production, and farm progression.
+- [Server](docs/server.md): PostgreSQL-backed HTTP server, world scope, and service API.
+- [Testing](docs/testing.md): disposable PostgreSQL test setup and release commands.
 - [World Roads](ARCHITECTURE.md#traveling-entities): server road routes and shared travel snapshots.
 - `BATTLE_MATH.md`, `tests/test_card_battle.py`, and `tests/test_physical_effects.py`: battle implementation and tests.
 - `server/migrations/`: ordered PostgreSQL schema history.

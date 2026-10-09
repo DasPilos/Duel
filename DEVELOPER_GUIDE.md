@@ -64,11 +64,40 @@ python -m unittest tests.test_combat tests.test_card_battle tests.test_physical_
 ## Change Boundaries
 ## Production Buildings
 
-Workers produce resources independently on per-unit timers. Each completed unit is written directly to the building's shared faction storage; there is no harvest-cycle buffer. Storage capacity is shared across the building's resources. Units that do not fit are discarded, not queued for later, and player harvest claims are granted only for units accepted into storage. Black-pit gem bonuses roll once per completed coal unit.
+Workers produce resources independently on per-unit timers. Each completed unit is written directly to the building's shared faction storage; there is no harvest-cycle buffer. Storage capacity is shared across the building's resources. Units that do not fit are discarded, not queued for later. Black-pit gem bonuses roll once per completed coal unit.
+
+Player output is shared exactly like citizen output; there are no personal harvest
+shares. Resources can be taken from the common building store through the normal
+withdraw action, subject to the building/city unlocks and backpack capacity.
+
+Farm progression: level 1 has 500 storage and two wheat-field slots. “Самозахват”
+adds a slot to field one; the separate wooden plough adds 5% wheat speed. Both are
+required for farm level 2, which has 800 storage and opens field two with two slots.
+At level 2, “Раздать пай” adds a slot to field two and the wooden handle adds 8%
+wheat speed. The speed bonuses stack. Farm state is stored in
+`building_states.farm_upgrades_json`; the active timer lives on
+`farm_upgrade_id`/`farm_upgrade_finish_at`.
+
+Farm slots use regular plot indices plus `FARM_RATION_SLOT_BASE` bonus indices.
+Keep the second-field bonus index tied to plot index 1 in
+`core/production_buildings.py`, `server/production_buildings.py`, and the
+production window's `plot_slots()` mapping.
+
+## Stable and Transport
+
+Every cart instance stores durability in `stable_cart_progress.cart_wear_json`.
+Active routes consume 2 wood per hour from the shared warehouse; idle/resting carts
+consume none. If the wood balance is insufficient, the unpaid amount reduces
+durability. Broken carts cannot dispatch; repair costs one wood per durability
+point restored. The cart-tab UI shows all instances in a horizontal row.
 
 ## Citizen Rations
 
 Satiety is tracked independently per citizen from 0 to 100%. Idle citizens lose 1% every 150 seconds, citizens traveling to work or driving a convoy lose 1% every 100 seconds, and working citizens lose 1% every 60 seconds. At 30% or below a citizen automatically consumes available barn food toward 100%; partial food restores only its nutrition value (wheat 10%, berries 15%, meat 20%). At 0%, a worker returns to the city and a convoy driver turns the wagon home. Strong hunger then rises by 1% per 60 seconds; food at any point resets strong hunger and restores satiety, while reaching 100% strong hunger marks the citizen dead. Dead citizen rows are retained for convoy history but excluded from active population and work offers. The hourly city tick handles taxes and population growth only; hunger is advanced independently by the 10-second city scheduler and at work/travel state transitions.
+
+## Battle Archive
+
+Online completed duels send one replay record with the battle result. The server stores it idempotently in the world-scoped `battle_archive` table; authenticated clients browse summaries through `GET /api/battles/archive` and retrieve full turn history through `GET /api/battles/archive/{id}`. The character-selection Hall of Fame pages through those records and allows stepping through saved turns. The local `battle_archive/` JSON files remain available for balance analysis.
 
 ## Change Boundaries
 

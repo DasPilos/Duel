@@ -3,10 +3,11 @@
 import pygame
 
 from core import settings
-from core.production_buildings import RESOURCES, building_config, building_level_info
+from core.production_buildings import RESOURCES, building_config, building_level_info, building_resources
 from ui.hud import draw_button
 from ui.catalog_icons import draw_building_icon, draw_item_icon
 from ui.production_building_window import ProductionBuildingWindow
+from ui.storage_meter import draw_storage_meter
 
 STORAGE_VIEW = {"object_id": None, "shape": "none", "harvest_label": "", "plot_names": {}}
 
@@ -28,8 +29,17 @@ class CityStorageWindow(ProductionBuildingWindow):
     def unit(self):
         return building_config(self.building)["unit"]
 
+    def _state(self):
+        state = super()._state()
+        storage = state.get("storage")
+        if storage is not None:
+            self.resources = tuple(
+                resource for resource in building_resources(self.building) if resource in storage
+            )
+        return state
+
     def production_desc(self, level):
-        return f"Вместимость: {building_level_info(level, self.building)['storage']} {self.unit}"
+        return f"Вместимость каждого товара: {building_level_info(level, self.building)['storage']} {self.unit}"
 
     def handle_event(self, event):
         if self.contribution_dialog.is_open:
@@ -111,8 +121,8 @@ class CityStorageWindow(ProductionBuildingWindow):
         m_pos = pygame.mouse.get_pos()
 
         title = self.name if self.state else f"{self.name} (нет связи с сервером)"
-        building_icon = draw_building_icon(screen, self.building, (rect.left + 14, rect.top + 5), 40)
-        title_x = rect.left + 62 if building_icon else rect.left + 24
+        building_icon = draw_building_icon(screen, self.building, (rect.left + 14, rect.top + 9), 32)
+        title_x = rect.left + 54 if building_icon else rect.left + 24
         screen.blit(scene.large_font.render(title, True, (255, 225, 130)), (title_x, rect.top + 16))
         screen.blit(scene.font.render(f"Уровень {self.level()}", True, (215, 205, 170)), (rect.left + 24, rect.top + 56))
         for tab, button, label in (("storage", self.storage_tab, "СКЛАД"), ("upgrade", self.upgrade_tab, "УЛУЧШЕНИЕ")):
@@ -141,31 +151,33 @@ class CityStorageWindow(ProductionBuildingWindow):
         scene = self.scene
         storage = self._state().get("storage", {})
         depositable = self._state().get("storage_depositable", {})
+        city_upgrade = self._state().get("city_upgrade", {})
+        charging_resources = set(city_upgrade.get("charging_resources", []))
         limit = storage.get("limit", building_level_info(self.level(), self.building)["storage"])
         table = pygame.Rect(self.rect.left + 24, curr_y, self.rect.width - 48, 0)
-        row_height = 28
+        row_height = 36
         header = pygame.Rect(table.left, curr_y, table.width, 34)
         pygame.draw.rect(screen, (44, 46, 34), header)
         screen.blit(scene.font.render("Товары:", True, (255, 225, 130)), (header.left + 12, header.top + 6))
-        filled = scene.font.render(f"Заполнен: {self.storage_total()} / {limit}", True, (255, 225, 130))
-        screen.blit(filled, filled.get_rect(midright=(header.right - 12, header.centery)))
         curr_y = header.bottom
         self.storage_deposit_buttons = {}
         self.storage_withdraw_buttons = {}
         for index, resource in enumerate(self.resources):
             row = pygame.Rect(table.left, curr_y, table.width, row_height)
             pygame.draw.rect(screen, (32, 34, 26) if index % 2 else (38, 40, 30), row)
-            draw_item_icon(screen, resource, (row.left + 12, row.top + 3), 22)
-            screen.blit(scene.font.render(RESOURCES[resource]["label"], True, (215, 215, 205)), (row.left + 40, row.top + 3))
+            draw_item_icon(screen, resource, (row.left + 12, row.top + 2), 32)
+            screen.blit(scene.font.render(RESOURCES[resource]["label"], True, (215, 215, 205)), (row.left + 50, row.top + 8))
             amount = int(storage.get(resource, 0))
-            amount_surface = scene.font.render(str(amount), True, (235, 235, 225))
-            screen.blit(amount_surface, amount_surface.get_rect(midright=(row.right - 230, row.centery)))
+            amount_surface = scene.font.render(f"{amount} / {limit}", True, (235, 235, 225))
+            amount_rect = amount_surface.get_rect(midright=(row.right - 230, row.centery))
+            screen.blit(amount_surface, amount_rect)
+            draw_storage_meter(
+                screen, pygame.Rect(row.left + 260, row.centery - 9,
+                                    max(1, amount_rect.left - row.left - 272), 18),
+                amount, limit, resource in charging_resources,
+            )
             available = depositable.get(resource, {})
             maximum = int(available.get("max_deposit", 0))
-            bag_text = scene.small_font.render(
-                f"Рюкзак: {available.get('in_backpack', 0)}", True, (185, 190, 170)
-            )
-            screen.blit(bag_text, (row.left + 260, row.top + 6))
             if amount > 0:
                 button = pygame.Rect(row.right - 220, row.top + 2, 96, row.height - 4)
                 draw_button(screen, button, "ВЗЯТЬ", scene.small_font,

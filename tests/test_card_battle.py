@@ -640,8 +640,9 @@ class TestCardBattle(unittest.TestCase):
             def award_battle_card(_card_keys):
                 return None
 
-            def report_battle_result(self, _fighter, outcome, opponent_level, _opponent_profile=None):
-                self.reported = (outcome, opponent_level)
+            def report_battle_result(self, _fighter, outcome, opponent_level,
+                                     _opponent_profile=None, battle_record=None):
+                self.reported = (outcome, opponent_level, battle_record)
                 return {"currency": {"copper": 20, "silver": 1, "gold": 0}, "xp": 20}
 
             @staticmethod
@@ -657,7 +658,7 @@ class TestCardBattle(unittest.TestCase):
             scene.player.hp = 1
             scene.enemy.hp = 0
 
-            with patch("scenes.duel_scene.record_battle"):
+            with patch("scenes.duel_scene.write_battle_record"):
                 scene.finish_battle()
             scene.save_online_character()
 
@@ -666,6 +667,7 @@ class TestCardBattle(unittest.TestCase):
                 {"copper": 20, "silver": 1, "gold": 0},
             )
             self.assertEqual(session.reported[0], "win")
+            self.assertEqual(session.reported[2]["player"]["name"], "Игрок")
         finally:
             pygame.quit()
 

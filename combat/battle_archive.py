@@ -18,9 +18,8 @@ def _fighter_snapshot(fighter):
     }
 
 
-def record_battle(battle, *, source, extra=None):
-    """Write one finished Battle as a JSON file under battle_archive/."""
-    ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
+def build_battle_record(battle, *, source, extra=None):
+    """Return the portable JSON payload for a finished battle."""
     record = {
         "battle_version": 2 if hasattr(battle, "hands") else 1,
         "id": uuid.uuid4().hex,
@@ -40,9 +39,20 @@ def record_battle(battle, *, source, extra=None):
         record["history"] = battle.history
     if extra:
         record.update(extra)
+    return record
+
+
+def write_battle_record(record):
+    """Write one battle payload under battle_archive/."""
+    ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
     path = ARCHIVE_DIR / f"{int(record['timestamp'])}_{record['id']}.json"
     path.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
     return path
+
+
+def record_battle(battle, *, source, extra=None):
+    """Build and write one finished Battle under battle_archive/."""
+    return write_battle_record(build_battle_record(battle, source=source, extra=extra))
 
 
 def load_battles():

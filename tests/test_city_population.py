@@ -1,3 +1,4 @@
+import json
 import time
 import unittest
 
@@ -19,6 +20,13 @@ class CityPopulationTests(unittest.TestCase):
     def tearDown(self):
         drop_test_database(self.database)
 
+    def _set_city_level(self, level):
+        with self.database.connection() as connection:
+            connection.execute(
+                "UPDATE city_population_state SET castle_level=%s WHERE world_id=%s AND faction='light'",
+                (int(level), self.database.world_id),
+            )
+
     def test_castle_starts_with_four_citizens_and_level_one_capacity_ten(self):
         state = self.city.get_state(self.character_id)
         self.assertEqual(state["castle_name"], "Замок Радбурка")
@@ -26,6 +34,96 @@ class CityPopulationTests(unittest.TestCase):
         self.assertEqual((state["population"], state["population_capacity"]), (4, 10))
         self.assertTrue(all(citizen["satiety"] == 100 for citizen in state["citizens"]))
         self.assertEqual(state["worksites"][0]["building"], "farm")
+
+    def test_governor_hourly_consumption_includes_horses_and_unlocked_foods(self):
+        now = time.time()
+        self.city.get_state(self.character_id, now=now)
+        with self.database.connection() as connection:
+            connection.execute(
+                "UPDATE city_population_state SET treasury_copper=1000 "
+                "WHERE world_id=%s AND faction='light'",
+                (self.database.world_id,),
+            )
+        horse_state = ProductionBuildings(self.database).purchase_horse(
+            self.character_id, 0, now=now + 1,
+        )
+        self.assertEqual(horse_state["stall_slots"][0]["horse"]["status"], "Отдыхает")
+        resting = self.city.get_state(self.character_id, now=now + 1)
+        self.assertEqual(resting["food_consumption_per_hour"], {"wheat": 12.0})
+
+        with self.database.connection() as connection:
+            connection.execute(
+                "UPDATE stable_horses SET status='В пути' WHERE world_id=%s AND faction='light'",
+                (self.database.world_id,),
+            )
+        travelling = self.city.get_state(self.character_id, now=now + 2)
+        self.assertEqual(travelling["food_consumption_per_hour"], {"wheat": 15.6})
+
+        self._set_city_level(2)
+        leveled = self.city.get_state(self.character_id, now=now + 3)
+        self.assertIn("wheat", leveled["food_consumption_per_hour"])
+        self.assertIn("berries", leveled["food_consumption_per_hour"])
+        self.assertNotIn("meat", leveled["food_consumption_per_hour"])
+
+    def test_governor_reports_food_income_and_weighted_trend(self):
+        now = 10000
+        state = self.city.get_state(self.character_id, now)
+        self.assertEqual(state["food_income_per_hour"]["wheat"], 0)
+        self.assertEqual(state["food_trend"]["wheat"], "deficit")
+
+        self.city.production.hire_worker(
+            self.character_id, "farm", 0, f"player:{self.character_id}", now,
+        )
+        state = self.city.get_state(self.character_id, now + 1)
+        self.assertAlmostEqual(state["food_income_per_hour"]["wheat"], 3600 / 140)
+        self.assertEqual(state["food_trend"]["wheat"], "surplus")
+
+        with self.database.connection() as connection:
+            connection.execute(
+                """UPDATE building_resources SET storage=710
+                   WHERE world_id=%s AND faction='light' AND building='barn' AND resource='wheat'""",
+                (self.database.world_id,),
+            )
+        state = self.city.get_state(self.character_id, now + 2)
+        self.assertEqual(state["food_trend"]["wheat"], "upgrade_ready")
+
+    def test_governor_reports_wood_income_and_city_upgrade_drain(self):
+        now = 10000
+        self.city.get_state(self.character_id, now)
+        self.city.production.hire_worker(
+            self.character_id, "lumber_camp", 0, f"player:{self.character_id}", now,
+        )
+        state = self.city.get_state(self.character_id, now + 1)
+        self.assertAlmostEqual(state["city_resource_income_per_hour"]["wood"], 15)
+        self.assertEqual(state["city_resource_consumption_per_hour"].get("wood", 0), 0)
+        self.assertEqual(state["city_resource_trend"]["wood"], "surplus")
+
+        with self.database.connection() as connection:
+            connection.execute(
+                """UPDATE building_resources SET storage=710
+                   WHERE world_id=%s AND faction='light' AND building='warehouse' AND resource='wood'""",
+                (self.database.world_id,),
+            )
+        state = self.city.get_state(self.character_id, now + 2)
+        self.assertEqual(state["city_resource_trend"]["wood"], "upgrade_ready")
+
+        cycle = {
+            "active": True,
+            "started_at": now + 10,
+            "finish_at": now + 3610,
+            "tick_index": 0,
+            "rate_percent": 12,
+            "resources": {"wood": {"per_tick": 50}},
+        }
+        with self.database.connection() as connection:
+            connection.execute(
+                """UPDATE city_population_state SET city_upgrade_cycle=%s::jsonb
+                   WHERE world_id=%s AND faction='light'""",
+                (json.dumps(cycle), self.database.world_id),
+            )
+        state = self.city.get_state(self.character_id, now + 3)
+        self.assertEqual(state["city_resource_consumption_per_hour"]["wood"], 200)
+        self.assertEqual(state["city_resource_trend"]["wood"], "deficit")
 
     def test_full_meal_matches_requested_food_values(self):
         self.assertEqual(
@@ -70,6 +168,26 @@ class CityPopulationTests(unittest.TestCase):
         working_id, traveling_id = [row["id"] for row in state["citizens"][:2]]
         with self.database.connection() as connection:
             connection.execute(
+                """UPDATE building_worker_slots SET occupied=1,worker_id=%s
+                   WHERE world_id=%s AND faction='light' AND building='farm' AND slot_index=0""",
+                (f"citizen:{working_id}", self.database.world_id),
+            )
+            connection.execute(
+                """UPDATE building_worker_slots SET occupied=1,worker_id=%s
+                   WHERE world_id=%s AND faction='light' AND building='farm' AND slot_index=1""",
+                (f"citizen:{traveling_id}", self.database.world_id),
+            )
+            connection.execute(
+                """UPDATE building_worker_slots SET occupied=1,worker_id=%s
+                   WHERE world_id=%s AND faction='light' AND building='farm' AND slot_index=0""",
+                (f"citizen:{working_id}", self.database.world_id),
+            )
+            connection.execute(
+                """UPDATE building_worker_slots SET occupied=1,worker_id=%s
+                   WHERE world_id=%s AND faction='light' AND building='farm' AND slot_index=1""",
+                (f"citizen:{traveling_id}", self.database.world_id),
+            )
+            connection.execute(
                 """UPDATE city_citizens SET satiety=100,satiety_progress=0,
                    satiety_updated_at=%s,working=TRUE,job_building='farm',job_slot=0,
                    travel_direction=NULL,arrival_at=NULL WHERE id=%s""",
@@ -109,7 +227,21 @@ class CityPopulationTests(unittest.TestCase):
         citizens = {row["id"]: row for row in state["citizens"]}
         self.assertEqual(citizens[citizen_id]["satiety"], 100)
         self.assertEqual(sum(row["satiety"] for row in state["citizens"] if row["id"] != citizen_id), 3 * 99)
-        self.assertEqual(state["food_storage"], {"wheat": 0, "berries": 0, "meat": 0})
+        self.assertEqual(state["food_storage"], {"wheat": 0})
+
+    def test_level_one_city_does_not_consume_locked_barn_food(self):
+        now = time.time()
+        self.city.get_state(self.character_id, now)
+        with self.database.connection() as connection:
+            connection.execute(
+                """UPDATE building_resources SET storage=10 WHERE world_id=%s AND faction='light'
+                   AND building='barn' AND resource IN ('berries','meat')""",
+                (self.database.world_id,),
+            )
+        with self.database.connection() as connection:
+            self.assertEqual(
+                self.city._food_stock(connection, self.database.world_id), {"wheat": 0}
+            )
 
     def test_food_replaces_strong_hunger_with_partial_satiety(self):
         now = time.time()
@@ -177,6 +309,7 @@ class CityPopulationTests(unittest.TestCase):
     def test_hourly_tick_grows_city_without_forcing_a_meal(self):
         now = time.time()
         state = self.city.get_state(self.character_id, now)
+        self._set_city_level(3)
         tick_at = int(now // 3600) * 3600
         with self.database.connection() as connection:
             connection.execute(
@@ -264,7 +397,7 @@ class CityPopulationTests(unittest.TestCase):
         state = self.city.get_state(self.character_id, now)
 
         self.assertEqual(state["population"], 5)
-        self.assertEqual(state["food_storage"], {"wheat": 40, "berries": 0, "meat": 0})
+        self.assertEqual(state["food_storage"], {"wheat": 40})
         elapsed_percent = int((now - tick_at) // 150)
         self.assertTrue(all(citizen["satiety"] == 76 - elapsed_percent
                     for citizen in state["citizens"][:4]))
@@ -343,6 +476,7 @@ class CityPopulationTests(unittest.TestCase):
     def test_threshold_meal_refills_then_individual_decay_resumes(self):
         now = float(int(time.time() // 3600) * 3600 + 30)
         self.city.get_state(self.character_id, now)
+        self._set_city_level(3)
         tick_at = int(now // 3600) * 3600
         with self.database.connection() as connection:
             connection.execute(
@@ -412,6 +546,29 @@ class CityPopulationTests(unittest.TestCase):
         state = self.city.get_state(self.character_id, now + 24)
         citizen = next(row for row in state["citizens"] if row["id"] == citizen_id)
         self.assertEqual(citizen["work_status"], "Свободен")
+
+    def test_population_clears_replaced_citizen_assignment(self):
+        now = 10000
+        state = self.city.get_state(self.character_id, now)
+        citizen_id = state["citizens"][0]["id"]
+        with self.database.connection() as connection:
+            connection.execute(
+                """UPDATE building_worker_slots SET occupied=1,worker_id=%s
+                   WHERE world_id=%s AND faction='light' AND building='farm' AND slot_index=0""",
+                (f"player:{self.character_id}", self.database.world_id),
+            )
+            connection.execute(
+                """UPDATE city_citizens SET job_building='farm',job_slot=0,working=TRUE,
+                   arrival_at=%s,travel_direction='outbound' WHERE id=%s""",
+                (now + 3600, citizen_id),
+            )
+
+        state = self.city.get_state(self.character_id, now + 1)
+        citizen = next(row for row in state["citizens"] if row["id"] == citizen_id)
+        farm = next(site for site in state["worksites"] if site["building"] == "farm")
+        self.assertIsNone(citizen["job_building"])
+        self.assertEqual(citizen["work_status"], "Свободен")
+        self.assertEqual(farm["free_slots"], [1])
 
     def test_legacy_production_workers_are_counted_as_castle_citizens(self):
         now = time.time()

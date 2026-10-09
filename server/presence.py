@@ -114,6 +114,16 @@ def get_character_presence(character_id):
                  if int(item["character_id"]) == int(character_id)), None)
 
 
+def remove_character_presence(character_id):
+    character_id = int(character_id)
+    removed = False
+    for token in list(PRESENCE):
+        if int(PRESENCE[token]["character_id"]) == character_id:
+            del PRESENCE[token]
+            removed = True
+    return removed
+
+
 def update_afk_character(character):
     cleanup()
     for item in PRESENCE.values():

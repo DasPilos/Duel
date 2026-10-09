@@ -313,7 +313,8 @@ class GameClient:
         )
 
     def report_battle_result(self, character_id, outcome, opponent_level, hp, mp,
-                             opponent_id=None, opponent_hp=None, opponent_mp=None):
+                             opponent_id=None, opponent_hp=None, opponent_mp=None,
+                             battle_record=None):
         payload = {
             "character_id": character_id,
             "outcome": outcome,
@@ -327,12 +328,25 @@ class GameClient:
                 "opponent_hp": int(opponent_hp),
                 "opponent_mp": int(opponent_mp),
             })
+        if battle_record is not None:
+            payload["battle_record"] = battle_record
         return self._request(
             "POST",
             "/api/battle/result",
             payload,
             authenticated=True,
         )
+
+    def list_battle_archive(self, limit=50, offset=0):
+        query = urlencode({"limit": max(1, min(100, int(limit))), "offset": max(0, int(offset))})
+        return self._request(
+            "GET", f"/api/battles/archive?{query}", authenticated=True,
+        )
+
+    def get_battle_archive_record(self, archive_id):
+        return self._request(
+            "GET", f"/api/battles/archive/{int(archive_id)}", authenticated=True,
+        )["battle"]
 
     def get_card_collection(self, character_id):
         return self._request(

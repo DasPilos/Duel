@@ -14,8 +14,9 @@ from server.forge import Forge
 from server import maintenance, social
 from server.world import run_bot_battle_tick
 from core.production_buildings import BUILDINGS
-from server.production_buildings import ProductionBuildings
+from server.production_buildings import DEFAULT_FACTION, ProductionBuildings
 from server.city_population import CityPopulation
+from server.city_upgrade import city_upgrade_payload
 from server.ai_commentator import enqueue_battle_comment, prewarm_local_model
 from server.world_events import run_world_event_watcher
 from server.transport import TransportService
@@ -157,7 +158,10 @@ class GameRequestHandler(BaseHTTPRequestHandler):
         xp = battle_xp(character["level"], opponent_level, outcome)
         apply_xp(fighter, xp, restore_hp=False)
 
-        copper, silver = battle_currency_reward(character["level"]) if outcome == "win" else (0, 0)
+        copper, silver = (
+            battle_currency_reward(character["level"], opponent_level)
+            if outcome == "win" else (0, 0)
+        )
         currency = Currency.from_dict(character)
         currency.add(copper, silver, 0)
         saved = self.database.save_character(user_id, character_id, {
@@ -171,12 +175,19 @@ class GameRequestHandler(BaseHTTPRequestHandler):
             "mp": max(0, min(int(body.get("mp", character["mp"])), character["max_mp"])),
         })
         afk_result = self._apply_afk_defender_result(character_id, body)
+        battle_archive_id = None
+        replay = body.get("battle_record")
+        if replay is not None:
+            battle_archive_id = self.database.save_battle_archive(
+                character_id, body.get("opponent_id"), outcome, replay,
+            )
         enqueue_battle_comment(self.database, character_id, body.get("opponent_id"), outcome)
         return {
             "character": saved,
             "xp": xp,
             "currency": {"copper": copper, "silver": silver, "gold": 0},
             "afk_opponent": afk_result,
+            "battle_archive_id": battle_archive_id,
         }
 
     def _apply_afk_defender_result(self, attacker_id, body):
@@ -354,6 +365,22 @@ class GameRequestHandler(BaseHTTPRequestHandler):
             if path == "/api/server/status":
                 self._handle_server_status()
                 return
+            if path == "/api/battles/archive":
+                self.database.user_id_by_token(self._token())
+                query = self._query()
+                limit = int(query.get("limit", [50])[0])
+                offset = int(query.get("offset", [0])[0])
+                self._send(200, self.database.list_battle_archive(limit, offset))
+                return
+            if path.startswith("/api/battles/archive/"):
+                self.database.user_id_by_token(self._token())
+                archive_id = int(path.rsplit("/", 1)[1])
+                battle = self.database.get_battle_archive(archive_id)
+                if battle is None:
+                    self._send(404, {"error": "Запись боя не найдена"})
+                else:
+                    self._send(200, {"battle": battle})
+                return
             if path == "/download/client":
                 self._send_client_download()
                 return
@@ -368,7 +395,19 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                 return
             if path == "/api/map/terrain":
                 self.database.user_id_by_token(self._token())
-                self._send(200, {"terrain": terrain_payload()})
+                with self.database.connection() as connection:
+                    state = connection.execute(
+                        "SELECT castle_level FROM city_population_state WHERE world_id=%s AND faction=%s",
+                        (self.database.world_id, DEFAULT_FACTION),
+                    ).fetchone()
+                city_level = 1 if state is None else int(state["castle_level"])
+                with self.database.connection() as connection:
+                    city_visual_state = city_upgrade_payload(
+                        connection, (self.database.world_id, DEFAULT_FACTION), time.time()
+                    )
+                terrain = terrain_payload(city_level)
+                terrain["city_visual_state"] = city_visual_state
+                self._send(200, {"terrain": terrain})
                 return
             if path == "/api/city/structures":
                 self.database.user_id_by_token(self._token())
@@ -678,10 +717,6 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                     state = buildings.fire_worker(character_id, building, body.get("slot_index"))
                 elif action == "workers/player/toggle":
                     state = buildings.toggle_player_worker(character_id, building, body.get("slot_index"))
-                elif action == "player-harvest/claim":
-                    state = buildings.claim_player_harvest(
-                        character_id, building, body.get("resource"), body.get("quantity", 0)
-                    )
                 elif action == "storage/deposit":
                     state = buildings.deposit_to_storage(
                         character_id, building, body.get("resource"), body.get("quantity", 0)
@@ -697,6 +732,10 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                     )
                 elif action == "upgrade/start":
                     state = buildings.start_upgrade(character_id, building)
+                elif action == "farm/upgrade" and building == "farm":
+                    state = buildings.purchase_farm_upgrade(
+                        character_id, body.get("upgrade_id"),
+                    )
                 elif action == "stall-upgrade/contribute" and building == "stable":
                     state = buildings.contribute_stall_upgrade(
                         character_id, body.get("upgrade_id"), body.get("resource"),
@@ -711,6 +750,8 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                     )
                 elif action == "cart/purchase" and building == "stable":
                     state = buildings.purchase_cart(character_id, body.get("grade", 1))
+                elif action == "cart/repair" and building == "stable":
+                    state = buildings.repair_cart(character_id, body.get("cart_id", ""))
                 elif action == "transport/dispatch" and building == "stable":
                     convoy = TransportService(self.database).dispatch(character_id, body)
                     state = ProductionBuildings(self.database).get_state(character_id, "stable")

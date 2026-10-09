@@ -146,6 +146,15 @@ class ForgeItemsTest(unittest.TestCase):
         c2_id = char2["id"]
         self.db.save_character(user2["id"], c2_id, {**char2, "silver": 50, "copper": 50})
 
+        with self.db.connection() as connection:
+            for character_id in (c1_id, c2_id):
+                connection.execute(
+                    "UPDATE characters SET stats_json=%s WHERE id=%s",
+                    (json.dumps({"strength": 100, "agility": 3, "intuition": 3,
+                                 "wisdom": 3, "intellect": 3, "harmony": 3, "endurance": 3}),
+                     character_id),
+                )
+
         # Give 30 wood to char1 (item 60)
         self.items_db.add_to_inventory(c1_id, 60, 30)
         # Give 10 wood to char2

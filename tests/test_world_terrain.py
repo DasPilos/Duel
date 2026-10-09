@@ -14,6 +14,49 @@ from tests.fixtures import create_test_database, drop_test_database, running_ser
 
 
 class WorldTerrainTests(unittest.TestCase):
+    def test_returning_wagon_hover_shows_cargo_weight_and_reverse_progress(self):
+        from types import SimpleNamespace
+        from ui.map_travel import _route_progress_percent, draw_mobile_hover_card
+
+        self.assertEqual(_route_progress_percent({
+            "direction": "returning", "travel_seconds": 120, "eta_seconds": 120,
+        }), 100)
+        self.assertEqual(_route_progress_percent({
+            "direction": "returning", "travel_seconds": 120, "eta_seconds": 0,
+        }), 0)
+
+        pygame.init()
+        pygame.display.set_mode((640, 480), pygame.HIDDEN)
+        rendered = []
+        font = pygame.font.SysFont(None, 18)
+
+        class Recorder:
+            def render(self, text, *args):
+                rendered.append(str(text))
+                return font.render(text, *args)
+
+            def __getattr__(self, name):
+                return getattr(font, name)
+
+        scene = SimpleNamespace(small_font=Recorder())
+        entity = {
+            "entity_kind": "wagon", "cart_name": "Лёгкая повозка",
+            "cart_sprite_key": "light", "movement_text": "Возвращается в город",
+            "route_name": "Крестьянское поселение", "direction": "returning",
+            "progress_percent": 100, "travel_seconds": 120, "eta_seconds": 120,
+            "phase": "returning", "cargo_kg": 300,
+            "cargo": [{"resource_id": "wheat", "quantity": 150, "unit_weight_kg": 2}],
+        }
+        try:
+            draw_mobile_hover_card(scene, pygame.Surface((640, 480)), entity)
+        finally:
+            pygame.quit()
+
+        self.assertIn("Лёгкая повозка", rendered)
+        self.assertIn("Груз: Пшеница ×150 · общий вес 300 кг", rendered)
+        self.assertIn("Путь в город: 100%", rendered)
+        self.assertFalse(any(text.startswith("Экипаж:") or text.startswith("Лошади:") for text in rendered))
+
     def test_resting_pinned_convoy_hover_shows_rest_not_returning(self):
         from ui.map_travel import traveling_entities
 
@@ -128,8 +171,7 @@ class WorldTerrainTests(unittest.TestCase):
         self.assertTrue(is_passable(400, 3000))
         self.assertTrue(is_passable(1778, 2550))
         self.assertTrue(is_passable(1400, 3600))
-        # Вход в лагерь лесорубов остаётся снаружи леса
-        self.assertTrue(is_passable(1232, 3664))
+        self.assertTrue(is_passable(1488, 2640))
         forest = next(obstacle for obstacle in OBSTACLES if obstacle["id"] == "forest_1")
         self.assertGreater(len(forest["trees"]), 300)
         points = forest["points"]
@@ -138,6 +180,28 @@ class WorldTerrainTests(unittest.TestCase):
             turn = abs(math.atan2(cy - by, cx - bx) - math.atan2(by - ay, bx - ax))
             turn = min(turn, 2 * math.pi - turn)
             self.assertLess(math.degrees(turn), 45)
+
+    def test_lumber_camp_moves_north_entrance_and_stump_clearcut_follow_forest(self):
+        camp = next(obj for obj in WORLD_OBJECTS if obj["id"] == "lumber_camp")
+        self.assertEqual((camp["tile_x"], camp["tile_y"], camp["tile_w"], camp["tile_h"]),
+                         (41, 83, 10, 10))
+        self.assertEqual(camp["rotation"], 180)
+        self.assertEqual(camp["entrance_tile"], [46, 83])
+        self.assertEqual(camp["approach_pos"], [1488, 2640])
+        self.assertTrue(is_passable(*camp["approach_pos"]))
+
+        forest = next(obstacle for obstacle in OBSTACLES if obstacle["id"] == "forest_1")
+        stump_tiles = {tuple(tile) for tile in camp["stump_tiles"]}
+        self.assertEqual(len(stump_tiles), 10)
+        self.assertTrue(all(93 <= y <= 97 for _x, y in stump_tiles))
+        self.assertTrue(all(point_in_polygon((x * 32 + 16, y * 32 + 16), forest["points"])
+                            for x, y in stump_tiles))
+
+        routes = roads_payload(city_level=4)["routes"]
+        route = next(row for row in routes if row["building_id"] == "lumber_camp")
+        route_tiles = {tuple(tile) for tile in route["tiles"]}
+        self.assertEqual(route["tiles"][-1], [46, 82])
+        self.assertFalse(route_tiles & stump_tiles)
 
     def test_hills_at_edges_huge_mountains_in_center(self):
         massif = next(obstacle for obstacle in OBSTACLES if obstacle["id"] == "mountains_1")
@@ -170,7 +234,7 @@ class WorldTerrainTests(unittest.TestCase):
             self.assertLess(math.degrees(turn), 45)
 
     def test_country_roads_connect_each_building_to_nearest_noncentral_gate(self):
-        roads = roads_payload()
+        roads = roads_payload(city_level=4)
         routes = {route["building_id"]: route for route in roads["routes"]}
         self.assertEqual(set(routes), set(COUNTRY_BUILDINGS))
         self.assertEqual(set(CITY_GATES), {"north", "west", "south"})
@@ -204,6 +268,25 @@ class WorldTerrainTests(unittest.TestCase):
         self.assertEqual({tuple(tile) for tile in roads["tiles"]},
                          {tuple(tile) for route in roads["routes"] for tile in route["tiles"]})
 
+    def test_city_level_filters_country_objects_and_roads(self):
+        level_one = terrain_payload(city_level=1)
+        self.assertEqual(
+            {obj["id"] for obj in level_one["objects"] if obj["id"] in COUNTRY_BUILDINGS},
+            {"wheat_farm", "lumber_camp"},
+        )
+        self.assertEqual(
+            {route["building_id"] for route in level_one["roads"]["routes"]},
+            {"wheat_farm", "lumber_camp"},
+        )
+        self.assertEqual(
+            {route["building_id"] for route in roads_payload(city_level=2)["routes"]},
+            {"wheat_farm", "lumber_camp", "mountain_rift"},
+        )
+        self.assertEqual(
+            {route["building_id"] for route in roads_payload(city_level=3)["routes"]},
+            {"wheat_farm", "lumber_camp", "mountain_rift", "barnyard"},
+        )
+
     def test_structures_come_from_server(self):
         database = create_test_database()
         try:
@@ -215,8 +298,14 @@ class WorldTerrainTests(unittest.TestCase):
         finally:
             drop_test_database(database)
         world_ids = [obj["id"] for obj in terrain["objects"]]
-        for object_id in ("wheat_farm", "lumber_camp", "mountain_rift", "barnyard", "black_pit", "town_radburg"):
+        for object_id in ("wheat_farm", "lumber_camp", "town_radburg"):
             self.assertIn(object_id, world_ids)
+        for object_id in ("mountain_rift", "barnyard", "black_pit"):
+            self.assertNotIn(object_id, world_ids)
+        self.assertEqual(
+            {route["building_id"] for route in terrain["roads"]["routes"]},
+            {"wheat_farm", "lumber_camp"},
+        )
         self.assertEqual(len(city["objects"]), 13)
         self.assertEqual(city["objects"][3]["id"], "barn_building")
         stable = city["objects"][-1]
@@ -227,6 +316,38 @@ class WorldTerrainTests(unittest.TestCase):
         route = terrain["roads"]["routes"][0]
         self.assertTrue({"building_id", "gate_id", "tiles", "distance_tiles", "distance_pixels", "resources"}.issubset(route))
         self.assertTrue(route["resources"])
+
+    def test_global_city_uses_modular_visual_state(self):
+        from unittest.mock import patch
+        from scenes.world_map_scene import WorldMapScene
+
+        town = next(obj for obj in WORLD_OBJECTS if obj["id"] == "town_radburg")
+        visual_state = {
+            "city_level": 1, "population": 8, "active": True, "phase_index": 2,
+        }
+
+        class Client:
+            def get_map_terrain(self):
+                return {
+                    "objects": [town], "obstacles": [],
+                    "roads": {"routes": [], "tiles": [], "travel_seconds": 0},
+                    "city_visual_state": visual_state,
+                }
+
+        pygame.init()
+        try:
+            screen = pygame.display.set_mode((settings.WIDTH, settings.HEIGHT), pygame.HIDDEN)
+            scene = WorldMapScene(SimpleNamespace(
+                character={"id": 1, "name": "Test"}, client=Client(),
+            ))
+            scene.camera_x = town["x"] + town["tile_w"] * scene.tile_size / 2
+            scene.camera_y = town["y"] + town["tile_h"] * scene.tile_size / 2
+            with patch("scenes.world_map_scene.draw_city_exterior") as draw_city:
+                scene._draw_objects(screen)
+            draw_city.assert_called_once()
+            self.assertEqual(draw_city.call_args.args[2], visual_state)
+        finally:
+            pygame.quit()
 
     def test_scene_without_server_has_no_structures(self):
         pygame.init()
@@ -420,7 +541,7 @@ class WorldTerrainTests(unittest.TestCase):
         pygame.init()
         try:
             screen = pygame.display.set_mode((settings.WIDTH, settings.HEIGHT), pygame.HIDDEN)
-            client = SimpleNamespace(get_map_terrain=terrain_payload)
+            client = SimpleNamespace(get_map_terrain=lambda: terrain_payload(city_level=2))
             from scenes.world_map_scene import WorldMapScene
 
             scene = WorldMapScene(SimpleNamespace(character={"id": 1, "name": "Т"}, client=client))

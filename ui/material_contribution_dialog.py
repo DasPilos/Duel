@@ -95,7 +95,7 @@ class MaterialContributionDialog:
         pygame.draw.rect(screen, (177, 147, 91), self.rect, 2, border_radius=6)
 
         scene = self.scene
-        draw_item_icon(screen, self.item_key, (self.rect.left + 24, self.rect.top + 17), 30)
+        draw_item_icon(screen, self.item_key, (self.rect.left + 23, self.rect.top + 16), 32)
         title = {"withdraw": "Забрать", "deposit": "Пополнение склада"}.get(self.mode, "Взнос")
         screen.blit(scene.font.render(f"{title}: {self.label}", True, (230, 215, 184)),
                 (self.rect.left + 62, self.rect.top + 20))

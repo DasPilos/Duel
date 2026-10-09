@@ -135,6 +135,16 @@ class ServerPersistenceTests(unittest.TestCase):
         self.assertEqual(loaded["xp"], 30)
         self.assertEqual(loaded["name"], "Воин")
 
+    def test_deleting_character_clears_cached_afk_presence(self):
+        user = self.database.register("presence-delete", "password")
+        character = self.database.create_character(user["id"], "AFK персонаж")
+        social.mark_afk("deleted-character-token", user["id"], character)
+        self.assertIsNotNone(social.get_character_presence(character["id"]))
+
+        self.database.delete_character(user["id"], character["id"])
+
+        self.assertIsNone(social.get_character_presence(character["id"]))
+
     def test_chat_message_payload_formats_server_time_in_kiev(self):
         created_at = datetime(2025, 1, 1, 22, 59, 59, tzinfo=timezone.utc).timestamp()
         payload = Database._chat_message_payload({
@@ -502,17 +512,82 @@ class ServerPersistenceTests(unittest.TestCase):
         self.assertEqual(loaded["name"], "Сетевой воин")
 
     def test_battle_result_rewards_are_computed_by_server(self):
+        previous_results = dict(GameRequestHandler.battle_result_times)
+        GameRequestHandler.battle_result_times.clear()
+        try:
+            with running_server(self.database) as client:
+                client.register("fighter", "password")
+                client.login("fighter", "password")
+                character = client.create_character("Победитель боя")
+                result = client.report_battle_result(character["id"], "win", 1, 5, 0)
+                self.assertEqual(result["xp"], 20)
+                self.assertEqual(result["currency"], {"copper": 40, "silver": 0, "gold": 0})
+                self.assertEqual(result["character"]["xp"], character["xp"] + 20)
+                self.assertEqual(result["character"]["hp"], 5)
+                with self.assertRaisesRegex(ServerError, "уже засчитан"):
+                    client.report_battle_result(character["id"], "win", 1, 5, 0)
+        finally:
+            GameRequestHandler.battle_result_times.clear()
+            GameRequestHandler.battle_result_times.update(previous_results)
+
+    def test_battle_result_persists_replay_in_server_archive(self):
+        replay = {
+            "id": "hall-of-fame-test-battle",
+            "timestamp": 1234.0,
+            "source": "duel_scene",
+            "turns": 2,
+            "winner": "Архивный герой",
+            "player": {"name": "Архивный герой", "level": 1, "stats": {}, "hp": 5, "max_hp": 10},
+            "enemy": {"name": "Соперник", "level": 1, "stats": {}, "hp": 0, "max_hp": 10},
+            "stats": {"player": {}, "enemy": {}},
+            "hands": {"player": ["first_card"], "enemy": ["second_card"]},
+            "history": [{"turn": 1, "events": [{"side": "player", "card": "first_card"}]}],
+        }
         with running_server(self.database) as client:
-            client.register("fighter", "password")
-            client.login("fighter", "password")
-            character = client.create_character("Победитель боя")
-            result = client.report_battle_result(character["id"], "win", 1, 5, 0)
-            self.assertEqual(result["xp"], 20)
-            self.assertEqual(result["currency"], {"copper": 10, "silver": 0, "gold": 0})
-            self.assertEqual(result["character"]["xp"], character["xp"] + 20)
-            self.assertEqual(result["character"]["hp"], 5)
-            with self.assertRaisesRegex(ServerError, "уже засчитан"):
-                client.report_battle_result(character["id"], "win", 1, 5, 0)
+            client.register("hall-archive-user", "password")
+            client.login("hall-archive-user", "password")
+            character = client.create_character("Архивный герой")
+            result = client.report_battle_result(
+                character["id"], "win", 1, 5, 0, battle_record=replay,
+            )
+            page = client.list_battle_archive(limit=10, offset=0)
+            detail = client.get_battle_archive_record(result["battle_archive_id"])
+
+        self.assertEqual(page["total"], 1)
+        self.assertEqual(page["battles"][0]["player_name"], "Архивный герой")
+        self.assertEqual(detail["replay_json"], replay)
+        self.assertEqual(detail["outcome"], "win")
+
+    def test_backyard_currency_reward_scales_with_opponent_level(self):
+        cases = (
+            ("payout-equal", 1, 1, 40),
+            ("payout-higher", 2, 1, 60),
+            ("payout-lower", 1, 2, 12),
+        )
+        previous_results = dict(GameRequestHandler.battle_result_times)
+        GameRequestHandler.battle_result_times.clear()
+        try:
+            with running_server(self.database) as template_client:
+                for index, (username, player_level, opponent_level, expected_copper) in enumerate(cases):
+                    client = type(template_client)(template_client.base_url)
+                    client.register(username, "password")
+                    client.login(username, "password")
+                    character = client.create_character(f"Hero{index}")
+                    if player_level != character["level"]:
+                        with self.database.connection() as connection:
+                            connection.execute(
+                                "UPDATE characters SET level=%s WHERE id=%s",
+                                (player_level, character["id"]),
+                            )
+                    result = client.report_battle_result(
+                        character["id"], "win", opponent_level, character["hp"], character["mp"],
+                    )
+                    self.assertEqual(result["currency"], {
+                        "copper": expected_copper, "silver": 0, "gold": 0,
+                    })
+        finally:
+            GameRequestHandler.battle_result_times.clear()
+            GameRequestHandler.battle_result_times.update(previous_results)
 
     def test_human_battle_result_queues_local_chat_commentary(self):
         previous_results = dict(GameRequestHandler.battle_result_times)

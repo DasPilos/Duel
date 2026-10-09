@@ -19,13 +19,17 @@ Z440 uses `/home/dev-admin/game` and `game-server.service`. Before touching the 
 ssh dev-admin@192.168.1.230 "git -C /home/dev-admin/game status --short; git -C /home/dev-admin/game rev-parse --short HEAD"
 ```
 
-If the worktree has changes, stop and identify them. Preserve `bot_state.json` and `venv/`; never use `git reset --hard` or overwrite unrelated files. Deploy only the reviewed files or a clean merged commit. After the source is in place:
+The current Z440 worktree may contain runtime `bot_state.json` changes and an untracked `venv/`; preserve both. If other changes appear, stop and identify them. Never use `git reset --hard` or overwrite unrelated files. After the reviewed release is pushed, deploy with a fast-forward pull only:
 
 ```powershell
-ssh dev-admin@192.168.1.230 "cd /home/dev-admin/game && python3 -m py_compile server/main.py server/city_population.py server/world_roads.py"
+ssh dev-admin@192.168.1.230 "git -C /home/dev-admin/game pull --ff-only origin main"
+ssh dev-admin@192.168.1.230 "cd /home/dev-admin/game && python3 -m py_compile server/main.py server/city_population.py server/production_buildings.py server/transport.py server/city_upgrade.py"
 ssh dev-admin@192.168.1.230 "sudo -n /usr/bin/systemctl restart game-server.service"
 ssh dev-admin@192.168.1.230 "systemctl is-active game-server.service && curl -fsS http://127.0.0.1:8765/health"
 ```
+
+Because this release changes the Pygame client, build `client_package.zip` locally
+from the same commit, then upload it separately and verify the advertised download.
 
 Do not copy local PostgreSQL data to Z440. Production environment variables and PostgreSQL credentials stay on the server.
 

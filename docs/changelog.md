@@ -1,5 +1,24 @@
 # Changelog
 
+## 2026-10-09 — City production, farm progression, and transport
+
+- Added PostgreSQL-backed city population, citizen hunger/rations, free-first worker
+  selection, and server validation for occupied slots.
+- Added Governor hourly resource income/expense and per-resource trend indicators.
+- Production output from all workers now goes to shared building storage. Removed
+  personal harvest shares; only unlocked resources appear or transfer.
+- Farm level 1 has 500 storage. Samozakhvat adds one slot to field one; the +5%
+  plough and Samozakhvat are required for level 2. Level 2 has 800 storage and a
+  second field with two places. Level-two ration adds one place to field two; the
+  wooden handle adds +8% wheat speed, stacking with the plough to +13%.
+- Added persistent cart durability, 2 wood/hour maintenance during active routes,
+  zero idle maintenance, broken-cart dispatch protection, wood-funded repairs, and
+  a horizontal cart fleet view.
+- Added city supply upgrades, battle archive/Hall of Fame, and migrations for city,
+  transport, carts, farm progression, and shared production storage.
+- Added integration and UI regression coverage. See
+  [release notes](RELEASE_NOTES_2026-10-09.md) for the comparison baseline.
+
 ## 2026-09-05 — Карточный бой, повторный драфт и статусы
 
 - Боевая колода теперь включает все доступные карты без временных лимитов по
@@ -27,9 +46,9 @@
 - Добавлены регрессионные тесты колоды, драфта, лимита руки, мгновенных карт,
   формулы урона, временных эффектов и геометрии интерфейса.
 
-## Текущее состояние
+## Актуальная версия
 
-- Добавлены автоматические тесты боевой логики.
-- Зафиксирована зависимость Pygame в `requirements.txt`.
-- Добавлены инструкции тестирования и устранения проблем.
-- Зафиксированы ограничения текущей версии.
+Сводка изменений относительно общей базовой ревизии репозитория и Z440 находится
+в [release notes 2026-10-09](RELEASE_NOTES_2026-10-09.md). Актуальные инструкции
+разработки, тестирования и деплоя — в `DEVELOPER_GUIDE.md`, `docs/testing.md` и
+`DEPLOYMENT_CHECKLIST.md`.

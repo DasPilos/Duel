@@ -25,7 +25,7 @@ from ui.music import (
     duck_battle_music,
     update_music_ducking,
 )
-from combat.battle_archive import record_battle
+from combat.battle_archive import build_battle_record, write_battle_record
 from client.network import ServerError
 
 
@@ -173,11 +173,13 @@ class DuelScene:
             )
 
         outcome = self.battle.outcome()
+        archive_record = build_battle_record(self.battle, source="duel_scene")
         if self.online_session is not None and outcome is not None:
             # Опыт и деньги начисляет сервер; клиент только сообщает исход
             try:
                 result = self.online_session.report_battle_result(
-                    self.player, outcome, self.enemy.level, self.opponent_profile
+                    self.player, outcome, self.enemy.level, self.opponent_profile,
+                    battle_record=archive_record,
                 )
                 self.currency_reward = dict(result.get("currency", self.currency_reward))
             except ServerError as error:
@@ -191,7 +193,7 @@ class DuelScene:
                     self.player.stats = dict(character["stats"])
                     self.player.recalculate_parameters()
 
-        record_battle(self.battle, source="duel_scene")
+        write_battle_record(archive_record)
 
     def restart(self, initial=False):
         level = 1 if initial else self.player.level

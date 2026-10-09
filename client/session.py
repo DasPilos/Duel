@@ -180,7 +180,8 @@ class OnlineSession:
             "stat_points": fighter.stat_points,
         }
 
-    def report_battle_result(self, fighter, outcome, opponent_level, opponent=None):
+    def report_battle_result(self, fighter, outcome, opponent_level, opponent=None,
+                             battle_record=None):
         """Опыт и деньги за бой начисляет сервер; боец синхронизируется с его ответом."""
         opponent_id = (opponent or {}).get("character_id", (opponent or {}).get("id"))
         if opponent_id is not None and not str(opponent_id).lstrip("-").isdigit():
@@ -190,6 +191,7 @@ class OnlineSession:
             opponent_id=opponent_id,
             opponent_hp=(opponent or {}).get("hp"),
             opponent_mp=(opponent or {}).get("mp"),
+            battle_record=battle_record,
         )
         self.character = result["character"]
         for field in ("level", "xp", "stat_points", "hp", "mp"):
@@ -197,6 +199,12 @@ class OnlineSession:
         fighter.stats = dict(self.character["stats"])
         fighter.recalculate_parameters()
         return result
+
+    def list_battle_archive(self, limit=50, offset=0):
+        return self.client.list_battle_archive(limit, offset)
+
+    def get_battle_archive_record(self, archive_id):
+        return self.client.get_battle_archive_record(archive_id)
 
     def save_fighter(self, fighter):
         if self.character is None:

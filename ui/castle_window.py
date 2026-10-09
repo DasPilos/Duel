@@ -7,6 +7,7 @@ import pygame
 from client.network import ServerError
 from core import settings
 from core.currency import Currency
+from core.production_buildings import RESOURCES
 from ui.catalog_icons import draw_building_icon, draw_item_icon
 from ui.hud import draw_button
 
@@ -18,11 +19,6 @@ TABS = (
     ("tasks", "ЗАДАНИЯ"),
     ("upgrades", "УЛУЧШЕНИЯ"),
 )
-MOOD_LABELS = {
-    "satisfied": ("Сыт", (100, 215, 125)),
-    "irritated": ("Проголодался", (240, 205, 85)),
-    "starving": ("Голоден", (240, 100, 90)),
-}
 FOOD_STATUS_COLORS = {
     "Пищи достаточно": (115, 215, 125),
     "Население не доедает": (245, 205, 80),
@@ -35,6 +31,11 @@ WORKSITE_LABELS = {
     "farm": "Ферма", "lumber_camp": "Лесопилка", "mountain_rift": "Рудник",
     "barnyard": "Зверинец", "black_pit": "Чёрная яма",
 }
+FOOD_TREND_STYLES = {
+    "deficit": ((239, 83, 77), "Дефицит"),
+    "surplus": ((244, 195, 75), "Есть небольшой +"),
+    "upgrade_ready": ((104, 222, 133), "На ап города"),
+}
 
 
 def _format_clock(seconds):
@@ -42,6 +43,16 @@ def _format_clock(seconds):
     hours, remainder = divmod(seconds, 3600)
     minutes, seconds = divmod(remainder, 60)
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+
+def _citizen_is_free(citizen):
+    return (
+        not citizen.get("job_building")
+        and not citizen.get("working", False)
+        and not citizen.get("travel_direction")
+        and citizen.get("work_status", "Свободен") == "Свободен"
+        and citizen.get("satisfaction", "satisfied") == "satisfied"
+    )
 
 
 class CastleWindow:
@@ -91,6 +102,7 @@ class CastleWindow:
                 self.scene.session.character["id"]
             )
             self.scene.city_population_count = int(self.state.get("population", 4))
+            self.scene.city_upgrade_state = dict(self.state.get("city_upgrade", {}))
             self.last_refresh = time.monotonic()
             self.message = None
             self._clear_invalid_selection()
@@ -105,7 +117,9 @@ class CastleWindow:
 
     def _clear_invalid_selection(self):
         citizens = (self.state or {}).get("citizens", [])
-        if self.selected_citizen_id not in {item["id"] for item in citizens}:
+        selected = next((item for item in citizens
+                         if item["id"] == self.selected_citizen_id), None)
+        if selected is None or not _citizen_is_free(selected):
             self.selected_citizen_id = None
 
     def handle_event(self, event):
@@ -165,8 +179,10 @@ class CastleWindow:
                     self.message = "Горожанин уже возвращается в город."
                 else:
                     self.pending_action = {"kind": "recall", "citizen_id": citizen_id}
-            else:
+            elif _citizen_is_free(citizen):
                 self.selected_citizen_id = citizen_id
+            else:
+                self.message = "Горожанин сейчас не свободен."
             return
         for building, rect in self.worksite_buttons.items():
             if not rect.collidepoint(event.pos):
@@ -215,11 +231,11 @@ class CastleWindow:
         pygame.draw.rect(screen, (24, 27, 25), self.rect, border_radius=9)
         pygame.draw.rect(screen, (197, 164, 103), self.rect, 2, border_radius=9)
 
-        draw_building_icon(screen, "main_castle", (self.rect.left + 20, self.rect.top + 16), 42)
+        draw_building_icon(screen, "main_castle", (self.rect.left + 20, self.rect.top + 21), 32)
         title = self.title_font.render("Замок Радбурка", True, (243, 218, 158))
-        screen.blit(title, (self.rect.left + 72, self.rect.top + 19))
+        screen.blit(title, (self.rect.left + 62, self.rect.top + 19))
         screen.blit(self.font.render(f"Уровень {state.get('castle_level', 1)}", True, (220, 209, 184)),
-                    (self.rect.left + 74, self.rect.top + 52))
+                (self.rect.left + 62, self.rect.top + 52))
         pygame.draw.line(screen, (86, 80, 62),
                          (self.rect.left + 22, self.rect.top + 75),
                          (self.rect.right - 22, self.rect.top + 75), 1)
@@ -241,7 +257,7 @@ class CastleWindow:
         elif self.tab == "treasury":
             self._draw_treasury(screen, state)
         elif self.tab == "governor":
-            pass
+            self._draw_governor(screen, state)
         elif self.tab == "tasks":
             self._draw_placeholder(screen, "Заданий пока нет.")
         else:
@@ -323,10 +339,10 @@ class CastleWindow:
         for currency, amount in (("copper", treasury.get("copper", 0)),
                                  ("silver", treasury.get("silver", 0)),
                                  ("gold", treasury.get("gold", 0))):
-            draw_item_icon(screen, currency, (coin_x, top + 1), 22)
+            draw_item_icon(screen, currency, (coin_x, top - 5), 32)
             amount_surface = self.font.render(str(amount), True, (232, 225, 205))
-            screen.blit(amount_surface, (coin_x + 26, top + 1))
-            coin_x += 82
+            screen.blit(amount_surface, (coin_x + 36, top + 1))
+            coin_x += 92
         seconds = state.get("tax_tick_seconds_left", 0)
         expected_tax = state.get("expected_tax_text", "0 меди")
         screen.blit(self.small_font.render(
@@ -379,11 +395,53 @@ class CastleWindow:
         surface = self.font.render(text, True, (205, 199, 185))
         screen.blit(surface, surface.get_rect(center=(self.rect.centerx, self.rect.centery + 20)))
 
+    def _draw_governor(self, screen, state):
+        left = self.rect.left + 32
+        top = self.rect.top + 140
+        headers = (
+            ("Ресурс", left),
+            ("Доход в час", left + 300),
+            ("Расход в час", left + 520),
+            ("Тенденция", left + 790),
+        )
+        for label, x in headers:
+            screen.blit(self.small_font.render(label, True, (243, 218, 158)), (x, top))
+        pygame.draw.line(screen, (83, 81, 68), (left, top + 26), (self.rect.right - 32, top + 26), 1)
+        income = state.get("city_resource_income_per_hour", state.get("food_income_per_hour", {}))
+        consumption = state.get(
+            "city_resource_consumption_per_hour", state.get("food_consumption_per_hour", {})
+        )
+        resources = tuple(dict.fromkeys((*income.keys(), *consumption.keys())))
+        if not resources:
+            empty = self.small_font.render("Нет текущего движения ресурсов.", True, (190, 190, 180))
+            screen.blit(empty, (left, top + 40))
+            return
+        trends = state.get("city_resource_trend", state.get("food_trend", {}))
+        for index, resource in enumerate(resources):
+            y = top + 36 + index * 46
+            draw_item_icon(screen, resource, (left, y), 28)
+            label = RESOURCES.get(resource, {}).get("label", str(resource))
+            screen.blit(self.font.render(label, True, (220, 215, 197)), (left + 40, y + 3))
+            for x, rate in ((left + 300, income.get(resource, 0)),
+                            (left + 520, consumption.get(resource, 0))):
+                value = f"{float(rate):.1f}".replace(".", ",")
+                screen.blit(self.font.render(f"{value} в час", True, (220, 215, 197)), (x, y + 3))
+            color, trend_label = FOOD_TREND_STYLES.get(
+                trends.get(resource), FOOD_TREND_STYLES["surplus"]
+            )
+            light = pygame.Surface((26, 26), pygame.SRCALPHA)
+            pygame.draw.circle(light, (*color, 54), (13, 13), 12)
+            pygame.draw.circle(light, (*color, 255), (13, 13), 6)
+            pygame.draw.circle(light, (255, 255, 235, 230), (11, 11), 2)
+            screen.blit(light, (left + 790, y + 1))
+            screen.blit(self.small_font.render(trend_label, True, color), (left + 824, y + 6))
+
     def _draw_population(self, screen, state, mouse):
         left = self.rect.left + 28
         top = self.rect.top + 137
         food = state.get("food_storage", {})
-        summary = (f"Население: {state.get('population', 0)} / "
+        summary = (f"Уровень города: {state.get('castle_level', 1)} · "
+               f"Население: {state.get('population', 0)} / "
                    f"{state.get('population_capacity', 10)}")
         growth_eta = state.get("new_citizen_eta_seconds")
         if growth_eta is not None:
@@ -400,14 +458,40 @@ class CastleWindow:
             status_color = FOOD_STATUS_COLORS.get(food_status, (190, 190, 180))
             status_surface = self.small_font.render(f"({food_status})", True, status_color)
             screen.blit(status_surface, (left + food_surface.get_width() + 10, top + 30))
+        upgrade = state.get("city_upgrade", {})
+        elapsed = time.monotonic() - self.last_refresh
+        if upgrade.get("active"):
+            seconds_left = max(0, int(upgrade.get("seconds_left", 0) - elapsed))
+            upgrade_text = (
+                f"Снабжение для улучшения: тик {upgrade.get('tick_index', 0)}/4 · "
+                f"списание {upgrade.get('rate_percent', 0)}% · "
+                f"до проверки {_format_clock(seconds_left)}"
+            )
+            upgrade_color = (120, 225, 155)
+        else:
+            next_start = float(upgrade.get("next_start_at", 0))
+            seconds_to_start = max(0, int(next_start - time.time())) if next_start else 0
+            last_result = upgrade.get("last_result", {})
+            if last_result.get("status") == "failed":
+                upgrade_text = f"Поставка не удержана · новая проверка через {_format_clock(seconds_to_start)}"
+                upgrade_color = (235, 155, 105)
+            else:
+                upgrade_text = f"Проверка запасов через {_format_clock(seconds_to_start)}"
+                upgrade_color = (175, 205, 220)
+        screen.blit(self.small_font.render(upgrade_text, True, upgrade_color), (left, top + 55))
         self.citizen_actions = {}
-        row_top = top + 67
+        row_top = top + 88
         row_height = 39
-        for index, citizen in enumerate(state.get("citizens", [])):
+        citizens = sorted(
+            state.get("citizens", []),
+            key=lambda citizen: not _citizen_is_free(citizen),
+        )
+        for index, citizen in enumerate(citizens):
             row = pygame.Rect(left, row_top + index * row_height, self.rect.width - 56, 34)
             pygame.draw.rect(screen, (38, 42, 39) if index % 2 else (33, 37, 35), row)
+            draw_item_icon(screen, "citizen", (row.left + 10, row.top + 1), 32)
             screen.blit(self.small_font.render(citizen["name"], True, (226, 225, 211)),
-                        (row.left + 10, row.top + 8))
+                        (row.left + 50, row.top + 8))
             satiety = int(citizen.get("satiety", 0))
             strong_hunger = int(citizen.get("strong_hunger", 0))
             if satiety == 0:
@@ -430,9 +514,6 @@ class CastleWindow:
             fill.height -= 2
             if fill.width:
                 pygame.draw.rect(screen, meter_color, fill, border_radius=2)
-            mood, mood_color = MOOD_LABELS.get(citizen.get("satisfaction"), ("—", (180, 180, 180)))
-            screen.blit(self.small_font.render(f"Довольство: {mood}", True, mood_color),
-                        (row.left + 405, row.top + 8))
             work_status = citizen.get("work_status", "Свободен")
             worksite = WORKSITE_LABELS.get(citizen.get("job_building"))
             work_label = f"{worksite} · {work_status}" if worksite else work_status

@@ -1,14 +1,114 @@
 """Отрисовка зданий, стен/ворот, персонажа и эффектов сцены города."""
 import math
+import time
 import pygame
 from core import settings
+from scenes.city.sprite_modules import city_visual_tier, draw_keep, draw_residence
 
-CITIZEN_HOUSE_LOTS = (
-    (60, 60, 2, 2, 1), (84, 60, 3, 2, 2),
-    (60, 64, 3, 2, 2), (84, 64, 2, 3, 1),
-    (60, 70, 2, 3, 2), (84, 70, 3, 3, 3),
-    (60, 77, 4, 2, 2), (84, 77, 4, 2, 1),
-    (64, 58, 3, 2, 1), (77, 58, 6, 3, 3),
+def _is_city_road_tile(tile_x, tile_y):
+    return (
+        (40 <= tile_x <= 59 and 40 <= tile_y <= 59)
+        or 47 <= tile_x <= 52
+        or 47 <= tile_y <= 52
+        or (tile_x >= 80 and 44 <= tile_y <= 55)
+    )
+
+
+def citizen_house_visual_bounds(lot, tile_size=32):
+    tile_x, tile_y, width_tiles, depth_tiles, floors = lot
+    floor_height = max(15, int(tile_size) // 2)
+    body_height = depth_tiles * tile_size + (floors - 1) * floor_height
+    roof_height = max(4, floor_height // 2)
+    bottom_y = tile_y * tile_size + depth_tiles * tile_size
+    top_y = bottom_y - body_height - roof_height
+    top_tile = top_y // tile_size
+    return pygame.Rect(
+        tile_x - 1, top_tile, width_tiles + 2,
+        tile_y + depth_tiles - top_tile,
+    )
+
+
+def build_citizen_house_lots(objects, house_limit=10):
+    """Choose evenly spaced house plots outside city buildings and roads."""
+    blocked_buildings = [
+        pygame.Rect(
+            int(obj["tile_x"]), int(obj["tile_y"]),
+            int(obj["tile_w"]), int(obj["tile_h"]),
+        ).inflate(2, 2)
+        for obj in objects
+        if all(key in obj for key in ("tile_x", "tile_y", "tile_w", "tile_h"))
+    ]
+    candidates = []
+    for tile_y in range(4, 94, 6):
+        for tile_x in range(4, 94, 6):
+            width, depth = 3, 3
+            floors = 1 + ((tile_x + tile_y) // 12) % 3
+            lot = (tile_x, tile_y, width, depth, floors)
+            footprint = citizen_house_visual_bounds(lot)
+            spacing_bounds = footprint.inflate(2, 2)
+            if any(
+                _is_city_road_tile(x, y)
+                for y in range(spacing_bounds.top, spacing_bounds.bottom)
+                for x in range(spacing_bounds.left, spacing_bounds.right)
+            ):
+                continue
+            if any(spacing_bounds.colliderect(rect) for rect in blocked_buildings):
+                continue
+            candidates.append(lot)
+
+    selected = []
+
+    def spaced(candidate):
+        footprint = citizen_house_visual_bounds(candidate).inflate(2, 2)
+        return all(
+            not footprint.colliderect(citizen_house_visual_bounds(house).inflate(2, 2))
+            for house in selected
+        )
+
+    for anchor_x, anchor_y in ((25, 25), (75, 25), (25, 75), (75, 75)):
+        quadrant = [
+            candidate for candidate in candidates
+            if spaced(candidate)
+            and ((candidate[0] + candidate[2] / 2 < 50) == (anchor_x < 50))
+            and ((candidate[1] + candidate[3] / 2 < 50) == (anchor_y < 50))
+        ]
+        if quadrant:
+            selected.append(min(
+                quadrant,
+                key=lambda candidate: (
+                    (candidate[0] + candidate[2] / 2 - anchor_x) ** 2
+                    + (candidate[1] + candidate[3] / 2 - anchor_y) ** 2
+                ),
+            ))
+
+    while len(selected) < max(0, int(house_limit)):
+        available = [candidate for candidate in candidates if spaced(candidate)]
+        if not available:
+            break
+
+        def distance_to_nearest_house(candidate):
+            center_x = candidate[0] + candidate[2] / 2
+            center_y = candidate[1] + candidate[3] / 2
+            return min(
+                (center_x - (house[0] + house[2] / 2)) ** 2
+                + (center_y - (house[1] + house[3] / 2)) ** 2
+                for house in selected
+            )
+
+        selected.append(max(
+            available,
+            key=lambda candidate: (
+                distance_to_nearest_house(candidate), -candidate[1], -candidate[0],
+            ),
+        ))
+    return tuple(selected)
+
+
+CITY_PALISADE_SECTIONS = (
+    (((1696, 3136), (3136, 3136)), ((3136, 1792), (3136, 3136))),
+    (((3136, 64), (3136, 1408)), ((1696, 64), (3136, 64))),
+    (((64, 64), (64, 1504)), ((64, 64), (1504, 64))),
+    (((64, 1696), (64, 3136)), ((64, 3136), (1504, 3136))),
 )
 
 
@@ -16,11 +116,19 @@ class CityRenderMixin:
     """Требует атрибуты CityScene: tile_size, world_to_screen, objects, шрифты и т.д."""
 
     def _citizen_house_solid_rects(self):
-        count = max(0, min(len(CITIZEN_HOUSE_LOTS), int(getattr(self, "city_population_count", 4))))
+        lots = getattr(self, "citizen_house_lots", ())
+        count = max(0, min(len(lots), int(getattr(self, "city_population_count", 4))))
         return [
-            pygame.Rect(tile_x * self.tile_size, tile_y * self.tile_size,
-                        width_tiles * self.tile_size, depth_tiles * self.tile_size)
-            for tile_x, tile_y, width_tiles, depth_tiles, _floors in CITIZEN_HOUSE_LOTS[:count]
+            pygame.Rect(
+                tile_x * self.tile_size - 5,
+                tile_y * self.tile_size + depth_tiles * self.tile_size
+                - (depth_tiles * self.tile_size + (floors - 1) * max(15, self.tile_size // 2))
+                - max(4, self.tile_size // 4),
+                width_tiles * self.tile_size + 10,
+                depth_tiles * self.tile_size + (floors - 1) * max(15, self.tile_size // 2)
+                + max(4, self.tile_size // 4),
+            )
+            for tile_x, tile_y, width_tiles, depth_tiles, floors in lots[:count]
         ]
 
     def _draw_citizen_houses(self, screen):
@@ -28,39 +136,47 @@ class CityRenderMixin:
         wall_colors = ((132, 94, 64), (151, 111, 72), (112, 113, 106), (153, 128, 91))
         roof_colors = ((91, 55, 42), (105, 67, 46), (75, 73, 66), (121, 77, 47))
         viewport = pygame.Rect(-192, -192, settings.WIDTH + 384, settings.HEIGHT + 384)
-        count = max(0, min(len(CITIZEN_HOUSE_LOTS), int(getattr(self, "city_population_count", 4))))
-        for index, (tile_x, tile_y, width_tiles, depth_tiles, floors) in enumerate(CITIZEN_HOUSE_LOTS[:count]):
+        lots = getattr(self, "citizen_house_lots", ())
+        count = max(0, min(len(lots), int(getattr(self, "city_population_count", 4))))
+        city_level = city_visual_tier(
+            getattr(self, "city_upgrade_state", {}).get("city_level", 1)
+        )
+        for index, (tile_x, tile_y, width_tiles, depth_tiles, floors) in enumerate(lots[:count]):
             world_x, world_y = tile_x * self.tile_size, tile_y * self.tile_size
             sx, sy = self.world_to_screen(world_x, world_y)
             width = width_tiles * self.tile_size
             depth = depth_tiles * self.tile_size
             floor_height = max(15, self.tile_size // 2)
             body_height = depth + (floors - 1) * floor_height
-            body = pygame.Rect(sx, sy + depth - floor_height, width, body_height)
-            if not body.colliderect(viewport):
+            body = pygame.Rect(sx + 4, sy + depth - body_height, width - 8, body_height)
+            roof_height = max(4, floor_height // 2)
+            roof_top = body.top - roof_height
+            visual_bounds = pygame.Rect(sx - 5, roof_top, width + 10, body.bottom - roof_top)
+            if not visual_bounds.colliderect(viewport):
                 continue
             wall = wall_colors[index % len(wall_colors)]
             roof = roof_colors[index % len(roof_colors)]
-            pygame.draw.ellipse(screen, (13, 16, 15), (sx + 4, sy + depth - 5, width - 8, 14))
+            pygame.draw.ellipse(screen, (13, 16, 15), (sx + 4, body.bottom - 8, width - 8, 14))
             pygame.draw.rect(screen, wall, body)
             pygame.draw.rect(screen, (61, 48, 38), body, 2)
             windows_per_floor = max(1, width_tiles // 2)
             for floor in range(floors):
-                floor_y = body.bottom - (floor + 1) * floor_height
+                floor_top = body.top + floor * floor_height
+                floor_bottom = body.bottom if floor == floors - 1 else floor_top + floor_height
                 if floor:
-                    pygame.draw.line(screen, (75, 56, 43), (sx + 2, floor_y),
-                                     (sx + width - 2, floor_y), 3)
-                window_y = floor_y + floor_height // 2 - 3
+                    pygame.draw.line(screen, (75, 56, 43), (body.left + 2, floor_top),
+                                     (body.right - 2, floor_top), 3)
+                window_y = floor_top + (floor_bottom - floor_top) // 2 - 4
                 for window_index in range(windows_per_floor):
-                    window_x = sx + (window_index + 1) * width // (windows_per_floor + 1)
+                    window_x = body.left + (window_index + 1) * body.width // (windows_per_floor + 1)
                     pygame.draw.rect(screen, (225, 185, 101),
                                      (window_x - 4, window_y, 8, 8), border_radius=1)
                     pygame.draw.line(screen, (74, 54, 39), (window_x, window_y),
                                      (window_x, window_y + 8), 1)
-            door = pygame.Rect(sx + width // 2 - 5, body.bottom - 19, 10, 19)
+            door = pygame.Rect(body.centerx - 5, body.bottom - 20, 10, 20)
             pygame.draw.rect(screen, (62, 41, 30), door)
-            roof_points = [(sx - 5, body.top + 3), (sx + width // 2, sy - floor_height - 4),
-                           (sx + width + 5, body.top + 3)]
+            roof_points = [(body.left - 5, body.top + 2),
+                           (body.centerx, roof_top), (body.right + 5, body.top + 2)]
             pygame.draw.polygon(screen, roof, roof_points)
             pygame.draw.lines(screen, (54, 42, 35), True, roof_points, 2)
 
@@ -123,6 +239,7 @@ class CityRenderMixin:
             k_r = pygame.Rect(kx, ky, ks, ks)
             pygame.draw.rect(c_surf, (42, 52, 66, 250), k_r, border_radius=6)
             pygame.draw.rect(c_surf, (120, 145, 180), k_r, 2, border_radius=6)
+            draw_keep(c_surf, k_r, self.city_upgrade_state.get("city_level", 1))
 
             # Южные королевские ворота замка (3 тайла = 96 px)
             gw = 3 * self.tile_size
@@ -1221,23 +1338,23 @@ class CityRenderMixin:
         """Отрисовывает мощные каменные стены периметра и 4 ворот."""
         pulse = 1.0 + 0.08 * math.sin(self.player_anim_timer * 5.0)
 
-        # 1. Отрисовка непроходимых стен
-        for s_rect in self.solid_rects:
-            sx, sy = self.world_to_screen(s_rect.x, s_rect.y)
-            w = s_rect.width
-            h = s_rect.height
-            if -w <= sx <= settings.WIDTH + w and -h <= sy <= settings.HEIGHT + h:
-                draw_r = pygame.Rect(sx, sy, w, h)
-                pygame.draw.rect(screen, (40, 48, 60), draw_r)
-                pygame.draw.rect(screen, (65, 80, 100), draw_r, 2)
+        # 1. Before the first city upgrade, draw the original stone wall.
+        if int(getattr(self, "city_upgrade_state", {}).get("city_level", 1)) < 2:
+            for s_rect in self.solid_rects:
+                sx, sy = self.world_to_screen(s_rect.x, s_rect.y)
+                w = s_rect.width
+                h = s_rect.height
+                if -w <= sx <= settings.WIDTH + w and -h <= sy <= settings.HEIGHT + h:
+                    draw_r = pygame.Rect(sx, sy, w, h)
+                    pygame.draw.rect(screen, (40, 48, 60), draw_r)
+                    pygame.draw.rect(screen, (65, 80, 100), draw_r, 2)
 
-                # Зубцы стен
-                if w > h:
-                    for bx in range(draw_r.left + 4, draw_r.right - 8, 20):
-                        pygame.draw.rect(screen, (25, 30, 38), (bx, draw_r.top + 2, 10, 6))
-                else:
-                    for by in range(draw_r.top + 4, draw_r.bottom - 8, 20):
-                        pygame.draw.rect(screen, (25, 30, 38), (draw_r.left + 2, by, 6, 10))
+                    if w > h:
+                        for bx in range(draw_r.left + 4, draw_r.right - 8, 20):
+                            pygame.draw.rect(screen, (25, 30, 38), (bx, draw_r.top + 2, 10, 6))
+                    else:
+                        for by in range(draw_r.top + 4, draw_r.bottom - 8, 20):
+                            pygame.draw.rect(screen, (25, 30, 38), (draw_r.left + 2, by, 6, 10))
 
         # 2. Главные ворота (Восток, 12 тайлов = 384 px, Y: 44..55)
         gw_e_x = 98 * self.tile_size
@@ -1310,6 +1427,86 @@ class CityRenderMixin:
             sub_lbl = self.grid_font.render("➜ ВЫХОД НА КАРТУ МИРА", True, (140, 255, 180))
             self._draw_gate_badge(screen, sx + gw_w_w + 120, sy + gw_w_h // 2 - 12, lbl, (100, 200, 255))
             self._draw_gate_badge(screen, sx + gw_w_w + 120, sy + gw_w_h // 2 + 12, sub_lbl, (100, 220, 160))
+
+    def _draw_palisade_section(self, screen, section, complete):
+        for start, end in section:
+            sx1, sy1 = self.world_to_screen(*start)
+            sx2, sy2 = self.world_to_screen(*end)
+            length = math.dist(start, end)
+            horizontal = abs(end[0] - start[0]) >= abs(end[1] - start[1])
+            if complete:
+                offsets = (12, 4) if horizontal else (-12, -4)
+                for offset, color, width in ((offsets[0], (74, 45, 27), 6),
+                                             (offsets[1], (153, 101, 54), 4)):
+                    if horizontal:
+                        pygame.draw.line(screen, color, (sx1, sy1 - offset),
+                                         (sx2, sy2 - offset), width)
+                    else:
+                        pygame.draw.line(screen, color, (sx1 - offset, sy1),
+                                         (sx2 - offset, sy2), width)
+                for distance in range(0, int(length) + 1, 56):
+                    fraction = min(1.0, distance / max(1.0, length))
+                    wx = start[0] + (end[0] - start[0]) * fraction
+                    wy = start[1] + (end[1] - start[1]) * fraction
+                    post_x, post_y = self.world_to_screen(wx, wy)
+                    post = (post_x - 3, post_y - 15, 7, 24) if horizontal else (
+                        post_x - 15, post_y - 3, 24, 7
+                    )
+                    pygame.draw.rect(screen, (61, 38, 24), post)
+                    cap = (post_x - 3, post_y - 15, 7, 5) if horizontal else (
+                        post_x - 15, post_y - 3, 5, 7
+                    )
+                    pygame.draw.rect(screen, (187, 130, 69), cap)
+                continue
+
+            for distance in range(12, int(length), 72):
+                fraction = distance / max(1.0, length)
+                wx = start[0] + (end[0] - start[0]) * fraction
+                wy = start[1] + (end[1] - start[1]) * fraction
+                pile_x, pile_y = self.world_to_screen(wx, wy)
+                if horizontal:
+                    pygame.draw.line(screen, (77, 48, 30), (pile_x - 13, pile_y + 4),
+                                     (pile_x + 13, pile_y - 3), 5)
+                    pygame.draw.line(screen, (151, 97, 51), (pile_x - 12, pile_y - 1),
+                                     (pile_x + 11, pile_y - 8), 4)
+                else:
+                    pygame.draw.line(screen, (77, 48, 30), (pile_x + 4, pile_y - 13),
+                                     (pile_x - 3, pile_y + 13), 5)
+                    pygame.draw.line(screen, (151, 97, 51), (pile_x - 1, pile_y - 12),
+                                     (pile_x - 8, pile_y + 11), 4)
+
+    def _draw_city_upgrade_construction(self, screen):
+        upgrade = getattr(self, "city_upgrade_state", {})
+        city_level = int(upgrade.get("city_level", 1))
+        if city_level >= 2:
+            for section in CITY_PALISADE_SECTIONS:
+                self._draw_palisade_section(screen, section, complete=True)
+            return
+        if not upgrade.get("active"):
+            return
+
+        elapsed = max(0.0, time.time() - float(upgrade.get("started_at", time.time())))
+        phase = min(3, int(upgrade.get("phase_index", elapsed // (15 * 60))))
+        if phase == 0:
+            for section in CITY_PALISADE_SECTIONS:
+                for start, end in section:
+                    sx1, sy1 = self.world_to_screen(*start)
+                    sx2, sy2 = self.world_to_screen(*end)
+                    length = math.dist(start, end)
+                    for distance in range(0, int(length), 88):
+                        fraction = distance / max(1.0, length)
+                        next_fraction = min(1.0, (distance + 40) / max(1.0, length))
+                        x1 = round(sx1 + (sx2 - sx1) * fraction)
+                        y1 = round(sy1 + (sy2 - sy1) * fraction)
+                        x2 = round(sx1 + (sx2 - sx1) * next_fraction)
+                        y2 = round(sy1 + (sy2 - sy1) * next_fraction)
+                        pygame.draw.line(screen, (74, 54, 37), (x1, y1), (x2, y2), 5)
+                        pygame.draw.line(screen, (133, 91, 55), (x1, y1), (x2, y2), 2)
+            return
+
+        completed_sections = 1 if phase == 2 else 3 if phase == 3 else 0
+        for index, section in enumerate(CITY_PALISADE_SECTIONS):
+            self._draw_palisade_section(screen, section, index < completed_sections)
 
     def _draw_gate_badge(self, screen, cx, cy, surf, border_color):
         """Вспомогательная плашка с надписью над воротами."""

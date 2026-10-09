@@ -10,6 +10,8 @@ import pygame
 from client.network import ServerError
 from core import settings
 from core.production_buildings import (
+    FARM_UPGRADES,
+    FARM_RATION_SLOT_BASE,
     RESOURCES,
     building_config,
     building_level_info,
@@ -19,6 +21,7 @@ from core.production_buildings import (
 from ui.catalog_icons import draw_building_icon, draw_item_icon
 from ui.hud import draw_button
 from ui.material_contribution_dialog import MaterialContributionDialog
+from ui.storage_meter import draw_storage_meter
 
 ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets" / "town"
 
@@ -156,7 +159,7 @@ def point_in_polygon(point, polygon):
 class ProductionBuildingWindow:
     LEFT_COLUMN = 300
     WORKER_PANEL_WIDTH = 300
-    WORKER_ROW_HEIGHT = 88
+    WORKER_ROW_HEIGHT = 104
     HOUSE_SIZE = 28
     REFRESH_SECONDS = 5
     # Лес: внутреннее кольцо (чаща и большие поляны) занимает такую долю радиуса
@@ -176,6 +179,7 @@ class ProductionBuildingWindow:
         self.last_refresh = 0.0
         self.received_at = 0.0
         self.deposit_buttons = {}
+        self.farm_upgrade_buttons = {}
         self.contribution_dialog = MaterialContributionDialog(scene)
         self.selected_plot = None
         self.worker_stats_scroll = 0
@@ -221,6 +225,26 @@ class ProductionBuildingWindow:
     def storage_total(self):
         return int(self._state().get("storage_total", 0))
 
+    def storage_is_full(self):
+        state = self._state()
+        if "storage_full" in state:
+            return bool(state["storage_full"])
+        storage = state.get("storage", {})
+        limit = int(storage.get("limit", 0))
+        resources = [amount for resource, amount in storage.items() if resource != "limit"]
+        return bool(resources) and all(int(amount) >= limit for amount in resources)
+
+    def slot_storage_is_full(self, slots):
+        storage = self._state().get("storage", {})
+        limit = int(storage.get("limit", 0))
+        resources = {
+            resource
+            for slot in slots
+            for resource in slot.get("resources", [slot.get("resource")])
+            if resource
+        }
+        return bool(resources) and all(int(storage.get(resource, 0)) >= limit for resource in resources)
+
     def stage(self):
         return int(self._state().get("stage", 0))
 
@@ -250,7 +274,7 @@ class ProductionBuildingWindow:
             )
             self.received_at = time.monotonic()
             self.message = None
-            if action in ("upgrade/deposit", "player-harvest/claim", "storage/deposit", "storage/withdraw"):
+            if action in ("upgrade/deposit", "storage/deposit", "storage/withdraw"):
                 refresh_carrying_state = getattr(self.scene.session, "refresh_carrying_state", None)
                 if refresh_carrying_state is not None:
                     refresh_carrying_state()
@@ -270,7 +294,10 @@ class ProductionBuildingWindow:
             population = self.scene.session.client.get_city_population(character_id)
             citizen = next((row for row in population.get("citizens", [])
                             if not row.get("job_building")
-                            and row.get("satisfaction") == "satisfied"), None)
+                            and row.get("satisfaction") == "satisfied"
+                            and row.get("work_status", "Свободен") == "Свободен"
+                            and not row.get("working")
+                            and not row.get("travel_direction")), None)
             if citizen is None:
                 self.message = "Нет свободных горожан для работы."
                 return
@@ -341,17 +368,33 @@ class ProductionBuildingWindow:
             )
         return (
             f"Горожанин: {per_unit or 'ресурсы не добываются'}. "
-            f"Склад: {info['storage']}. Горожан: {info['max_workers']}."
+            f"Вместимость каждого товара: {info['storage']}. Горожан: {info['max_workers']}."
         )
 
     def harvest_countdown(self):
         state = self.state
         if state is None or self.workers() <= 0:
             return "ожидание рабочего"
-        if self.storage_total() >= state["storage"]["limit"]:
+        if self.storage_is_full():
             return "склад заполнен"
         seconds = state.get("next_harvest_seconds")
         return "—" if seconds is None else format_clock(seconds - self._since_received())
+
+    def production_per_hour(self):
+        rates = {}
+        for slot in self._state().get("worker_slots", []):
+            resources = slot.get("resources") or [slot.get("resource")]
+            timers = slot.get("timer_sec_by_resource", {})
+            for resource in resources:
+                if not resource:
+                    continue
+                timer = timers.get(resource, RESOURCES.get(resource, {}).get("timer_sec"))
+                if timer is None or float(timer) <= 0:
+                    continue
+                rates.setdefault(resource, 0.0)
+                if slot.get("occupied") and not slot.get("is_travelling"):
+                    rates[resource] += 3600 / float(timer)
+        return rates
 
     def status(self):
         """Возвращает (статус, цвет)."""
@@ -360,7 +403,7 @@ class ProductionBuildingWindow:
             return "Нет связи с сервером", (240, 90, 80)
         if (state.get("upgrade") or {}).get("in_progress"):
             return "Идёт улучшение", (120, 190, 240)
-        if self.storage_total() >= state["storage"]["limit"]:
+        if self.storage_is_full():
             return "Склад переполнен", (240, 90, 80)
         if self.workers() > 0:
             return "Работает", (110, 230, 120)
@@ -576,6 +619,10 @@ class ProductionBuildingWindow:
         """Открытые слоты участка (есть на сервере) или None, если участок ещё закрыт."""
         by_index = {slot["slot_index"]: slot for slot in self._state().get("worker_slots", [])}
         slots = [by_index[i] for i in self.groups[index]["slots"] if i in by_index]
+        if self.building == "farm" and index in self._state().get("farm_upgrades", {}).get("ration_plots", []):
+            extra_slot_index = FARM_RATION_SLOT_BASE + index
+            if extra_slot_index in by_index:
+                slots.append(by_index[extra_slot_index])
         return slots or None
 
     def click_plot(self, index):
@@ -613,8 +660,9 @@ class ProductionBuildingWindow:
         elif action == "fire":
             self.fire_worker(slot_index)
         else:
-            storage = self._state().get("storage", {})
-            if self._state().get("player_work") is None and self.storage_total() >= storage.get("limit", 0):
+            slots = [slot for slot in self._state().get("worker_slots", [])
+                     if int(slot["slot_index"]) == slot_index]
+            if self._state().get("player_work") is None and self.slot_storage_is_full(slots):
                 self.message = "Склад переполнен, нельзя начать добычу."
                 return
             self._request("workers/player/toggle", {"slot_index": slot_index})
@@ -629,15 +677,12 @@ class ProductionBuildingWindow:
         character_id = self.scene.session.character["id"]
         player_worker_id = f"player:{character_id}"
         own_slot = next((slot for slot in slots if slot.get("worker_id") == player_worker_id), None)
-        storage = self._state().get("storage", {})
-        if own_slot is None and self.storage_total() >= storage.get("limit", 0):
+        if own_slot is None and self.slot_storage_is_full(slots):
             self.message = "Склад переполнен, нельзя начать добычу."
             return
-        target_slot = own_slot or next(
-            (slot for slot in slots if slot["occupied"] and not slot.get("is_player", False)), None
-        ) or next((slot for slot in slots if not slot["occupied"]), None)
+        target_slot = own_slot or next((slot for slot in slots if not slot["occupied"]), None)
         if target_slot is None:
-            self.message = "На участке работают другие игроки."
+            self.message = "На участке нет свободных мест."
             return
         self._queue_worker_action("player", target_slot["slot_index"])
 
@@ -752,20 +797,26 @@ class ProductionBuildingWindow:
                 else:
                     self.remove_plot_worker(index)
         elif event.button == 1 and self.tab == "upgrade":
-            for item_id, button in self.deposit_buttons.items():
-                if button.collidepoint(pos):
-                    material = next((item for item in self._state()["upgrade"]["materials"]
-                                     if item["item_id"] == item_id), None)
-                    if material:
-                        self.contribution_dialog.open(
-                            item_id,
-                            material["name"],
-                            material["in_warehouse"],
-                            material["required"] - material["deposited"],
-                        )
-                    return
-            if self.upgrade_button.collidepoint(pos):
-                self.start_upgrade()
+            if self.building == "farm":
+                for upgrade_id, button in self.farm_upgrade_buttons.items():
+                    if button.collidepoint(pos):
+                        self._request("farm/upgrade", {"upgrade_id": upgrade_id})
+                        return
+            else:
+                for item_id, button in self.deposit_buttons.items():
+                    if button.collidepoint(pos):
+                        material = next((item for item in self._state()["upgrade"]["materials"]
+                                         if item["item_id"] == item_id), None)
+                        if material:
+                            self.contribution_dialog.open(
+                                item_id,
+                                material["name"],
+                                material["in_warehouse"],
+                                material["required"] - material["deposited"],
+                            )
+                        return
+                if self.upgrade_button.collidepoint(pos):
+                    self.start_upgrade()
         elif event.button == 1 and self.tab == "storage":
             for resource, button in self.storage_withdraw_buttons.items():
                 if button.collidepoint(pos):
@@ -787,12 +838,6 @@ class ProductionBuildingWindow:
                         mode="deposit",
                     )
                     return
-            for resource, button in self.claim_buttons.items():
-                if button.collidepoint(pos):
-                    quantity = self._state().get("player_harvest_claims", {}).get(resource, 0)
-                    self._request("player-harvest/claim", {"resource": resource, "quantity": quantity})
-                    return
-
     # ---------- отрисовка ----------
 
     def _draw_forest_backdrop(self, screen):
@@ -822,8 +867,9 @@ class ProductionBuildingWindow:
             self._draw_forest_backdrop(screen)
         for index, plot in enumerate(self.plot_geometry()):
             group = self.groups[index]
-            unlock_level, places, resource = group["level"], group["places"], group["resource"]
+            unlock_level, resource = group["level"], group["resource"]
             slots = self.plot_slots(index)
+            places = len(slots) if slots is not None else group["places"]
             rect = plot["rect"]
             if slots is None:
                 pygame.draw.polygon(screen, (42, 42, 40), plot["points"])
@@ -1107,8 +1153,8 @@ class ProductionBuildingWindow:
 
         status_text, status_col = self.status()
         title = scene.large_font.render(self.name, True, (255, 225, 130))
-        building_icon = draw_building_icon(screen, self.building, (rect.left + 14, rect.top + 5), 40)
-        title_x = rect.left + 62 if building_icon else rect.left + 24
+        building_icon = draw_building_icon(screen, self.building, (rect.left + 14, rect.top + 9), 32)
+        title_x = rect.left + 54 if building_icon else rect.left + 24
         screen.blit(title, (title_x, rect.top + 16))
         screen.blit(scene.small_font.render(f"Уровень {level}", True, (215, 205, 170)),
                     (rect.left + 24, rect.top + 52))
@@ -1124,7 +1170,23 @@ class ProductionBuildingWindow:
 
         max_workers = self._state().get("max_workers", building_level_info(level, self.building)["max_workers"])
         screen.blit(scene.small_font.render(f"Горожане: {self.workers()} / {max_workers}", True, (235, 220, 170)), (rect.left + 24, rect.top + 112))
-        screen.blit(scene.small_font.render(f"{self.view['harvest_label']}: {self.harvest_countdown()}", True, (190, 220, 235)), (rect.left + 24, rect.top + 132))
+        production_rates = self.production_per_hour()
+        production_label = scene.small_font.render("Производство в час:", True, (190, 220, 235))
+        production_y = rect.top + 132
+        production_x = rect.left + 24
+        screen.blit(production_label, (production_x, production_y + 1))
+        production_x += production_label.get_width() + 10
+        for resource, rate in production_rates.items():
+            rate_value = f"{rate:.1f}".replace(".", ",")
+            rate_text = f"{RESOURCES[resource]['label']} {rate_value} ед./ч"
+            text_width = scene.small_font.size(rate_text)[0]
+            if production_x + 32 + 6 + text_width > rect.right - 20:
+                production_x = rect.left + 24
+                production_y += 34
+            draw_item_icon(screen, resource, (production_x, production_y - 7), 32)
+            screen.blit(scene.small_font.render(rate_text, True, (215, 220, 205)),
+                        (production_x + 38, production_y + 1))
+            production_x += 38 + text_width + 14
         if self.message:
             screen.blit(scene.small_font.render(self.message, True, (240, 150, 120)), (rect.left + 440, rect.top + 112))
         if self.tab == "production":
@@ -1133,8 +1195,7 @@ class ProductionBuildingWindow:
                 slot.get("worker_id") == f"player:{self.scene.session.character['id']}"
                 for slot in selected_slots
             ))
-            storage = self._state().get("storage", {})
-            storage_full = self.storage_total() >= storage.get("limit", 0)
+            storage_full = self.slot_storage_is_full(selected_slots or [])
             can_work = self.selected_plot is not None and selected_slots is not None and (
                 has_player_here or not storage_full
             )
@@ -1152,7 +1213,7 @@ class ProductionBuildingWindow:
         if is_working and close_hover:
             self._draw_tooltip(screen, "Чтобы покинуть место, завершите работу.", m_pos)
 
-        curr_y = rect.top + 160
+        curr_y = max(rect.top + 160, production_y + 38)
         pygame.draw.line(screen, (100, 90, 55), (rect.left + 22, curr_y), (rect.right - 22, curr_y), 1)
         curr_y += 14
 
@@ -1216,13 +1277,13 @@ class ProductionBuildingWindow:
                     (rect.left + 10, rect.top + 58))
         icon_x = rect.left + 70
         for resource in work.get("resources", []):
-            draw_item_icon(screen, resource, (icon_x, rect.top + 57), 18)
+            draw_item_icon(screen, resource, (icon_x, rect.top + 50), 32)
             label = self.scene.grid_font.render(
                 f"{RESOURCES[resource]['label']}: {totals.get(resource, 0)}",
                 True, (198, 211, 195),
             )
-            screen.blit(label, (icon_x + 20, rect.top + 59))
-            icon_x += 24 + label.get_width() + 8
+            screen.blit(label, (icon_x + 38, rect.top + 59))
+            icon_x += 42 + label.get_width() + 8
 
     def _draw_worker_stats(self, screen):
         rect = self.worker_stats_rect()
@@ -1249,7 +1310,6 @@ class ProductionBuildingWindow:
         screen.set_clip(clip_rect)
         elapsed = self._since_received()
         own_id = self.scene.session.character["id"]
-        lifetime = state.get("player_harvest_totals", {})
         for visible_index, slot in enumerate(slots[self.worker_stats_scroll:self.worker_stats_scroll + visible_rows]):
             row_y = header_bottom + 4 + visible_index * self.WORKER_ROW_HEIGHT
             row = pygame.Rect(rect.left + 7, row_y, rect.width - 14, self.WORKER_ROW_HEIGHT - 2)
@@ -1271,7 +1331,7 @@ class ProductionBuildingWindow:
                 if resource in resource_labels and percent > 0
             )
             if bonus_text:
-                bonus_surface = scene.grid_font.render(bonus_text, True, (117, 225, 128))
+                bonus_surface = scene.small_font.render(bonus_text, True, (117, 225, 128))
                 screen.blit(bonus_surface, (name_x + name_surface.get_width() + 10, row.top + 8))
 
             resources = slot.get("resources", [slot.get("resource")])
@@ -1302,48 +1362,35 @@ class ProductionBuildingWindow:
                 if resource_lines:
                     icon_x = row.left + 7
                     for resource, clock in resource_lines:
-                        draw_item_icon(screen, resource, (icon_x, row.top + 27), 16)
-                        text = scene.grid_font.render(
+                        draw_item_icon(screen, resource, (icon_x, row.top + 25), 32)
+                        text = scene.small_font.render(
                             f"{RESOURCES[resource]['label']} {clock}", True, (190, 205, 184)
                         )
-                        screen.blit(text, (icon_x + 18, row.top + 29))
-                        icon_x += 22 + text.get_width() + 8
+                        screen.blit(text, (icon_x + 38, row.top + 32))
+                        icon_x += 42 + text.get_width() + 8
 
-            if is_player:
-                screen.blit(scene.grid_font.render("Всего:", True, (154, 181, 149)),
-                            (row.left + 7, row.top + 66))
-                icon_x = row.left + 55
-                for resource in resources:
-                    if resource not in RESOURCES:
-                        continue
-                    draw_item_icon(screen, resource, (icon_x, row.top + 65), 14)
-                    label = scene.grid_font.render(
-                        f"{RESOURCES[resource]['label']}: {lifetime.get(resource, 0)}",
-                        True, (154, 181, 149),
-                    )
-                    screen.blit(label, (icon_x + 16, row.top + 67))
-                    icon_x += 20 + label.get_width() + 7
         screen.set_clip(previous_clip)
 
     def _draw_storage_tab(self, screen, curr_y):
         scene = self.scene
         rect = self.rect
         storage = self._state().get("storage", {})
-        player_claims = self._state().get("player_harvest_claims", {})
         depositable = self._state().get("storage_depositable", {})
         self.storage_withdraw_buttons = {}
         self.storage_deposit_buttons = {}
-        self.claim_buttons = {}
-        screen.blit(scene.font.render(f"Склад: {self.storage_total()} / {storage.get('limit', 0)}", True, (255, 225, 130)), (rect.left + 24, curr_y))
-        curr_y += 34
-        for resource in self.resources:
-            claimable = player_claims.get(resource, 0)
+        for resource in storage:
+            if resource == "limit" or resource not in RESOURCES:
+                continue
             shared_amount = int(storage.get(resource, 0))
             backpack = depositable.get(resource, {})
-            text = (f"{RESOURCES[resource]['label']}: склад {shared_amount} · "
-                    f"рюкзак {backpack.get('in_backpack', 0)} · ваша доля в складе {claimable}")
-            draw_item_icon(screen, resource, (rect.left + 12, curr_y + 2), 24)
-            screen.blit(scene.small_font.render(text, True, (215, 215, 205)), (rect.left + 42, curr_y + 4))
+            text = (f"{RESOURCES[resource]['label']}: склад {shared_amount} / {storage.get('limit', 0)} · "
+                    f"рюкзак {backpack.get('in_backpack', 0)}")
+            draw_item_icon(screen, resource, (rect.left + 12, curr_y), 32)
+            screen.blit(scene.small_font.render(text, True, (215, 215, 205)), (rect.left + 50, curr_y + 8))
+            draw_storage_meter(
+                screen, pygame.Rect(rect.left + 650, curr_y + 10, 250, 8),
+                shared_amount, storage.get("limit", 0),
+            )
             if shared_amount > 0:
                 button = pygame.Rect(rect.left + 1060, curr_y, 112, 28)
                 draw_button(screen, button, "ВЗЯТЬ", scene.small_font,
@@ -1354,18 +1401,16 @@ class ProductionBuildingWindow:
                 draw_button(screen, button, "ВНЕСТИ", scene.small_font,
                             color=(68, 112, 60), text_color=(235, 245, 230))
                 self.storage_deposit_buttons[resource] = button
-            if claimable > 0:
-                button = pygame.Rect(rect.left + 1296, curr_y, 150, 28)
-                draw_button(screen, button, f"ДОЛЯ {claimable}", scene.small_font,
-                            color=(69, 112, 67), text_color=(235, 232, 215))
-                self.claim_buttons[resource] = button
-            curr_y += 30
-        hint = scene.small_font.render("Вместимость общая для всех ресурсов; излишек при выгрузке сгорает", True, (150, 155, 165))
+            curr_y += 36
+        hint = scene.small_font.render("Лимит указан отдельно для каждого ресурса", True, (150, 155, 165))
         screen.blit(hint, (rect.left + 24, curr_y + 12))
 
     def _draw_upgrade_tab(self, screen, curr_y, m_pos):
         scene = self.scene
         rect = self.rect
+        if self.building == "farm":
+            self._draw_farm_upgrade_cards(screen, curr_y)
+            return
         upgrade = self._state().get("upgrade")
         self.deposit_buttons = {}
         if upgrade is None:
@@ -1383,8 +1428,8 @@ class ProductionBuildingWindow:
             done = int(material["deposited"]) + int(material["in_warehouse"]) >= int(material["required"])
             credit = f", ранее оплачено {material['deposited']}" if material["deposited"] else ""
             text = f"{material['name']}: склад {material['in_warehouse']}/{remaining}{credit}"
-            draw_item_icon(screen, material, (rect.left + 12, curr_y + 2), 24)
-            screen.blit(scene.small_font.render(text, True, (140, 230, 140) if done else (230, 200, 120)), (rect.left + 42, curr_y + 6))
+            draw_item_icon(screen, material, (rect.left + 12, curr_y), 32)
+            screen.blit(scene.small_font.render(text, True, (140, 230, 140) if done else (230, 200, 120)), (rect.left + 50, curr_y + 6))
             curr_y += 36
         curr_y += 12
         if upgrade["in_progress"]:
@@ -1396,3 +1441,101 @@ class ProductionBuildingWindow:
         hover = ready and self.upgrade_button.collidepoint(m_pos)
         color = ((110, 180, 110) if hover else (80, 140, 85)) if ready else (55, 55, 60)
         draw_button(screen, self.upgrade_button, "УЛУЧШИТЬ", scene.small_font, color=color, text_color=(255, 255, 255) if ready else (150, 150, 155))
+
+    def _draw_farm_upgrade_cards(self, screen, curr_y):
+        scene = self.scene
+        state = self._state()
+        progress = state.get("farm_upgrades", {})
+        completed = progress.get("completed", {})
+        warehouse = state.get("warehouse_storage", {}) or {}
+        treasury = int(state.get("treasury_silver_available", 0))
+        farm_level = int(state.get("level", 1))
+        active_id = progress.get("active_upgrade_id")
+        seconds_left = max(0, int(progress.get("seconds_left", 0) - self._since_received()))
+        self.farm_upgrade_buttons = {}
+
+        card_left = self.rect.left + 24
+        card_width = self.rect.width - 48
+        card_height = 166
+        card_gap = 10
+        available_upgrades = [
+            (upgrade_id, upgrade)
+            for upgrade_id, upgrade in FARM_UPGRADES.items()
+            if int(upgrade.get("required_farm_level", 1)) == farm_level
+        ]
+        for index, (upgrade_id, upgrade) in enumerate(available_upgrades):
+            card = pygame.Rect(card_left, curr_y + index * (card_height + card_gap),
+                               card_width, card_height)
+            is_complete = bool(completed.get(upgrade_id, False))
+            is_active = active_id == upgrade_id
+            requirements_met = (
+                farm_level >= int(upgrade.get("required_farm_level", 1))
+                and (upgrade_id != "farm_level_2"
+                     or (completed.get("ration", False) and completed.get("wooden_plough", False)))
+            )
+            funds_available = (
+                treasury >= int(upgrade["silver_cost"])
+                and all(int(warehouse.get(resource, 0)) >= int(amount)
+                        for resource, amount in upgrade["materials"].items())
+            )
+            can_start = (
+                not is_complete and active_id is None and requirements_met and funds_available
+            )
+            pygame.draw.rect(screen, (34, 39, 31), card, border_radius=6)
+            pygame.draw.rect(screen, (108, 137, 82) if can_start else (77, 78, 66), card, 1,
+                             border_radius=6)
+            screen.blit(scene.font.render(upgrade["name"], True, (232, 218, 184)),
+                        (card.left + 14, card.top + 10))
+            screen.blit(scene.small_font.render(
+                f"Требование: {upgrade['requirement']}", True,
+                (161, 201, 148) if requirements_met else (222, 161, 115),
+            ), (card.left + 14, card.top + 39))
+            screen.blit(scene.small_font.render(
+                f"Результат: {upgrade['result']}", True, (197, 207, 190),
+            ), (card.left + 14, card.top + 62))
+            duration_text = scene.small_font.render(
+                f"Время улучшения: {format_duration(upgrade['time_seconds'])}",
+                True, (180, 194, 176),
+            )
+            screen.blit(duration_text, (card.left + 14, card.top + 82))
+
+            price_y = card.top + 108
+            draw_item_icon(screen, "silver", (card.left + 14, price_y), 32)
+            silver_text = scene.small_font.render(
+                f"{treasury}/{upgrade['silver_cost']} серебра", True, (224, 214, 188)
+            )
+            screen.blit(silver_text, (card.left + 52, price_y + 8))
+            wood_cost = int(upgrade["materials"].get("wood", 0))
+            if wood_cost:
+                draw_item_icon(screen, "wood", (card.left + 250, price_y), 32)
+                wood_text = scene.small_font.render(
+                    f"{int(warehouse.get('wood', 0))}/{wood_cost} древесины",
+                    True, (224, 214, 188),
+                )
+                screen.blit(wood_text, (card.left + 288, price_y + 8))
+
+            button = pygame.Rect(card.right - 226, card.top + 113, 210, 38)
+            if is_complete:
+                status = scene.small_font.render("УСТАНОВЛЕНО", True, (143, 208, 139))
+                screen.blit(status, status.get_rect(midright=(button.right, button.centery)))
+            elif is_active:
+                status = scene.small_font.render(
+                    f"Осталось: {format_clock(seconds_left)}", True, (132, 193, 231)
+                )
+                screen.blit(status, status.get_rect(midright=(button.right, button.centery)))
+            else:
+                if not requirements_met:
+                    label, enabled = "СНАЧАЛА ПРЕДЫДУЩИЕ", False
+                elif not funds_available:
+                    label, enabled = "НЕДОСТАТОЧНО", False
+                elif active_id is not None:
+                    label, enabled = "ИДЁТ УЛУЧШЕНИЕ", False
+                else:
+                    label, enabled = "НАЧАТЬ", True
+                draw_button(
+                    screen, button, label, scene.small_font,
+                    color=(75, 125, 70) if enabled else (49, 51, 46),
+                    text_color=(240, 238, 220) if enabled else (140, 142, 132),
+                )
+                if enabled:
+                    self.farm_upgrade_buttons[upgrade_id] = button

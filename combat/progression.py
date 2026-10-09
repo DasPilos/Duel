@@ -43,11 +43,14 @@ def battle_xp(player_level, opponent_level, outcome):
     return int(round(base_xp * _tier_multiplier(int(opponent_level) - int(player_level))))
 
 
-def battle_currency_reward(level):
-    """(медь, серебро) за победу на уровне персонажа."""
-    level = int(level)
-    rewards = {1: (10, 0), 2: (20, 0), 3: (60, 0), 4: (80, 0), 5: (20, 1)}
-    return rewards.get(level, (0, 2) if level >= 6 else (0, 0))
+def battle_currency_reward(player_level, opponent_level=None):
+    """Copper reward for a backyard win, adjusted by level difference."""
+    player_level = int(player_level)
+    opponent_level = player_level if opponent_level is None else int(opponent_level)
+    difference = player_level - opponent_level
+    multiplier = 1 + (0.5 * difference if difference >= 0 else 0.7 * difference)
+    copper = max(0, int(round(40 * multiplier)))
+    return copper, 0
 
 
 def apply_xp(fighter, amount, restore_hp=False):

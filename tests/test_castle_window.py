@@ -196,6 +196,8 @@ class CastleWindowTests(unittest.TestCase):
         self.assertFalse(any(text.startswith("За тик:") for text in rendered))
 
     def test_population_uses_color_satiety_bars_and_strong_hunger_meter(self):
+        from ui.catalog_icons import draw_item_icon
+
         window = CastleWindow(object())
         window.is_open = True
         window.tab = "population"
@@ -229,8 +231,9 @@ class CastleWindowTests(unittest.TestCase):
 
         window.small_font = Recorder()
         screen = pygame.Surface((window.rect.right + 1, window.rect.bottom + 1))
-        with patch("pygame.mouse.get_pos", return_value=(0, 0)):
-            window.draw(screen)
+        with patch("ui.castle_window.draw_item_icon", wraps=draw_item_icon) as draw_icon:
+            with patch("pygame.mouse.get_pos", return_value=(0, 0)):
+                window.draw(screen)
 
         self.assertEqual(rendered["Сытность 8%"], (226, 66, 58))
         self.assertEqual(rendered["Сильный голод 35%"], (15, 15, 15))
@@ -238,6 +241,92 @@ class CastleWindowTests(unittest.TestCase):
         self.assertEqual(rendered["Сытность 31%"], (72, 174, 95))
         self.assertFalse(any("/100" in text for text in rendered))
         self.assertFalse(any("приёма пищи" in text for text in rendered))
+        self.assertFalse(any(text.startswith("Довольство:") for text in rendered))
+        citizen_icons = [call for call in draw_icon.call_args_list if call.args[1] == "citizen"]
+        self.assertEqual(len(citizen_icons), 4)
+        self.assertTrue(all(call.args[3] == 32 for call in citizen_icons))
+
+    def test_population_lists_free_citizens_before_workers(self):
+        window = CastleWindow(object())
+        state = {
+            "population": 2,
+            "population_capacity": 10,
+            "citizens": [
+                {"id": 1, "name": "Работает", "satiety": 80, "strong_hunger": 0,
+                 "satisfaction": "satisfied", "work_status": "Занят", "job_building": "farm"},
+                {"id": 2, "name": "Свободен", "satiety": 75, "strong_hunger": 0,
+                 "satisfaction": "satisfied", "work_status": "Свободен", "job_building": None},
+            ],
+            "food_storage": {},
+            "worksites": [],
+            "city_upgrade": {},
+        }
+        rendered = []
+        original_font = window.small_font
+
+        class Recorder:
+            def render(self, text, *args):
+                rendered.append(str(text))
+                return original_font.render(text, *args)
+
+            def __getattr__(self, name):
+                return getattr(original_font, name)
+
+        window.small_font = Recorder()
+        screen = pygame.Surface((window.rect.right + 1, window.rect.bottom + 1))
+        with patch("pygame.mouse.get_pos", return_value=(0, 0)):
+            window._draw_population(screen, state, (0, 0))
+
+        self.assertLess(rendered.index("Свободен"), rendered.index("Работает"))
+
+    def test_governor_lists_hourly_rates_and_trends_for_city_resources(self):
+        from ui.catalog_icons import draw_item_icon
+
+        window = CastleWindow(object())
+        rendered = []
+        original_font = window.font
+
+        class Recorder:
+            def render(self, text, *args):
+                rendered.append(str(text))
+                return original_font.render(text, *args)
+
+            def __getattr__(self, name):
+                return getattr(original_font, name)
+
+        window.font = Recorder()
+        window.small_font = Recorder()
+        screen = pygame.Surface((window.rect.right + 1, window.rect.bottom + 1))
+        with patch("ui.castle_window.draw_item_icon", wraps=draw_item_icon) as draw_icon:
+            window._draw_governor(screen, {
+                "city_resource_income_per_hour": {"wheat": 16.0},
+                "city_resource_consumption_per_hour": {"wheat": 9.6},
+                "city_resource_trend": {"wheat": "surplus"},
+            })
+            window._draw_governor(screen, {
+                "city_resource_income_per_hour": {
+                    "wheat": 16.0, "berries": 3.0, "meat": 1.0, "wood": 15.0,
+                },
+                "city_resource_consumption_per_hour": {
+                    "wheat": 9.6, "berries": 2.4, "meat": 2.0, "wood": 0.0,
+                },
+                "city_resource_trend": {
+                    "wheat": "upgrade_ready", "berries": "surplus", "meat": "deficit",
+                    "wood": "surplus",
+                },
+            })
+
+        self.assertLess(rendered.index("Доход в час"), rendered.index("Расход в час"))
+        self.assertIn("Пшеница", rendered)
+        self.assertIn("16,0 в час", rendered)
+        self.assertIn("9,6 в час", rendered)
+        self.assertIn("Древесина", rendered)
+        self.assertIn("15,0 в час", rendered)
+        self.assertIn("Есть небольшой +", rendered)
+        self.assertIn("На ап города", rendered)
+        self.assertIn("Дефицит", rendered)
+        icon_keys = [call.args[1] for call in draw_icon.call_args_list]
+        self.assertEqual(icon_keys, ["wheat", "wheat", "berries", "meat", "wood"])
 
 
 if __name__ == "__main__":

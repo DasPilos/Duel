@@ -1,7 +1,7 @@
-# Мини-дуэль (game)
+# Game
 
-Небольшая пошаговая боевая игра на Pygame: игрок и противник собирают руку карт,
-тратят очки характеристик и автоматически разыгрывают выбранные действия.
+Pygame RPG with online accounts, shared city state, production buildings,
+transport logistics, and a turn-based card battle system.
 
 ## Быстрый старт
 
@@ -14,20 +14,20 @@ python main.py
 
 - Python 3.13+
 - pygame 2.6.1+
-- сервер использует только стандартную библиотеку Python
+- PostgreSQL and psycopg 3 for the online server
 
 ## Основные модули
 
 ### `client/`
 
-HTTP-клиент, авторизация, сетевые сессии, сохранение персонажа, чат,
+HTTP-клиент, авторизация, выбор мира и персонажа, сетевые сессии, чат,
 realtime-события и локальное состояние клиента.
 
 ### `server/`
 
-HTTP API, SQLite-хранилище, пользователи и персонажи, чат и модерация,
-присутствие игроков, заявки на дуэли, групповые бои, состояние ботов,
-планировщик ботов и WebSocket-шлюз.
+HTTP API, PostgreSQL migrations, world-scoped users and characters, citizen
+population, city upgrades, production storage, carts and convoys, chat,
+moderation, battle archive, bots, and WebSocket gateway.
 
 ### `ui/chat/`
 
@@ -52,7 +52,8 @@ HTTP API, SQLite-хранилище, пользователи и персона�
 
 ### `scenes/`
 
-Экран авторизации, выбор персонажа, таверна, задний двор и дуэль.
+Экран авторизации, выбор мира и персонажа, город, глобальная карта, таверна,
+задний двор и дуэль.
 Дополнительные модули отвечают за ввод, тайминги боя и комментарии.
 
 ### `ui/`
@@ -73,6 +74,9 @@ Pygame-интерфейс, карточки персонажей, рендери
 - [`card_battle.md`](card_battle.md) — колода, драфт, карты, формулы и временные эффекты.
 - [`file_contracts.md`](file_contracts.md) — публичные контракты каждого файла + история изменений.
 - [`server.md`](server.md) — запуск локального сервера и клиента.
+- [`CITY_SYSTEM.md`](CITY_SYSTEM.md) — город, население, производство и уровни фермы.
+- [`testing.md`](testing.md) — тестовая БД и релизная проверка.
+- [`RELEASE_NOTES_2026-10-09.md`](RELEASE_NOTES_2026-10-09.md) — изменения относительно базовой ревизии.
 
 ## Глоссарий UI
 

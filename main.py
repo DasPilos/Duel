@@ -9,6 +9,7 @@ from core.settings import FPS, HEIGHT, WIDTH
 from scenes.duel_scene import DuelScene
 from scenes.mage_battle_scene import MageBattleScene
 from scenes.character_scene import CharacterScene
+from scenes.hall_of_fame_scene import HallOfFameScene
 from scenes.create_character_scene import CreateCharacterScene
 from scenes.tavern_scene import TavernScene
 from scenes.backyard_scene import BackyardScene
@@ -310,6 +311,10 @@ def main():
                     if scene.cancelled:
                         scene.session.disconnect()
                         running = False
+                    elif scene.hall_of_fame_requested:
+                        close_scene_ui(scene)
+                        session = scene.session
+                        transition.start(screen, lambda: HallOfFameScene(session))
                     elif scene.create_new_character:
                         # Transition to character creation scene
                         close_scene_ui(scene)
@@ -319,6 +324,11 @@ def main():
                         close_scene_ui(scene)
                         session = scene.session
                         transition.start(screen, lambda: scene_for_saved_character(session))
+
+                elif args.online and isinstance(scene, HallOfFameScene) and scene.finished:
+                    close_scene_ui(scene)
+                    session = scene.session
+                    transition.start(screen, lambda: CharacterScene(session))
 
                 elif args.online and isinstance(scene, CreateCharacterScene) and scene.finished:
                     pygame.key.stop_text_input()

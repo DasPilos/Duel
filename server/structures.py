@@ -249,18 +249,21 @@ CITY_WALLS = [[0, 0, 1504, 64],
 WORLD_OBJECTS = [{'id': 'lumber_camp',
   'name': 'Лагерь лесорубов',
   'type': 'Строение 10х10',
-  'tile_x': 33,
-  'tile_y': 104,
+        'tile_x': 41,
+        'tile_y': 83,
   'tile_w': 10,
   'tile_h': 10,
-  'x': 1216,
-  'y': 3488,
+        'x': 1472,
+        'y': 2816,
+        'rotation': 180,
   'radius': 140,
-  'entrance_tile': [38, 113],
-  'approach_pos': [1232, 3664],
-  'desc': 'Лагерь лесорубов в чаще леса. Горожане рубят лес и собирают ягоды.',
+        'entrance_tile': [46, 83],
+        'approach_pos': [1488, 2640],
+        'origin_desc': 'Левый верхний тайл: [41, 83], вход с севера: [46, 83]',
+        'stump_tiles': [[42, 93], [45, 93], [48, 93], [41, 95], [44, 95], [47, 95], [50, 95], [42, 97], [45, 97], [48, 97]],
+        'desc': 'Лагерь лесорубов у южной кромки леса. Вход с севера; к югу от лагеря видны пни на вырубке.',
   'icon': '🌲',
-  'solid_rects': [[1080, 3392, 272, 160], [1072, 3552, 88, 64], [1272, 3552, 88, 64]]},
+        'solid_rects': [[1336, 2752, 272, 160], [1528, 2688, 88, 64], [1328, 2688, 88, 64]]},
  {'id': 'town_radburg',
   'name': 'Город Радбург',
   'type': 'Город Света (15х15)',
@@ -360,5 +363,10 @@ def city_structures():
     return {"objects": CITY_OBJECTS, "walls": CITY_WALLS}
 
 
-def world_structures():
-    return {"objects": WORLD_OBJECTS}
+def world_structures(city_level=1):
+        from core.city_progression import COUNTRY_BUILDING_UNLOCK_LEVELS, unlocked_country_buildings
+
+        unlocked = set(unlocked_country_buildings(city_level))
+        return {"objects": [obj for obj in WORLD_OBJECTS
+                                                if obj["id"] not in COUNTRY_BUILDING_UNLOCK_LEVELS
+                                                or obj["id"] in unlocked]}

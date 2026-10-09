@@ -15,6 +15,7 @@ from ui.afk_presence import active_player_entities, draw_active_players, draw_af
 from ui.catalog_icons import draw_building_icon
 from ui.map_travel import draw_mobile_hover_card, draw_traveling_entities, mobile_entity_at
 from ui.production_building_window import VIEWS, ProductionBuildingWindow, object_building, point_in_polygon
+from scenes.city.exterior import draw_city_exterior
 
 
 # Фразы при попытке взаимодействия с расстояния больше 1 тайла
@@ -86,6 +87,8 @@ class WorldMapScene:
     Размер карты: 512 тайлов по ширине (16384 px) x 256 тайлов по высоте (8192 px).
     Координатная сетка начинается с левого верхнего угла: (0, 0) = [0, 0].
     """
+
+    CITY_VISUAL_REFRESH_SECONDS = 10.0
 
     def __init__(self, session, spawn_gate=None, spawn_pos=None):
         self.session = session
@@ -206,6 +209,8 @@ class WorldMapScene:
 
         # Строения карты живут на сервере и приходят вместе с рельефом (_load_terrain)
         self.objects = []
+        self.city_visual_state = {"city_level": 1, "active": False}
+        self.city_visual_refresh_at = 0.0
 
         self.obstacles = self._load_terrain()
 
@@ -295,10 +300,16 @@ class WorldMapScene:
                 frame_w, frame_h = 238, 330
                 shifts = [-240, 0, 239]
                 self.forester_frames = []
+                camp_rotation = int(next(
+                    (obj.get("rotation", 0) for obj in self.objects if obj.get("id") == "lumber_camp"),
+                    0,
+                )) % 360
                 for shift in shifts:
                     frame_surf = pygame.Surface((frame_w, frame_h), pygame.SRCALPHA)
                     frame_surf.blit(sheet, (0, 0), pygame.Rect(237 + shift, 85, frame_w, frame_h))
                     scaled_frame = pygame.transform.smoothscale(frame_surf, target_size)
+                    if camp_rotation:
+                        scaled_frame = pygame.transform.rotate(scaled_frame, camp_rotation)
                     self.forester_frames.append(scaled_frame)
             except Exception as e:
                 print(f"Ошибка загрузки спрайта лесника: {e}")
@@ -640,8 +651,12 @@ class WorldMapScene:
         except (ServerError, AttributeError, KeyError, OSError):
             self.road_tiles = set()
             self.road_travel_seconds = 0
+            self.city_visual_state = {"city_level": 1, "active": False}
             return []
         self.objects = hydrate_structures(terrain.get("objects", []))
+        self.city_visual_state = dict(terrain.get(
+            "city_visual_state", {"city_level": 1, "active": False}
+        ))
         roads = terrain.get("roads", {})
         self.road_tiles = {tuple(tile) for tile in roads.get("tiles", [])}
         self.road_routes = roads.get("routes", [])
@@ -664,6 +679,21 @@ class WorldMapScene:
                 **obstacle, "points": points, "bounds": bounds, "passages": passages, "surface": surface, "origin": origin,
             })
         return obstacles
+
+    def _refresh_city_visual_state(self):
+        now = time.monotonic()
+        if now < self.city_visual_refresh_at:
+            return False
+        self.city_visual_refresh_at = now + self.CITY_VISUAL_REFRESH_SECONDS
+        try:
+            population = self.session.client.get_city_population(
+                self.session.character["id"]
+            )
+        except (ServerError, AttributeError, KeyError, OSError, TypeError, ValueError):
+            return False
+        self.city_visual_state = dict(population.get("city_upgrade", {}))
+        self.city_visual_state.setdefault("city_level", int(population.get("castle_level", 1)))
+        return True
 
     @staticmethod
     def _render_mountains(points, peaks, passages=()):
@@ -905,6 +935,7 @@ class WorldMapScene:
             self.profile_overlay.update_profile(saved_profile)
 
     def update(self, dt):
+        self._refresh_city_visual_state()
         if self.chat is not None:
             self.chat.update(dt)
         # 1. Движение персонажа к целевой точке (Dota-стиль) с проверкой коллизий
@@ -1150,6 +1181,25 @@ class WorldMapScene:
                 # Мягкая тень под строением
                 pygame.draw.ellipse(screen, (16, 24, 16, 170), (sx + 20, sy + 180, obj_w - 40, 120))
 
+                for tile_x, tile_y in obj.get("stump_tiles", []):
+                    if (int(tile_x), int(tile_y)) in self.road_tiles:
+                        continue
+                    stump_x, stump_y = self.world_to_screen(
+                        (int(tile_x) + 0.5) * self.tile_size,
+                        (int(tile_y) + 0.5) * self.tile_size,
+                    )
+                    if not (-24 <= stump_x <= settings.WIDTH + 24
+                            and -20 <= stump_y <= settings.HEIGHT + 20):
+                        continue
+                    pygame.draw.ellipse(screen, (22, 27, 16),
+                                        (stump_x - 11, stump_y + 4, 24, 9))
+                    pygame.draw.ellipse(screen, (84, 55, 32),
+                                        (stump_x - 9, stump_y - 5, 18, 14))
+                    pygame.draw.ellipse(screen, (178, 139, 82),
+                                        (stump_x - 7, stump_y - 6, 14, 9))
+                    pygame.draw.ellipse(screen, (125, 88, 51),
+                                        (stump_x - 3, stump_y - 4, 6, 4))
+
                 # Отрисовка анимированного спрайта хижины лесника (дым из трубы)
                 if self.forester_frames:
                     # 3 кадра анимации дыма, смена кадра каждые 0.35 секунды (~3 FPS)
@@ -1235,6 +1285,29 @@ class WorldMapScene:
 
             elif obj.get("id") == "black_pit":
                 self._draw_black_pit_object(screen, obj)
+
+            elif obj.get("id") == "town_radburg":
+                top_left_x = obj["tile_x"] * self.tile_size
+                top_left_y = obj["tile_y"] * self.tile_size
+                sx, sy = self.world_to_screen(top_left_x, top_left_y)
+                obj_w = obj["tile_w"] * self.tile_size
+                obj_h = obj["tile_h"] * self.tile_size
+                city_rect = pygame.Rect(sx, sy, obj_w, obj_h)
+                if not city_rect.colliderect(pygame.Rect(0, 0, settings.WIDTH, settings.HEIGHT)):
+                    continue
+                draw_city_exterior(screen, city_rect, self.city_visual_state)
+                is_active = self.active_entity and self.active_entity.get("id") == obj["id"]
+                is_hovered = self.hovered_entity and self.hovered_entity.get("id") == obj["id"]
+                if is_active:
+                    pygame.draw.rect(screen, (255, 215, 60), city_rect, 3, border_radius=8)
+                elif is_hovered:
+                    pygame.draw.rect(screen, (80, 200, 255), city_rect.inflate(8, 8), 2, border_radius=8)
+                else:
+                    pygame.draw.rect(screen, (100, 125, 155), city_rect, 2, border_radius=8)
+                badge_color = (255, 215, 60) if is_active else (100, 200, 255) if is_hovered else (220, 200, 160)
+                level = int(self.city_visual_state.get("city_level", 1))
+                self._draw_badge(screen, city_rect.centerx, sy - 12,
+                                 f"Город Радбург · ур. {level}", badge_color)
 
             elif obj.get("id") in ("town_radburg", "main_castle") or obj.get("is_placeholder"):
                 # Заглушка города (например, Город Радбург 15х15 тайлов, 480х480 px)
@@ -1549,8 +1622,8 @@ class WorldMapScene:
         screen.blit(popup_surf, (box_x, box_y))
 
         name = ent.get("name", "Объект")
-        building_icon = draw_building_icon(screen, ent.get("id"), (box_x + 10, box_y + 5), 26)
-        title_x = box_x + 42 if building_icon else box_x + 12
+        building_icon = draw_building_icon(screen, ent.get("id"), (box_x + 10, box_y + 5), 32)
+        title_x = box_x + 50 if building_icon else box_x + 12
         title = name if building_icon else f"{ent.get('icon', '📍')} {name}"
         title_surf = self.small_font.render(title, True, (255, 230, 140))
         screen.blit(title_surf, (title_x, box_y + 10))

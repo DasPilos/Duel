@@ -7,6 +7,7 @@ from pathlib import Path
 import pygame
 
 from core import settings
+from core.production_buildings import PRODUCTION_ITEM_IDS, RESOURCES
 
 
 ROAD_BUILDING_IDS = {
@@ -31,11 +32,21 @@ def _format_phase_eta(entity):
     labels = {
         "loading": "До конца погрузки",
         "unloading": "До конца разгрузки",
-        "resting": "До конца отдыха",
+        "resting": "До конца пополнения провизии",
         "waiting_for_resources": "Повторная проверка через",
     }
     label = labels.get(phase, "До прибытия")
     return f"{label}: {_format_eta(entity.get('eta_seconds', 0))}"
+
+
+def _route_progress_percent(entity):
+    progress = entity.get("progress_percent")
+    if progress is None:
+        total = max(1, int(entity.get("travel_seconds", entity.get("total_seconds", 1))))
+        eta = max(0, int(entity.get("eta_seconds", entity.get("seconds_remaining", 0))))
+        direction = entity.get("direction", "outbound")
+        progress = 100 * (1 - eta / total if direction == "outbound" else eta / total)
+    return max(0, min(100, int(round(float(progress)))))
 
 
 def route_position(tiles, progress, tile_size):
@@ -95,9 +106,7 @@ def traveling_entities(scene, location="world_map"):
                          - max(0.0, time.monotonic() - float(getattr(chat, "convoys_received_at", 0)))))
         total = max(1, int(convoy.get("travel_seconds", convoy.get("total_seconds", eta or 1))))
         direction = convoy.get("direction", "outbound")
-        progress = convoy.get("progress_percent")
-        if progress is None:
-            progress = 100 * (1 - eta / total if direction == "outbound" else eta / total)
+        progress = _route_progress_percent({**convoy, "seconds_remaining": eta})
         position = route_position(route["tiles"], float(progress) / 100, scene.tile_size)
         if position is None:
             continue
@@ -108,6 +117,7 @@ def traveling_entities(scene, location="world_map"):
             "position_y": position[1],
             "position_direction": position[2],
             "eta_seconds": eta,
+            "progress_percent": progress,
             "route_name": convoy.get("route_name", route.get("name", "Маршрут")),
             "movement_text": convoy.get("movement_text", convoy.get(
                 "status", "Едет к загородному объекту" if direction == "outbound"
@@ -159,6 +169,24 @@ def _blit_transport_sprite(screen, name, size, center, direction="n"):
         screen.blit(sprite, sprite.get_rect(center=(round(center[0]), round(center[1]))))
 
 
+def draw_transport_cart_icon(screen, sprite_key="light", position=(0, 0), size=24):
+    sprite = _transport_sprite(f"cart_{sprite_key}", size, "n")
+    if sprite is None:
+        return None
+    rect = sprite.get_rect(topleft=(round(position[0]), round(position[1])))
+    screen.blit(sprite, rect)
+    return rect
+
+
+def draw_transport_horse_icon(screen, position=(0, 0), size=32):
+    sprite = _transport_sprite("horse", size, "n")
+    if sprite is None:
+        return None
+    rect = sprite.get_rect(topleft=(round(position[0]), round(position[1])))
+    screen.blit(sprite, rect)
+    return rect
+
+
 def draw_convoy_sprite_group(screen, center, sprite_key="light", direction="w", size=96, spacing=None):
     vectors = {
         "n": (0, -1), "ne": (0.707, -0.707), "e": (1, 0), "se": (0.707, 0.707),
@@ -208,7 +236,17 @@ def draw_traveling_entities(scene, screen, location="world_map"):
                 pygame.draw.rect(screen, (112, 133, 103), (sx - 5, sy - 14, 10, 14), border_radius=2)
         name = entity.get("cart_name", entity.get("name", "Повозка"))
         label = scene.grid_font.render(str(name), True, (237, 214, 164))
-        screen.blit(label, label.get_rect(midbottom=(sx, sy - 28)))
+        label_rect = label.get_rect(midbottom=(sx, sy - 28))
+        sprite_key = entity.get("cart_sprite_key", "light")
+        icon_size = 32
+        icon_rect = draw_transport_cart_icon(
+            screen, sprite_key,
+            (label_rect.left - icon_size - 4, label_rect.centery - icon_size // 2),
+            icon_size,
+        )
+        if icon_rect is not None:
+            label_rect.left = icon_rect.right + 4
+        screen.blit(label, label_rect)
 
 
 def draw_mobile_hover_card(scene, screen, entity):
@@ -221,6 +259,9 @@ def draw_mobile_hover_card(scene, screen, entity):
         card = CharacterCard.get_or_create(profile["id"])
         card.draw(screen, pygame.Rect(settings.ENEMY_CARD_RECT), profile=profile,
                   border_color=(95, 174, 225), title="ИГРОК РЯДОМ", editable=False)
+        return
+    if entity.get("entity_kind") == "wagon":
+        _draw_wagon_hover_card(scene, screen, entity)
         return
     lines = [
         (entity.get("cart_name", entity.get("name", "Горожанин")), (244, 217, 164)),
@@ -256,5 +297,90 @@ def draw_mobile_hover_card(scene, screen, entity):
     pygame.draw.rect(screen, (18, 24, 32), panel, border_radius=6)
     pygame.draw.rect(screen, (80, 190, 255), panel, 2, border_radius=6)
     for index, (text, color) in enumerate(lines):
-        screen.blit(scene.small_font.render(str(text), True, color),
-                    (panel.left + padding, panel.top + padding + index * line_height))
+        line_y = panel.top + padding + index * line_height
+        screen.blit(scene.small_font.render(str(text), True, color), (panel.left + padding, line_y))
+
+
+def _draw_wagon_hover_card(scene, screen, entity):
+    width, padding, line_height = 340, 12, 36
+    bar_height, bar_gap = 8, 5
+    content_height = padding * 2 + line_height * 6 + bar_gap + bar_height + 1
+    mouse_x, mouse_y = pygame.mouse.get_pos()
+    left = min(mouse_x + 16, screen.get_width() - width - 8)
+    top = min(mouse_y + 16, screen.get_height() - content_height - 8)
+    panel = pygame.Rect(max(8, left), max(8, top), width, content_height)
+    pygame.draw.rect(screen, (18, 24, 32), panel, border_radius=6)
+    pygame.draw.rect(screen, (80, 190, 255), panel, 2, border_radius=6)
+
+    line_y = panel.top + padding
+    icon = draw_transport_cart_icon(
+        screen, entity.get("cart_sprite_key", "light"),
+        (panel.left + padding, line_y), 32,
+    )
+    cart_label = str(entity.get("cart_name", entity.get("name", "Лёгкая повозка")))
+    screen.blit(scene.small_font.render(cart_label, True, (244, 217, 164)),
+                (icon.right + 6 if icon else panel.left + padding, line_y + 8))
+    line_y += line_height
+
+    movement = str(entity.get("movement_text", entity.get("status", "В пути")))
+    screen.blit(scene.small_font.render(movement, True, (128, 203, 245)),
+                (panel.left + padding, line_y))
+    line_y += line_height
+
+    route_name = str(entity.get("route_name", "—"))
+    route_text = f"Маршрут: {route_name}"
+    screen.blit(scene.small_font.render(route_text, True, (210, 210, 196)),
+                (panel.left + padding, line_y))
+    line_y += line_height
+
+    cargo = entity.get("cargo", [])
+    if isinstance(cargo, list):
+        cargo_slots = [slot for slot in cargo if isinstance(slot, dict)]
+        resource_names = []
+        for slot in cargo_slots:
+            resource_id = str(slot.get("resource_id", ""))
+            label = RESOURCES.get(resource_id, {}).get("label", resource_id or "Ресурс")
+            quantity = int(slot.get("quantity", 0) or 0)
+            resource_names.append(f"{label} ×{quantity}" if quantity else label)
+        cargo_name = ", ".join(resource_names) or "нет"
+        cargo_weight = float(entity.get("cargo_kg", 0) or 0)
+    elif isinstance(cargo, dict):
+        cargo_name = ", ".join(
+            f"{RESOURCES.get(str(name), {}).get('label', name)} ×{amount}"
+            for name, amount in cargo.items()
+        ) or "нет"
+        cargo_weight = float(entity.get("cargo_kg", 0) or 0)
+    else:
+        cargo_name = "нет"
+        cargo_weight = float(entity.get("cargo_kg", 0) or 0)
+
+    cargo_icon = None
+    first_resource = next((slot.get("resource_id") for slot in cargo_slots), None) if isinstance(cargo, list) else None
+    if first_resource:
+        from ui.catalog_icons import draw_item_icon
+
+        item_id = PRODUCTION_ITEM_IDS.get(str(first_resource))
+        cargo_icon = draw_item_icon(screen, item_id or str(first_resource),
+                                    (panel.left + padding, line_y - 1), 32)
+    cargo_text = f"{cargo_name} · общий вес {cargo_weight:g} кг"
+    cargo_x = cargo_icon.get_width() + panel.left + padding + 6 if cargo_icon else panel.left + padding
+    screen.blit(scene.small_font.render(f"Груз: {cargo_text}", True, (217, 197, 155)), (cargo_x, line_y))
+    line_y += line_height
+
+    percent = _route_progress_percent(entity)
+    direction = entity.get("direction", "outbound")
+    progress_label = "Путь в город" if direction == "returning" else "Путь к объекту"
+    progress_text = f"{progress_label}: {percent}%"
+    screen.blit(scene.small_font.render(progress_text, True, (192, 205, 180)),
+                (panel.left + padding, line_y))
+    line_y += scene.small_font.get_height() + bar_gap
+    track = pygame.Rect(panel.left + padding, line_y, width - padding * 2, bar_height)
+    pygame.draw.rect(screen, (55, 61, 65), track, border_radius=3)
+    fill = track.copy()
+    fill.width = round(track.width * percent / 100)
+    if fill.width:
+        bar_color = (118, 193, 111) if direction == "outbound" else (95, 166, 203)
+        pygame.draw.rect(screen, bar_color, fill, border_radius=3)
+    line_y += bar_height + 1
+    screen.blit(scene.small_font.render(_format_phase_eta(entity), True, (192, 205, 180)),
+                (panel.left + padding, line_y))

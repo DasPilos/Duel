@@ -149,7 +149,7 @@ def icon_key(item_or_key):
     return key_str
 
 
-def draw_item_icon(screen, item_or_key, position, size=24):
+def draw_item_icon(screen, item_or_key, position, size=32):
     key = icon_key(item_or_key)
     if not key:
         return None

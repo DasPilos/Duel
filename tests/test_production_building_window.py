@@ -124,7 +124,20 @@ class ProductionBuildingWindowTests(unittest.TestCase):
         pygame.quit()
 
     def _open(self, object_id):
-        entity = next(obj for obj in self.scene.objects if obj["id"] == object_id)
+        entity = next((obj for obj in self.scene.objects if obj["id"] == object_id), None)
+        if entity is None:
+            required_city_level = {
+                "mountain_rift": 2, "barnyard": 3, "black_pit": 4,
+            }.get(object_id)
+            if required_city_level is not None:
+                from client.structures import hydrate_structures
+                from server.world_map import terrain_payload
+
+                terrain = terrain_payload(required_city_level)
+                self.scene.objects = hydrate_structures(terrain.get("objects", []))
+                entity = next(obj for obj in self.scene.objects if obj["id"] == object_id)
+        if entity is None:
+            raise AssertionError(f"Map object {object_id!r} is not available in this test world")
         self.scene.active_entity = entity
         self.scene.player_x, self.scene.player_y = entity["approach_pos"]
         self.scene._trigger_active_action()
@@ -225,7 +238,27 @@ class ProductionBuildingWindowTests(unittest.TestCase):
         self.assertEqual(self.client.calls, [])
         self.assertEqual(window.message, "На этом участке нет рабочего")
 
-    def test_work_button_requires_confirmation_and_replaces_citizen(self):
+    def test_hiring_skips_a_citizen_who_is_driving_a_cart(self):
+        window = self._open("wheat_farm")
+        self.client.citizens[0]["work_status"] = "Ведёт повозку"
+        self.client.citizens[1]["work_status"] = "Свободен"
+
+        window.hire_worker(slot_index=0)
+
+        self.assertEqual(self.client.city_calls, [("assign", "farm", 0, 2)])
+
+    def test_work_button_does_not_displace_workers_when_plot_is_full(self):
+        window = self._open("wheat_farm")
+        window.state = _payload("farm", occupied={0, 1})
+        window.selected_plot = 0
+
+        window._work_selected_plot()
+
+        self.assertIsNone(window.pending_worker_action)
+        self.assertEqual(window.message, "На участке нет свободных мест.")
+        self.assertEqual(self.client.calls, [])
+
+    def test_work_button_requires_confirmation_and_uses_free_slot(self):
         window = self._open("wheat_farm")
         window.state = _payload("farm", occupied={0})
         self.scene.draw(self.screen)
@@ -235,10 +268,10 @@ class ProductionBuildingWindowTests(unittest.TestCase):
         self._click(window.confirm_no_button.center)
         self.assertIsNone(window.pending_worker_action)
         self._click(window.work_button.center)
-        self.assertEqual(window.pending_worker_action, ("player", 0))
+        self.assertEqual(window.pending_worker_action, ("player", 1))
         self.assertEqual(self.client.calls, [])
         self._confirm_worker_action(window)
-        self.assertEqual(self.client.calls, [("farm", "workers/player/toggle", 0)])
+        self.assertEqual(self.client.calls, [("farm", "workers/player/toggle", 1)])
         rendered = []
         original_grid_font = self.scene.grid_font
 
@@ -260,30 +293,69 @@ class ProductionBuildingWindowTests(unittest.TestCase):
     def test_work_button_rejects_full_storage(self):
         window = self._open("wheat_farm")
         window.selected_plot = 0
-        window.state = _payload("farm")
+        window.state = _payload("farm", level=3)
+        window.state["storage"]["wheat"] = window.state["storage"]["limit"]
         window.state["storage_total"] = window.state["storage"]["limit"]
+        self.assertTrue(window.slot_storage_is_full(window.plot_slots(0)))
+        self.assertFalse(window.slot_storage_is_full([{"resources": ["flax"]}]))
         self.scene.draw(self.screen)
         self._click(window.work_button.center)
         self.assertEqual(window.message, "Склад переполнен, нельзя начать добычу.")
         self.assertIsNone(window.pending_worker_action)
         self.assertEqual(self.client.calls, [])
 
-    def test_worker_table_shows_unit_countdowns_and_lifetime_total(self):
-        window = self._open("barnyard")
-        window.state = _payload("barnyard", occupied={0})
+    def test_header_shows_hourly_output_and_recalculates_after_worker_removal(self):
+        window = self._open("wheat_farm")
+        window.state = _payload("farm", occupied={0, 1})
+        for slot in window.state["worker_slots"]:
+            slot.update(
+                resources=["wheat"],
+                timer_sec_by_resource={"wheat": 140},
+                is_travelling=False,
+            )
+
+        self.assertAlmostEqual(window.production_per_hour()["wheat"], 2 * 3600 / 140)
+        window.state["worker_slots"][1]["occupied"] = False
+        self.assertAlmostEqual(window.production_per_hour()["wheat"], 3600 / 140)
+
+        rendered = []
+        original_small, original_font = self.scene.small_font, self.scene.font
+
+        class Recorder:
+            def __init__(self, font):
+                self.font = font
+
+            def render(self, text, *args):
+                rendered.append(str(text))
+                return self.font.render(text, *args)
+
+            def __getattr__(self, name):
+                return getattr(self.font, name)
+
+        self.scene.small_font = Recorder(original_small)
+        self.scene.font = Recorder(original_font)
+        try:
+            self.scene.draw(self.screen)
+        finally:
+            self.scene.small_font = original_small
+            self.scene.font = original_font
+        self.assertIn("Производство в час:", rendered)
+        self.assertIn("Пшеница 25,7 ед./ч", rendered)
+
+    def test_worker_table_shows_unit_countdowns_without_personal_totals(self):
+        window = self._open("wheat_farm")
+        window.state = _payload("farm", occupied={0})
         slot = window.state["worker_slots"][0]
         slot.update(
-            worker_id="player:1", worker_name="Тест", is_player=True,
-            resources=["leather", "meat"], progress_sec=300,
-            resource_progress_sec={"leather": 300, "meat": 500},
-            timer_sec_by_resource={"leather": 368, "meat": 544},
-            harvest_bonus={"leather": 20, "meat": 20},
+            worker_id="player:1", worker_name="Игрок", is_player=True,
+            resources=["wheat"], progress_sec=113,
+            resource_progress_sec={"wheat": 113},
+            timer_sec_by_resource={"wheat": 140},
+            harvest_bonus={"wheat": 20},
         )
-        window.state["player_harvest_totals"] = {"leather": 5, "meat": 7}
         window.state["player_work"] = {
-            "slot_index": 0, "resource": "leather", "resources": ["leather", "meat"],
-            "timer_sec": 460, "progress_sec": 400, "seconds_to_next": 60,
-            "total_produced": {"leather": 5, "meat": 7},
+            "slot_index": 0, "resource": "wheat", "resources": ["wheat"],
+            "timer_sec": 140, "progress_sec": 113, "seconds_to_next": 27,
         }
         window.selected_plot = 0
         self.assertEqual(window.worker_stats_rect().width, window.LEFT_COLUMN - 20)
@@ -292,14 +364,17 @@ class ProductionBuildingWindowTests(unittest.TestCase):
 
         rendered = []
         rendered_colors = {}
+        rendered_fonts = {}
         original_small, original_grid = self.scene.small_font, self.scene.grid_font
 
         class Recorder:
-            def __init__(self, font):
+            def __init__(self, font, label):
                 self.font = font
+                self.label = label
 
             def render(self, text, *args):
                 rendered.append(text)
+                rendered_fonts[str(text)] = self.label
                 if len(args) > 1:
                     rendered_colors[text] = args[1]
                 return self.font.render(text, *args)
@@ -307,24 +382,128 @@ class ProductionBuildingWindowTests(unittest.TestCase):
             def __getattr__(self, name):
                 return getattr(self.font, name)
 
-        self.scene.small_font = Recorder(original_small)
-        self.scene.grid_font = Recorder(original_grid)
+        self.scene.small_font = Recorder(original_small, "small")
+        self.scene.grid_font = Recorder(original_grid, "grid")
         try:
             self.scene.draw(self.screen)
         finally:
             self.scene.small_font = original_small
             self.scene.grid_font = original_grid
-        self.assertIn("Тест", rendered)
-        self.assertIn("+20% Кожа · +20% Мясо", rendered)
-        self.assertEqual(rendered_colors["+20% Кожа · +20% Мясо"], (117, 225, 128))
-        self.assertIn("Кожа 1:08", rendered)
-        self.assertIn("Мясо 0:44", rendered)
-        self.assertTrue(any(text.startswith("Кожа ") for text in rendered))
-        self.assertTrue(any(text.startswith("Мясо ") for text in rendered))
-        self.assertTrue(any(text == "Всего:" for text in rendered))
-        self.assertIn("Кожа: 5", rendered)
-        self.assertIn("Мясо: 7", rendered)
+        self.assertIn("Игрок", rendered)
+        self.assertIn("+20% Пшеница", rendered)
+        self.assertEqual(rendered_colors["+20% Пшеница"], (117, 225, 128))
+        self.assertIn("Пшеница 0:27", rendered)
+        self.assertEqual(rendered_fonts["+20% Пшеница"], "small")
+        self.assertEqual(rendered_fonts["Пшеница 0:27"], "small")
+        self.assertEqual(rendered_fonts["Игрок"], "small")
+        self.assertNotIn("Всего:", rendered)
+        self.assertNotIn("Пшеница: 14", rendered)
         self.assertFalse(any("За цикл" in text for text in rendered))
+
+    def test_farm_upgrade_tab_lists_level_one_improvements(self):
+        window = self._open("wheat_farm")
+        window.tab = "upgrade"
+        window.state["farm_upgrades"] = {
+            "completed": {
+                "ration": False, "wooden_plough": False,
+                "farm_level_2": False, "ration_level_2": False, "wooden_handle": False,
+            },
+            "ration_plots": [], "wooden_plough": False, "wooden_handle": False,
+            "active_upgrade_id": None,
+            "seconds_left": 0,
+        }
+        window.state["warehouse_storage"] = {"wood": 100}
+        window.state["treasury_silver_available"] = 100
+        rendered = []
+        original_small, original_font = self.scene.small_font, self.scene.font
+
+        class Recorder:
+            def __init__(self, font):
+                self.font = font
+
+            def render(self, text, *args):
+                rendered.append(str(text))
+                return self.font.render(text, *args)
+
+            def __getattr__(self, name):
+                return getattr(self.font, name)
+
+        self.scene.small_font = Recorder(original_small)
+        self.scene.font = Recorder(original_font)
+        try:
+            self.scene.draw(self.screen)
+        finally:
+            self.scene.small_font = original_small
+            self.scene.font = original_font
+
+        for name in (
+            "Самозахват", "Усиленный деревянный плуг", "Улучшить Крестьянское поселение",
+        ):
+            self.assertTrue(any(name in text for text in rendered))
+        self.assertFalse(any("Раздать пай" in text for text in rendered))
+        self.assertFalse(any("Деревянная рукоять" in text for text in rendered))
+        self.assertIn("Время улучшения: 30 мин", rendered)
+        self.assertEqual(rendered.count("Время улучшения: 1 ч 0 мин"), 1)
+        self.assertIn("Время улучшения: 2 ч 0 мин", rendered)
+        self.assertEqual(rendered.count("НАЧАТЬ"), 2)
+        self.assertEqual(set(window.farm_upgrade_buttons), {"ration", "wooden_plough"})
+
+    def test_farm_upgrade_tab_lists_level_two_improvements(self):
+        window = self._open("wheat_farm")
+        window.tab = "upgrade"
+        window.state["level"] = 2
+        window.state["farm_upgrades"] = {
+            "completed": {
+                "ration": True, "wooden_plough": True, "farm_level_2": True,
+                "ration_level_2": False, "wooden_handle": False,
+            },
+            "ration_plots": [0], "wooden_plough": True, "wooden_handle": False,
+            "active_upgrade_id": None, "seconds_left": 0,
+        }
+        window.state["warehouse_storage"] = {"wood": 100}
+        window.state["treasury_silver_available"] = 100
+        rendered = []
+        original_small, original_font = self.scene.small_font, self.scene.font
+
+        class Recorder:
+            def __init__(self, font):
+                self.font = font
+
+            def render(self, text, *args):
+                rendered.append(str(text))
+                return self.font.render(text, *args)
+
+            def __getattr__(self, name):
+                return getattr(self.font, name)
+
+        self.scene.small_font = Recorder(original_small)
+        self.scene.font = Recorder(original_font)
+        try:
+            self.scene.draw(self.screen)
+        finally:
+            self.scene.small_font = original_small
+            self.scene.font = original_font
+
+        self.assertTrue(any("Раздать пай" in text for text in rendered))
+        self.assertTrue(any("Деревянная рукоять" in text for text in rendered))
+        self.assertFalse(any("Самозахват" in text for text in rendered))
+        self.assertFalse(any("Усиленный деревянный плуг" in text for text in rendered))
+        self.assertEqual(set(window.farm_upgrade_buttons), {"ration_level_2", "wooden_handle"})
+
+    def test_level_two_ration_slot_is_attached_to_second_wheat_field(self):
+        window = self._open("wheat_farm")
+        window.state = _payload("farm", level=2)
+        window.state["farm_upgrades"] = {"ration_plots": [0, 1]}
+        window.state["worker_slots"].extend([
+            {"slot_index": 1000, "resource": "wheat", "resources": ["wheat"], "occupied": False},
+            {"slot_index": 1001, "resource": "wheat", "resources": ["wheat"], "occupied": False},
+        ])
+
+        first_field = window.plot_slots(0)
+        second_field = window.plot_slots(1)
+
+        self.assertEqual([slot["slot_index"] for slot in first_field], [0, 1, 1000])
+        self.assertEqual([slot["slot_index"] for slot in second_field], [2, 3, 1001])
 
     def test_travelling_citizen_shows_arrival_eta_not_production_timer(self):
         window = self._open("lumber_camp")
@@ -358,16 +537,17 @@ class ProductionBuildingWindowTests(unittest.TestCase):
         self.assertIn("В пути к объекту · прибытие через 18:00", rendered)
         self.assertFalse(any(text.startswith("Древесина ") for text in rendered))
 
-    def test_storage_claim_button_requests_personal_harvest(self):
+    def test_storage_tab_uses_only_shared_stock_and_unlocked_resources(self):
         window = self._open("wheat_farm")
         window.tab = "storage"
         window.state = _payload("farm")
-        window.state["player_harvest_claims"] = {"wheat": 5}
+        window.state["storage"] = {"wheat": 5, "limit": 500}
+        window.state["storage_depositable"] = {
+            "wheat": {"item_id": 63, "in_backpack": 0, "max_deposit": 0}
+        }
         self.scene.draw(self.screen)
-        self.assertIn("wheat", window.claim_buttons)
-        self._click(window.claim_buttons["wheat"].center)
-        self.assertEqual(self.client.calls, [("farm", "player-harvest/claim", None)])
-        self.assertEqual(self.client.last_payload, {"resource": "wheat", "quantity": 5})
+        self.assertEqual(set(window.storage_withdraw_buttons), {"wheat"})
+        self.assertFalse(hasattr(window, "claim_buttons"))
 
     def test_production_storage_can_withdraw_common_stock(self):
         window = self._open("wheat_farm")
