@@ -1,3 +1,5 @@
+BASE_POPULATION_CAPACITY = 10
+
 COUNTRY_BUILDING_UNLOCK_LEVELS = {
     "wheat_farm": 1,
     "lumber_camp": 1,

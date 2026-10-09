@@ -11,7 +11,12 @@ from core.production_buildings import (
     LUMBER_CAMP_UPGRADES,
     building_level_info,
 )
-from core.city_progression import city_storage_resources, city_upgrade_resources, unlocked_country_buildings
+from core.city_progression import (
+    BASE_POPULATION_CAPACITY,
+    city_storage_resources,
+    city_upgrade_resources,
+    unlocked_country_buildings,
+)
 from core.production_buildings import slot_resources
 from server.database import Database, lock_character
 from server.production_buildings import (
@@ -20,10 +25,13 @@ from server.production_buildings import (
     _harvest_bonus_for_worker,
     _resource_timer_sec,
 )
-from server.city_upgrade import SURPLUS_PERCENT, city_upgrade_payload, process_city_upgrade
+from server.city_upgrade import (
+    city_upgrade_cycle_cost,
+    city_upgrade_payload,
+    process_city_upgrade,
+)
 
 MIN_POPULATION = 4
-BASE_POPULATION_CAPACITY = 10
 FULL_MEAL_NUTRITION = 100
 FOOD_VALUE = {"wheat": 10, "berries": 15, "meat": 20}
 FOOD_SHARE = {"wheat": 3, "berries": 3, "meat": 4}
@@ -874,12 +882,12 @@ class CityPopulation:
         warehouse_level = 1 if warehouse_level_row is None else int(warehouse_level_row["level"])
         warehouse_capacity = int(building_level_info(warehouse_level, "warehouse")["storage"])
         upgrade_foods = set(city_upgrade_resources(int(state["castle_level"])))
+        upgrade_cycle_cost = city_upgrade_cycle_cost(len(citizen_list), population_capacity)
         food_trend = {}
         for resource in food:
             if food_income.get(resource, 0.0) < food_consumption.get(resource, 0.0):
                 food_trend[resource] = "deficit"
-            elif (resource in upgrade_foods
-                  and food[resource] >= math.ceil(barn_capacity * SURPLUS_PERCENT / 100)):
+            elif resource in upgrade_foods and food[resource] >= upgrade_cycle_cost:
                 food_trend[resource] = "upgrade_ready"
             else:
                 food_trend[resource] = "surplus"
@@ -887,8 +895,7 @@ class CityPopulation:
         resource_trend["wood"] = (
             "deficit" if resource_income["wood"] < resource_consumption.get("wood", 0.0)
             else "upgrade_ready"
-            if ("wood" in upgrade_foods and resource_storage["wood"]
-                >= math.ceil(warehouse_capacity * SURPLUS_PERCENT / 100))
+            if "wood" in upgrade_foods and resource_storage["wood"] >= upgrade_cycle_cost
             else "surplus" if resource_income["wood"] > resource_consumption.get("wood", 0.0)
             else "deficit"
         )

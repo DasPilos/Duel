@@ -80,7 +80,7 @@ class CityPopulationTests(unittest.TestCase):
 
         with self.database.connection() as connection:
             connection.execute(
-                """UPDATE building_resources SET storage=710
+                """UPDATE building_resources SET storage=160
                    WHERE world_id=%s AND faction='light' AND building='barn' AND resource='wheat'""",
                 (self.database.world_id,),
             )
@@ -109,11 +109,13 @@ class CityPopulationTests(unittest.TestCase):
 
         cycle = {
             "active": True,
+            "drain_formula": "population_capacity",
             "started_at": now + 10,
             "finish_at": now + 3610,
             "tick_index": 0,
-            "rate_percent": 12,
-            "resources": {"wood": {"per_tick": 50}},
+            "population": 4,
+            "population_capacity": 10,
+            "resources": {"wood": {"per_tick": 40}},
         }
         with self.database.connection() as connection:
             connection.execute(
@@ -122,7 +124,7 @@ class CityPopulationTests(unittest.TestCase):
                 (json.dumps(cycle), self.database.world_id),
             )
         state = self.city.get_state(self.character_id, now + 3)
-        self.assertEqual(state["city_resource_consumption_per_hour"]["wood"], 200)
+        self.assertEqual(state["city_resource_consumption_per_hour"]["wood"], 160)
         self.assertEqual(state["city_resource_trend"]["wood"], "deficit")
 
     def test_full_meal_matches_requested_food_values(self):

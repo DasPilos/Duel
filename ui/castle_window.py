@@ -462,10 +462,12 @@ class CastleWindow:
         elapsed = time.monotonic() - self.last_refresh
         if upgrade.get("active"):
             seconds_left = max(0, int(upgrade.get("seconds_left", 0) - elapsed))
+            tick_costs = upgrade.get("resource_cost_per_tick", {})
+            tick_cost = next(iter(tick_costs.values()), None)
+            drain_text = f" · по {tick_cost} ед. каждого ресурса за тик" if tick_cost is not None else ""
             upgrade_text = (
-                f"Снабжение для улучшения: тик {upgrade.get('tick_index', 0)}/4 · "
-                f"списание {upgrade.get('rate_percent', 0)}% · "
-                f"до проверки {_format_clock(seconds_left)}"
+                f"Снабжение для улучшения: тик {upgrade.get('tick_index', 0)}/4"
+                f"{drain_text} · до проверки {_format_clock(seconds_left)}"
             )
             upgrade_color = (120, 225, 155)
         else:

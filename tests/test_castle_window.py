@@ -259,7 +259,10 @@ class CastleWindowTests(unittest.TestCase):
             ],
             "food_storage": {},
             "worksites": [],
-            "city_upgrade": {},
+            "city_upgrade": {
+                "active": True, "tick_index": 1, "seconds_left": 500,
+                "resource_cost_per_tick": {"wheat": 40, "wood": 40},
+            },
         }
         rendered = []
         original_font = window.small_font
@@ -278,6 +281,7 @@ class CastleWindowTests(unittest.TestCase):
             window._draw_population(screen, state, (0, 0))
 
         self.assertLess(rendered.index("Свободен"), rendered.index("Работает"))
+        self.assertTrue(any("по 40 ед. каждого ресурса за тик" in text for text in rendered))
 
     def test_governor_lists_hourly_rates_and_trends_for_city_resources(self):
         from ui.catalog_icons import draw_item_icon

@@ -3,18 +3,37 @@
 import json
 import math
 
-from core.city_progression import city_storage_resources, city_upgrade_resources
+from core.city_progression import (
+    BASE_POPULATION_CAPACITY,
+    city_storage_resources,
+    city_upgrade_resources,
+)
 from core.production_buildings import building_level_info, building_resources
 
-SURPLUS_PERCENT = 71
 UPGRADE_TICK_SECONDS = 15 * 60
 UPGRADE_TICK_COUNT = 4
 UPGRADE_CYCLE_SECONDS = UPGRADE_TICK_SECONDS * UPGRADE_TICK_COUNT
 UPGRADE_START_GRACE_SECONDS = 15
+LEGACY_SURPLUS_PERCENT = 71
 
 
-def city_upgrade_drain_percent(city_level):
-    return min(15, 12 + max(0, int(city_level) - 1))
+def city_upgrade_drain_per_tick(population, population_capacity):
+    return max(0, int(population)) * max(0, int(population_capacity))
+
+
+def city_upgrade_cycle_cost(population, population_capacity):
+    return city_upgrade_drain_per_tick(population, population_capacity) * UPGRADE_TICK_COUNT
+
+
+def _population_state(connection, key, city_level):
+    row = connection.execute(
+        """SELECT COUNT(*) AS amount FROM city_citizens
+           WHERE world_id=%s AND faction=%s AND alive=TRUE""",
+        key,
+    ).fetchone()
+    population = 0 if row is None else int(row["amount"])
+    capacity = max(1, int(city_level)) * BASE_POPULATION_CAPACITY
+    return population, capacity
 
 
 def _json_object(value):
@@ -69,17 +88,32 @@ def _write_upgrade_state(connection, key, last_hour, cycle, last_result):
 
 def _finish_city_upgrade(connection, key, city_level, cycle, finished_at):
     resources = _city_storage(connection, key, city_level)
-    below_threshold = [
-        {
-            "resource": resource,
-            "storage": item["stock"],
-            "capacity": item["capacity"],
-            "required": math.ceil(item["capacity"] * SURPLUS_PERCENT / 100),
-        }
-        for resource, item in resources.items()
-        if item["stock"] < math.ceil(item["capacity"] * SURPLUS_PERCENT / 100)
-    ]
-    if not below_threshold and resources:
+    if cycle.get("drain_formula") == "population_capacity":
+        unpaid_resources = [
+            {
+                "resource": resource,
+                "required": int(item.get("required", 0)),
+                "charged": int(item.get("charged", 0)),
+                "shortfall": max(0, int(item.get("required", 0)) - int(item.get("charged", 0))),
+            }
+            for resource, item in cycle["resources"].items()
+            if int(item.get("charged", 0)) < int(item.get("required", 0))
+        ]
+        completion_failed = bool(unpaid_resources)
+    else:
+        below_threshold = [
+            {
+                "resource": resource,
+                "storage": item["stock"],
+                "capacity": item["capacity"],
+                "required": math.ceil(item["capacity"] * LEGACY_SURPLUS_PERCENT / 100),
+            }
+            for resource, item in resources.items()
+            if item["stock"] < math.ceil(item["capacity"] * LEGACY_SURPLUS_PERCENT / 100)
+        ]
+        unpaid_resources = []
+        completion_failed = bool(below_threshold)
+    if not completion_failed and resources:
         next_level = city_level + 1
         connection.execute(
             """UPDATE city_population_state SET castle_level=%s
@@ -93,12 +127,16 @@ def _finish_city_upgrade(connection, key, city_level, cycle, finished_at):
             "finished_at": float(finished_at),
             "resources": list(cycle["resources"]),
         }
-    return {
+    result = {
         "status": "failed",
         "level": city_level,
         "finished_at": float(finished_at),
-        "below_threshold": below_threshold,
     }
+    if cycle.get("drain_formula") == "population_capacity":
+        result["unpaid_resources"] = unpaid_resources
+    else:
+        result["below_threshold"] = below_threshold
+    return result
 
 
 def process_city_upgrade(connection, key, now):
@@ -125,7 +163,19 @@ def process_city_upgrade(connection, key, now):
             tick_at = started_at + (tick_index + 1) * UPGRADE_TICK_SECONDS
             if now + 1e-6 < tick_at:
                 break
+            if cycle.get("drain_formula") == "population_capacity":
+                population, population_capacity = _population_state(connection, key, city_level)
+                per_tick = city_upgrade_drain_per_tick(population, population_capacity)
+                cycle["population"] = population
+                cycle["population_capacity"] = population_capacity
+            else:
+                per_tick = None
             for resource, item in cycle["resources"].items():
+                tick_cost = per_tick if per_tick is not None else int(item["per_tick"])
+                if per_tick is not None:
+                    item["per_tick"] = tick_cost
+                    item["required"] = int(item.get("required", 0)) + tick_cost
+                    item.setdefault("tick_costs", []).append(tick_cost)
                 building = item["building"]
                 stock_row = connection.execute(
                     """SELECT storage FROM building_resources
@@ -134,7 +184,7 @@ def process_city_upgrade(connection, key, now):
                     (*key, building, resource),
                 ).fetchone()
                 stock = 0 if stock_row is None else int(stock_row["storage"])
-                charged = min(stock, int(item["per_tick"]))
+                charged = min(stock, tick_cost)
                 if charged:
                     connection.execute(
                         """UPDATE building_resources SET storage=storage-%s
@@ -163,30 +213,36 @@ def process_city_upgrade(connection, key, now):
         return last_result
 
     resources = _city_storage(connection, key, city_level)
-    surplus = {
+    population, population_capacity = _population_state(connection, key, city_level)
+    per_tick = city_upgrade_drain_per_tick(population, population_capacity)
+    cycle_cost = city_upgrade_cycle_cost(population, population_capacity)
+    funded = {
         resource: item for resource, item in resources.items()
-        if item["stock"] >= math.ceil(item["capacity"] * SURPLUS_PERCENT / 100)
+        if item["stock"] >= cycle_cost
     }
-    if not resources or len(surplus) != len(resources):
+    if not resources or len(funded) != len(resources):
         _write_upgrade_state(connection, key, hour, {}, last_result)
         return last_result
 
-    rate_percent = city_upgrade_drain_percent(city_level)
     cycle = {
         "active": True,
+        "drain_formula": "population_capacity",
         "started_at": float(hour),
         "finish_at": float(hour + UPGRADE_CYCLE_SECONDS),
         "tick_index": 0,
-        "rate_percent": rate_percent,
+        "population": population,
+        "population_capacity": population_capacity,
         "resources": {
             resource: {
                 "building": item["building"],
                 "snapshot": item["stock"],
                 "capacity": item["capacity"],
-                "per_tick": math.ceil(item["stock"] * rate_percent / 100),
+                "per_tick": per_tick,
+                "required": 0,
                 "charged": 0,
+                "tick_costs": [],
             }
-            for resource, item in surplus.items()
+            for resource, item in funded.items()
         },
     }
     _write_upgrade_state(connection, key, hour, cycle, last_result)
@@ -211,6 +267,7 @@ def city_upgrade_payload(connection, key, now):
            WHERE world_id=%s AND faction=%s AND alive=TRUE""",
         key,
     ).fetchone()
+    population = 0 if population_row is None else int(population_row["amount"])
 
     cycle = _json_object(row["city_upgrade_cycle"])
     active = bool(cycle.get("active"))
@@ -227,7 +284,8 @@ def city_upgrade_payload(connection, key, now):
     next_start_at = max(0.0, last_hour + 3600)
     return {
         "city_level": int(row["castle_level"]),
-        "population": int(population_row["amount"]),
+        "population": population,
+        "population_capacity": int(row["castle_level"]) * BASE_POPULATION_CAPACITY,
         "active": active,
         "started_at": started_at,
         "finish_at": finish_at,
@@ -235,9 +293,27 @@ def city_upgrade_payload(connection, key, now):
         "tick_index": tick_index,
         "tick_count": UPGRADE_TICK_COUNT,
         "phase_index": phase_index,
-        "rate_percent": int(cycle.get("rate_percent", 0)) if active else 0,
+        "drain_formula": cycle.get("drain_formula") if active else None,
         "resource_drain_per_hour": {
-            resource: int(item.get("per_tick", 0)) * UPGRADE_TICK_COUNT
+            resource: (
+                city_upgrade_drain_per_tick(
+                    population,
+                    int(cycle.get("population_capacity", int(row["castle_level"]) * BASE_POPULATION_CAPACITY)),
+                ) * UPGRADE_TICK_COUNT
+                if cycle.get("drain_formula") == "population_capacity"
+                else int(item.get("per_tick", 0)) * UPGRADE_TICK_COUNT
+            )
+            for resource, item in cycle.get("resources", {}).items()
+        } if active else {},
+        "resource_cost_per_tick": {
+            resource: (
+                city_upgrade_drain_per_tick(
+                    population,
+                    int(cycle.get("population_capacity", int(row["castle_level"]) * BASE_POPULATION_CAPACITY)),
+                )
+                if cycle.get("drain_formula") == "population_capacity"
+                else int(item.get("per_tick", 0))
+            )
             for resource, item in cycle.get("resources", {}).items()
         } if active else {},
         "next_tick_at": next_tick_at,
@@ -245,5 +321,4 @@ def city_upgrade_payload(connection, key, now):
         "charging_resources": list(cycle.get("resources", {})) if active else [],
         "last_result": _json_object(row["city_upgrade_last_result"]),
         "next_start_at": next_start_at,
-        "surplus_percent": SURPLUS_PERCENT,
     }
