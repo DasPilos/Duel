@@ -1,4 +1,5 @@
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import os
 import sys
 
@@ -162,6 +163,16 @@ def disconnect_scene(scene):
     return None
 
 
+def start_disconnect(scene, executor):
+    session = scene_session(scene)
+    if session is None:
+        return None
+    checkpoint = checkpoint_for_scene(scene)
+    close_scene_ui(scene)
+    fighter = scene.player if isinstance(scene, DuelScene) else None
+    return executor.submit(session.disconnect, fighter=fighter, character=checkpoint)
+
+
 def apply_passive_regen(scene, dt):
     # Во время боя не применяем пассивную регенерацию, кроме как при просмотре результатов
     if isinstance(scene, DuelScene):
@@ -225,6 +236,9 @@ def main():
     inventory = InventoryWindow()
     exit_menu = ExitMenu()
     server_status_hud = ServerStatusHUD()
+    disconnect_executor = ThreadPoolExecutor(max_workers=1)
+    disconnect_future = None
+    disconnect_succeeded = False
 
     try:
         running = True
@@ -248,11 +262,12 @@ def main():
                 elif exit_menu.is_open:
                     action = exit_menu.handle_event(event)
                     if action == "quit":
-                        error = disconnect_scene(scene)
-                        if error is None:
+                        disconnect_succeeded = False
+                        disconnect_future = start_disconnect(scene, disconnect_executor)
+                        if disconnect_future is not None:
                             exit_menu.begin_quit()
                         else:
-                            exit_menu.open(error=error)
+                            exit_menu.open(error="Не удалось отключиться от сервера.")
                     continue
                 elif (server_status_visible(scene, transition.active, exit_menu)
                       and server_status_hud.handle_event(event) == "restart_client"):
@@ -286,7 +301,17 @@ def main():
                 if inventory_session(scene) is not None:
                     inventory.open(inventory_session(scene))
 
-            if exit_menu.update_quit(dt):
+            if disconnect_future is not None and disconnect_future.done():
+                completed_disconnect = disconnect_future
+                disconnect_future = None
+                try:
+                    completed_disconnect.result()
+                except ServerError as error:
+                    exit_menu.open(error=str(error))
+                else:
+                    disconnect_succeeded = True
+
+            if exit_menu.update_quit(dt) and disconnect_succeeded:
                 running = False
 
             ensure_equipment_loaded(scene)
@@ -438,6 +463,7 @@ def main():
 
             pygame.display.flip()
     finally:
+        disconnect_executor.shutdown(wait=True, cancel_futures=False)
         scene.close()
         pygame.quit()
 

@@ -494,8 +494,48 @@ class WorldTerrainTests(unittest.TestCase):
             self.assertLess(screen.get_at((0, 0)).r, 255)
             self.assertIn("Выход через 3...", rendered_titles)
             self.assertTrue(menu.update_quit(2.5))
+            screen.fill((255, 255, 255))
+            menu.draw(screen, font, small_font)
+            self.assertIn("Выход через 0...", rendered_titles)
         finally:
             pygame.quit()
+
+    def test_exit_disconnect_is_submitted_without_blocking_countdown(self):
+        from main import start_disconnect
+
+        class FakeSession:
+            character = {"id": 7, "name": "Test", "zone": "tavern"}
+            disconnected = False
+
+            def disconnect(self, fighter=None, character=None):
+                self.disconnected = True
+                self.checkpoint = character
+
+        class FakeChat:
+            closed = False
+
+            def close(self):
+                self.closed = True
+
+        class FakeExecutor:
+            def submit(self, function, **kwargs):
+                self.function = function
+                self.arguments = kwargs
+                return "pending-disconnect"
+
+        session = FakeSession()
+        chat = FakeChat()
+        executor = FakeExecutor()
+        scene = SimpleNamespace(session=session, chat=chat, player=None)
+
+        result = start_disconnect(scene, executor)
+
+        self.assertEqual(result, "pending-disconnect")
+        self.assertTrue(chat.closed)
+        self.assertFalse(session.disconnected)
+        executor.function(**executor.arguments)
+        self.assertTrue(session.disconnected)
+        self.assertEqual(session.checkpoint["id"], 7)
 
     def test_profile_key_action_opens_and_closes_player_card(self):
         from main import toggle_player_profile

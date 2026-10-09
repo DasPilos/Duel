@@ -66,7 +66,7 @@ class ExitMenu:
             shade = pygame.Surface(screen.get_size(), pygame.SRCALPHA)
             shade.fill((0, 0, 0, min(240, int(progress * 240))))
             screen.blit(shade, (0, 0))
-            countdown = max(1, math.ceil(self.quit_remaining))
+            countdown = math.ceil(self.quit_remaining)
             label = small_font.render(f"Выход через {countdown}...", True, (235, 225, 205))
             screen.blit(label, label.get_rect(center=screen.get_rect().center))
             return
