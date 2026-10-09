@@ -290,6 +290,45 @@ class ProductionBuildingWindowTests(unittest.TestCase):
             self.scene.grid_font = original_grid_font
         self.assertIn("ЗАВЕРШИТЬ РАБОТУ", rendered)
 
+    def test_worker_panel_reaches_window_bottom_and_shows_five_workers(self):
+        for building, resource in (("wheat_farm", "wheat"), ("lumber_camp", "wood")):
+            with self.subTest(building=building):
+                window = self._open(building)
+                window.state["worker_slots"] = [
+                    {
+                        "slot_index": index, "occupied": True,
+                        "worker_id": f"citizen:{index + 1}",
+                        "worker_name": f"Работник {index + 1}",
+                        "resources": [resource], "resource_progress_sec": {resource: 0},
+                        "timer_sec_by_resource": {resource: 240},
+                        "progress_sec": 0, "is_travelling": False,
+                    }
+                    for index in range(5)
+                ]
+                self.assertEqual(
+                    window.worker_stats_rect().bottom,
+                    min(window.rect.bottom, settings.HEIGHT) - 2,
+                )
+                self.assertGreaterEqual(window.worker_stats_visible_rows(), 5)
+                rendered = []
+                original_small_font = self.scene.small_font
+
+                class Recorder:
+                    def render(self, text, *args):
+                        rendered.append(str(text))
+                        return original_small_font.render(text, *args)
+
+                    def __getattr__(self, name):
+                        return getattr(original_small_font, name)
+
+                self.scene.small_font = Recorder()
+                try:
+                    window._draw_worker_stats(self.screen)
+                finally:
+                    self.scene.small_font = original_small_font
+                for index in range(5):
+                    self.assertIn(f"Работник {index + 1}", rendered)
+
     def test_work_button_rejects_full_storage(self):
         window = self._open("wheat_farm")
         window.selected_plot = 0
@@ -359,7 +398,10 @@ class ProductionBuildingWindowTests(unittest.TestCase):
         }
         window.selected_plot = 0
         self.assertEqual(window.worker_stats_rect().width, window.LEFT_COLUMN - 20)
-        self.assertLessEqual(window.worker_stats_rect().bottom, settings.CHAT_ZONE_START)
+        self.assertEqual(
+            window.worker_stats_rect().bottom,
+            min(window.rect.bottom, settings.HEIGHT) - 2,
+        )
         self.assertGreaterEqual(window.plots_area().left, window.worker_stats_rect().right)
 
         rendered = []

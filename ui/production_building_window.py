@@ -442,12 +442,12 @@ class ProductionBuildingWindow:
 
     def worker_stats_rect(self):
         top = self.rect.top + 174
-        bottom = min(
-            self.rect.bottom - 20,
-            getattr(settings, "CHAT_ZONE_START", self.rect.bottom - 20) - 8,
-        )
+        bottom = min(self.rect.bottom, settings.HEIGHT) - 2
         return pygame.Rect(self.rect.left + 10, top, self.LEFT_COLUMN - 20,
                            max(120, bottom - top))
+
+    def worker_stats_visible_rows(self):
+        return max(1, (self.worker_stats_rect().height - 46) // self.WORKER_ROW_HEIGHT)
 
     def plot_geometry(self):
         """Контуры участков: rect (габарит), points (полигон), center (точка внутри), house_y (ряд домиков)."""
@@ -767,7 +767,7 @@ class ProductionBuildingWindow:
         if (event.type == pygame.MOUSEWHEEL and self.tab == "production"
                 and self.worker_stats_rect().collidepoint(pygame.mouse.get_pos())):
             occupied = sum(1 for slot in self._state().get("worker_slots", []) if slot["occupied"])
-            visible = max(1, (self.worker_stats_rect().height - 58) // self.WORKER_ROW_HEIGHT)
+            visible = self.worker_stats_visible_rows()
             self.worker_stats_scroll = max(
                 0, min(max(0, occupied - visible), self.worker_stats_scroll - event.y)
             )
@@ -1305,7 +1305,7 @@ class ProductionBuildingWindow:
         header_bottom = rect.top + 42
         pygame.draw.line(screen, (67, 83, 68), (rect.left + 10, header_bottom),
                          (rect.right - 10, header_bottom), 1)
-        visible_rows = max(1, (rect.height - 52) // self.WORKER_ROW_HEIGHT)
+        visible_rows = self.worker_stats_visible_rows()
         max_scroll = max(0, len(slots) - visible_rows)
         self.worker_stats_scroll = max(0, min(max_scroll, self.worker_stats_scroll))
         if not slots:
@@ -1313,7 +1313,10 @@ class ProductionBuildingWindow:
             screen.blit(empty, (rect.left + 12, header_bottom + 18))
             return
 
-        clip_rect = pygame.Rect(rect.left + 6, header_bottom + 2, rect.width - 12, rect.bottom - header_bottom - 6)
+        clip_rect = pygame.Rect(
+            rect.left + 6, header_bottom + 2, rect.width - 12,
+            max(0, rect.bottom - header_bottom - 4),
+        )
         previous_clip = screen.get_clip()
         screen.set_clip(clip_rect)
         elapsed = self._since_received()
