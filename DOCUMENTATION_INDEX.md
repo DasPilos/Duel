@@ -5,6 +5,7 @@
 - [README](README.md): project overview and quick start.
 - [Architecture](ARCHITECTURE.md): server authority, shared-world boundaries, persistence, and module map.
 - [Developer Guide](DEVELOPER_GUIDE.md): local PostgreSQL, server/client launch, and tests.
+- [Operator 2 Sync Guide](OPERATOR2_SYNC_GUIDE.md): safe source updates, server/world selection, and level-gated resource/building checks.
 - [Contributing](CONTRIBUTING.md): branches, review, battle math, and server changes.
 - [Deployment Checklist](DEPLOYMENT_CHECKLIST.md): GitHub, Z440, and downloadable client release.
 - [Z440 Server Monitor](SERVER_MONITOR.md): host metrics dashboard and console service.

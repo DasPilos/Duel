@@ -490,6 +490,81 @@ class ProductionBuildingWindowTests(unittest.TestCase):
         self.assertFalse(any("Усиленный деревянный плуг" in text for text in rendered))
         self.assertEqual(set(window.farm_upgrade_buttons), {"ration_level_2", "wooden_handle"})
 
+    def test_lumber_camp_upgrade_tab_shows_three_chain_cards(self):
+        window = self._open("lumber_camp")
+        window.tab = "upgrade"
+        window.state["level"] = 1
+        window.state["lumber_camp_upgrades"] = {
+            "completed": {
+                "logging_expansion": False, "strong_handle": False,
+                "lumber_camp_level_2": False,
+            },
+            "bonus_plots": [], "strong_handle": False,
+            "active_upgrade_id": None, "seconds_left": 0,
+        }
+        window.state["warehouse_storage"] = {"wood": 300}
+        window.state["treasury_silver_available"] = 100
+        rendered = []
+        original_small, original_font = self.scene.small_font, self.scene.font
+
+        class Recorder:
+            def __init__(self, font):
+                self.font = font
+
+            def render(self, text, *args):
+                rendered.append(str(text))
+                return self.font.render(text, *args)
+
+            def __getattr__(self, name):
+                return getattr(self.font, name)
+
+        self.scene.small_font = Recorder(original_small)
+        self.scene.font = Recorder(original_font)
+        try:
+            self.scene.draw(self.screen)
+        finally:
+            self.scene.small_font = original_small
+            self.scene.font = original_font
+
+        for name in ("Расширение вырубки", "Усиленная рукоять", "Улучшить лесопилку"):
+            self.assertTrue(any(name in text for text in rendered))
+        self.assertIn("Результат: +1 место на первом участке древесины", rendered)
+        self.assertIn("Результат: +8% к скорости вырубки", rendered)
+        self.assertIn("Результат: Лесопилка — уровень 2", rendered)
+        self.assertIn("Время улучшения: 40 мин", rendered)
+        self.assertIn("100/50 серебра", rendered)
+        self.assertIn("100/70 серебра", rendered)
+        self.assertIn("300/300 древесины", rendered)
+        self.assertIn("Время улучшения: 1 ч 0 мин", rendered)
+        self.assertIn("Время улучшения: 2 ч 20 мин", rendered)
+        self.assertEqual(set(window.building_upgrade_buttons), {"logging_expansion", "strong_handle"})
+        self.assertEqual(rendered.count("СНАЧАЛА ПРЕДЫДУЩИЕ"), 1)
+
+        with patch.object(window, "_request") as request:
+            self.scene.handle_event(pygame.event.Event(
+                pygame.MOUSEBUTTONDOWN, button=1,
+                pos=window.building_upgrade_buttons["logging_expansion"].center,
+            ))
+        request.assert_called_once_with(
+            "lumber-camp/upgrade", {"upgrade_id": "logging_expansion"},
+        )
+
+        window.state["level"] = 2
+        window.state["lumber_camp_upgrades"]["completed"] = {
+            "logging_expansion": True, "strong_handle": True,
+            "lumber_camp_level_2": True,
+        }
+        rendered.clear()
+        self.scene.small_font = Recorder(original_small)
+        self.scene.font = Recorder(original_font)
+        try:
+            self.scene.draw(self.screen)
+        finally:
+            self.scene.small_font = original_small
+            self.scene.font = original_font
+        self.assertEqual(rendered.count("УСТАНОВЛЕНО"), 3)
+        self.assertEqual(window.building_upgrade_buttons, {})
+
     def test_level_two_ration_slot_is_attached_to_second_wheat_field(self):
         window = self._open("wheat_farm")
         window.state = _payload("farm", level=2)

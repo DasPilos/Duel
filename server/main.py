@@ -736,6 +736,10 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                     state = buildings.purchase_farm_upgrade(
                         character_id, body.get("upgrade_id"),
                     )
+                elif action == "lumber-camp/upgrade" and building == "lumber_camp":
+                    state = buildings.purchase_lumber_camp_upgrade(
+                        character_id, body.get("upgrade_id"),
+                    )
                 elif action == "stall-upgrade/contribute" and building == "stable":
                     state = buildings.contribute_stall_upgrade(
                         character_id, body.get("upgrade_id"), body.get("resource"),

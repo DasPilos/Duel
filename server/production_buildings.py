@@ -24,8 +24,10 @@ from core.city_progression import city_storage_resources
 from core.currency import Currency
 from core.production_buildings import (
     BUILDINGS,
+    BUILDING_BONUS_SLOT_BASE,
     FARM_RATION_SLOT_BASE,
     FARM_UPGRADES,
+    LUMBER_CAMP_UPGRADES,
     RESOURCES,
     building_config,
     building_level_info,
@@ -211,6 +213,36 @@ class ProductionBuildings:
         }
 
     @staticmethod
+    def _lumber_camp_upgrades(connection, key):
+        row = connection.execute(
+            f"SELECT lumber_camp_upgrades_json FROM building_states WHERE {_WHERE}", key
+        ).fetchone()
+        upgrades = {} if row is None else row["lumber_camp_upgrades_json"] or {}
+        if isinstance(upgrades, str):
+            upgrades = json.loads(upgrades)
+        return {
+            "bonus_plots": sorted(set(int(value) for value in upgrades.get("bonus_plots", []))),
+            "strong_handle": bool(upgrades.get("strong_handle", False)),
+        }
+
+    def _lumber_camp_upgrade_payload(self, connection, key, state, now):
+        upgrades = self._lumber_camp_upgrades(connection, key)
+        finish_at = state["lumber_camp_upgrade_finish_at"]
+        return {
+            "completed": {
+                "logging_expansion": 0 in upgrades["bonus_plots"],
+                "strong_handle": upgrades["strong_handle"],
+                "lumber_camp_level_2": int(state["level"]) >= 2,
+            },
+            **upgrades,
+            "active_upgrade_id": state["lumber_camp_upgrade_id"],
+            "active_plot_index": state["lumber_camp_upgrade_plot_index"],
+            "finish_at": finish_at,
+            "seconds_left": (max(0, int(float(finish_at) - float(now)))
+                             if finish_at is not None else 0),
+        }
+
+    @staticmethod
     def _city_level(connection, world_id, faction):
         row = connection.execute(
             "SELECT castle_level FROM city_population_state WHERE world_id=%s AND faction=%s",
@@ -284,6 +316,16 @@ class ProductionBuildings:
                        ON CONFLICT (world_id, faction, building, slot_index) DO NOTHING""",
                     (*key, extra_slot),
                 )
+        if building == "lumber_camp":
+            camp_upgrades = self._lumber_camp_upgrades(connection, key)
+            for plot_index in camp_upgrades["bonus_plots"]:
+                extra_slot = BUILDING_BONUS_SLOT_BASE + int(plot_index)
+                connection.execute(
+                    """INSERT INTO building_worker_slots (world_id, faction, building, slot_index)
+                       VALUES (%s, %s, %s, %s)
+                       ON CONFLICT (world_id, faction, building, slot_index) DO NOTHING""",
+                    (*key, extra_slot),
+                )
         if building == "stable":
             for grade, progress in DEFAULT_CART_PROGRESS["grades"].items():
                 connection.execute(
@@ -308,6 +350,8 @@ class ProductionBuildings:
             self._ensure(connection, key, finish_at)
         if key[2] == "farm":
             self._complete_farm_upgrade(connection, key, now)
+        elif key[2] == "lumber_camp":
+            self._complete_lumber_camp_upgrade(connection, key, now)
         self._sync_harvest(connection, key, now)
         if key[2] == "stable":
             self._complete_cart_production(connection, key, now)
@@ -366,6 +410,35 @@ class ProductionBuildings:
             f"""UPDATE building_states SET farm_upgrades_json=%s::jsonb,
                 farm_upgrade_id=NULL, farm_upgrade_plot_index=NULL,
                 farm_upgrade_finish_at=NULL WHERE {_WHERE}""",
+            (json.dumps(upgrades, ensure_ascii=False), *key),
+        )
+        self._ensure(connection, key, finish_at)
+
+    def _complete_lumber_camp_upgrade(self, connection, key, now):
+        state = self._state(connection, key)
+        finish_at = state["lumber_camp_upgrade_finish_at"]
+        if finish_at is None or float(finish_at) > float(now):
+            return
+        finish_at = float(finish_at)
+        self._sync_harvest(connection, key, finish_at)
+        upgrades = self._lumber_camp_upgrades(connection, key)
+        upgrade_id = state["lumber_camp_upgrade_id"]
+        if upgrade_id == "logging_expansion":
+            plot_index = int(state["lumber_camp_upgrade_plot_index"])
+            upgrades["bonus_plots"] = sorted(set(upgrades["bonus_plots"]) | {plot_index})
+        elif upgrade_id == "strong_handle":
+            upgrades["strong_handle"] = True
+            connection.execute(
+                f"""UPDATE building_worker_slots SET hire_time=%s, credited='{{}}'::jsonb
+                    WHERE {_WHERE} AND occupied=1""",
+                (finish_at, *key),
+            )
+        elif upgrade_id == "lumber_camp_level_2":
+            connection.execute(f"UPDATE building_states SET level=2 WHERE {_WHERE}", key)
+        connection.execute(
+            f"""UPDATE building_states SET lumber_camp_upgrades_json=%s::jsonb,
+                lumber_camp_upgrade_id=NULL, lumber_camp_upgrade_plot_index=NULL,
+                lumber_camp_upgrade_finish_at=NULL WHERE {_WHERE}""",
             (json.dumps(upgrades, ensure_ascii=False), *key),
         )
         self._ensure(connection, key, finish_at)
@@ -473,6 +546,13 @@ class ProductionBuildings:
                         ) if completed
                     )
                     harvest_bonus["wheat"] = int(harvest_bonus.get("wheat", 0)) + farm_speed_bonus
+            elif building == "lumber_camp":
+                upgrades = self._lumber_camp_upgrades(connection, key)
+                if upgrades["strong_handle"] and "wood" in slot_resources(building, slot["slot_index"]):
+                    harvest_bonus = dict(harvest_bonus)
+                    harvest_bonus["wood"] = int(harvest_bonus.get("wood", 0)) + int(
+                        LUMBER_CAMP_UPGRADES["strong_handle"]["speed_bonus_percent"]
+                    )
             fresh, credited = _new_units(building, slot, now, harvest_bonus)
             for resource, amount in fresh.items():
                 added[resource] = added.get(resource, 0) + amount
@@ -526,9 +606,17 @@ class ProductionBuildings:
         info = building_level_info(state["level"], building)
         farm_upgrades = self._farm_upgrades(connection, key) if building == "farm" else None
         farm_upgrade_progress = self._farm_upgrade_payload(connection, key, state, now) if building == "farm" else None
+        lumber_camp_upgrades = self._lumber_camp_upgrades(connection, key) if building == "lumber_camp" else None
+        lumber_camp_upgrade_progress = (
+            self._lumber_camp_upgrade_payload(connection, key, state, now)
+            if building == "lumber_camp" else None
+        )
         if building == "farm":
             info = dict(info)
             info["max_workers"] += len(farm_upgrades["ration_plots"])
+        elif building == "lumber_camp":
+            info = dict(info)
+            info["max_workers"] += len(lumber_camp_upgrades["bonus_plots"])
         slots = []
         for slot in self._slots(connection, key):
             resources = slot_resources(building, slot["slot_index"])
@@ -545,6 +633,12 @@ class ProductionBuildings:
                     ) if completed
                 )
                 harvest_bonus["wheat"] = int(harvest_bonus.get("wheat", 0)) + farm_speed_bonus
+            elif (building == "lumber_camp" and lumber_camp_upgrades["strong_handle"]
+                  and "wood" in resources):
+                harvest_bonus = dict(harvest_bonus)
+                harvest_bonus["wood"] = int(harvest_bonus.get("wood", 0)) + int(
+                    LUMBER_CAMP_UPGRADES["strong_handle"]["speed_bonus_percent"]
+                )
             worker_name = slot["worker_id"]
             travel_direction = None
             arrival_at = None
@@ -878,7 +972,7 @@ class ProductionBuildings:
                     },
                 })
             feed_consumption = occupied_stalls * building_config(building)["feed_kg_per_horse_hour"]
-        elif building == "farm":
+        elif building in ("farm", "lumber_camp"):
             treasury_row = connection.execute(
                 "SELECT treasury_copper FROM city_population_state WHERE world_id=%s AND faction=%s",
                 key[:2],
@@ -892,6 +986,7 @@ class ProductionBuildings:
             "level": state["level"],
             "max_workers": info["max_workers"],
             "farm_upgrades": farm_upgrade_progress,
+            "lumber_camp_upgrades": lumber_camp_upgrade_progress,
             "stall_capacity": stall_capacity if building == "stable" else info.get("stall_capacity"),
             "stall_capacity_bonus": stall_capacity_bonus if building == "stable" else 0,
             "stall_slots": stall_slots,
@@ -924,7 +1019,7 @@ class ProductionBuildings:
             "storage_depositable": storage_depositable,
             "storage_withdrawable": storage_withdrawable,
             **carry_state,
-            "warehouse_storage": self._warehouse_storage(connection, key) if building in ("stable", "farm") else None,
+            "warehouse_storage": self._warehouse_storage(connection, key) if building in ("stable", "farm", "lumber_camp") else None,
             "worker_slots": slots,
             "player_work": player_work,
             "player_harvest_totals": player_harvest_totals,
@@ -1506,6 +1601,8 @@ class ProductionBuildings:
     def start_upgrade(self, character_id, building, now=None):
         """Запускает стройку (любой игрок фракции): сданные материалы расходуются, уровень вырастет по времени."""
         now = _timestamp(now)
+        if building == "lumber_camp":
+            raise ValueError("Используйте цепочку улучшений лесопилки")
         with self._transaction(character_id, building, now) as (connection, key):
             state = self._state(connection, key)
             requirements = upgrade_requirements(state["level"], building)
@@ -1523,6 +1620,54 @@ class ProductionBuildings:
             connection.execute(
                 f"UPDATE building_states SET upgrade_finish_at = %s WHERE {_WHERE}",
                 (now + requirements["time_seconds"], *key),
+            )
+            return self._payload(connection, key, character_id, now)
+
+    def purchase_lumber_camp_upgrade(self, character_id, upgrade_id, now=None, plot_index=None):
+        now = _timestamp(now)
+        upgrade_id = str(upgrade_id)
+        upgrade = LUMBER_CAMP_UPGRADES.get(upgrade_id)
+        if upgrade is None:
+            raise ValueError("Неизвестное улучшение лесопилки")
+        with self._transaction(character_id, "lumber_camp", now) as (connection, key):
+            state = self._state(connection, key)
+            if state["lumber_camp_upgrade_id"] is not None:
+                raise ValueError("Улучшение лесопилки уже выполняется")
+            if state["upgrade_finish_at"] is not None:
+                raise ValueError("Сначала завершите текущее улучшение здания")
+            progress = self._lumber_camp_upgrades(connection, key)
+            if int(state["level"]) < int(upgrade.get("required_building_level", 1)):
+                raise ValueError("Это улучшение доступно только на втором уровне лесопилки")
+            if upgrade_id == "logging_expansion":
+                expected_plot_index = int(upgrade["plot_index"])
+                plot_index = expected_plot_index if plot_index is None else int(plot_index)
+                if plot_index != expected_plot_index:
+                    raise ValueError("Улучшение относится к другому участку вырубки")
+                if plot_index in progress["bonus_plots"]:
+                    raise ValueError("Первый участок вырубки уже расширен")
+            elif upgrade_id == "strong_handle":
+                if progress["strong_handle"]:
+                    raise ValueError("Усиленная рукоять уже установлена")
+            elif upgrade_id == "lumber_camp_level_2":
+                if int(state["level"]) >= 2:
+                    raise ValueError("Лесопилка уже достигла уровня 2")
+                if 0 not in progress["bonus_plots"] or not progress["strong_handle"]:
+                    raise ValueError("Сначала завершите расширение вырубки и установите усиленную рукоять")
+
+            self._debit_treasury(
+                connection, key, Currency.to_copper(silver=int(upgrade["silver_cost"])),
+            )
+            material_costs = {
+                STORAGE_ITEM_IDS[resource]: int(amount)
+                for resource, amount in upgrade["materials"].items()
+            }
+            self._debit_warehouse_items(connection, key, material_costs, now)
+            connection.execute(
+                f"""UPDATE building_states SET lumber_camp_upgrade_id=%s,
+                    lumber_camp_upgrade_plot_index=%s, lumber_camp_upgrade_finish_at=%s
+                    WHERE {_WHERE}""",
+                (upgrade_id, plot_index if upgrade_id == "logging_expansion" else None,
+                 now + int(upgrade["time_seconds"]), *key),
             )
             return self._payload(connection, key, character_id, now)
 

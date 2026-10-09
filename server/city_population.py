@@ -5,7 +5,12 @@ import math
 import time
 
 from core.currency import Currency
-from core.production_buildings import BUILDINGS, FARM_UPGRADES, building_level_info
+from core.production_buildings import (
+    BUILDINGS,
+    FARM_UPGRADES,
+    LUMBER_CAMP_UPGRADES,
+    building_level_info,
+)
 from core.city_progression import city_storage_resources, city_upgrade_resources, unlocked_country_buildings
 from core.production_buildings import slot_resources
 from server.database import Database, lock_character
@@ -694,6 +699,9 @@ class CityPopulation:
         income = {resource: 0.0 for resource in resources_in_scope}
         buildings = ("farm", "lumber_camp", "barnyard")
         farm_upgrades = self.production._farm_upgrades(connection, (*key, "farm"))
+        lumber_upgrades = self.production._lumber_camp_upgrades(
+            connection, (*key, "lumber_camp"),
+        )
         for building in buildings:
             building_key = (*key, building)
             slots = connection.execute(
@@ -726,6 +734,12 @@ class CityPopulation:
                         ) if completed
                     )
                     bonus["wheat"] = int(bonus.get("wheat", 0)) + farm_speed_bonus
+                elif (building == "lumber_camp" and lumber_upgrades["strong_handle"]
+                      and "wood" in resources):
+                    bonus = dict(bonus)
+                    bonus["wood"] = int(bonus.get("wood", 0)) + int(
+                        LUMBER_CAMP_UPGRADES["strong_handle"]["speed_bonus_percent"]
+                    )
                 for resource in resources:
                     if resource not in income:
                         continue

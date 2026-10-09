@@ -6,6 +6,7 @@ CYCLE_DURATION_SEC = 7200
 # Стадии участка внутри цикла (по 30 минут)
 PLOT_STAGE_COUNT = 4
 FARM_RATION_SLOT_BASE = 1000
+BUILDING_BONUS_SLOT_BASE = FARM_RATION_SLOT_BASE
 FARM_UPGRADES = {
     "ration": {
         "name": "Самозахват",
@@ -15,6 +16,7 @@ FARM_UPGRADES = {
         "materials": {},
         "time_seconds": 30 * 60,
         "plot_index": 0,
+        "required_building_level": 1,
     },
     "wooden_plough": {
         "name": "Усиленный деревянный плуг",
@@ -24,6 +26,7 @@ FARM_UPGRADES = {
         "silver_cost": 20,
         "materials": {"wood": 100},
         "time_seconds": 60 * 60,
+        "required_building_level": 1,
     },
     "farm_level_2": {
         "name": "Улучшить Крестьянское поселение",
@@ -32,6 +35,7 @@ FARM_UPGRADES = {
         "silver_cost": 50,
         "materials": {"wood": 200},
         "time_seconds": 120 * 60,
+        "required_building_level": 1,
         "required_farm_level": 1,
     },
     "ration_level_2": {
@@ -53,6 +57,37 @@ FARM_UPGRADES = {
         "materials": {"wood": 100},
         "time_seconds": 60 * 60,
         "required_farm_level": 2,
+    },
+}
+LUMBER_CAMP_UPGRADES = {
+    "logging_expansion": {
+        "name": "Расширение вырубки",
+        "requirement": "Нет",
+        "result": "+1 место на первом участке древесины",
+        "silver_cost": 50,
+        "materials": {},
+        "time_seconds": 40 * 60,
+        "plot_index": 0,
+        "required_building_level": 1,
+    },
+    "strong_handle": {
+        "name": "Усиленная рукоять",
+        "requirement": "Нет",
+        "result": "+8% к скорости вырубки",
+        "speed_bonus_percent": 8,
+        "silver_cost": 70,
+        "materials": {},
+        "time_seconds": 60 * 60,
+        "required_building_level": 1,
+    },
+    "lumber_camp_level_2": {
+        "name": "Улучшить лесопилку",
+        "requirement": "Расширение вырубки и усиленная рукоять",
+        "result": "Лесопилка — уровень 2",
+        "silver_cost": 50,
+        "materials": {"wood": 300},
+        "time_seconds": 140 * 60,
+        "required_building_level": 1,
     },
 }
 
@@ -348,8 +383,8 @@ def plot_slot_ranges(building):
 
 
 def slot_resources(building, slot_index):
-    if building == "farm" and int(slot_index) >= FARM_RATION_SLOT_BASE:
-        plot_index = int(slot_index) - FARM_RATION_SLOT_BASE
+    if building in ("farm", "lumber_camp") and int(slot_index) >= BUILDING_BONUS_SLOT_BASE:
+        plot_index = int(slot_index) - BUILDING_BONUS_SLOT_BASE
         plots = building_config(building)["plots"]
         if 0 <= plot_index < len(plots):
             return _plot_resources(plots[plot_index])

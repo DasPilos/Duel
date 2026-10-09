@@ -447,6 +447,73 @@ class CityStorageServerTests(unittest.TestCase):
         self.assertEqual(sum(row["quantity"] for row in items.get_inventory(self.character_id)
                              if row["item_id"] == 60), 0)
 
+    def test_lumber_camp_upgrade_chain_expands_first_plot_and_unlocks_level_two(self):
+        now = 10000
+        initial = self.buildings.get_state(self.character_id, "lumber_camp", now)
+        self.assertEqual(initial["storage"]["limit"], 500)
+        self.assertEqual(initial["max_workers"], 2)
+        with self.database.connection() as connection:
+            connection.execute(
+                """UPDATE city_population_state SET treasury_copper=50000
+                   WHERE world_id=%s AND faction='light'""",
+                (self.database.world_id,),
+            )
+            connection.execute(
+                """UPDATE building_resources SET storage=300
+                   WHERE world_id=%s AND faction='light' AND building='warehouse' AND resource='wood'""",
+                (self.database.world_id,),
+            )
+
+        initial = self.buildings.get_state(self.character_id, "lumber_camp", now + 0.5)
+        self.assertEqual(initial["treasury_silver_available"], 500)
+
+        expansion = self.buildings.purchase_lumber_camp_upgrade(
+            self.character_id, "logging_expansion", now + 1,
+        )
+        self.assertEqual(expansion["lumber_camp_upgrades"]["seconds_left"], 2400)
+        self.assertEqual(expansion["treasury_silver_available"], 450)
+        expansion_done = self.buildings.get_state(
+            self.character_id, "lumber_camp", now + 2402,
+        )
+        self.assertTrue(expansion_done["lumber_camp_upgrades"]["completed"]["logging_expansion"])
+        self.assertEqual(expansion_done["max_workers"], 3)
+        bonus_slot = next(slot for slot in expansion_done["worker_slots"]
+                          if slot["slot_index"] == 1000)
+        self.assertEqual(bonus_slot["resources"], ["wood"])
+
+        with self.assertRaisesRegex(ValueError, "усиленную рукоять"):
+            self.buildings.purchase_lumber_camp_upgrade(
+                self.character_id, "lumber_camp_level_2", now + 2403,
+            )
+
+        handle = self.buildings.purchase_lumber_camp_upgrade(
+            self.character_id, "strong_handle", now + 2403,
+        )
+        self.assertEqual(handle["treasury_silver_available"], 380)
+        self.assertEqual(handle["warehouse_storage"]["wood"], 300)
+        handle_done = self.buildings.get_state(
+            self.character_id, "lumber_camp", now + 6004,
+        )
+        self.assertTrue(handle_done["lumber_camp_upgrades"]["completed"]["strong_handle"])
+        self.assertEqual(handle_done["worker_slots"][0]["timer_sec_by_resource"]["wood"], 221)
+
+        level_two = self.buildings.purchase_lumber_camp_upgrade(
+            self.character_id, "lumber_camp_level_2", now + 6005,
+        )
+        self.assertEqual(level_two["lumber_camp_upgrades"]["seconds_left"], 8400)
+        self.assertEqual(level_two["treasury_silver_available"], 330)
+        self.assertEqual(level_two["warehouse_storage"]["wood"], 0)
+        completed = self.buildings.get_state(
+            self.character_id, "lumber_camp", now + 14405,
+        )
+        self.assertEqual(completed["level"], 2)
+        self.assertEqual(completed["storage"]["limit"], 800)
+        self.assertEqual(completed["max_workers"], 4)
+        self.assertEqual(
+            [slot["slot_index"] for slot in completed["worker_slots"]],
+            [0, 1, 2, 1000],
+        )
+
     def test_building_upgrade_spends_shared_warehouse_not_backpack(self):
         items = ItemsDatabase(self.database)
         requirements = upgrade_requirements(1, "stable")["materials"]

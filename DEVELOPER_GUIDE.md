@@ -83,6 +83,16 @@ Keep the second-field bonus index tied to plot index 1 in
 `core/production_buildings.py`, `server/production_buildings.py`, and the
 production window's `plot_slots()` mapping.
 
+Lumber-camp progression is stored in `building_states.lumber_camp_upgrades_json`;
+level 1 starts with 500 storage and two workers. “Расширение вырубки” adds one
+worker slot to the first wood plot, “Усиленная рукоять” adds 8% wood speed, and
+both are required for level 2 (800 storage, three base slots). The bonus slot
+uses `BUILDING_BONUS_SLOT_BASE + plot_index`, shared with farm bonus-slot logic.
+The lumber upgrade costs are 50 silver/40 minutes for expansion, 70 silver/60
+minutes for the handle, and 50 silver plus 300 wood/140 minutes for level 2.
+The purchase route is `lumber-camp/upgrade`; keep lumber upgrades out of the
+generic `upgrade/start` flow.
+
 ## Stable and Transport
 
 Every cart instance stores durability in `stable_cart_progress.cart_wear_json`.

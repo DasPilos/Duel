@@ -11,6 +11,7 @@ from client.network import ServerError
 from core import settings
 from core.production_buildings import (
     FARM_UPGRADES,
+    LUMBER_CAMP_UPGRADES,
     FARM_RATION_SLOT_BASE,
     RESOURCES,
     building_config,
@@ -180,6 +181,7 @@ class ProductionBuildingWindow:
         self.received_at = 0.0
         self.deposit_buttons = {}
         self.farm_upgrade_buttons = {}
+        self.building_upgrade_buttons = self.farm_upgrade_buttons
         self.contribution_dialog = MaterialContributionDialog(scene)
         self.selected_plot = None
         self.worker_stats_scroll = 0
@@ -623,6 +625,11 @@ class ProductionBuildingWindow:
             extra_slot_index = FARM_RATION_SLOT_BASE + index
             if extra_slot_index in by_index:
                 slots.append(by_index[extra_slot_index])
+        elif (self.building == "lumber_camp"
+              and index in self._state().get("lumber_camp_upgrades", {}).get("bonus_plots", [])):
+            extra_slot_index = FARM_RATION_SLOT_BASE + index
+            if extra_slot_index in by_index:
+                slots.append(by_index[extra_slot_index])
         return slots or None
 
     def click_plot(self, index):
@@ -797,10 +804,11 @@ class ProductionBuildingWindow:
                 else:
                     self.remove_plot_worker(index)
         elif event.button == 1 and self.tab == "upgrade":
-            if self.building == "farm":
-                for upgrade_id, button in self.farm_upgrade_buttons.items():
+            if self.building in ("farm", "lumber_camp"):
+                for upgrade_id, button in self.building_upgrade_buttons.items():
                     if button.collidepoint(pos):
-                        self._request("farm/upgrade", {"upgrade_id": upgrade_id})
+                        action = "farm/upgrade" if self.building == "farm" else "lumber-camp/upgrade"
+                        self._request(action, {"upgrade_id": upgrade_id})
                         return
             else:
                 for item_id, button in self.deposit_buttons.items():
@@ -1411,6 +1419,9 @@ class ProductionBuildingWindow:
         if self.building == "farm":
             self._draw_farm_upgrade_cards(screen, curr_y)
             return
+        if self.building == "lumber_camp":
+            self._draw_lumber_camp_upgrade_cards(screen, curr_y)
+            return
         upgrade = self._state().get("upgrade")
         self.deposit_buttons = {}
         if upgrade is None:
@@ -1443,16 +1454,33 @@ class ProductionBuildingWindow:
         draw_button(screen, self.upgrade_button, "УЛУЧШИТЬ", scene.small_font, color=color, text_color=(255, 255, 255) if ready else (150, 150, 155))
 
     def _draw_farm_upgrade_cards(self, screen, curr_y):
+        state = self._state()
+        self._draw_building_upgrade_cards(
+            screen, curr_y, FARM_UPGRADES, state.get("farm_upgrades", {}),
+            "required_farm_level",
+            {"farm_level_2": ("ration", "wooden_plough")},
+        )
+
+    def _draw_lumber_camp_upgrade_cards(self, screen, curr_y):
+        state = self._state()
+        self._draw_building_upgrade_cards(
+            screen, curr_y, LUMBER_CAMP_UPGRADES,
+            state.get("lumber_camp_upgrades", {}), "required_building_level",
+            {"lumber_camp_level_2": ("logging_expansion", "strong_handle")},
+        )
+
+    def _draw_building_upgrade_cards(
+            self, screen, curr_y, upgrades, progress, required_level_key, prerequisites):
         scene = self.scene
         state = self._state()
-        progress = state.get("farm_upgrades", {})
         completed = progress.get("completed", {})
         warehouse = state.get("warehouse_storage", {}) or {}
         treasury = int(state.get("treasury_silver_available", 0))
-        farm_level = int(state.get("level", 1))
+        building_level = int(state.get("level", 1))
         active_id = progress.get("active_upgrade_id")
         seconds_left = max(0, int(progress.get("seconds_left", 0) - self._since_received()))
-        self.farm_upgrade_buttons = {}
+        self.building_upgrade_buttons = {}
+        self.farm_upgrade_buttons = self.building_upgrade_buttons
 
         card_left = self.rect.left + 24
         card_width = self.rect.width - 48
@@ -1460,8 +1488,9 @@ class ProductionBuildingWindow:
         card_gap = 10
         available_upgrades = [
             (upgrade_id, upgrade)
-            for upgrade_id, upgrade in FARM_UPGRADES.items()
-            if int(upgrade.get("required_farm_level", 1)) == farm_level
+            for upgrade_id, upgrade in upgrades.items()
+            if (int(upgrade.get(required_level_key, 1)) == building_level
+                or (self.building == "lumber_camp" and completed.get(upgrade_id, False)))
         ]
         for index, (upgrade_id, upgrade) in enumerate(available_upgrades):
             card = pygame.Rect(card_left, curr_y + index * (card_height + card_gap),
@@ -1469,9 +1498,9 @@ class ProductionBuildingWindow:
             is_complete = bool(completed.get(upgrade_id, False))
             is_active = active_id == upgrade_id
             requirements_met = (
-                farm_level >= int(upgrade.get("required_farm_level", 1))
-                and (upgrade_id != "farm_level_2"
-                     or (completed.get("ration", False) and completed.get("wooden_plough", False)))
+                building_level >= int(upgrade.get(required_level_key, 1))
+                and all(completed.get(required_id, False)
+                        for required_id in prerequisites.get(upgrade_id, ()))
             )
             funds_available = (
                 treasury >= int(upgrade["silver_cost"])
@@ -1538,4 +1567,4 @@ class ProductionBuildingWindow:
                     text_color=(240, 238, 220) if enabled else (140, 142, 132),
                 )
                 if enabled:
-                    self.farm_upgrade_buttons[upgrade_id] = button
+                    self.building_upgrade_buttons[upgrade_id] = button
