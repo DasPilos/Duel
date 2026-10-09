@@ -454,13 +454,37 @@ class CityStorageServerTests(unittest.TestCase):
         self.assertEqual(initial["max_workers"], 2)
         with self.database.connection() as connection:
             connection.execute(
-                """UPDATE city_population_state SET treasury_copper=50000
+                """UPDATE city_population_state SET treasury_copper=0
                    WHERE world_id=%s AND faction='light'""",
                 (self.database.world_id,),
             )
             connection.execute(
+                "UPDATE characters SET copper=0, silver=500, gold=0 WHERE id=%s",
+                (self.character_id,),
+            )
+            connection.execute(
                 """UPDATE building_resources SET storage=300
                    WHERE world_id=%s AND faction='light' AND building='warehouse' AND resource='wood'""",
+                (self.database.world_id,),
+            )
+
+        with self.assertRaisesRegex(ValueError, "казне недостаточно средств"):
+            self.buildings.purchase_lumber_camp_upgrade(
+                self.character_id, "logging_expansion", now + 0.25,
+            )
+        with self.database.connection() as connection:
+            treasury = connection.execute(
+                "SELECT treasury_copper FROM city_population_state WHERE world_id=%s AND faction='light'",
+                (self.database.world_id,),
+            ).fetchone()["treasury_copper"]
+            wallet_silver = connection.execute(
+                "SELECT silver FROM characters WHERE id=%s", (self.character_id,),
+            ).fetchone()["silver"]
+            self.assertEqual(treasury, 0)
+            self.assertEqual(wallet_silver, 500)
+            connection.execute(
+                """UPDATE city_population_state SET treasury_copper=50000
+                   WHERE world_id=%s AND faction='light'""",
                 (self.database.world_id,),
             )
 

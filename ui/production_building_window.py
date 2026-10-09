@@ -1531,7 +1531,7 @@ class ProductionBuildingWindow:
             price_y = card.top + 108
             draw_item_icon(screen, "silver", (card.left + 14, price_y), 32)
             silver_text = scene.small_font.render(
-                f"{treasury}/{upgrade['silver_cost']} серебра", True, (224, 214, 188)
+                f"Казна: {treasury}/{upgrade['silver_cost']} серебра", True, (224, 214, 188)
             )
             screen.blit(silver_text, (card.left + 52, price_y + 8))
             wood_cost = int(upgrade["materials"].get("wood", 0))
