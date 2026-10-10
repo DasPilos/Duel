@@ -58,6 +58,8 @@ def _citizen_is_free(citizen):
 class CastleWindow:
     REFRESH_SECONDS = 5.0
     CITIZEN_ROW_HEIGHT = 39
+    CITIZEN_SCROLLBAR_WIDTH = 10
+    CITIZEN_SCROLLBAR_GAP = 4
 
     def __init__(self, scene):
         self.scene = scene
@@ -79,6 +81,8 @@ class CastleWindow:
         self.last_refresh = 0.0
         self.citizen_actions = {}
         self.citizen_scroll = 0
+        self.citizen_scroll_dragging = False
+        self.citizen_scroll_drag_offset = 0
         self.worksite_buttons = {}
         self.confirm_button = pygame.Rect(0, 0, 160, 36)
         self.cancel_button = pygame.Rect(0, 0, 160, 36)
@@ -130,11 +134,17 @@ class CastleWindow:
         if self.treasury_transfer is not None:
             self._handle_treasury_transfer_event(event)
             return
+        if self.citizen_scroll_dragging:
+            if event.type == pygame.MOUSEMOTION:
+                self._scroll_citizens_from_y(event.pos[1], self.citizen_scroll_drag_offset)
+            elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+                self.citizen_scroll_dragging = False
+            return
         if (event.type == pygame.MOUSEWHEEL and self.tab == "population"
-                and self.citizen_list_rect().collidepoint(pygame.mouse.get_pos())):
+                and (self.citizen_list_rect().collidepoint(pygame.mouse.get_pos())
+                     or self.citizen_scrollbar_track_rect().collidepoint(pygame.mouse.get_pos()))):
             citizens = (self.state or {}).get("citizens", [])
-            visible_rows = max(1, self.citizen_list_rect().height // self.CITIZEN_ROW_HEIGHT)
-            max_scroll = max(0, len(citizens) - visible_rows)
+            max_scroll = self.citizen_max_scroll()
             self.citizen_scroll = max(0, min(max_scroll, self.citizen_scroll - event.y))
             return
         if event.type == pygame.KEYDOWN and event.key in (pygame.K_ESCAPE, pygame.K_RETURN, pygame.K_SPACE):
@@ -174,6 +184,17 @@ class CastleWindow:
                     return
             return
         if self.tab != "population":
+            return
+        thumb = self.citizen_scrollbar_thumb_rect()
+        if thumb is not None and thumb.collidepoint(event.pos):
+            self.citizen_scroll_dragging = True
+            self.citizen_scroll_drag_offset = event.pos[1] - thumb.top
+            return
+        track = self.citizen_scrollbar_track_rect()
+        if thumb is not None and track.collidepoint(event.pos):
+            self._scroll_citizens_from_y(event.pos[1], thumb.height // 2)
+            self.citizen_scroll_dragging = True
+            self.citizen_scroll_drag_offset = thumb.height // 2
             return
         for citizen_id, rect in self.citizen_actions.items():
             if not rect.collidepoint(event.pos):
@@ -450,65 +471,30 @@ class CastleWindow:
     def _draw_population(self, screen, state, mouse):
         left = self.rect.left + 28
         top = self.rect.top + 137
-        food = state.get("food_storage", {})
-        summary = (f"Уровень города: {state.get('castle_level', 1)} · "
-               f"Население: {state.get('population', 0)} / "
+        summary = (f"Население: {state.get('population', 0)} / "
                    f"{state.get('population_capacity', 10)}")
-        growth_eta = state.get("new_citizen_eta_seconds")
-        if growth_eta is not None:
-            elapsed = time.monotonic() - self.last_refresh
-            growth_eta = max(0, int(growth_eta - elapsed))
-            summary += f"  (Следующий житель: {_format_clock(growth_eta)})"
         screen.blit(self.font.render(summary, True, (225, 216, 187)), (left, top))
-        food_text = (f"Амбар: пшеница {food.get('wheat', 0)} · ягоды {food.get('berries', 0)}"
-                     f" · мясо {food.get('meat', 0)}")
-        food_surface = self.small_font.render(food_text, True, (190, 210, 177))
-        screen.blit(food_surface, (left, top + 30))
-        food_status = state.get("food_status")
-        if food_status:
-            status_color = FOOD_STATUS_COLORS.get(food_status, (190, 190, 180))
-            status_surface = self.small_font.render(f"({food_status})", True, status_color)
-            screen.blit(status_surface, (left + food_surface.get_width() + 10, top + 30))
-        upgrade = state.get("city_upgrade", {})
-        elapsed = time.monotonic() - self.last_refresh
-        if upgrade.get("active"):
-            seconds_left = max(0, int(upgrade.get("seconds_left", 0) - elapsed))
-            tick_costs = upgrade.get("resource_cost_per_tick", {})
-            tick_cost = next(iter(tick_costs.values()), None)
-            drain_text = f" · по {tick_cost} ед. каждого ресурса за тик" if tick_cost is not None else ""
-            upgrade_text = (
-                f"Снабжение для улучшения: тик {upgrade.get('tick_index', 0)}/4"
-                f"{drain_text} · до проверки {_format_clock(seconds_left)}"
-            )
-            upgrade_color = (120, 225, 155)
-        else:
-            next_start = float(upgrade.get("next_start_at", 0))
-            seconds_to_start = max(0, int(next_start - time.time())) if next_start else 0
-            last_result = upgrade.get("last_result", {})
-            if last_result.get("status") == "failed":
-                upgrade_text = f"Поставка не удержана · новая проверка через {_format_clock(seconds_to_start)}"
-                upgrade_color = (235, 155, 105)
-            else:
-                upgrade_text = f"Проверка запасов через {_format_clock(seconds_to_start)}"
-                upgrade_color = (175, 205, 220)
-        screen.blit(self.small_font.render(upgrade_text, True, upgrade_color), (left, top + 55))
         self.citizen_actions = {}
-        row_top = top + 88
         row_height = self.CITIZEN_ROW_HEIGHT
         citizens = sorted(
             state.get("citizens", []),
             key=lambda citizen: not _citizen_is_free(citizen),
         )
         list_rect = self.citizen_list_rect()
-        visible_rows = max(1, list_rect.height // row_height)
+        visible_rows = self.citizen_visible_rows()
         max_scroll = max(0, len(citizens) - visible_rows)
         self.citizen_scroll = max(0, min(max_scroll, self.citizen_scroll))
+        self._draw_citizen_panel_frame(screen)
         previous_clip = screen.get_clip()
         screen.set_clip(list_rect)
-        for index, citizen in enumerate(citizens[self.citizen_scroll:self.citizen_scroll + visible_rows],
-                                        start=self.citizen_scroll):
-            row = pygame.Rect(left, row_top + index * row_height, self.rect.width - 56, 34)
-            pygame.draw.rect(screen, (38, 42, 39) if index % 2 else (33, 37, 35), row)
+        for visible_index, citizen in enumerate(
+                citizens[self.citizen_scroll:self.citizen_scroll + visible_rows]):
+            citizen_index = self.citizen_scroll + visible_index
+            row = pygame.Rect(left, list_rect.top + visible_index * row_height,
+                              list_rect.width, 34)
+            pygame.draw.rect(
+                screen, (38, 42, 39) if citizen_index % 2 else (33, 37, 35), row,
+            )
             draw_item_icon(screen, "citizen", (row.left + 10, row.top + 1), 32)
             screen.blit(self.small_font.render(citizen["name"], True, (226, 225, 211)),
                         (row.left + 50, row.top + 8))
@@ -557,6 +543,7 @@ class CastleWindow:
                         color=(73, 104, 75) if label == "НАЗНАЧИТЬ" else (75, 74, 62),
                         hover_color=(96, 135, 93))
         screen.set_clip(previous_clip)
+        self._draw_citizen_scrollbar(screen, len(citizens))
 
         self.worksite_buttons = {}
         if self.selected_citizen_id is None:
@@ -583,11 +570,81 @@ class CastleWindow:
             screen.blit(name, name.get_rect(midtop=(rect.centerx, rect.top + 6)))
             screen.blit(count, count.get_rect(midbottom=(rect.centerx, rect.bottom - 5)))
 
+    def citizen_visible_rows(self):
+        return max(1, self.citizen_list_rect().height // self.CITIZEN_ROW_HEIGHT)
+
+    def citizen_max_scroll(self):
+        return max(0, len((self.state or {}).get("citizens", [])) - self.citizen_visible_rows())
+
+    def citizen_scrollbar_track_rect(self):
+        list_rect = self.citizen_list_rect()
+        return pygame.Rect(
+            list_rect.right + self.CITIZEN_SCROLLBAR_GAP,
+            list_rect.top,
+            self.CITIZEN_SCROLLBAR_WIDTH,
+            list_rect.height,
+        )
+
+    def citizen_scrollbar_thumb_rect(self):
+        max_scroll = self.citizen_max_scroll()
+        if max_scroll <= 0:
+            return None
+        track = self.citizen_scrollbar_track_rect()
+        citizen_count = len((self.state or {}).get("citizens", []))
+        thumb_height = min(
+            track.height,
+            max(28, round(track.height * self.citizen_visible_rows() / citizen_count)),
+        )
+        travel = track.height - thumb_height
+        thumb_top = track.top + round(travel * self.citizen_scroll / max_scroll)
+        return pygame.Rect(track.left, thumb_top, track.width, thumb_height)
+
     def citizen_list_rect(self):
-        left = self.rect.left + 28
-        top = self.rect.top + 137 + 88
-        bottom = self.rect.bottom - 108 - 24
-        return pygame.Rect(left, top, self.rect.width - 56, max(self.CITIZEN_ROW_HEIGHT, bottom - top))
+        panel = self.citizen_panel_rect()
+        left = panel.left + 8
+        top = panel.top + 12
+        width = (panel.width - 16 - self.CITIZEN_SCROLLBAR_GAP
+                 - self.CITIZEN_SCROLLBAR_WIDTH)
+        height = max(self.CITIZEN_ROW_HEIGHT, panel.height - 24)
+        return pygame.Rect(left, top, width, height)
+
+    def citizen_panel_rect(self):
+        left = self.rect.left + 20
+        top = self.rect.top + 137 + 40
+        bottom = self.rect.bottom - 14
+        if self.selected_citizen_id is not None:
+            worksite_top = self.rect.bottom - 108 - 34
+            bottom = min(bottom, worksite_top)
+        return pygame.Rect(left, top, self.rect.width - 40, max(1, bottom - top))
+
+    def _draw_citizen_panel_frame(self, screen):
+        pygame.draw.rect(
+            screen, (197, 164, 103), self.citizen_panel_rect(), 1, border_radius=3,
+        )
+
+    def _draw_citizen_scrollbar(self, screen, citizen_count):
+        thumb = self.citizen_scrollbar_thumb_rect()
+        if thumb is None or citizen_count <= self.citizen_visible_rows():
+            return
+        track = self.citizen_scrollbar_track_rect()
+        pygame.draw.rect(screen, (29, 34, 32), track, border_radius=5)
+        pygame.draw.rect(screen, (70, 78, 73), track, 1, border_radius=5)
+        color = (154, 174, 157) if self.citizen_scroll_dragging else (104, 126, 110)
+        pygame.draw.rect(screen, color, thumb, border_radius=5)
+
+    def _scroll_citizens_from_y(self, mouse_y, grab_offset):
+        thumb = self.citizen_scrollbar_thumb_rect()
+        max_scroll = self.citizen_max_scroll()
+        if thumb is None or max_scroll <= 0:
+            self.citizen_scroll = 0
+            return
+        track = self.citizen_scrollbar_track_rect()
+        travel = track.height - thumb.height
+        if travel <= 0:
+            self.citizen_scroll = 0
+            return
+        thumb_top = max(track.top, min(track.bottom - thumb.height, mouse_y - grab_offset))
+        self.citizen_scroll = round((thumb_top - track.top) * max_scroll / travel)
 
     def _draw_confirmation(self, screen, state):
         pending = self.pending_action

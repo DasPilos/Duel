@@ -265,23 +265,30 @@ class CastleWindowTests(unittest.TestCase):
             },
         }
         rendered = []
-        original_font = window.small_font
+        original_font, original_small_font = window.font, window.small_font
 
         class Recorder:
+            def __init__(self, wrapped):
+                self.wrapped = wrapped
+
             def render(self, text, *args):
                 rendered.append(str(text))
-                return original_font.render(text, *args)
+                return self.wrapped.render(text, *args)
 
             def __getattr__(self, name):
-                return getattr(original_font, name)
+                return getattr(self.wrapped, name)
 
-        window.small_font = Recorder()
+        window.font = Recorder(original_font)
+        window.small_font = Recorder(original_small_font)
         screen = pygame.Surface((window.rect.right + 1, window.rect.bottom + 1))
         with patch("pygame.mouse.get_pos", return_value=(0, 0)):
             window._draw_population(screen, state, (0, 0))
 
+        self.assertIn("Население: 2 / 10", rendered)
+        self.assertFalse(any(text.startswith("Уровень города:") for text in rendered))
+        self.assertFalse(any(text.startswith("Амбар:") for text in rendered))
+        self.assertFalse(any(text.startswith("Проверка запасов") for text in rendered))
         self.assertLess(rendered.index("Свободен"), rendered.index("Работает"))
-        self.assertTrue(any("по 40 ед. каждого ресурса за тик" in text for text in rendered))
 
     def test_population_citizen_list_scrolls_to_last_residents(self):
         pygame.display.set_mode((1, 1), pygame.HIDDEN)
@@ -327,6 +334,61 @@ class CastleWindowTests(unittest.TestCase):
         window._draw_population(screen, state, (0, 0))
         self.assertIn("Горожанин 24", rendered)
         self.assertIn(24, window.citizen_actions)
+
+    def test_population_scrollbar_is_visible_and_draggable(self):
+        pygame.display.set_mode((1, 1), pygame.HIDDEN)
+        window = CastleWindow(object())
+        window.is_open = True
+        window.tab = "population"
+        citizens = [
+            {"id": index, "name": f"Горожанин {index}", "satiety": 80,
+             "strong_hunger": 0, "satisfaction": "satisfied",
+             "work_status": "Занят", "job_building": "farm"}
+            for index in range(1, 25)
+        ]
+        state = {
+            "population": len(citizens), "population_capacity": 30,
+            "citizens": citizens, "food_storage": {}, "worksites": [],
+            "city_upgrade": {},
+        }
+        window.state = state
+        thumb = window.citizen_scrollbar_thumb_rect()
+        self.assertIsNotNone(thumb)
+        self.assertLess(thumb.height, window.citizen_scrollbar_track_rect().height)
+
+        window.handle_event(pygame.event.Event(
+            pygame.MOUSEBUTTONDOWN, button=1, pos=thumb.center,
+        ))
+        self.assertTrue(window.citizen_scroll_dragging)
+        track = window.citizen_scrollbar_track_rect()
+        window.handle_event(pygame.event.Event(
+            pygame.MOUSEMOTION, pos=(thumb.centerx, track.bottom), rel=(0, track.height), buttons=(1, 0, 0),
+        ))
+        self.assertEqual(window.citizen_scroll, window.citizen_max_scroll())
+        rendered_row_rects = []
+        original_draw_rect = pygame.draw.rect
+
+        def record_rows(surface, color, rect, *args, **kwargs):
+            if isinstance(rect, pygame.Rect) and rect.width == window.citizen_list_rect().width \
+                    and rect.height == 34:
+                rendered_row_rects.append(rect.copy())
+            return original_draw_rect(surface, color, rect, *args, **kwargs)
+
+        with patch("pygame.draw.rect", side_effect=record_rows):
+            window._draw_population(
+                pygame.Surface((window.rect.right + 1, window.rect.bottom + 1)),
+                state, (0, 0),
+            )
+        self.assertTrue(rendered_row_rects)
+        self.assertTrue(all(
+            window.citizen_list_rect().top <= row.top
+            and row.bottom <= window.citizen_list_rect().bottom
+            for row in rendered_row_rects
+        ))
+        window.handle_event(pygame.event.Event(
+            pygame.MOUSEBUTTONUP, button=1, pos=(thumb.centerx, track.bottom),
+        ))
+        self.assertFalse(window.citizen_scroll_dragging)
 
     def test_governor_lists_hourly_rates_and_trends_for_city_resources(self):
         from ui.catalog_icons import draw_item_icon
