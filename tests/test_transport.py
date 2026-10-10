@@ -96,6 +96,24 @@ class TransportServiceTests(unittest.TestCase):
 
         self.assertEqual(convoy["cart_id"], "cart_grade_1~2")
 
+    def test_active_convoy_route_survives_transport_service_recreation(self):
+        convoy = TransportService(self.database).dispatch(
+            self.character_id, self._payload(), now=self.now + 2,
+        )
+
+        restarted_state = ProductionBuildings(self.database).get_state(
+            self.character_id, "stable", now=self.now + 3,
+        )
+        restored = next(
+            item for item in restarted_state["transport_convoys"]
+            if item["id"] == convoy["id"]
+        )
+
+        self.assertEqual(restored["destination_building_id"], "lumber_camp")
+        self.assertEqual(restored["cart_id"], "cart_grade_1")
+        self.assertEqual(restored["phase"], "outbound")
+        self.assertGreater(restored["seconds_remaining"], 0)
+
     def test_second_cart_dispatches_empty_when_selected_resource_is_unavailable(self):
         with self.database.connection() as connection:
             connection.execute(
