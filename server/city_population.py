@@ -12,7 +12,7 @@ from core.production_buildings import (
     building_level_info,
 )
 from core.city_progression import (
-    BASE_POPULATION_CAPACITY,
+    city_population_capacity,
     city_storage_resources,
     city_upgrade_resources,
     unlocked_country_buildings,
@@ -157,19 +157,22 @@ class CityPopulation:
         if not legacy_slots:
             return
         city = connection.execute(
-            """SELECT castle_level, COUNT(citizen.id) AS population,
+            """SELECT castle_level, population_capacity_bonus,
+                      COUNT(citizen.id) AS population,
                       COALESCE(MAX(citizen.ordinal), 0) AS max_ordinal
                FROM city_population_state state
                              LEFT JOIN city_citizens citizen
                                  ON citizen.world_id = state.world_id AND citizen.faction = state.faction
                                 AND citizen.alive=TRUE
                WHERE state.world_id = %s AND state.faction = %s
-               GROUP BY state.castle_level""",
+               GROUP BY state.castle_level, state.population_capacity_bonus""",
             key,
         ).fetchone()
         population = int(city["population"])
         max_ordinal = int(city["max_ordinal"])
-        capacity = int(city["castle_level"]) * BASE_POPULATION_CAPACITY
+        capacity = city_population_capacity(
+            city["castle_level"], city["population_capacity_bonus"],
+        )
         for slot in legacy_slots:
             try:
                 preferred_ordinal = int(str(slot["worker_id"]).rsplit("-", 1)[1])
@@ -633,7 +636,8 @@ class CityPopulation:
                 (tax_copper, *key),
             )
         state = connection.execute(
-            "SELECT castle_level FROM city_population_state WHERE world_id = %s AND faction = %s",
+                """SELECT castle_level, population_capacity_bonus
+                    FROM city_population_state WHERE world_id = %s AND faction = %s""",
             key,
         ).fetchone()
         current = connection.execute(
@@ -649,7 +653,9 @@ class CityPopulation:
         ).fetchone()["amount"]
         stock = self._food_stock(connection, key[0])
         food_reserve = sum(stock.get(food, 0) * value for food, value in FOOD_VALUE.items())
-        if (current["amount"] < int(state["castle_level"]) * BASE_POPULATION_CAPACITY
+        if (current["amount"] < city_population_capacity(
+                state["castle_level"], state["population_capacity_bonus"]
+            )
                 and not unhappy and food_reserve >= FULL_MEAL_NUTRITION):
             ordinal = int(current["max_ordinal"]) + 1
             connection.execute(
@@ -758,7 +764,8 @@ class CityPopulation:
 
     def _payload(self, connection, key, now, character_id):
         state = connection.execute(
-            """SELECT castle_level, last_food_tick_at, treasury_copper
+            """SELECT castle_level, population_capacity_bonus,
+                      last_food_tick_at, treasury_copper
                FROM city_population_state WHERE world_id = %s AND faction = %s""",
             key,
         ).fetchone()
@@ -785,7 +792,9 @@ class CityPopulation:
             connection, key, now, resource_storage
         )
         food_income = {resource: resource_income[resource] for resource in food}
-        population_capacity = int(state["castle_level"]) * BASE_POPULATION_CAPACITY
+        population_capacity = city_population_capacity(
+            state["castle_level"], state["population_capacity_bonus"],
+        )
         next_tick_at = float(state["last_food_tick_at"]) + 3600
         satieties = [int(row["satiety"]) for row in citizens]
         food_status = ("В городе голод" if any(value <= 10 for value in satieties) else

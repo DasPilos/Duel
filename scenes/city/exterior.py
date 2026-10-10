@@ -143,4 +143,4 @@ def draw_city_exterior(screen, rect, visual_state):
     keep_size = max(24, round(min(bounds.width, bounds.height) * 0.38))
     keep = pygame.Rect(0, 0, keep_size, keep_size)
     keep.center = bounds.center
-    draw_keep(screen, keep, tier)
+    draw_keep(screen, keep, 1)

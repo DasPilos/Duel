@@ -1319,6 +1319,15 @@ class CityStorageWindowTests(unittest.TestCase):
         self.assertEqual([city_visual_tier(level) for level in (1, 2, 3, 10)],
                          [1, 2, 2, 2])
 
+    def test_city_level_two_keeps_central_castle_at_building_level_one(self):
+        from scenes.city.exterior import draw_city_exterior
+
+        rect = pygame.Rect(80, 80, 480, 480)
+        with patch("scenes.city.exterior.draw_keep") as draw_keep:
+            draw_city_exterior(self.screen, rect, {"city_level": 2, "active": False})
+        draw_keep.assert_called_once()
+        self.assertEqual(draw_keep.call_args.args[2], 1)
+
     def test_purchased_cart_is_hidden_from_buy_tab_and_available_in_transport(self):
         window = self.scene.stable_window
         self.client.cart_progress["grades"]["1"]["body_owned"] = True

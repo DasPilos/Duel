@@ -57,6 +57,7 @@ def _citizen_is_free(citizen):
 
 class CastleWindow:
     REFRESH_SECONDS = 5.0
+    CITIZEN_ROW_HEIGHT = 39
 
     def __init__(self, scene):
         self.scene = scene
@@ -77,6 +78,7 @@ class CastleWindow:
         self.pending_action = None
         self.last_refresh = 0.0
         self.citizen_actions = {}
+        self.citizen_scroll = 0
         self.worksite_buttons = {}
         self.confirm_button = pygame.Rect(0, 0, 160, 36)
         self.cancel_button = pygame.Rect(0, 0, 160, 36)
@@ -128,6 +130,13 @@ class CastleWindow:
         if self.treasury_transfer is not None:
             self._handle_treasury_transfer_event(event)
             return
+        if (event.type == pygame.MOUSEWHEEL and self.tab == "population"
+                and self.citizen_list_rect().collidepoint(pygame.mouse.get_pos())):
+            citizens = (self.state or {}).get("citizens", [])
+            visible_rows = max(1, self.citizen_list_rect().height // self.CITIZEN_ROW_HEIGHT)
+            max_scroll = max(0, len(citizens) - visible_rows)
+            self.citizen_scroll = max(0, min(max_scroll, self.citizen_scroll - event.y))
+            return
         if event.type == pygame.KEYDOWN and event.key in (pygame.K_ESCAPE, pygame.K_RETURN, pygame.K_SPACE):
             if self.pending_action:
                 self.pending_action = None
@@ -155,6 +164,8 @@ class CastleWindow:
             if rect.collidepoint(event.pos):
                 self.tab = key
                 self.selected_citizen_id = None
+                if key == "population":
+                    self.citizen_scroll = 0
                 return
         if self.tab == "treasury":
             for direction, rect in self.treasury_buttons.items():
@@ -483,12 +494,19 @@ class CastleWindow:
         screen.blit(self.small_font.render(upgrade_text, True, upgrade_color), (left, top + 55))
         self.citizen_actions = {}
         row_top = top + 88
-        row_height = 39
+        row_height = self.CITIZEN_ROW_HEIGHT
         citizens = sorted(
             state.get("citizens", []),
             key=lambda citizen: not _citizen_is_free(citizen),
         )
-        for index, citizen in enumerate(citizens):
+        list_rect = self.citizen_list_rect()
+        visible_rows = max(1, list_rect.height // row_height)
+        max_scroll = max(0, len(citizens) - visible_rows)
+        self.citizen_scroll = max(0, min(max_scroll, self.citizen_scroll))
+        previous_clip = screen.get_clip()
+        screen.set_clip(list_rect)
+        for index, citizen in enumerate(citizens[self.citizen_scroll:self.citizen_scroll + visible_rows],
+                                        start=self.citizen_scroll):
             row = pygame.Rect(left, row_top + index * row_height, self.rect.width - 56, 34)
             pygame.draw.rect(screen, (38, 42, 39) if index % 2 else (33, 37, 35), row)
             draw_item_icon(screen, "citizen", (row.left + 10, row.top + 1), 32)
@@ -538,6 +556,7 @@ class CastleWindow:
             draw_button(screen, action_rect, label, self.small_font,
                         color=(73, 104, 75) if label == "НАЗНАЧИТЬ" else (75, 74, 62),
                         hover_color=(96, 135, 93))
+        screen.set_clip(previous_clip)
 
         self.worksite_buttons = {}
         if self.selected_citizen_id is None:
@@ -563,6 +582,12 @@ class CastleWindow:
             )
             screen.blit(name, name.get_rect(midtop=(rect.centerx, rect.top + 6)))
             screen.blit(count, count.get_rect(midbottom=(rect.centerx, rect.bottom - 5)))
+
+    def citizen_list_rect(self):
+        left = self.rect.left + 28
+        top = self.rect.top + 137 + 88
+        bottom = self.rect.bottom - 108 - 24
+        return pygame.Rect(left, top, self.rect.width - 56, max(self.CITIZEN_ROW_HEIGHT, bottom - top))
 
     def _draw_confirmation(self, screen, state):
         pending = self.pending_action

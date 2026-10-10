@@ -35,6 +35,12 @@ class CityPopulationTests(unittest.TestCase):
         self.assertTrue(all(citizen["satiety"] == 100 for citizen in state["citizens"]))
         self.assertEqual(state["worksites"][0]["building"], "farm")
 
+    def test_city_level_two_has_population_capacity_fourteen(self):
+        self._set_city_level(2)
+        state = self.city.get_state(self.character_id)
+        self.assertEqual(state["castle_level"], 2)
+        self.assertEqual(state["population_capacity"], 14)
+
     def test_governor_hourly_consumption_includes_horses_and_unlocked_foods(self):
         now = time.time()
         self.city.get_state(self.character_id, now=now)

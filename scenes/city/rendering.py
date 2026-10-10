@@ -239,7 +239,7 @@ class CityRenderMixin:
             k_r = pygame.Rect(kx, ky, ks, ks)
             pygame.draw.rect(c_surf, (42, 52, 66, 250), k_r, border_radius=6)
             pygame.draw.rect(c_surf, (120, 145, 180), k_r, 2, border_radius=6)
-            draw_keep(c_surf, k_r, self.city_upgrade_state.get("city_level", 1))
+            draw_keep(c_surf, k_r, 1)
 
             # Южные королевские ворота замка (3 тайла = 96 px)
             gw = 3 * self.tile_size

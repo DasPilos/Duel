@@ -4,7 +4,7 @@ import json
 import math
 
 from core.city_progression import (
-    BASE_POPULATION_CAPACITY,
+    city_population_capacity,
     city_storage_resources,
     city_upgrade_resources,
 )
@@ -27,12 +27,19 @@ def city_upgrade_cycle_cost(population, population_capacity):
 
 def _population_state(connection, key, city_level):
     row = connection.execute(
-        """SELECT COUNT(*) AS amount FROM city_citizens
-           WHERE world_id=%s AND faction=%s AND alive=TRUE""",
+        """SELECT state.population_capacity_bonus,
+                  COUNT(citizen.id) AS amount
+           FROM city_population_state state
+           LEFT JOIN city_citizens citizen
+             ON citizen.world_id=state.world_id AND citizen.faction=state.faction
+            AND citizen.alive=TRUE
+           WHERE state.world_id=%s AND state.faction=%s
+           GROUP BY state.population_capacity_bonus""",
         key,
     ).fetchone()
     population = 0 if row is None else int(row["amount"])
-    capacity = max(1, int(city_level)) * BASE_POPULATION_CAPACITY
+    capacity_bonus = 0 if row is None else int(row["population_capacity_bonus"])
+    capacity = city_population_capacity(city_level, capacity_bonus)
     return population, capacity
 
 
@@ -142,7 +149,8 @@ def _finish_city_upgrade(connection, key, city_level, cycle, finished_at):
 def process_city_upgrade(connection, key, now):
     """Advance due quarter-hour deductions and start only on an exact hour boundary."""
     state = connection.execute(
-        """SELECT castle_level, city_upgrade_last_hour, city_upgrade_cycle,
+        """SELECT castle_level, population_capacity_bonus,
+              city_upgrade_last_hour, city_upgrade_cycle,
                   city_upgrade_last_result
            FROM city_population_state WHERE world_id=%s AND faction=%s FOR UPDATE""",
         key,
@@ -251,8 +259,9 @@ def process_city_upgrade(connection, key, now):
 
 def city_upgrade_payload(connection, key, now):
     row = connection.execute(
-        """SELECT castle_level, city_upgrade_last_hour, city_upgrade_cycle,
-                  city_upgrade_last_result
+        """SELECT castle_level, population_capacity_bonus,
+              city_upgrade_last_hour, city_upgrade_cycle,
+              city_upgrade_last_result
            FROM city_population_state WHERE world_id=%s AND faction=%s""",
         key,
     ).fetchone()
@@ -285,7 +294,9 @@ def city_upgrade_payload(connection, key, now):
     return {
         "city_level": int(row["castle_level"]),
         "population": population,
-        "population_capacity": int(row["castle_level"]) * BASE_POPULATION_CAPACITY,
+        "population_capacity": city_population_capacity(
+            row["castle_level"], row["population_capacity_bonus"],
+        ),
         "active": active,
         "started_at": started_at,
         "finish_at": finish_at,
@@ -298,7 +309,9 @@ def city_upgrade_payload(connection, key, now):
             resource: (
                 city_upgrade_drain_per_tick(
                     population,
-                    int(cycle.get("population_capacity", int(row["castle_level"]) * BASE_POPULATION_CAPACITY)),
+                    int(cycle.get("population_capacity", city_population_capacity(
+                        row["castle_level"], row["population_capacity_bonus"],
+                    ))),
                 ) * UPGRADE_TICK_COUNT
                 if cycle.get("drain_formula") == "population_capacity"
                 else int(item.get("per_tick", 0)) * UPGRADE_TICK_COUNT
@@ -309,7 +322,9 @@ def city_upgrade_payload(connection, key, now):
             resource: (
                 city_upgrade_drain_per_tick(
                     population,
-                    int(cycle.get("population_capacity", int(row["castle_level"]) * BASE_POPULATION_CAPACITY)),
+                    int(cycle.get("population_capacity", city_population_capacity(
+                        row["castle_level"], row["population_capacity_bonus"],
+                    ))),
                 )
                 if cycle.get("drain_formula") == "population_capacity"
                 else int(item.get("per_tick", 0))

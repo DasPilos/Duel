@@ -125,9 +125,9 @@ class ProductionBuildingsTests(unittest.TestCase):
                         locations = {
                             "wheat": (("farm", 0),),
                             "wood": (("lumber_camp", 0),),
-                            "iron": (("mountain_rift", 0),),
+                            "iron": (("mountain_rift", 2),),
                             "coal": (("black_pit", 0),),
-                            "stone": (("mountain_rift", 2),),
+                            "stone": (("mountain_rift", 0),),
                             "leather": (("barnyard", 0),),
                             "meat": (("barnyard", 0),),
                         }
@@ -730,10 +730,10 @@ class ProductionBuildingsTests(unittest.TestCase):
 
     def test_rift_mines_grow_with_levels(self):
         character_id = self._character()
-        # Места в приисках (железо, камень, мифрил, обсидиан) по таблице уровней
+        # Уровень 1 открывает камень; железо добавляется на уровне 2.
         expected = {
-            1: (2, 0, 0, 0), 2: (2, 1, 0, 0), 3: (2, 2, 0, 0), 4: (4, 2, 0, 0), 5: (6, 2, 0, 0),
-            6: (6, 4, 0, 0), 7: (6, 4, 3, 0), 8: (8, 5, 3, 0), 9: (10, 6, 3, 0), 10: (10, 6, 6, 3),
+            1: (0, 2, 0, 0), 2: (1, 2, 0, 0), 3: (2, 2, 0, 0), 4: (3, 3, 0, 0), 5: (5, 3, 0, 0),
+            6: (6, 4, 0, 0), 7: (6, 5, 2, 0), 8: (8, 5, 3, 0), 9: (10, 6, 3, 0), 10: (10, 7, 5, 3),
         }
         for level, places in expected.items():
             with self.subTest(level=level):
@@ -745,7 +745,7 @@ class ProductionBuildingsTests(unittest.TestCase):
     def test_rift_ore_timers(self):
         character_id = self._character()
         self._set_level(character_id, "mountain_rift", 10)
-        for slot_index in (0, 2, 10, 19):
+        for slot_index in (0, 2, 11, 20):
             self.buildings.hire_worker(character_id, "mountain_rift", slot_index, f"w{slot_index}", 10000)
 
         state = self.buildings.get_state(character_id, "mountain_rift", 17200)

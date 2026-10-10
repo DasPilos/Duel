@@ -283,6 +283,51 @@ class CastleWindowTests(unittest.TestCase):
         self.assertLess(rendered.index("Свободен"), rendered.index("Работает"))
         self.assertTrue(any("по 40 ед. каждого ресурса за тик" in text for text in rendered))
 
+    def test_population_citizen_list_scrolls_to_last_residents(self):
+        pygame.display.set_mode((1, 1), pygame.HIDDEN)
+        window = CastleWindow(object())
+        window.is_open = True
+        window.tab = "population"
+        citizens = [
+            {"id": index, "name": f"Горожанин {index}", "satiety": 80,
+             "strong_hunger": 0, "satisfaction": "satisfied",
+             "work_status": "Занят", "job_building": "farm"}
+            for index in range(1, 25)
+        ]
+        state = {
+            "population": len(citizens), "population_capacity": 30,
+            "citizens": citizens, "food_storage": {}, "worksites": [],
+            "city_upgrade": {},
+        }
+        window.state = state
+        rendered = []
+        original_font = window.small_font
+
+        class Recorder:
+            def render(self, text, *args):
+                rendered.append(str(text))
+                return original_font.render(text, *args)
+
+            def __getattr__(self, name):
+                return getattr(original_font, name)
+
+        window.small_font = Recorder()
+        screen = pygame.Surface((window.rect.right + 1, window.rect.bottom + 1))
+        window._draw_population(screen, state, (0, 0))
+        self.assertIn("Горожанин 1", rendered)
+        self.assertNotIn("Горожанин 24", rendered)
+
+        list_rect = window.citizen_list_rect()
+        visible_rows = list_rect.height // window.CITIZEN_ROW_HEIGHT
+        with patch("pygame.mouse.get_pos", return_value=list_rect.center):
+            window.handle_event(pygame.event.Event(pygame.MOUSEWHEEL, x=0, y=-100))
+        self.assertEqual(window.citizen_scroll, len(citizens) - visible_rows)
+
+        rendered.clear()
+        window._draw_population(screen, state, (0, 0))
+        self.assertIn("Горожанин 24", rendered)
+        self.assertIn(24, window.citizen_actions)
+
     def test_governor_lists_hourly_rates_and_trends_for_city_resources(self):
         from ui.catalog_icons import draw_item_icon
 

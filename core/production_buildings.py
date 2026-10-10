@@ -188,8 +188,8 @@ BUILDINGS = {
     "mountain_rift": {
         "name": "Горный разлом",
         "plots": (
-            (1, 2, "iron", "iron_mine"),
-            (2, 1, "stone", "stone_mine"),
+            (1, 2, "stone", "stone_mine"),
+            (2, 2, "iron", "iron_mine"),
             (3, 1, "stone", "stone_mine"),
             (4, 2, "iron", "iron_mine"),
             (5, 2, "iron", "iron_mine"),

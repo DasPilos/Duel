@@ -4,6 +4,7 @@ import unittest
 
 from core.production_buildings import building_level_info
 from server.city_population import CityPopulation
+from core.city_progression import city_population_capacity, city_upgrade_resources
 from server.city_upgrade import (
     UPGRADE_TICK_SECONDS,
     city_upgrade_cycle_cost,
@@ -84,6 +85,14 @@ class CityUpgradeTests(unittest.TestCase):
                      self.start_at - 120, self.start_at - 120),
                 )
 
+    def _set_population_capacity_bonus(self, amount):
+        with self.database.connection() as connection:
+            connection.execute(
+                """UPDATE city_population_state SET population_capacity_bonus=%s
+                   WHERE world_id=%s AND faction='light'""",
+                (int(amount), self.database.world_id),
+            )
+
     def test_level_one_capacity_and_population_based_drain_formula(self):
         self.assertEqual(building_level_info(1, "barn")["storage"], 1000)
         self.assertEqual(building_level_info(1, "warehouse")["storage"], 1000)
@@ -91,6 +100,8 @@ class CityUpgradeTests(unittest.TestCase):
         self.assertEqual(city_upgrade_cycle_cost(10, 10), 400)
         self.assertEqual(city_upgrade_drain_per_tick(4, 10), 40)
         self.assertEqual(city_upgrade_cycle_cost(4, 10), 160)
+        self.assertEqual(city_population_capacity(2), 14)
+        self.assertEqual(set(city_upgrade_resources(2)), {"wheat", "wood", "stone"})
 
     def test_city_visual_payload_includes_live_population(self):
         with self.database.connection() as connection:
@@ -215,6 +226,31 @@ class CityUpgradeTests(unittest.TestCase):
             self.assertEqual(self._storage("warehouse", "wood"), expected_stock)
         self.assertEqual(self._city_level(), 2)
 
+    def test_level_two_city_with_fourteen_citizens_charges_three_resources(self):
+        with self.database.connection() as connection:
+            connection.execute(
+                "UPDATE city_population_state SET castle_level=2 WHERE world_id=%s AND faction='light'",
+                (self.database.world_id,),
+            )
+        self._set_population(14)
+        self._set_storage("barn", "wheat", 1000)
+        self._set_storage("warehouse", "wood", 1000)
+        self._set_storage("warehouse", "stone", 1000)
+
+        self._process_at(self.start_at)
+        with self.database.connection() as connection:
+            cycle = connection.execute(
+                "SELECT city_upgrade_cycle FROM city_population_state WHERE world_id=%s AND faction='light'",
+                (self.database.world_id,),
+            ).fetchone()["city_upgrade_cycle"]
+        self.assertEqual(set(cycle["resources"]), {"wheat", "wood", "stone"})
+        self.assertTrue(all(item["per_tick"] == 196 for item in cycle["resources"].values()))
+
+        self._process_at(self.start_at + UPGRADE_TICK_SECONDS)
+        self.assertEqual(self._storage("barn", "wheat"), 804)
+        self.assertEqual(self._storage("warehouse", "wood"), 804)
+        self.assertEqual(self._storage("warehouse", "stone"), 804)
+
     def test_tick_cost_updates_when_population_changes_during_cycle(self):
         self._set_storage("barn", "wheat", 1000)
         self._set_storage("warehouse", "wood", 1000)
@@ -231,3 +267,15 @@ class CityUpgradeTests(unittest.TestCase):
                 (self.database.world_id,),
             ).fetchone()["city_upgrade_cycle"]
         self.assertEqual(cycle["resources"]["wheat"]["tick_costs"], [40, 50])
+
+    def test_tick_cost_uses_persisted_population_capacity_bonus(self):
+        self._set_population_capacity_bonus(4)
+        self._set_storage("barn", "wheat", 1000)
+        self._set_storage("warehouse", "wood", 1000)
+        self._process_at(self.start_at)
+
+        with self.database.connection() as connection:
+            state = self.city.get_state(self.character_id, self.start_at)["city_upgrade"]
+        self.assertEqual(state["population_capacity"], 14)
+        self.assertEqual(state["resource_cost_per_tick"]["wheat"], 56)
+        self.assertEqual(state["resource_cost_per_tick"]["wood"], 56)
