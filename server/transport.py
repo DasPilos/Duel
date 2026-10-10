@@ -713,6 +713,8 @@ class TransportService:
         if len(horse_ids) != int(cart_config.get("horse_count", 0)) or len(set(horse_ids)) != len(horse_ids):
             raise ValueError("Выберите требуемое число разных лошадей")
         slot_count = int(cart_config.get("resource_slots", 0))
+        if len(resource_ids) != slot_count or any(resource is None for resource in resource_ids):
+            raise ValueError("Выберите ресурс для каждого грузового слота")
         if len(resource_ids) != slot_count or len(set(selected_resource_ids)) != len(selected_resource_ids):
             raise ValueError("Проверьте выбранный груз в слотах повозки")
         route = self.routes.get(destination_id)

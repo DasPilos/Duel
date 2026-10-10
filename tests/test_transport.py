@@ -119,6 +119,14 @@ class TransportServiceTests(unittest.TestCase):
         self.assertEqual(convoy["cargo_kg"], 0)
         self.assertEqual(convoy["status"], "Едет к объекту")
 
+    def test_dispatch_rejects_unselected_cargo_slot(self):
+        payload = self._payload()
+        payload["resource_ids"] = [None]
+        with self.assertRaisesRegex(ValueError, "ресурс для каждого грузового слота"):
+            TransportService(self.database).dispatch(
+                self.character_id, payload, now=self.now + 2,
+            )
+
     def test_empty_pinned_route_returns_instead_of_waiting_for_resources(self):
         with self.database.connection() as connection:
             connection.execute(

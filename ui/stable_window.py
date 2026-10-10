@@ -817,6 +817,9 @@ class StableWindow:
             reasons.append("Выберите свободного горожанина-кучера.")
         if not self._selected_transport_route():
             reasons.append("Выберите пункт назначения.")
+        for index, resource_id in enumerate(self.transport_draft["resource_ids"]):
+            if resource_id is None:
+                reasons.append(f"Выберите груз для слота {index + 1}.")
         return reasons
 
     def _transport_can_start(self):

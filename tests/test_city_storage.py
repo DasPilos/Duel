@@ -1993,7 +1993,7 @@ class CityStorageWindowTests(unittest.TestCase):
         })
         self.assertIsNone(window.transport_draft["cart_id"])
 
-    def test_dispatch_allows_an_empty_cargo_slot(self):
+    def test_dispatch_button_waits_until_cargo_slot_is_selected(self):
         window = self.scene.stable_window
         window.state = self.client.get_building("stable", 1)
         window.state["available_carts"] = [{
@@ -2016,8 +2016,8 @@ class CityStorageWindowTests(unittest.TestCase):
         }
 
         reasons = window._transport_block_reasons()
-        self.assertEqual(reasons, [])
-        self.assertTrue(window._transport_can_start())
+        self.assertEqual(reasons, ["Выберите груз для слота 1."])
+        self.assertFalse(window._transport_can_start())
 
     def test_repeat_route_checkbox_toggles_draft(self):
         window = self.scene.stable_window
