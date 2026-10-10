@@ -780,7 +780,10 @@ class StableWindow:
             if route:
                 try:
                     self.destination_state = self.scene.session.client.get_building(
-                        route["building_id"], self.scene.session.character["id"]
+                        ROUTE_STORAGE_BUILDING_IDS.get(
+                            route["building_id"], route["building_id"]
+                        ),
+                        self.scene.session.character["id"],
                     )
                 except (ServerError, AttributeError, KeyError, OSError) as error:
                     self.message = str(error)
@@ -814,13 +817,6 @@ class StableWindow:
             reasons.append("Выберите свободного горожанина-кучера.")
         if not self._selected_transport_route():
             reasons.append("Выберите пункт назначения.")
-        resource_ids = self.transport_draft["resource_ids"]
-        if not resource_ids:
-            reasons.append("Заполните слоты груза.")
-        else:
-            for index, resource_id in enumerate(resource_ids):
-                if resource_id is None:
-                    reasons.append(f"Выберите груз для слота {index + 1}.")
         return reasons
 
     def _transport_can_start(self):

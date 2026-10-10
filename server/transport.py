@@ -225,6 +225,7 @@ class TransportService:
 
     def _start_pinned_loading(self, connection, convoy, world_id, now):
         resource_ids = _json_list(convoy["resource_ids_json"])
+        selected_resource_ids = [resource_id for resource_id in resource_ids if resource_id is not None]
         source_building = _production_building(convoy["destination_building_id"])
         source_key = (int(world_id), DEFAULT_FACTION, source_building)
         self._ensure_building(connection, source_key, now)
@@ -242,7 +243,7 @@ class TransportService:
         slot_weight_budget = capacity_kg / max(1, len(resource_ids))
         barn_resources = set(building_resources("barn"))
         city_storage = {}
-        for resource_id in resource_ids:
+        for resource_id in selected_resource_ids:
             storage_building = "barn" if resource_id in barn_resources else "warehouse"
             if storage_building not in city_storage:
                 city_key = (int(world_id), DEFAULT_FACTION, storage_building)
@@ -266,7 +267,7 @@ class TransportService:
                                 + int(slot.get("quantity", 0))
                             )
                 free_by_resource = {}
-                for requested_resource in resource_ids:
+                for requested_resource in selected_resource_ids:
                     requested_storage = (
                         "barn" if requested_resource in barn_resources else "warehouse"
                     )
@@ -285,7 +286,7 @@ class TransportService:
 
         cargo = []
         cargo_weight = 0.0
-        for resource_id in resource_ids:
+        for resource_id in selected_resource_ids:
             item_id = STORAGE_ITEM_IDS.get(resource_id)
             source = source_resources.get(resource_id)
             storage_building = "barn" if resource_id in barn_resources else "warehouse"
@@ -295,15 +296,13 @@ class TransportService:
             ).fetchone()
             unit_weight = 0.0 if item is None else float(item["weight"] or 0)
             if source is None or unit_weight <= 0:
-                cargo = []
-                break
+                continue
             quantity = min(
                 int(source["storage"]), destination["free_by_resource"][resource_id],
                 max(0, math.floor((slot_weight_budget + 1e-9) / unit_weight)),
             )
             if quantity <= 0:
-                cargo = []
-                break
+                continue
             cargo.append({
                 "resource_id": resource_id, "item_id": int(item_id),
                 "quantity": quantity, "unit_weight_kg": unit_weight,
@@ -313,19 +312,14 @@ class TransportService:
             destination["free_by_resource"][resource_id] -= quantity
             slot_weight_budget = max(0.0, slot_weight_budget - quantity_weight)
 
-        if len(cargo) != len(resource_ids):
+        if not cargo:
             connection.execute(
                 """UPDATE transport_convoys SET cargo_json='[]'::jsonb, cargo_weight_kg=0,
-                   status='blocked', phase='waiting_for_resources', waiting_for_resources=TRUE,
-                   started_at=%s, travel_seconds=%s, arrival_at=%s WHERE id=%s""",
-                (now, RESOURCE_RETRY_SECONDS, now + RESOURCE_RETRY_SECONDS, int(convoy["id"])),
-            )
-            connection.execute(
-                """UPDATE stable_horses SET status='Ожидает ресурсов'
-                   WHERE id IN (SELECT horse_id FROM transport_convoy_horses WHERE convoy_id=%s)""",
+                   delivered_quantity=0 WHERE id=%s""",
                 (int(convoy["id"]),),
             )
-            return False
+            self._start_return_leg(connection, convoy, now)
+            return True
 
         for item in cargo:
             connection.execute(
@@ -712,19 +706,21 @@ class TransportService:
         horse_ids = [int(value) for value in payload.get("horse_ids", [])]
         driver_id = int(payload.get("driver_citizen_id", 0))
         destination_id = str(payload.get("destination_building_id", ""))
-        resource_ids = [str(value) for value in payload.get("resource_ids", [])]
+        resource_ids = [None if value is None else str(value)
+                for value in payload.get("resource_ids", [])]
+        selected_resource_ids = [value for value in resource_ids if value is not None]
         pinned = bool(payload.get("pinned", False))
         if len(horse_ids) != int(cart_config.get("horse_count", 0)) or len(set(horse_ids)) != len(horse_ids):
             raise ValueError("Выберите требуемое число разных лошадей")
         slot_count = int(cart_config.get("resource_slots", 0))
-        if len(resource_ids) != slot_count or len(set(resource_ids)) != len(resource_ids):
-            raise ValueError("Заполните все разные слоты груза")
+        if len(resource_ids) != slot_count or len(set(selected_resource_ids)) != len(selected_resource_ids):
+            raise ValueError("Проверьте выбранный груз в слотах повозки")
         route = self.routes.get(destination_id)
         if route is None or not route.get("tiles"):
             raise ValueError("Выберите доступный загородный маршрут")
         building = _production_building(destination_id)
         allowed_resources = {str(item["id"]) for item in route.get("resources", [])}
-        if any(resource not in allowed_resources for resource in resource_ids):
+        if any(resource not in allowed_resources for resource in selected_resource_ids):
             raise ValueError("Выбранный ресурс не подходит для пункта назначения")
 
         with self.db.connection() as connection:
@@ -738,7 +734,7 @@ class TransportService:
             )) | set(city_storage_resources(
                 "warehouse", city_level, building_resources("warehouse")
             ))
-            if any(resource_id not in available_city_resources for resource_id in resource_ids):
+            if any(resource_id not in available_city_resources for resource_id in selected_resource_ids):
                 raise ValueError("Этот ресурс ещё не открыт для города")
             stable_key = (world_id, DEFAULT_FACTION, "stable")
             warehouse_key = (world_id, DEFAULT_FACTION, "warehouse")
@@ -749,7 +745,7 @@ class TransportService:
             barn_resources = set(building_resources("barn"))
             source_buildings = {
                 resource_id: ("barn" if resource_id in barn_resources else "warehouse")
-                for resource_id in resource_ids
+                for resource_id in selected_resource_ids
             }
             if "barn" in source_buildings.values():
                 self._ensure_building(connection, barn_key, now)
@@ -855,7 +851,7 @@ class TransportService:
                         - int(destination_resources.get(resource_id, {}).get("storage", 0))
                         - reserved_by_resource.get(resource_id, 0),
                     )
-                    for resource_id in set(resource_ids)
+                    for resource_id in set(selected_resource_ids)
                 }
                 source_keys = {"warehouse": warehouse_key, "barn": barn_key}
                 source_resources = {
@@ -864,24 +860,25 @@ class TransportService:
                 }
                 slot_weight_budget = capacity_kg / max(1, slot_count)
                 for resource_id in ([] if pinned else resource_ids):
+                    if resource_id is None:
+                        continue
                     item_id = STORAGE_ITEM_IDS.get(resource_id)
                     source_building = source_buildings[resource_id]
                     source_stock = source_resources[source_building].get(resource_id)
                     if item_id is None or source_stock is None:
-                        source_name = "городском амбаре" if source_building == "barn" else "общем складе"
-                        raise ValueError(f"Ресурс {resource_id} отсутствует в {source_name}")
+                        continue
                     item = connection.execute(
                         "SELECT weight FROM items_catalog WHERE id=%s", (int(item_id),),
                     ).fetchone()
                     unit_weight = 0.0 if item is None else float(item["weight"] or 0)
                     if unit_weight <= 0:
-                        raise ValueError(f"Не задан вес ресурса {resource_id}")
+                        continue
                     per_slot_capacity = max(0, math.floor((slot_weight_budget + 1e-9) / unit_weight))
                     quantity = min(
                         int(source_stock["storage"]), destination_free[resource_id], per_slot_capacity,
                     )
                     if quantity <= 0:
-                        raise ValueError("Недостаточно ресурса на складе, места в повозке или места назначения")
+                        continue
                     cargo.append({
                         "resource_id": resource_id, "item_id": int(item_id),
                         "quantity": quantity, "unit_weight_kg": unit_weight,

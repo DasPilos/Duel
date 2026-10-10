@@ -1993,7 +1993,7 @@ class CityStorageWindowTests(unittest.TestCase):
         })
         self.assertIsNone(window.transport_draft["cart_id"])
 
-    def test_disabled_dispatch_explains_missing_cargo_slot(self):
+    def test_dispatch_allows_an_empty_cargo_slot(self):
         window = self.scene.stable_window
         window.state = self.client.get_building("stable", 1)
         window.state["available_carts"] = [{
@@ -2016,26 +2016,8 @@ class CityStorageWindowTests(unittest.TestCase):
         }
 
         reasons = window._transport_block_reasons()
-        self.assertEqual(reasons, ["Выберите груз для слота 1."])
-        rendered = []
-        original_small = self.scene.small_font
-
-        class Recorder:
-            def render(self, text, *args):
-                rendered.append(str(text))
-                return original_small.render(text, *args)
-
-            def __getattr__(self, name):
-                return getattr(original_small, name)
-
-        self.scene.small_font = Recorder()
-        try:
-            window._draw_transport_block_tooltip(
-                self.screen, pygame.Rect(600, 700, 240, 38), reasons
-            )
-        finally:
-            self.scene.small_font = original_small
-        self.assertIn("Выберите груз для слота 1.", rendered)
+        self.assertEqual(reasons, [])
+        self.assertTrue(window._transport_can_start())
 
     def test_repeat_route_checkbox_toggles_draft(self):
         window = self.scene.stable_window

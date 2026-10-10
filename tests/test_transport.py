@@ -96,6 +96,50 @@ class TransportServiceTests(unittest.TestCase):
 
         self.assertEqual(convoy["cart_id"], "cart_grade_1~2")
 
+    def test_second_cart_dispatches_empty_when_selected_resource_is_unavailable(self):
+        with self.database.connection() as connection:
+            connection.execute(
+                "UPDATE stable_cart_progress SET body_count=2 WHERE world_id=%s AND faction='light' AND grade=1",
+                (self.database.world_id,),
+            )
+            connection.execute(
+                """UPDATE building_resources SET storage=0 WHERE world_id=%s AND faction='light'
+                   AND building='warehouse' AND resource='wood'""",
+                (self.database.world_id,),
+            )
+
+        payload = self._payload()
+        payload["cart_id"] = "cart_grade_1~2"
+        convoy = TransportService(self.database).dispatch(
+            self.character_id, payload, now=self.now + 2,
+        )
+
+        self.assertEqual(convoy["cart_id"], "cart_grade_1~2")
+        self.assertEqual(convoy["cargo"], [])
+        self.assertEqual(convoy["cargo_kg"], 0)
+        self.assertEqual(convoy["status"], "Едет к объекту")
+
+    def test_empty_pinned_route_returns_instead_of_waiting_for_resources(self):
+        with self.database.connection() as connection:
+            connection.execute(
+                """UPDATE building_resources SET storage=0 WHERE world_id=%s AND faction='light'
+                   AND building='warehouse' AND resource='wood'""",
+                (self.database.world_id,),
+            )
+        payload = self._payload()
+        payload["pinned"] = True
+        service = TransportService(self.database)
+        convoy = service.dispatch(self.character_id, payload, now=self.now + 2)
+
+        returned = service.get_world_convoys(
+            self.character_id, now=self.now + convoy["travel_seconds"] + 3,
+        )
+
+        self.assertEqual(len(returned), 1)
+        self.assertEqual(returned[0]["phase"], "returning")
+        self.assertEqual(returned[0]["cargo"], [])
+        self.assertNotEqual(returned[0]["status"], "Ожидает ресурсы")
+
     def test_dispatched_horse_uses_work_satiety_rate(self):
         TransportService(self.database).dispatch(
             self.character_id, self._payload(), now=self.now + 2
