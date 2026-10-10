@@ -41,6 +41,15 @@ class CityPopulationTests(unittest.TestCase):
         self.assertEqual(state["castle_level"], 2)
         self.assertEqual(state["population_capacity"], 14)
 
+    def test_governor_lists_newly_unlocked_stone_before_it_is_stocked(self):
+        self._set_city_level(2)
+        state = self.city.get_state(self.character_id)
+
+        self.assertIn("stone", state["city_resource_storage"])
+        self.assertEqual(state["city_resource_storage"]["stone"], 0)
+        self.assertIn("stone", state["city_resource_income_per_hour"])
+        self.assertIn("stone", state["city_resource_trend"])
+
     def test_governor_hourly_consumption_includes_horses_and_unlocked_foods(self):
         now = time.time()
         self.city.get_state(self.character_id, now=now)

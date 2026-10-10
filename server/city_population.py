@@ -10,6 +10,7 @@ from core.production_buildings import (
     FARM_UPGRADES,
     LUMBER_CAMP_UPGRADES,
     building_level_info,
+    building_resources,
 )
 from core.city_progression import (
     city_population_capacity,
@@ -779,15 +780,28 @@ class CityPopulation:
             "SELECT * FROM city_citizens WHERE world_id = %s AND faction = %s AND alive=TRUE ORDER BY ordinal",
             key,
         ).fetchall()
-        food = self._food_stock(connection, key[0])
-        resource_storage = {**food, "wood": 0}
-        wood_row = connection.execute(
-            """SELECT storage FROM building_resources WHERE world_id=%s AND faction=%s
-               AND building='warehouse' AND resource='wood'""",
-            key,
-        ).fetchone()
-        if wood_row is not None:
-            resource_storage["wood"] = int(wood_row["storage"])
+        city_level = int(state["castle_level"])
+        accessible_barn = city_storage_resources(
+            "barn", city_level, building_resources("barn"),
+        )
+        accessible_warehouse = city_storage_resources(
+            "warehouse", city_level, building_resources("warehouse"),
+        )
+        barn_stock = self._food_stock(connection, key[0])
+        food = {resource: int(barn_stock.get(resource, 0)) for resource in accessible_barn}
+        resource_storage = {
+            **food,
+            **{resource: 0 for resource in accessible_warehouse},
+        }
+        warehouse_rows = connection.execute(
+            """SELECT resource, storage FROM building_resources
+               WHERE world_id=%s AND faction=%s AND building='warehouse'
+                 AND resource = ANY(%s)""",
+            (*key, list(accessible_warehouse)),
+        ).fetchall()
+        resource_storage.update({
+            row["resource"]: int(row["storage"]) for row in warehouse_rows
+        })
         resource_income = self._resource_income_per_hour(
             connection, key, now, resource_storage
         )
@@ -901,13 +915,18 @@ class CityPopulation:
             else:
                 food_trend[resource] = "surplus"
         resource_trend = dict(food_trend)
-        resource_trend["wood"] = (
-            "deficit" if resource_income["wood"] < resource_consumption.get("wood", 0.0)
-            else "upgrade_ready"
-            if "wood" in upgrade_foods and resource_storage["wood"] >= upgrade_cycle_cost
-            else "surplus" if resource_income["wood"] > resource_consumption.get("wood", 0.0)
-            else "deficit"
-        )
+        for resource in accessible_warehouse:
+            income = resource_income.get(resource, 0.0)
+            consumption = resource_consumption.get(resource, 0.0)
+            if income < consumption:
+                trend = "deficit"
+            elif resource in upgrade_foods and resource_storage[resource] >= upgrade_cycle_cost:
+                trend = "upgrade_ready"
+            elif income > consumption:
+                trend = "surplus"
+            else:
+                trend = "deficit"
+            resource_trend[resource] = trend
         return {"castle_name": "Замок Радбурка", "castle_level": int(state["castle_level"]),
             "city_upgrade": city_upgrade,
                 "population": len(citizen_list),
