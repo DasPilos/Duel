@@ -12,17 +12,17 @@ COUNTRY_BUILDING_UNLOCK_LEVELS = {
 CITY_STORAGE_RESOURCE_UNLOCK_LEVELS = {
     "barn": {
         "wheat": 1,
-        "berries": 2,
+        "berries": 3,
         "meat": 3,
     },
     "warehouse": {
         "wood": 1,
-        "board": 2,
-        "flax": 2,
+        "board": 3,
+        "flax": 3,
         "stone": 2,
-        "iron": 2,
-        "iron_ingot": 2,
-        "stone_block": 2,
+        "iron": 3,
+        "iron_ingot": 3,
+        "stone_block": 3,
         "cotton": 3,
         "leather": 3,
         "hard_leather": 3,

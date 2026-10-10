@@ -97,6 +97,15 @@ class CityStorageServerTests(unittest.TestCase):
             "diamond", self.buildings.get_state(self.character_id, "warehouse", 10005)["storage"]
         )
 
+    def test_level_two_storage_exposes_only_wheat_wood_and_stone(self):
+        self._set_city_level(2)
+        barn = self.buildings.get_state(self.character_id, "barn", 10000)
+        warehouse = self.buildings.get_state(self.character_id, "warehouse", 10000)
+        self.assertEqual(barn["storage"], {"wheat": 0, "limit": 1000})
+        self.assertEqual(
+            warehouse["storage"], {"wood": 0, "stone": 0, "limit": 1000},
+        )
+
     def test_each_city_storage_resource_has_its_own_capacity(self):
         items = ItemsDatabase(self.database)
         items.add_to_inventory(self.character_id, 63, 1000)
@@ -1013,6 +1022,24 @@ class CityStorageWindowTests(unittest.TestCase):
             window._transport_popup_items(),
             [("wood", "Древесина"), ("berries", "Ягоды"), ("flax", "Лён")],
         )
+
+    def test_transport_farm_destination_loads_production_storage_for_resource_picker(self):
+        window = self.scene.stable_window
+        window.state = self.client.get_building("stable", 1)
+        window.state["city_upgrade"] = {"city_level": 1}
+        window.routes = [{
+            "building_id": "wheat_farm", "name": "Крестьянское поселение",
+            "resources": [{"id": "wheat", "label": "Пшеница"}],
+        }]
+        window.transport_draft["cart_id"] = "cart_grade_1"
+        with patch.object(self.client, "get_building", return_value={
+            "storage": {"wheat": 0, "limit": 500},
+        }) as get_building:
+            window._select_transport_option(("destination", None, "wheat_farm"))
+
+        get_building.assert_called_once_with("farm", 1)
+        window.transport_popup = ("resource", 0)
+        self.assertEqual(window._transport_popup_items(), [("wheat", "Пшеница")])
 
     def test_barn_and_warehouse_windows(self):
         for building, opener, window in (
