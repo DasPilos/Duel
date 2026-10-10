@@ -2,6 +2,7 @@ import math
 import time
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import pygame
 
@@ -122,6 +123,52 @@ class WorldTerrainTests(unittest.TestCase):
         draw_traveling_entities(scene, screen)
 
         self.assertFalse(screen.get_bounding_rect().size == (0, 0))
+
+    def test_nearby_convoys_on_same_route_render_in_separate_lanes(self):
+        from ui.map_travel import draw_traveling_entities, traveling_entities
+
+        pygame.init()
+        pygame.display.set_mode((640, 640), pygame.HIDDEN)
+        route = {
+            "building_id": "lumber_camp", "name": "Лесопилка",
+            "tiles": [[10, 10], [11, 10]],
+        }
+        convoys = [
+            {
+                "id": convoy_id, "cart_sprite_key": "peasant",
+                "destination_building_id": "lumber_camp",
+                "seconds_remaining": 5, "travel_seconds": 10,
+                "progress_percent": 50, "direction": "outbound", "cargo": [],
+            }
+            for convoy_id in (41, 42)
+        ]
+        scene = SimpleNamespace(
+            chat=SimpleNamespace(traveling_convoys=convoys, travelers=[],
+                                 convoys_received_at=time.monotonic()),
+            road_routes=[route], tile_size=32,
+            grid_font=pygame.font.SysFont(None, 16),
+            world_to_screen=lambda x, y: (x, y),
+        )
+        entities = traveling_entities(scene)
+        self.assertEqual(len(entities), 2)
+        self.assertEqual(
+            {(entity["position_x"], entity["position_y"]) for entity in entities},
+            {(entities[0]["position_x"], entities[0]["position_y"])},
+        )
+        display_positions = {
+            (entity["display_position_x"], entity["display_position_y"])
+            for entity in entities
+        }
+        self.assertEqual(len(display_positions), 2)
+
+        rendered_centers = []
+        screen = pygame.Surface((640, 640))
+        with patch("ui.map_travel.draw_convoy_sprite_group",
+                   side_effect=lambda _screen, center, *_args, **_kwargs:
+                   rendered_centers.append(center)), \
+                patch("ui.map_travel.draw_transport_cart_icon", return_value=None):
+            draw_traveling_entities(scene, screen)
+        self.assertEqual(len(set(rendered_centers)), 2)
 
     def test_afk_presence_survives_ttl_and_is_cleared_on_reconnect(self):
         previous_presence = dict(presence.PRESENCE)

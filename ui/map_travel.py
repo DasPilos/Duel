@@ -124,7 +124,47 @@ def traveling_entities(scene, location="world_map"):
                 else "Возвращается в город",
             )),
         })
+    _separate_nearby_convoys(result, scene.tile_size)
     return result
+
+
+def _separate_nearby_convoys(entities, tile_size):
+    convoys = [
+        entity for entity in entities
+        if entity.get("entity_kind") == "wagon"
+    ]
+    remaining = set(range(len(convoys)))
+    directions = {
+        "n": (0, -1), "ne": (0.707, -0.707), "e": (1, 0), "se": (0.707, 0.707),
+        "s": (0, 1), "sw": (-0.707, 0.707), "w": (-1, 0), "nw": (-0.707, -0.707),
+    }
+    close_distance = max(1.0, float(tile_size) * 1.5)
+    lane_spacing = max(1.0, float(tile_size) * 0.9)
+    while remaining:
+        anchor_index = min(remaining)
+        anchor = convoys[anchor_index]
+        cluster = [
+            index for index in remaining
+            if convoys[index].get("destination_building_id")
+            == anchor.get("destination_building_id")
+            and math.hypot(
+                float(convoys[index]["position_x"]) - float(anchor["position_x"]),
+                float(convoys[index]["position_y"]) - float(anchor["position_y"]),
+            ) <= close_distance
+        ]
+        remaining.difference_update(cluster)
+        if len(cluster) < 2:
+            continue
+        direction = anchor.get("position_direction", "s")
+        dx, dy = directions.get(direction, (0, 1))
+        perpendicular = (-dy, dx)
+        cluster.sort(key=lambda index: str(convoys[index].get("id", index)))
+        midpoint = (len(cluster) - 1) / 2
+        for lane, index in enumerate(cluster):
+            entity = convoys[index]
+            offset = (lane - midpoint) * lane_spacing
+            entity["display_position_x"] = float(entity["position_x"]) + perpendicular[0] * offset
+            entity["display_position_y"] = float(entity["position_y"]) + perpendicular[1] * offset
 
 
 def mobile_entity_at(scene, screen_position, location="world_map"):
@@ -136,7 +176,10 @@ def mobile_entity_at(scene, screen_position, location="world_map"):
         if pygame.Rect(sx - 22, sy - 58, 44, 62).collidepoint(x, y):
             return {**occupant, "entity_kind": "player", "eta_seconds": None}
     for entity in traveling_entities(scene, location):
-        sx, sy = scene.world_to_screen(entity["position_x"], entity["position_y"])
+        sx, sy = scene.world_to_screen(
+            entity.get("display_position_x", entity["position_x"]),
+            entity.get("display_position_y", entity["position_y"]),
+        )
         if pygame.Rect(sx - 34, sy - 48, 68, 64).collidepoint(x, y):
             return entity
     return None
@@ -206,7 +249,10 @@ def draw_convoy_sprite_group(screen, center, sprite_key="light", direction="w", 
 def draw_traveling_entities(scene, screen, location="world_map"):
     entities = traveling_entities(scene, location)
     for entity in entities:
-        sx, sy = scene.world_to_screen(entity["position_x"], entity["position_y"])
+        sx, sy = scene.world_to_screen(
+            entity.get("display_position_x", entity["position_x"]),
+            entity.get("display_position_y", entity["position_y"]),
+        )
         if not (-80 <= sx <= settings.WIDTH + 80 and -100 <= sy <= settings.HEIGHT + 20):
             continue
         if entity["entity_kind"] == "wagon":
