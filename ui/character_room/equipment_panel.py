@@ -38,11 +38,6 @@ class EquipmentPanel:
         self.selected_slot: Optional[str] = None
         self.slot_rects: Dict[str, pygame.Rect] = {}
 
-    def set_equipment(self, equipment: Dict[str, Dict]):
-        """Устанавливает экипировку"""
-        self.equipment = equipment
-        self._update_rects()
-
     def _update_rects(self):
         """Обновляет прямоугольники для отображения"""
         self.slot_rects = {}
@@ -99,7 +94,7 @@ class EquipmentPanel:
                 screen.blit(item_name, (self.start_x + 330, y + 10))
 
                 # Бонусы
-                stat_labels = {"strength": "Сила", "agility": "Ловкость", "intuition": "Интуиция", "endurance": "Выносливость", "wisdom": "Мудрость", "intellect": "Интеллект", "harmony": "Гармония", "hp": "HP", "mp": "MP", "dodge": "% Уворот", "block": "% Блок"}
+                stat_labels = {"strength": "Сила", "agility": "Ловкость", "intuition": "Интуиция", "endurance": "Выносливость", "wisdom": "Мудрость", "intellect": "Интеллект", "hp": "HP", "mp": "MP", "dodge": "% Уворот", "block": "% Блок"}
                 bonuses_list = [f"+{v} {stat_labels.get(k, k)}" for k, v in equipment["bonuses"].items()]
                 bonuses_text = ", ".join(bonuses_list)
                 bonuses_surface = self.small_font.render(bonuses_text, True, (100, 200, 100))
@@ -125,14 +120,10 @@ class EquipmentPanel:
         screen.blit(total_text, (self.start_x, y))
 
         if total_bonuses:
-            stat_labels = {"strength": "Сила", "agility": "Ловкость", "intuition": "Интуиция", "endurance": "Выносливость", "wisdom": "Мудрость", "intellect": "Интеллект", "harmony": "Гармония", "hp": "HP", "mp": "MP", "dodge": "% Уворот", "block": "% Блок"}
+            stat_labels = {"strength": "Сила", "agility": "Ловкость", "intuition": "Интуиция", "endurance": "Выносливость", "wisdom": "Мудрость", "intellect": "Интеллект", "hp": "HP", "mp": "MP", "dodge": "% Уворот", "block": "% Блок"}
             bonuses_text = ", ".join([f"+{v} {stat_labels.get(k, k.replace('_', ' '))}" for k, v in total_bonuses.items()])
             bonuses_surface = pygame.font.SysFont("arial", 20).render(bonuses_text, True, (100, 200, 100))
             screen.blit(bonuses_surface, (self.start_x, y + 30))
-
-    def get_selected_slot(self) -> Optional[str]:
-        """Возвращает выбранный слот"""
-        return self.selected_slot
 
     def clear_selection(self):
         """Очищает выбор"""

@@ -1,13 +1,12 @@
 """Shared city citizens, hourly food consumption, and work assignments."""
 
-import itertools
+import json
 import math
 import time
 
 from core.currency import Currency
 from core.production_buildings import (
     BUILDINGS,
-    FARM_UPGRADES,
     LUMBER_CAMP_UPGRADES,
     building_level_info,
     building_resources,
@@ -20,11 +19,14 @@ from core.city_progression import (
 )
 from core.production_buildings import slot_resources
 from server.database import Database, lock_character
+from server import treasury_ledger
 from server.production_buildings import (
     DEFAULT_FACTION,
+    STORAGE_ITEM_IDS,
     ProductionBuildings,
     _harvest_bonus_for_worker,
     _resource_timer_sec,
+    farm_speed_bonus_percent,
 )
 from server.city_upgrade import (
     city_upgrade_cycle_cost,
@@ -35,7 +37,43 @@ from server.city_upgrade import (
 MIN_POPULATION = 4
 FULL_MEAL_NUTRITION = 100
 FOOD_VALUE = {"wheat": 10, "berries": 15, "meat": 20}
-FOOD_SHARE = {"wheat": 3, "berries": 3, "meat": 4}
+FOOD_EXTRACTION_RANK = {"wheat": 1, "berries": 2, "meat": 3}
+
+
+def _cargo_resources(value):
+    if value is None:
+        return []
+    if isinstance(value, str):
+        value = json.loads(value)
+    return [resource for resource in (value or []) if resource]
+TAX_COPPER = {"satisfied": 50, "irritated": 20, "starving": 0}
+TREASURY_EDICT_TAX_BONUS = 10
+TREASURY_EDICT_COST_WOOD = 30
+TREASURY_EDICT_COST_SILVER = 5
+TREASURY_EDICT_TIME_SECONDS = 4800
+CASTLE_UPGRADE_CAPACITY_BONUS = {"plot_for_building": 1}
+CASTLE_UPGRADES = {
+    1: {
+        "plot_for_building": {
+            "name": "Участок под застройку",
+            "effect": "+1 место горожанина",
+            "result": "Вместимость горожан +1",
+            "requirement": "Нет",
+            "wood_cost": 30,
+            "silver_cost": 10,
+            "time_seconds": 6000,
+        },
+        "treasury_edict": {
+            "name": "Казначейский указ",
+            "effect": "+10 медн. налога за каждого горожанина",
+            "result": "Налог с горожан +10 медн.",
+            "requirement": "Нет",
+            "wood_cost": TREASURY_EDICT_COST_WOOD,
+            "silver_cost": TREASURY_EDICT_COST_SILVER,
+            "time_seconds": TREASURY_EDICT_TIME_SECONDS,
+        },
+    },
+}
 IDLE_SATIETY_SECONDS = 150
 TRAVEL_SATIETY_SECONDS = 100
 WORK_SATIETY_SECONDS = 60
@@ -54,29 +92,13 @@ def hour_boundary(timestamp):
     return math.floor(float(timestamp) / 3600) * 3600
 
 
-def meal_plan(needed, available):
-    """Choose a balanced ration, preferring exact satiety without wasting food."""
-    needed = max(0, int(needed))
-    if not needed:
-        return {food: 0 for food in FOOD_VALUE}
-    foods = tuple(FOOD_VALUE)
-    limits = [min(max(0, int(available.get(food, 0))), math.ceil(needed / FOOD_VALUE[food]))
-              for food in foods]
-    best_score = None
-    best = {food: 0 for food in foods}
-    for amounts in itertools.product(*(range(limit + 1) for limit in limits)):
-        nutrition = [amount * FOOD_VALUE[food] for food, amount in zip(foods, amounts)]
-        total = sum(nutrition)
-        balance_error = sum(
-            abs(value * sum(FOOD_SHARE.values()) - total * FOOD_SHARE[food])
-            for food, value in zip(foods, nutrition)
-        )
-        score = (min(total, needed), -max(0, total - needed), -balance_error,
-                 -sum(amounts), *(-amount for amount in amounts))
-        if best_score is None or score > best_score:
-            best_score = score
-            best = dict(zip(foods, amounts))
-    return best
+def wheat_reserve_zone(amount, capacity):
+    ratio = 0 if int(capacity) <= 0 else max(0, int(amount)) / int(capacity)
+    if ratio <= 0.20:
+        return "red"
+    if ratio <= 0.40:
+        return "yellow"
+    return "green"
 
 
 def satisfaction_for_satiety(satiety):
@@ -89,15 +111,9 @@ def satisfaction_for_satiety(satiety):
 
 
 def food_consumption_per_hour(citizens, available_foods):
-    unlocked_foods = tuple(food for food in FOOD_VALUE if food in set(available_foods))
-    if not unlocked_foods:
+    if "wheat" not in set(available_foods):
         return {}
-    ration = meal_plan(
-        FULL_MEAL_NUTRITION - 30,
-        {food: math.ceil((FULL_MEAL_NUTRITION - 30) / FOOD_VALUE[food])
-         for food in unlocked_foods},
-    )
-    totals = {food: 0.0 for food in unlocked_foods}
+    wheat_total = 0.0
     for citizen in citizens:
         status = citizen.get("work_status")
         if status in ("Ведёт повозку", "В пути", "Возвращается"):
@@ -106,11 +122,10 @@ def food_consumption_per_hour(citizens, available_foods):
             interval = WORK_SATIETY_SECONDS
         else:
             interval = IDLE_SATIETY_SECONDS
-        for food in unlocked_foods:
-            totals[food] += ration.get(food, 0) * 3600 / (
-                (FULL_MEAL_NUTRITION - 30) * interval
-            )
-    return {food: amount for food, amount in totals.items() if amount > 0}
+        wheat_total += math.ceil((FULL_MEAL_NUTRITION - 30) / FOOD_VALUE["wheat"]) * 3600 / (
+            (FULL_MEAL_NUTRITION - 30) * interval
+        )
+    return {"wheat": wheat_total} if wheat_total > 0 else {}
 
 
 class CityPopulation:
@@ -130,8 +145,8 @@ class CityPopulation:
 
     def _ensure_state(self, connection, key, now):
         connection.execute(
-            """INSERT INTO city_population_state (world_id, faction, castle_level, last_food_tick_at)
-               VALUES (%s, %s, 1, %s) ON CONFLICT DO NOTHING""",
+            """INSERT INTO city_population_state (world_id, faction, castle_level, city_level, last_food_tick_at)
+               VALUES (%s, %s, 1, 1, %s) ON CONFLICT DO NOTHING""",
             (*key, hour_boundary(now)),
         )
         count = connection.execute(
@@ -158,7 +173,7 @@ class CityPopulation:
         if not legacy_slots:
             return
         city = connection.execute(
-            """SELECT castle_level, population_capacity_bonus,
+            """SELECT city_level, population_capacity_bonus,
                       COUNT(citizen.id) AS population,
                       COALESCE(MAX(citizen.ordinal), 0) AS max_ordinal
                FROM city_population_state state
@@ -166,13 +181,13 @@ class CityPopulation:
                                  ON citizen.world_id = state.world_id AND citizen.faction = state.faction
                                 AND citizen.alive=TRUE
                WHERE state.world_id = %s AND state.faction = %s
-               GROUP BY state.castle_level, state.population_capacity_bonus""",
+               GROUP BY state.city_level, state.population_capacity_bonus""",
             key,
         ).fetchone()
         population = int(city["population"])
         max_ordinal = int(city["max_ordinal"])
         capacity = city_population_capacity(
-            city["castle_level"], city["population_capacity_bonus"],
+            city["city_level"], city["population_capacity_bonus"],
         )
         for slot in legacy_slots:
             try:
@@ -279,19 +294,17 @@ class CityPopulation:
         }
 
     def _feed(self, connection, world_id, stock, needed):
-        plan = meal_plan(needed, stock)
-        nutrition = 0
-        for food, quantity in plan.items():
-            if quantity <= 0:
-                continue
-            connection.execute(
-                """UPDATE building_resources SET storage = storage - %s
-                   WHERE world_id = %s AND faction = %s AND building = 'barn' AND resource = %s""",
-                (quantity, int(world_id), DEFAULT_FACTION, food),
-            )
-            stock[food] = stock.get(food, 0) - quantity
-            nutrition += quantity * FOOD_VALUE[food]
-        return nutrition
+        quantity = min(max(0, int(stock.get("wheat", 0))),
+                       math.ceil(max(0, int(needed)) / FOOD_VALUE["wheat"]))
+        if quantity <= 0:
+            return 0
+        connection.execute(
+            """UPDATE building_resources SET storage = storage - %s
+               WHERE world_id = %s AND faction = %s AND building = 'barn' AND resource = 'wheat'""",
+            (quantity, int(world_id), DEFAULT_FACTION),
+        )
+        stock["wheat"] = stock.get("wheat", 0) - quantity
+        return quantity * FOOD_VALUE["wheat"]
 
     @staticmethod
     def _satiety_rate(citizen, convoy_driver=False):
@@ -315,7 +328,9 @@ class CityPopulation:
         if stock is None:
             stock = self._food_stock(connection, key[0])
         reached_zero_at = previous_update if satiety == 0 else None
-        died = False
+        satiety_zero_since = citizen.get("satiety_zero_since")
+        if satiety_zero_since is not None:
+            satiety_zero_since = float(satiety_zero_since)
 
         while remaining > 1e-9:
             if satiety <= 30:
@@ -329,20 +344,12 @@ class CityPopulation:
                     continue
 
             if satiety == 0:
-                hunger_seconds = max(
-                    0.0, (100 - strong_hunger - strong_hunger_progress)
-                    * STRONG_HUNGER_SECONDS,
-                )
-                if remaining >= hunger_seconds:
-                    remaining -= hunger_seconds
-                    strong_hunger = 100
-                    strong_hunger_progress = 0
-                    died = True
-                    break
                 hunger_units = strong_hunger_progress + remaining / STRONG_HUNGER_SECONDS
-                hunger_gain = int(hunger_units)
-                strong_hunger += hunger_gain
-                strong_hunger_progress = hunger_units - hunger_gain
+                hunger_gain = min(100 - strong_hunger, int(hunger_units))
+                strong_hunger = min(100, strong_hunger + hunger_gain)
+                strong_hunger_progress = (
+                    0 if strong_hunger == 100 else hunger_units - hunger_gain
+                )
                 remaining = 0
                 break
 
@@ -372,44 +379,49 @@ class CityPopulation:
                 reached_zero_at = None
 
         satisfaction = satisfaction_for_satiety(satiety)
-        if died:
+        if satiety == 0 and satiety_zero_since is None:
+            satiety_zero_since = reached_zero_at or now
+        elif satiety > 0:
+            satiety_zero_since = None
+        if (satiety == 0 and float(now) - satiety_zero_since > 2 * 60 * 60):
             if convoy_driver:
                 from server.transport import TransportService
 
                 TransportService(self.db).turn_driver_home(
-                    connection, key[0], int(citizen["id"]), reached_zero_at or now,
+                    connection, key[0], int(citizen["id"]), satiety_zero_since,
                 )
             self._release_worker(connection, key, citizen, now, clear_job=True)
             connection.execute(
                 """UPDATE city_citizens SET alive=FALSE, working=FALSE, job_building=NULL,
                    job_slot=NULL, arrival_at=NULL, travel_direction=NULL, satiety=0,
                    satiety_progress=0, strong_hunger=100, strong_hunger_progress=0,
-                   satiety_updated_at=%s, satisfaction='starving' WHERE id=%s""",
-                (now, int(citizen["id"])),
+                   satiety_updated_at=%s, satiety_zero_since=%s,
+                   satisfaction='starving' WHERE id=%s""",
+                (now, satiety_zero_since, int(citizen["id"])),
             )
             return citizen["name"]
-
         connection.execute(
             """UPDATE city_citizens SET satiety=%s, satiety_progress=%s,
                strong_hunger=%s, strong_hunger_progress=%s,
-               satiety_updated_at=%s, satisfaction=%s WHERE id=%s""",
+               satiety_updated_at=%s, satiety_zero_since=%s, satisfaction=%s WHERE id=%s""",
             (satiety, satiety_progress, strong_hunger, strong_hunger_progress,
-             now, satisfaction, int(citizen["id"])),
+             now, satiety_zero_since, satisfaction, int(citizen["id"])),
         )
         citizen.update(
             satiety=satiety, satiety_progress=satiety_progress,
             strong_hunger=strong_hunger, strong_hunger_progress=strong_hunger_progress,
-            satiety_updated_at=now, satisfaction=satisfaction,
+            satiety_updated_at=now, satiety_zero_since=satiety_zero_since,
+            satisfaction=satisfaction,
         )
-        if satiety == 0 and convoy_driver:
+        if satiety <= 10 and convoy_driver:
             from server.transport import TransportService
 
             TransportService(self.db).turn_driver_home(
-                connection, key[0], int(citizen["id"]), reached_zero_at or now,
+                connection, key[0], int(citizen["id"]), now,
             )
-        elif (satiety == 0 and citizen.get("working")
+        elif (satiety <= 10 and citizen.get("working")
               and citizen.get("travel_direction") != "returning"):
-            self._begin_return(connection, key, citizen, reached_zero_at or now)
+            self._begin_return(connection, key, citizen, now)
         return None
 
     def _sync_citizens(self, connection, key, now):
@@ -590,35 +602,86 @@ class CityPopulation:
                 if settled is not None:
                     self._sync_citizen_hunger(connection, key, dict(settled), now, stock)
 
-    def _resume_worker(self, connection, key, citizen, now):
-        building, slot_index = citizen.get("job_building"), citizen.get("job_slot")
-        if not building or slot_index is None or citizen.get("working"):
-            return
-        building_key = self._ensure_building(connection, key[0], building, now)
-        slot = connection.execute(
-            """SELECT occupied FROM building_worker_slots
-               WHERE world_id = %s AND faction = %s AND building = %s AND slot_index = %s FOR UPDATE""",
-            (*building_key, int(slot_index)),
-        ).fetchone()
-        if slot is None or slot["occupied"]:
-            connection.execute(
-                "UPDATE city_citizens SET job_building = NULL, job_slot = NULL WHERE id = %s",
-                (int(citizen["id"]),),
+    @staticmethod
+    def _tax_copper(citizens, edict_active=False):
+        total = 0
+        for row in citizens:
+            tax = TAX_COPPER.get(row["satisfaction"], 0)
+            if tax and edict_active:
+                tax += TREASURY_EDICT_TAX_BONUS
+            total += tax
+        return total
+
+    def _pick_departing_citizen(self, connection, key):
+        """Приоритет ухода: свободные, затем не-пищевая работа, затем пищевая по классу (мясо, ягоды, пшеница)."""
+        citizens = connection.execute(
+            """SELECT id, ordinal, name, job_building, job_slot, working, travel_direction
+               FROM city_citizens WHERE world_id=%s AND faction=%s AND alive=TRUE
+               ORDER BY ordinal""",
+            key,
+        ).fetchall()
+        convoy_cargo = {
+            int(row["driver_citizen_id"]): _cargo_resources(row["resource_ids_json"])
+            for row in connection.execute(
+                """SELECT driver_citizen_id, resource_ids_json FROM transport_convoys
+                   WHERE world_id=%s AND faction=%s AND status IN ('outbound','blocked')""",
+                key,
+            ).fetchall()
+        }
+
+        def food_rank(resources):
+            ranks = [FOOD_EXTRACTION_RANK[resource] for resource in resources
+                     if resource in FOOD_EXTRACTION_RANK]
+            return max(ranks) if ranks else 0
+
+        candidates = []
+        for citizen in citizens:
+            citizen_id = int(citizen["id"])
+            ordinal = int(citizen["ordinal"])
+            if citizen_id in convoy_cargo:
+                cargo_rank = food_rank(convoy_cargo[citizen_id])
+                if cargo_rank == 0:
+                    candidates.append((3, 0, -ordinal, citizen))
+                else:
+                    candidates.append((4, -cargo_rank, -ordinal, citizen))
+                continue
+            if citizen["job_building"] is None:
+                candidates.append((1, 0, -ordinal, citizen))
+                continue
+            slot_rank = food_rank(slot_resources(citizen["job_building"], int(citizen["job_slot"])))
+            if slot_rank == 0:
+                candidates.append((2, 0, -ordinal, citizen))
+            else:
+                candidates.append((5, -slot_rank, -ordinal, citizen))
+        if not candidates:
+            return None
+        return min(candidates, key=lambda item: item[:3])[3]
+
+    def _depart_citizen(self, connection, key, citizen, now):
+        if int(citizen["id"]) in self._convoy_driver_ids(connection, key):
+            from server.transport import TransportService
+
+            TransportService(self.db).turn_driver_home(
+                connection, key[0], int(citizen["id"]), now,
             )
-            return
-        arrival_at = now + self._travel_seconds(building)
+        self._release_worker(connection, key, dict(citizen), now, clear_job=True)
         connection.execute(
-            """UPDATE building_worker_slots SET occupied = 1, worker_id = %s,
-               hire_time = %s, credited = '{}'::jsonb
-               WHERE world_id = %s AND faction = %s AND building = %s AND slot_index = %s""",
-            (f"citizen:{citizen['id']}", arrival_at, *building_key, int(slot_index)),
+            """UPDATE city_citizens SET alive=FALSE, working=FALSE, job_building=NULL,
+               job_slot=NULL, arrival_at=NULL, travel_direction=NULL, satisfaction='starving'
+               WHERE id=%s""",
+            (int(citizen["id"]),),
         )
-        connection.execute(
-            """UPDATE city_citizens SET working = TRUE, arrival_at = %s,
-                    travel_direction = 'outbound', return_progress = 1,
-                    return_started_at = NULL WHERE id = %s""",
-            (arrival_at, int(citizen["id"])),
-        )
+        return citizen
+
+    def _convoy_driver_ids(self, connection, key):
+        return {
+            int(row["driver_citizen_id"])
+            for row in connection.execute(
+                """SELECT driver_citizen_id FROM transport_convoys
+                   WHERE world_id=%s AND faction=%s AND status IN ('outbound','blocked')""",
+                key,
+            ).fetchall()
+        }
 
     def _hourly_tick(self, connection, key, tick_at):
         citizens = connection.execute(
@@ -626,19 +689,27 @@ class CityPopulation:
                WHERE world_id=%s AND faction=%s AND alive=TRUE FOR UPDATE""",
             key,
         ).fetchall()
-        tax_copper = sum(
-            {"satisfied": 100, "irritated": 20, "starving": 0}.get(row["satisfaction"], 0)
-            for row in citizens
-        )
+        edict = connection.execute(
+            """SELECT EXISTS(
+                   SELECT 1 FROM castle_upgrade_state
+                   WHERE world_id = %s AND faction = %s AND upgrade_id = 'treasury_edict'
+                     AND done = TRUE
+                     AND castle_level = (SELECT castle_level FROM city_population_state
+                                         WHERE world_id = %s AND faction = %s)
+               ) AS done""",
+            (*key, *key),
+        ).fetchone()
+        tax_copper = self._tax_copper(citizens, edict_active=bool(edict["done"]))
         if tax_copper:
             connection.execute(
                 """UPDATE city_population_state SET treasury_copper = treasury_copper + %s
                    WHERE world_id = %s AND faction = %s""",
                 (tax_copper, *key),
             )
+            treasury_ledger.distribute_income(connection, key, tax_copper)
         state = connection.execute(
-                """SELECT castle_level, population_capacity_bonus
-                    FROM city_population_state WHERE world_id = %s AND faction = %s""",
+            """SELECT city_level, population_capacity_bonus
+               FROM city_population_state WHERE world_id = %s AND faction = %s""",
             key,
         ).fetchone()
         current = connection.execute(
@@ -647,17 +718,17 @@ class CityPopulation:
                FROM city_citizens WHERE world_id=%s AND faction=%s""",
             key,
         ).fetchone()
-        unhappy = connection.execute(
-            """SELECT COUNT(*) AS amount FROM city_citizens WHERE world_id=%s AND faction=%s
-               AND alive=TRUE AND satisfaction <> 'satisfied'""",
-            key,
-        ).fetchone()["amount"]
         stock = self._food_stock(connection, key[0])
-        food_reserve = sum(stock.get(food, 0) * value for food, value in FOOD_VALUE.items())
-        if (current["amount"] < city_population_capacity(
-                state["castle_level"], state["population_capacity_bonus"]
-            )
-                and not unhappy and food_reserve >= FULL_MEAL_NUTRITION):
+        barn_level_row = connection.execute(
+            "SELECT level FROM building_states WHERE world_id=%s AND faction=%s AND building='barn'",
+            key,
+        ).fetchone()
+        barn_level = 1 if barn_level_row is None else int(barn_level_row["level"])
+        barn_capacity = int(building_level_info(barn_level, "barn")["storage"])
+        zone = wheat_reserve_zone(stock.get("wheat", 0), barn_capacity)
+        if (zone == "green" and current["amount"] < city_population_capacity(
+                state["city_level"], state["population_capacity_bonus"]
+        )):
             ordinal = int(current["max_ordinal"]) + 1
             connection.execute(
                 """INSERT INTO city_citizens
@@ -665,6 +736,12 @@ class CityPopulation:
                          VALUES (%s, %s, %s, %s, 100, %s, %s)""",
                      (*key, ordinal, f"Горожанин {ordinal}", tick_at, tick_at),
             )
+            return []
+        if zone == "red" and current["amount"] > 0:
+            citizen = self._pick_departing_citizen(connection, key)
+            if citizen is not None:
+                departed = self._depart_citizen(connection, key, citizen, tick_at)
+                return [("departed", departed["name"])]
         return []
 
     def _process_due(self, key, now):
@@ -694,8 +771,74 @@ class CityPopulation:
             self._settle_travel(connection, key, now)
             departures.extend(self._sync_citizens(connection, key, now))
             process_city_upgrade(connection, key, now)
-        for name in departures:
-            self._announce_starvation_death(key[0], name)
+            self._complete_castle_upgrades(connection, key, now)
+        for event in departures:
+            if isinstance(event, tuple):
+                self._announce_citizen_departure(key[0], event[1])
+            else:
+                self._announce_starvation_death(key[0], event)
+
+    def _complete_castle_upgrades(self, connection, key, now):
+        finished = connection.execute(
+            """UPDATE castle_upgrade_state SET done = TRUE, finish_at = NULL
+               WHERE world_id = %s AND faction = %s
+                 AND done = FALSE AND finish_at IS NOT NULL AND finish_at <= %s
+               RETURNING upgrade_id""",
+            (*key, now),
+        ).fetchall()
+        for row in finished:
+            effect = CASTLE_UPGRADE_CAPACITY_BONUS.get(row["upgrade_id"], 0)
+            if effect:
+                connection.execute(
+                    """UPDATE city_population_state
+                       SET population_capacity_bonus = population_capacity_bonus + %s
+                       WHERE world_id = %s AND faction = %s""",
+                    (effect, *key),
+                )
+
+    def start_castle_upgrade(self, character_id, upgrade_id, now=None):
+        now = time.time() if now is None else float(now)
+        self.get_state(character_id, now)
+        with self.db.connection() as connection:
+            lock_character(connection, character_id)
+            key = self._key(connection, character_id)
+            state = connection.execute(
+                """SELECT castle_level FROM city_population_state
+                   WHERE world_id = %s AND faction = %s FOR UPDATE""",
+                key,
+            ).fetchone()
+            level = int(state["castle_level"])
+            upgrade = CASTLE_UPGRADES.get(level, {}).get(upgrade_id)
+            if upgrade is None:
+                raise ValueError("Улучшение замка не найдено")
+            existing = connection.execute(
+                """SELECT done, finish_at FROM castle_upgrade_state
+                   WHERE world_id = %s AND faction = %s AND castle_level = %s AND upgrade_id = %s
+                   FOR UPDATE""",
+                (*key, level, upgrade_id),
+            ).fetchone()
+            if existing is not None and existing["done"]:
+                raise ValueError(f"{upgrade['name']} уже построено")
+            if existing is not None and existing["finish_at"] is not None:
+                raise ValueError(f"{upgrade['name']} уже выполняется")
+            self.production._debit_treasury(
+                connection, key, Currency.to_copper(silver=upgrade["silver_cost"]), character_id,
+            )
+            self.production._debit_warehouse_items(
+                connection, key, {STORAGE_ITEM_IDS["wood"]: upgrade["wood_cost"]}, now,
+            )
+            connection.execute(
+                """INSERT INTO castle_upgrade_state
+                       (world_id, faction, castle_level, upgrade_id, finish_at, done)
+                   VALUES (%s, %s, %s, %s, %s, FALSE)
+                   ON CONFLICT (world_id, faction, castle_level, upgrade_id)
+                   DO UPDATE SET finish_at = EXCLUDED.finish_at""",
+                (*key, level, upgrade_id, now + upgrade["time_seconds"]),
+            )
+        return self.get_state(character_id, now)
+
+    def start_treasury_edict(self, character_id, now=None):
+        return self.start_castle_upgrade(character_id, "treasury_edict", now)
 
     def tick_all(self, now=None):
         now = time.time() if now is None else float(now)
@@ -706,13 +849,19 @@ class CityPopulation:
             self._process_due(key, now)
 
     def _announce_starvation_death(self, world_id, name):
+        self._announce_city_chat(world_id, f"Горожанин умер от голода: {name}")
+
+    def _announce_citizen_departure(self, world_id, name):
+        self._announce_city_chat(world_id, f"Горожанин покинул город из-за голода: {name}")
+
+    def _announce_city_chat(self, world_id, text):
         world_db = Database(self.db.dsn, schema=self.db.schema, world_id=int(world_id))
         system_character = world_db.ensure_bot_character(f"city_population_{world_id}", "Город")
-        world_db.add_chat_message(system_character, "city", f"Горожанин умер от голода: {name}")
+        world_db.add_chat_message(system_character, "city", text)
 
     def _resource_income_per_hour(self, connection, key, now, resources_in_scope):
         income = {resource: 0.0 for resource in resources_in_scope}
-        buildings = ("farm", "lumber_camp", "barnyard")
+        buildings = ("farm", "lumber_camp", "barnyard", "mountain_rift", "black_pit")
         farm_upgrades = self.production._farm_upgrades(connection, (*key, "farm"))
         lumber_upgrades = self.production._lumber_camp_upgrades(
             connection, (*key, "lumber_camp"),
@@ -738,17 +887,10 @@ class CityPopulation:
                 bonus = _harvest_bonus_for_worker(connection, worker_id)
                 resources = slot_resources(building, int(slot["slot_index"]))
                 if (building == "farm"
-                        and (farm_upgrades["wooden_plough"] or farm_upgrades["wooden_handle"])
+                        and (farm_upgrades["wooden_plough"] or farm_upgrades["whetstone"])
                         and "wheat" in resources):
                     bonus = dict(bonus)
-                    farm_speed_bonus = sum(
-                        int(FARM_UPGRADES[upgrade_id]["speed_bonus_percent"])
-                        for upgrade_id, completed in (
-                            ("wooden_plough", farm_upgrades["wooden_plough"]),
-                            ("wooden_handle", farm_upgrades["wooden_handle"]),
-                        ) if completed
-                    )
-                    bonus["wheat"] = int(bonus.get("wheat", 0)) + farm_speed_bonus
+                    bonus["wheat"] = int(bonus.get("wheat", 0)) + farm_speed_bonus_percent(farm_upgrades)
                 elif (building == "lumber_camp" and lumber_upgrades["strong_handle"]
                       and "wood" in resources):
                     bonus = dict(bonus)
@@ -765,22 +907,27 @@ class CityPopulation:
 
     def _payload(self, connection, key, now, character_id):
         state = connection.execute(
-            """SELECT castle_level, population_capacity_bonus,
+            """SELECT castle_level, city_level, population_capacity_bonus,
                       last_food_tick_at, treasury_copper
                FROM city_population_state WHERE world_id = %s AND faction = %s""",
             key,
         ).fetchone()
+        castle_rows = self._castle_upgrade_rows(connection, key, int(state["castle_level"]))
+        treasury_edict_done = bool(castle_rows.get("treasury_edict", {}).get("done"))
         character_currency = connection.execute(
             "SELECT copper, silver, gold FROM characters WHERE id = %s",
             (int(character_id),),
         ).fetchone()
         treasury = Currency().add_copper_amount(int(state["treasury_copper"]))
+        personal_treasury = treasury_ledger.contribution_of(connection, key, character_id)
+        is_mayor = treasury_ledger.is_mayor(connection, key, character_id)
+        spendable_treasury = treasury_ledger.spendable_copper(connection, key, character_id)
         personal_currency = Currency.from_dict(character_currency or {})
         citizens = connection.execute(
             "SELECT * FROM city_citizens WHERE world_id = %s AND faction = %s AND alive=TRUE ORDER BY ordinal",
             key,
         ).fetchall()
-        city_level = int(state["castle_level"])
+        city_level = int(state["city_level"])
         accessible_barn = city_storage_resources(
             "barn", city_level, building_resources("barn"),
         )
@@ -807,22 +954,29 @@ class CityPopulation:
         )
         food_income = {resource: resource_income[resource] for resource in food}
         population_capacity = city_population_capacity(
-            state["castle_level"], state["population_capacity_bonus"],
+            state["city_level"], state["population_capacity_bonus"],
         )
         next_tick_at = float(state["last_food_tick_at"]) + 3600
-        satieties = [int(row["satiety"]) for row in citizens]
-        food_status = ("В городе голод" if any(value <= 10 for value in satieties) else
-                       "Население не доедает" if any(value <= 30 for value in satieties) else
-                       "Пищи достаточно")
-        expected_tax_copper = sum(
-            {"satisfied": 100, "irritated": 20, "starving": 0}.get(row["satisfaction"], 0)
-            for row in citizens
+        barn_level_row = connection.execute(
+            "SELECT level FROM building_states WHERE world_id=%s AND faction=%s AND building='barn'",
+            key,
+        ).fetchone()
+        barn_level = 1 if barn_level_row is None else int(barn_level_row["level"])
+        barn_capacity = int(building_level_info(barn_level, "barn")["storage"])
+        wheat_zone = wheat_reserve_zone(food.get("wheat", 0), barn_capacity)
+        food_status = {
+            "green": "в городе достаточно еды для роста",
+            "yellow": "в городе не стабильно с поставками еды",
+            "red": "в городе нечего есть, может начаться голод",
+        }[wheat_zone]
+        expected_tax_copper = self._tax_copper(
+            citizens, edict_active=treasury_edict_done,
         )
-        food_reserve = sum(food.get(item, 0) * value for item, value in FOOD_VALUE.items())
-        unhappy = any(row["satisfaction"] != "satisfied" for row in citizens)
-        new_citizen_due = len(citizens) < population_capacity and not unhappy and food_reserve >= FULL_MEAL_NUTRITION
+        new_citizen_due = (
+            wheat_zone == "green" and len(citizens) < population_capacity
+        )
         worksites = []
-        unlocked_roads = set(unlocked_country_buildings(state["castle_level"]))
+        unlocked_roads = set(unlocked_country_buildings(state["city_level"]))
         for building in WORK_BUILDINGS:
             road_id = next((road for road, worksite in ROAD_BUILDINGS.items()
                             if worksite == building), None)
@@ -842,6 +996,10 @@ class CityPopulation:
             capacity = building_level_info(level, building)["max_workers"]
             if building == "farm":
                 capacity += len(self.production._farm_upgrades(connection, building_key)["ration_plots"])
+                capacity += sum(
+                    int(count) for count in
+                    self.production._farm_upgrades(connection, building_key)["extra_places"].values()
+                )
             worksites.append({"building": building, "name": BUILDINGS[building]["name"],
                               "free_slots": [int(row["slot_index"]) for row in slots if not row["occupied"]],
                               "capacity": capacity,
@@ -874,6 +1032,17 @@ class CityPopulation:
                                  "strong_hunger": int(row["strong_hunger"]),
                                  "satisfaction": row["satisfaction"], "work_status": work_status,
                                  "job_building": row["job_building"], "job_slot": row["job_slot"],
+                                 "death_eta_seconds": (
+                                     max(0, math.ceil(
+                                         ((int(row["satiety"]) * self._satiety_rate(
+                                             row, int(row["id"]) in convoy_driver_ids
+                                         ) - float(row.get("satiety_progress", 0)))
+                                          if int(row["satiety"]) > 0 else 0)
+                                         + 2 * 60 * 60
+                                         - (now - float(row["satiety_zero_since"])
+                                            if row.get("satiety_zero_since") is not None else 0)
+                                     )) if int(row["satiety"]) <= 10 else None
+                                 ),
                                  "travel_seconds_left": (max(0, math.ceil(float(row["arrival_at"]) - now))
                                                           if row["travel_direction"] and row["arrival_at"] is not None
                                                           else 0),
@@ -884,27 +1053,40 @@ class CityPopulation:
             key,
         ).fetchall()
         food_consumers = citizen_list + [
-            {"work_status": "Свободен" if horse["status"] == "Отдыхает" else "Занят"}
+            {"work_status": "Свободен" if horse["status"] == "Отдыхает" else "Занят",
+             "is_horse": True}
             for horse in horses
         ]
         food_consumption = food_consumption_per_hour(food_consumers, food)
+        new_citizen_eta = (
+            max(0, math.ceil(next_tick_at - now)) if new_citizen_due else None
+        )
+        departure_eta = (
+            max(0, math.ceil(next_tick_at - now)) if wheat_zone == "red" and citizens else None
+        )
         resource_consumption = dict(food_consumption)
         city_upgrade = city_upgrade_payload(connection, key, now)
         for resource, amount in city_upgrade.get("resource_drain_per_hour", {}).items():
             resource_consumption[resource] = resource_consumption.get(resource, 0.0) + float(amount)
-        barn_level_row = connection.execute(
-            "SELECT level FROM building_states WHERE world_id=%s AND faction=%s AND building='barn'",
-            key,
-        ).fetchone()
-        barn_level = 1 if barn_level_row is None else int(barn_level_row["level"])
-        barn_capacity = int(building_level_info(barn_level, "barn")["storage"])
+        if wheat_zone == "yellow":
+            net_wheat_drain = max(
+                0.0,
+                resource_consumption.get("wheat", 0.0) - food_income.get("wheat", 0.0),
+            )
+            red_threshold = math.floor(barn_capacity * 0.20)
+            satiated_eta = (
+                math.ceil((food.get("wheat", 0) - red_threshold) * 3600 / net_wheat_drain)
+                if net_wheat_drain > 0 else None
+            )
+        else:
+            satiated_eta = None
         warehouse_level_row = connection.execute(
             "SELECT level FROM building_states WHERE world_id=%s AND faction=%s AND building='warehouse'",
             key,
         ).fetchone()
         warehouse_level = 1 if warehouse_level_row is None else int(warehouse_level_row["level"])
         warehouse_capacity = int(building_level_info(warehouse_level, "warehouse")["storage"])
-        upgrade_foods = set(city_upgrade_resources(int(state["castle_level"])))
+        upgrade_foods = set(city_upgrade_resources(int(state["city_level"])))
         upgrade_cycle_cost = city_upgrade_cycle_cost(len(citizen_list), population_capacity)
         food_trend = {}
         for resource in food:
@@ -927,8 +1109,16 @@ class CityPopulation:
             else:
                 trend = "deficit"
             resource_trend[resource] = trend
-        return {"castle_name": "Замок Радбурка", "castle_level": int(state["castle_level"]),
+        return {"castle_name": "Замок Радбурка",
+            "castle_level": int(state["castle_level"]),
+            "city_level": city_level,
             "city_upgrade": city_upgrade,
+                "castle_upgrade": (self._active_castle_upgrades(
+                    int(state["castle_level"]), castle_rows, now) or [{
+                        "id": None, "active": False, "finish_at": None, "upgrade_name": None,
+                    }])[0],
+                "castle_upgrades_active": self._active_castle_upgrades(
+                    int(state["castle_level"]), castle_rows, now),
                 "population": len(citizen_list),
                 "population_capacity": population_capacity,
                 "citizens": citizen_list, "food_storage": food,
@@ -940,19 +1130,73 @@ class CityPopulation:
                 "city_resource_storage": resource_storage,
                 "city_resource_trend": resource_trend,
                 "food_status": food_status,
+                "food_zone": wheat_zone,
                 "treasury_copper": int(state["treasury_copper"]),
                 "treasury": treasury.to_dict(),
                 "treasury_text": Currency.format_amount(state["treasury_copper"]),
+                "personal_treasury_copper": personal_treasury,
+                "personal_treasury_text": Currency.format_amount(personal_treasury),
+                "is_mayor": is_mayor,
+                "spendable_treasury_copper": spendable_treasury,
                 "personal_currency_copper": personal_currency.total_copper(),
                 "personal_currency": personal_currency.to_dict(),
                 "personal_currency_text": Currency.format_amount(personal_currency.total_copper()),
                 "tax_tick_seconds_left": max(0, math.ceil(next_tick_at - now)),
                 "expected_tax_copper": expected_tax_copper,
                 "expected_tax_text": Currency.format_amount(expected_tax_copper),
-                "new_citizen_eta_seconds": (
-                    max(0, math.ceil(next_tick_at - now)) if new_citizen_due else None
-                ),
-                "worksites": worksites, "governor": None, "tasks": [], "upgrades": []}
+                "new_citizen_eta_seconds": new_citizen_eta,
+                "departure_eta_seconds": departure_eta,
+                "satiated_eta_seconds": satiated_eta,
+                "worksites": worksites, "governor": None, "tasks": [],
+                "upgrades": self._castle_upgrades_payload(
+                    int(state["castle_level"]), castle_rows, now)}
+
+    def _castle_upgrade_rows(self, connection, key, castle_level):
+        rows = connection.execute(
+            """SELECT upgrade_id, finish_at, done FROM castle_upgrade_state
+               WHERE world_id = %s AND faction = %s AND castle_level = %s""",
+            (*key, castle_level),
+        ).fetchall()
+        return {row["upgrade_id"]: row for row in rows}
+
+    @staticmethod
+    def _active_castle_upgrades(castle_level, rows, now):
+        catalog = CASTLE_UPGRADES.get(castle_level, {})
+        active = []
+        for upgrade_id, row in rows.items():
+            if row["done"] or row["finish_at"] is None or upgrade_id not in catalog:
+                continue
+            active.append({
+                "id": upgrade_id,
+                "active": True,
+                "finish_at": float(row["finish_at"]),
+                "upgrade_name": catalog[upgrade_id]["name"],
+            })
+        return active
+
+    @staticmethod
+    def _castle_upgrades_payload(castle_level, rows, now):
+        payload = []
+        for upgrade_id, upgrade in CASTLE_UPGRADES.get(castle_level, {}).items():
+            row = rows.get(upgrade_id)
+            done = bool(row["done"]) if row else False
+            finish_at = row["finish_at"] if row else None
+            active = finish_at is not None and not done
+            seconds_left = max(0, math.ceil(float(finish_at) - now)) if active else 0
+            payload.append({
+                "id": upgrade_id,
+                "name": upgrade["name"],
+                "effect": upgrade["effect"],
+                "requirement": upgrade["requirement"],
+                "result": upgrade["result"],
+                "silver_cost": upgrade["silver_cost"],
+                "wood_cost": upgrade["wood_cost"],
+                "time_seconds": upgrade["time_seconds"],
+                "is_complete": done,
+                "is_active": active,
+                "seconds_left": seconds_left,
+            })
+        return payload
 
     def get_state(self, character_id, now=None):
         now = time.time() if now is None else float(now)
@@ -991,10 +1235,19 @@ class CityPopulation:
                 if not wallet.subtract_copper_amount(amount_copper):
                     raise ValueError("У персонажа недостаточно монет")
                 treasury += amount_copper
+                treasury_ledger.add_contribution(connection, key, character_id, amount_copper)
+                treasury_ledger.refresh_mayor(connection, key)
             else:
-                if treasury < amount_copper:
-                    raise ValueError("В казне недостаточно монет")
+                contribution = treasury_ledger.contribution_of(connection, key, character_id)
+                if contribution < amount_copper:
+                    needed_silver = -(-amount_copper // Currency.COPPER_PER_SILVER)
+                    have_silver = contribution // Currency.COPPER_PER_SILVER
+                    raise ValueError(
+                        f"В казне недостаточно твоих средств: {have_silver}/{needed_silver} серебра"
+                    )
                 treasury -= amount_copper
+                treasury_ledger.remove_contribution(connection, key, character_id, amount_copper)
+                treasury_ledger.refresh_mayor(connection, key)
                 wallet.add_copper_amount(amount_copper)
             connection.execute(
                 """UPDATE city_population_state SET treasury_copper = %s

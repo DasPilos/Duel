@@ -12,7 +12,7 @@ from ui.hud import draw_button
 
 
 class ServerStatusHUD:
-    POLL_SECONDS = 5.0
+    POLL_SECONDS = 1.0
     PANEL_COLOR = (25, 29, 31)
     BORDER_COLOR = (113, 133, 126)
     TEXT_COLOR = (230, 226, 211)

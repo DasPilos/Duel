@@ -32,11 +32,6 @@ class InventoryPanel:
         self.max_visible_rows = 3
         self.scroll_speed = 50
 
-    def set_items(self, items: List[Dict]):
-        """Устанавливает список предметов"""
-        self.items = items
-        self._update_rects()
-
     def _update_rects(self):
         """Обновляет прямоугольники для отображения"""
         self.item_rects = []

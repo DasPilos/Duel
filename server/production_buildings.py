@@ -12,12 +12,14 @@ from copy import deepcopy
 from contextlib import contextmanager
 
 from core.cart_progress import (
+    CART_AUTO_REPAIR_RULES,
     CART_GRADES,
     CART_MAX_DURABILITY,
-    CART_REPAIR_WOOD_PER_DURABILITY,
-    CART_WOOD_MAINTENANCE_PER_HOUR,
     DEFAULT_CART_PROGRESS,
     RESOURCE_ITEM_IDS,
+    cart_apply_work,
+    cart_durability_band,
+    cart_repair_wood_cost,
     cart_stats,
 )
 from core.city_progression import city_storage_resources
@@ -25,7 +27,6 @@ from core.currency import Currency
 from core.production_buildings import (
     BUILDINGS,
     BUILDING_BONUS_SLOT_BASE,
-    FARM_RATION_SLOT_BASE,
     FARM_UPGRADES,
     LUMBER_CAMP_UPGRADES,
     RESOURCES,
@@ -33,6 +34,7 @@ from core.production_buildings import (
     building_level_info,
     building_resources,
     building_resources_for_level,
+    farm_extra_slot_index,
     horse_purchase_price_silver,
     PRODUCTION_ITEM_IDS,
     slot_resources,
@@ -40,10 +42,12 @@ from core.production_buildings import (
 )
 from server.database import lock_character
 from server.items_database import ItemsDatabase
+from server import treasury_ledger
 from server.city_upgrade import city_upgrade_payload
 
 # Пока в игре одна фракция; когда появится выбор фракции, её нужно хранить у персонажа
 DEFAULT_FACTION = "light"
+CART_NAME_MAX_LENGTH = 24
 STORAGE_ITEM_IDS = {
     "berries": 62,
     "wheat": 63,
@@ -143,6 +147,16 @@ def distribute_to_storage(storage, incoming, limit):
 _WHERE = "world_id = %s AND faction = %s AND building = %s"
 
 
+def farm_speed_bonus_percent(upgrades):
+    return sum(
+        int(FARM_UPGRADES[upgrade_id]["speed_bonus_percent"])
+        for upgrade_id, completed in (
+            ("wooden_plough", upgrades["wooden_plough"]),
+            ("whetstone", upgrades["whetstone"]),
+        ) if completed
+    )
+
+
 class ProductionBuildings:
     """Общие здания фракции. Методы принимают персонажа, от имени которого действует игрок."""
 
@@ -185,10 +199,16 @@ class ProductionBuildings:
         upgrades = {} if row is None else row["farm_upgrades_json"] or {}
         if isinstance(upgrades, str):
             upgrades = json.loads(upgrades)
+        extra_places = {
+            str(plot): int(count)
+            for plot, count in (upgrades.get("extra_places", {}) or {}).items()
+            if int(count) > 0
+        }
         return {
             "ration_plots": sorted(set(int(value) for value in upgrades.get("ration_plots", []))),
+            "extra_places": extra_places,
             "wooden_plough": bool(upgrades.get("wooden_plough", False)),
-            "wooden_handle": bool(upgrades.get("wooden_handle", False)),
+            "whetstone": bool(upgrades.get("whetstone", False)),
         }
 
     def _farm_upgrade_payload(self, connection, key, state, now):
@@ -197,14 +217,16 @@ class ProductionBuildings:
         return {
             "completed": {
                 "ration": 0 in upgrades["ration_plots"],
-                "ration_level_2": 1 in upgrades["ration_plots"],
+                "plough_field_edge": int(upgrades["extra_places"].get("1", 0)) >= 2,
                 "wooden_plough": upgrades["wooden_plough"],
-                "wooden_handle": upgrades["wooden_handle"],
+                "whetstone": upgrades["whetstone"],
                 "farm_level_2": int(state["level"]) >= 2,
+                "flax_field_sowing": int(state["level"]) >= 3,
             },
             "ration_plots": upgrades["ration_plots"],
+            "extra_places": upgrades["extra_places"],
             "wooden_plough": upgrades["wooden_plough"],
-            "wooden_handle": upgrades["wooden_handle"],
+            "whetstone": upgrades["whetstone"],
             "active_upgrade_id": state["farm_upgrade_id"],
             "active_plot_index": state["farm_upgrade_plot_index"],
             "finish_at": finish_at,
@@ -245,10 +267,10 @@ class ProductionBuildings:
     @staticmethod
     def _city_level(connection, world_id, faction):
         row = connection.execute(
-            "SELECT castle_level FROM city_population_state WHERE world_id=%s AND faction=%s",
+            "SELECT city_level FROM city_population_state WHERE world_id=%s AND faction=%s",
             (int(world_id), str(faction)),
         ).fetchone()
-        return 1 if row is None else int(row["castle_level"])
+        return 1 if row is None else int(row["city_level"])
 
     @staticmethod
     def _slots(connection, key):
@@ -308,14 +330,21 @@ class ProductionBuildings:
             )
         if building == "farm":
             farm_upgrades = self._farm_upgrades(connection, key)
-            for plot_index in farm_upgrades.get("ration_plots", []):
-                extra_slot = FARM_RATION_SLOT_BASE + int(plot_index)
+            for plot_index in farm_upgrades["ration_plots"]:
                 connection.execute(
                     """INSERT INTO building_worker_slots (world_id, faction, building, slot_index)
                        VALUES (%s, %s, %s, %s)
                        ON CONFLICT (world_id, faction, building, slot_index) DO NOTHING""",
-                    (*key, extra_slot),
+                    (*key, BUILDING_BONUS_SLOT_BASE + int(plot_index)),
                 )
+            for plot_index, count in farm_upgrades["extra_places"].items():
+                for place_number in range(1, int(count) + 1):
+                    connection.execute(
+                        """INSERT INTO building_worker_slots (world_id, faction, building, slot_index)
+                           VALUES (%s, %s, %s, %s)
+                           ON CONFLICT (world_id, faction, building, slot_index) DO NOTHING""",
+                        (*key, farm_extra_slot_index(int(plot_index), place_number)),
+                    )
         if building == "lumber_camp":
             camp_upgrades = self._lumber_camp_upgrades(connection, key)
             for plot_index in camp_upgrades["bonus_plots"]:
@@ -385,9 +414,12 @@ class ProductionBuildings:
         self._sync_harvest(connection, key, finish_at)
         upgrades = self._farm_upgrades(connection, key)
         upgrade_id = state["farm_upgrade_id"]
-        if upgrade_id in ("ration", "ration_level_2"):
+        if upgrade_id == "ration":
             plot_index = int(state["farm_upgrade_plot_index"])
             upgrades["ration_plots"] = sorted(set(upgrades["ration_plots"]) | {plot_index})
+        elif upgrade_id == "plough_field_edge":
+            plot_index = int(state["farm_upgrade_plot_index"])
+            upgrades["extra_places"][str(plot_index)] = int(upgrades["extra_places"].get(str(plot_index), 0)) + 2
         elif upgrade_id == "wooden_plough":
             upgrades["wooden_plough"] = True
             connection.execute(
@@ -395,8 +427,8 @@ class ProductionBuildings:
                     WHERE {_WHERE} AND occupied=1""",
                 (finish_at, *key),
             )
-        elif upgrade_id == "wooden_handle":
-            upgrades["wooden_handle"] = True
+        elif upgrade_id == "whetstone":
+            upgrades["whetstone"] = True
             connection.execute(
                 f"""UPDATE building_worker_slots SET hire_time=%s, credited='{{}}'::jsonb
                     WHERE {_WHERE} AND occupied=1""",
@@ -405,6 +437,10 @@ class ProductionBuildings:
         elif upgrade_id == "farm_level_2":
             connection.execute(
                 f"UPDATE building_states SET level=2 WHERE {_WHERE}", key
+            )
+        elif upgrade_id == "flax_field_sowing":
+            connection.execute(
+                f"UPDATE building_states SET level=3 WHERE {_WHERE}", key
             )
         connection.execute(
             f"""UPDATE building_states SET farm_upgrades_json=%s::jsonb,
@@ -534,18 +570,11 @@ class ProductionBuildings:
             harvest_bonus = _harvest_bonus_for_worker(connection, slot["worker_id"])
             if building == "farm":
                 upgrades = self._farm_upgrades(connection, key)
-                if (upgrades["wooden_plough"] or upgrades["wooden_handle"]) and "wheat" in slot_resources(
+                if (upgrades["wooden_plough"] or upgrades["whetstone"]) and "wheat" in slot_resources(
                     building, slot["slot_index"]
                 ):
                     harvest_bonus = dict(harvest_bonus)
-                    farm_speed_bonus = sum(
-                        int(FARM_UPGRADES[upgrade_id]["speed_bonus_percent"])
-                        for upgrade_id, completed in (
-                            ("wooden_plough", upgrades["wooden_plough"]),
-                            ("wooden_handle", upgrades["wooden_handle"]),
-                        ) if completed
-                    )
-                    harvest_bonus["wheat"] = int(harvest_bonus.get("wheat", 0)) + farm_speed_bonus
+                    harvest_bonus["wheat"] = int(harvest_bonus.get("wheat", 0)) + farm_speed_bonus_percent(upgrades)
             elif building == "lumber_camp":
                 upgrades = self._lumber_camp_upgrades(connection, key)
                 if upgrades["strong_handle"] and "wood" in slot_resources(building, slot["slot_index"]):
@@ -613,7 +642,7 @@ class ProductionBuildings:
         )
         if building == "farm":
             info = dict(info)
-            info["max_workers"] += len(farm_upgrades["ration_plots"])
+            info["max_workers"] += len(farm_upgrades["ration_plots"]) + sum(farm_upgrades["extra_places"].values())
         elif building == "lumber_camp":
             info = dict(info)
             info["max_workers"] += len(lumber_camp_upgrades["bonus_plots"])
@@ -622,17 +651,10 @@ class ProductionBuildings:
             resources = slot_resources(building, slot["slot_index"])
             harvest_bonus = _harvest_bonus_for_worker(connection, slot["worker_id"])
             if (building == "farm"
-                    and (farm_upgrades["wooden_plough"] or farm_upgrades["wooden_handle"])
+                    and (farm_upgrades["wooden_plough"] or farm_upgrades["whetstone"])
                     and "wheat" in resources):
                 harvest_bonus = dict(harvest_bonus)
-                farm_speed_bonus = sum(
-                    int(FARM_UPGRADES[upgrade_id]["speed_bonus_percent"])
-                    for upgrade_id, completed in (
-                        ("wooden_plough", farm_upgrades["wooden_plough"]),
-                        ("wooden_handle", farm_upgrades["wooden_handle"]),
-                    ) if completed
-                )
-                harvest_bonus["wheat"] = int(harvest_bonus.get("wheat", 0)) + farm_speed_bonus
+                harvest_bonus["wheat"] = int(harvest_bonus.get("wheat", 0)) + farm_speed_bonus_percent(farm_upgrades)
             elif (building == "lumber_camp" and lumber_camp_upgrades["strong_handle"]
                   and "wood" in resources):
                 harvest_bonus = dict(harvest_bonus)
@@ -763,7 +785,10 @@ class ProductionBuildings:
         available_carts = []
         available_cart_drivers = []
         treasury_silver_available = 0
+        treasury_copper = 0
+        spendable_treasury_copper = 0
         backpack_resource_amounts = {}
+
         if building == "stable":
             self._sync_horse_satiety(connection, key, now)
             active_convoys = connection.execute(
@@ -801,7 +826,6 @@ class ProductionBuildings:
                 if body_count <= 0:
                     continue
                 cart_grade = CART_GRADES[grade]
-                stats = cart_stats(progress.get("upgrades", {}))
                 for instance in range(1, body_count + 1):
                     cart_id = (f"cart_grade_{grade}" if instance == 1
                                else f"cart_grade_{grade}~{instance}")
@@ -811,11 +835,8 @@ class ProductionBuildings:
                         float(CART_MAX_DURABILITY),
                         float(wear.get("durability", CART_MAX_DURABILITY)),
                     ))
+                    stats = cart_stats(progress.get("upgrades", {}), durability)
                     broken = durability <= 0
-                    is_working = (
-                        active_convoy is not None
-                        and (active_convoy.get("phase") or "outbound") != "resting"
-                    )
                     can_travel = (
                         not broken
                         and
@@ -833,18 +854,15 @@ class ProductionBuildings:
                         "id": cart_id,
                         "grade": int(grade),
                         "instance": instance,
-                        "name": cart_grade["name"],
+                        "name": str(wear.get("name") or cart_grade["name"]),
+                        "custom_name": wear.get("name"),
                         "status": status,
                         "durability": durability,
                         "max_durability": CART_MAX_DURABILITY,
+                        "wear_band": cart_durability_band(durability),
                         "broken": broken,
-                        "maintenance_wood_per_hour": (
-                            CART_WOOD_MAINTENANCE_PER_HOUR
-                            if is_working and not broken else 0
-                        ),
-                        "repair_wood_cost": int(math.ceil(
-                            CART_MAX_DURABILITY - durability
-                        )) * CART_REPAIR_WOOD_PER_DURABILITY,
+                        "auto_repair": wear.get("auto_repair"),
+                        "repair_wood_cost": cart_repair_wood_cost(durability),
                         "can_travel": can_travel,
                         "dispatch_available": can_travel,
                         "sprite_key": cart_grade.get("sprite_key", "light"),
@@ -881,8 +899,11 @@ class ProductionBuildings:
                    WHERE world_id = %s AND faction = %s""",
                 key[:2],
             ).fetchone()
-            treasury_silver_available = (0 if treasury_row is None else
-                                         int(treasury_row["treasury_copper"]) // Currency.COPPER_PER_SILVER)
+            treasury_copper = 0 if treasury_row is None else int(treasury_row["treasury_copper"])
+            treasury_silver_available = (
+                treasury_ledger.spendable_copper(connection, key[:2], character_id)
+                // Currency.COPPER_PER_SILVER
+            )
             backpack_resource_amounts = {
                 resource: int(self._backpack_amount(connection, character_id, item_id))
                 for resource, item_id in RESOURCE_ITEM_IDS.items()
@@ -911,6 +932,7 @@ class ProductionBuildings:
                     "wood_in_warehouse": self._warehouse_amount(
                         connection, key, upgrade["wood_item_id"]
                     ),
+                    "treasury_copper": treasury_copper,
                     "treasury_silver_available": treasury_silver_available,
                     "purchased": upgrade_id in purchased_upgrades,
                     "wood_remaining": max(
@@ -977,8 +999,11 @@ class ProductionBuildings:
                 "SELECT treasury_copper FROM city_population_state WHERE world_id=%s AND faction=%s",
                 key[:2],
             ).fetchone()
-            treasury_silver_available = (0 if treasury_row is None else
-                                         int(treasury_row["treasury_copper"]) // Currency.COPPER_PER_SILVER)
+            treasury_copper = 0 if treasury_row is None else int(treasury_row["treasury_copper"])
+            spendable_treasury_copper = treasury_ledger.spendable_copper(
+                connection, key[:2], character_id
+            )
+            treasury_silver_available = spendable_treasury_copper // Currency.COPPER_PER_SILVER
         return {
             "building": building,
             "faction": key[1],
@@ -995,6 +1020,8 @@ class ProductionBuildings:
             "available_carts": available_carts,
             "available_cart_drivers": available_cart_drivers,
             "backpack_resource_amounts": backpack_resource_amounts,
+            "treasury_copper": treasury_copper,
+            "spendable_treasury_copper": spendable_treasury_copper,
             "treasury_silver_available": treasury_silver_available,
             "silver_available": silver_available if building == "stable" else None,
             "horse_price_next_silver": (
@@ -1104,7 +1131,7 @@ class ProductionBuildings:
             )
 
     @staticmethod
-    def _debit_treasury(connection, key, amount_copper):
+    def _debit_treasury(connection, key, amount_copper, character_id):
         amount_copper = max(0, int(amount_copper))
         if not amount_copper:
             return
@@ -1113,16 +1140,33 @@ class ProductionBuildings:
                WHERE world_id = %s AND faction = %s FOR UPDATE""",
             (int(key[0]), key[1]),
         ).fetchone()
-        available = 0 if treasury is None else int(treasury["treasury_copper"])
-        if available < amount_copper:
-            needed_silver = (amount_copper + Currency.COPPER_PER_SILVER - 1) // Currency.COPPER_PER_SILVER
-            have_silver = available // Currency.COPPER_PER_SILVER
-            raise ValueError(f"В казне недостаточно средств: {have_silver}/{needed_silver} серебра")
+        if treasury is None:
+            raise ValueError("В казне недостаточно твоих средств: 0/0 серебра")
+        if treasury_ledger.is_mayor(connection, key, character_id):
+            available = int(treasury["treasury_copper"])
+            if available < amount_copper:
+                needed_silver = (amount_copper + Currency.COPPER_PER_SILVER - 1) // Currency.COPPER_PER_SILVER
+                have_silver = available // Currency.COPPER_PER_SILVER
+                raise ValueError(f"В казне недостаточно средств: {have_silver}/{needed_silver} серебра")
+            spent_by_character = treasury_ledger.spend_from_pool(connection, key, amount_copper)
+            for contributor_id, share in spent_by_character.items():
+                treasury_ledger.award_glory(connection, key, contributor_id, share)
+            unassigned_copper = amount_copper - sum(spent_by_character.values())
+            treasury_ledger.award_faction_glory(connection, key, unassigned_copper)
+        else:
+            available = treasury_ledger.contribution_of(connection, key, character_id)
+            if available < amount_copper:
+                needed_silver = (amount_copper + Currency.COPPER_PER_SILVER - 1) // Currency.COPPER_PER_SILVER
+                have_silver = available // Currency.COPPER_PER_SILVER
+                raise ValueError(f"В казне недостаточно твоих средств: {have_silver}/{needed_silver} серебра")
+            treasury_ledger.remove_contribution(connection, key, character_id, amount_copper)
+            treasury_ledger.award_glory(connection, key, character_id, amount_copper)
         connection.execute(
             """UPDATE city_population_state SET treasury_copper = treasury_copper - %s
                WHERE world_id = %s AND faction = %s""",
             (amount_copper, int(key[0]), key[1]),
         )
+        treasury_ledger.refresh_mayor(connection, key)
 
     @staticmethod
     def _cart_progress(connection, key):
@@ -1192,8 +1236,7 @@ class ProductionBuildings:
             return
 
         warehouse_key = (int(key[0]), key[1], "warehouse")
-        if convoy_by_cart:
-            self._ensure(connection, warehouse_key, now)
+        self._ensure(connection, warehouse_key, now)
         wood_row = connection.execute(
             """SELECT storage FROM building_resources
                     WHERE world_id=%s AND faction=%s AND building=%s AND resource='wood'
@@ -1202,6 +1245,14 @@ class ProductionBuildings:
         ).fetchone()
         wood_available = 0 if wood_row is None else int(wood_row["storage"])
         wood_spent = 0
+
+        def pay_auto_repair(cost):
+            nonlocal wood_available, wood_spent
+            if wood_available < cost:
+                return False
+            wood_available -= cost
+            wood_spent += cost
+            return True
 
         for cart_row in carts:
             wear_json = cart_row["cart_wear_json"] or {}
@@ -1218,32 +1269,34 @@ class ProductionBuildings:
                     float(record.get("durability", CART_MAX_DURABILITY)),
                 ))
                 last_updated = float(record.get("updated_at", now))
-                fraction = max(0.0, float(record.get("wood_fraction", 0.0)))
+                carry = max(0.0, float(record.get("wear_carry_seconds", 0.0)))
+                rule = CART_AUTO_REPAIR_RULES.get(record.get("auto_repair"))
                 convoy = convoy_by_cart.get(cart_id)
-                if convoy and durability > 0 and (convoy.get("phase") or "outbound") != "resting":
+                work_seconds = 0.0
+                if convoy and (convoy.get("phase") or "outbound") != "resting":
                     phase_started = float(convoy["started_at"])
                     work_start = max(last_updated, phase_started)
                     if convoy["status"] == "blocked":
                         work_end = now
                     else:
                         work_end = min(now, float(convoy["arrival_at"]))
-                    elapsed = max(0.0, work_end - work_start)
-                    due = fraction + elapsed * CART_WOOD_MAINTENANCE_PER_HOUR / 3600
-                    whole_due = int(math.floor(due + 1e-9))
-                    paid = min(whole_due, wood_available)
-                    if paid:
-                        wood_available -= paid
-                        wood_spent += paid
-                    if paid < whole_due:
-                        durability = max(0.0, durability - (due - paid))
-                        fraction = 0.0
-                    else:
-                        fraction = due - whole_due
+                    work_seconds = max(0.0, work_end - work_start)
+                if work_seconds > 0 or rule is not None:
+                    durability, carry, _repairs = cart_apply_work(
+                        durability,
+                        carry,
+                        work_seconds,
+                        repair_threshold=rule["threshold"] if rule else None,
+                        try_pay_repair=(
+                            (lambda: pay_auto_repair(rule["wood_cost"])) if rule else None
+                        ),
+                    )
                 record.update({
                     "durability": round(durability, 4),
                     "updated_at": now,
-                    "wood_fraction": round(fraction, 6),
+                    "wear_carry_seconds": round(carry, 4),
                 })
+                record.pop("wood_fraction", None)
                 wear_json[cart_id] = record
             connection.execute(
                 f"""UPDATE stable_cart_progress SET cart_wear_json=%s::jsonb
@@ -1258,10 +1311,8 @@ class ProductionBuildings:
                 (wood_spent, *warehouse_key),
             )
 
-    def repair_cart(self, character_id, cart_id, now=None):
-        now = _timestamp(now)
-        cart_id = str(cart_id)
-        cart_type, separator, instance_value = cart_id.partition("~")
+    def _cart_record_for(self, connection, key, cart_id):
+        cart_type, separator, instance_value = str(cart_id).partition("~")
         try:
             grade = int(cart_type.rsplit("_", 1)[1])
             instance = int(instance_value) if separator else 1
@@ -1269,39 +1320,81 @@ class ProductionBuildings:
             raise ValueError("Выбрана неизвестная повозка")
         if instance < 1 or cart_type != f"cart_grade_{grade}":
             raise ValueError("Выбрана неизвестная повозка")
+        row = connection.execute(
+            f"""SELECT body_owned, body_count, cart_wear_json FROM stable_cart_progress
+                WHERE {_WHERE} AND grade=%s FOR UPDATE""",
+            (*key, grade),
+        ).fetchone()
+        if row is None or instance > max(
+            int(row["body_count"] or 0), 1 if row["body_owned"] else 0
+        ):
+            raise ValueError("Эта повозка ещё не куплена")
+        wear = row["cart_wear_json"] or {}
+        if isinstance(wear, str):
+            wear = json.loads(wear)
+        return grade, dict(wear)
 
+    def set_cart_auto_repair(self, character_id, cart_id, mode, now=None):
+        now = _timestamp(now)
+        if mode not in (None, *CART_AUTO_REPAIR_RULES):
+            raise ValueError("Неизвестный режим авторемонта")
         with self._transaction(character_id, "stable", now) as (connection, key):
             self._advance_cart_maintenance(connection, key, now)
-            row = connection.execute(
-                f"""SELECT body_owned, body_count, cart_wear_json FROM stable_cart_progress
-                    WHERE {_WHERE} AND grade=%s FOR UPDATE""",
-                (*key, grade),
-            ).fetchone()
-            if row is None or instance > max(
-                int(row["body_count"] or 0), 1 if row["body_owned"] else 0
-            ):
-                raise ValueError("Эта повозка ещё не куплена")
-            wear = row["cart_wear_json"] or {}
-            if isinstance(wear, str):
-                wear = json.loads(wear)
-            wear = dict(wear)
+            grade, wear = self._cart_record_for(connection, key, cart_id)
+            record = dict(wear.get(str(cart_id), {}))
+            record["auto_repair"] = mode
+            wear[str(cart_id)] = record
+            connection.execute(
+                f"""UPDATE stable_cart_progress SET cart_wear_json=%s::jsonb
+                    WHERE {_WHERE} AND grade=%s""",
+                (json.dumps(wear), *key, grade),
+            )
+            self._advance_cart_maintenance(connection, key, now)
+            return self._payload(connection, key, character_id, now)
+
+    def rename_cart(self, character_id, cart_id, name, now=None):
+        now = _timestamp(now)
+        cart_id = str(cart_id)
+        clean = " ".join(str(name or "").split())[:CART_NAME_MAX_LENGTH]
+        with self._transaction(character_id, "stable", now) as (connection, key):
+            self._advance_cart_maintenance(connection, key, now)
+            grade, wear = self._cart_record_for(connection, key, cart_id)
+            record = dict(wear.get(cart_id, {}))
+            if clean:
+                record["name"] = clean
+            else:
+                record.pop("name", None)
+            wear[cart_id] = record
+            connection.execute(
+                f"""UPDATE stable_cart_progress SET cart_wear_json=%s::jsonb
+                    WHERE {_WHERE} AND grade=%s""",
+                (json.dumps(wear), *key, grade),
+            )
+            return self._payload(connection, key, character_id, now)
+
+    def repair_cart(self, character_id, cart_id, now=None):
+        now = _timestamp(now)
+        cart_id = str(cart_id)
+        with self._transaction(character_id, "stable", now) as (connection, key):
+            self._advance_cart_maintenance(connection, key, now)
+            grade, wear = self._cart_record_for(connection, key, cart_id)
             record = dict(wear.get(cart_id, {}))
             durability = max(0.0, min(
                 float(CART_MAX_DURABILITY),
                 float(record.get("durability", CART_MAX_DURABILITY)),
             ))
-            missing = max(0, int(math.ceil(CART_MAX_DURABILITY - durability)))
-            if missing <= 0:
+            if durability >= CART_MAX_DURABILITY:
                 raise ValueError("Повозка не нуждается в ремонте")
-            wood_cost = missing * CART_REPAIR_WOOD_PER_DURABILITY
+            wood_cost = cart_repair_wood_cost(durability)
             self._debit_warehouse_items(
                 connection, key, {STORAGE_ITEM_IDS["wood"]: wood_cost}, now,
             )
-            wear[cart_id] = {
+            record.update({
                 "durability": float(CART_MAX_DURABILITY),
                 "updated_at": now,
-                "wood_fraction": 0.0,
-            }
+                "wear_carry_seconds": 0.0,
+            })
+            wear[cart_id] = record
             connection.execute(
                 f"""UPDATE stable_cart_progress SET cart_wear_json=%s::jsonb
                     WHERE {_WHERE} AND grade=%s""",
@@ -1343,7 +1436,7 @@ class ProductionBuildings:
                 connection, key, {STORAGE_ITEM_IDS["wood"]: wood_due}, now,
             )
             self._debit_treasury(
-                connection, key, Currency.to_copper(silver=silver_due),
+                connection, key, Currency.to_copper(silver=silver_due), character_id,
             )
             connection.execute(
                 f"""UPDATE stable_cart_progress
@@ -1655,7 +1748,7 @@ class ProductionBuildings:
                     raise ValueError("Сначала завершите расширение вырубки и установите усиленную рукоять")
 
             self._debit_treasury(
-                connection, key, Currency.to_copper(silver=int(upgrade["silver_cost"])),
+                connection, key, Currency.to_copper(silver=int(upgrade["silver_cost"])), character_id,
             )
             material_costs = {
                 STORAGE_ITEM_IDS[resource]: int(amount)
@@ -1687,28 +1780,37 @@ class ProductionBuildings:
             required_farm_level = int(upgrade.get("required_farm_level", 1))
             if int(state["level"]) < required_farm_level:
                 raise ValueError("Это улучшение доступно только на втором уровне поселения")
-            if upgrade_id in ("ration", "ration_level_2"):
+            if upgrade_id in ("ration", "plough_field_edge"):
                 expected_plot_index = int(upgrade["plot_index"])
                 plot_index = expected_plot_index if plot_index is None else int(plot_index)
                 if plot_index != expected_plot_index:
                     raise ValueError("Улучшение относится к другому полю пшеницы")
-                if plot_index in progress["ration_plots"]:
+                if upgrade_id == "ration" and plot_index in progress["ration_plots"]:
                     raise ValueError("На этом поле уже выдан дополнительный паёк")
+                if upgrade_id == "plough_field_edge" and int(progress["extra_places"].get(str(plot_index), 0)) > 0:
+                    raise ValueError("Окрайна этого поля уже перепахана")
             elif upgrade_id == "wooden_plough":
                 if progress["wooden_plough"]:
                     raise ValueError("Усиленный деревянный плуг уже установлен")
-            elif upgrade_id == "wooden_handle":
-                if progress["wooden_handle"]:
-                    raise ValueError("Деревянная рукоять уже установлена")
+            elif upgrade_id == "whetstone":
+                if progress["whetstone"]:
+                    raise ValueError("Точильный камень уже установлен")
             elif upgrade_id == "farm_level_2":
                 if int(state["level"]) >= 2:
                     raise ValueError("Крестьянское поселение уже достигло уровня 2")
                 if 0 not in progress["ration_plots"] or not progress["wooden_plough"]:
                     raise ValueError("Сначала завершите «Раздать пай» и установите плуг")
+            elif upgrade_id == "flax_field_sowing":
+                if int(state["level"]) >= 3:
+                    raise ValueError("Крестьянское поселение уже достигло уровня 3")
+                if not progress["whetstone"]:
+                    raise ValueError("Сначала установите точильный камень")
 
-            self._debit_treasury(
-                connection, key, Currency.to_copper(silver=int(upgrade["silver_cost"])),
-            )
+            if "gold_cost" in upgrade:
+                price = Currency.to_copper(gold=int(upgrade["gold_cost"]))
+            else:
+                price = Currency.to_copper(silver=int(upgrade["silver_cost"]))
+            self._debit_treasury(connection, key, price, character_id)
             material_costs = {
                 STORAGE_ITEM_IDS[resource]: int(amount)
                 for resource, amount in upgrade["materials"].items()
@@ -1718,7 +1820,7 @@ class ProductionBuildings:
                 f"""UPDATE building_states SET farm_upgrade_id=%s,
                     farm_upgrade_plot_index=%s, farm_upgrade_finish_at=%s
                     WHERE {_WHERE}""",
-                (upgrade_id, plot_index if upgrade_id in ("ration", "ration_level_2") else None,
+                (upgrade_id, plot_index if upgrade_id in ("ration", "plough_field_edge") else None,
                  now + int(upgrade["time_seconds"]), *key),
             )
             return self._payload(connection, key, character_id, now)
@@ -1755,7 +1857,7 @@ class ProductionBuildings:
                 connection, key, {int(upgrade["wood_item_id"]): wood_due}, now,
             )
             self._debit_treasury(
-                connection, key, Currency.to_copper(silver=silver_due),
+                connection, key, Currency.to_copper(silver=silver_due), character_id,
             )
             connection.execute(
                 """
@@ -1793,7 +1895,7 @@ class ProductionBuildings:
                 f"SELECT COUNT(*) AS count FROM stable_horses WHERE {_WHERE}", key
             ).fetchone()["count"]
             price = horse_purchase_price_silver(horse_count)
-            self._debit_treasury(connection, key, Currency.to_copper(silver=price))
+            self._debit_treasury(connection, key, Currency.to_copper(silver=price), character_id)
             connection.execute(
                 """
                 INSERT INTO stable_horses

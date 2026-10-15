@@ -38,9 +38,9 @@ class ProductionBuildingsTests(unittest.TestCase):
         self.buildings = ProductionBuildings(self.database)
         with self.database.connection() as connection:
             connection.execute(
-                """INSERT INTO city_population_state (world_id, faction, castle_level, last_food_tick_at)
+                """INSERT INTO city_population_state (world_id, faction, city_level, last_food_tick_at)
                    VALUES (%s, 'light', 4, 0) ON CONFLICT (world_id, faction)
-                   DO UPDATE SET castle_level = 4""",
+                   DO UPDATE SET city_level = 4""",
                 (self.database.world_id,),
             )
 
@@ -58,7 +58,7 @@ class ProductionBuildingsTests(unittest.TestCase):
             connection.execute(
                 "UPDATE characters SET stats_json = %s WHERE id = %s",
                 (json.dumps({"strength": strength, "agility": 3, "intuition": 3,
-                             "wisdom": 3, "intellect": 3, "harmony": 3, "endurance": 3}),
+                             "wisdom": 3, "intellect": 3, "endurance": 3}),
                  character_id),
             )
 
@@ -282,32 +282,6 @@ class ProductionBuildingsTests(unittest.TestCase):
         self.assertEqual(loaded["position_y"], 2789.25)
         self.assertEqual(loaded["position_direction"], "nw")
 
-    def test_disconnect_cancels_pending_duel_application_and_marks_afk(self):
-        from server import social
-
-        with running_server(self.database) as client:
-            client.register("afk-user", "secret1")
-            client.login("afk-user", "secret1")
-            character = client.create_character("AfkUser")
-            offer = social.add_public_duel_offer(
-                {"character_id": character["id"], "name": character["name"]}, "backyard"
-            )
-            client.disconnect({
-                **character,
-                "zone": "backyard",
-                "position_x": 1200,
-                "position_y": 900,
-                "position_direction": "e",
-            })
-
-        saved_offer = next(item for item in social.DUEL_OFFERS if item["id"] == offer["id"])
-        afk_presence = social.get_character_presence(character["id"])
-        self.assertEqual(saved_offer["status"], "cancelled")
-        self.assertTrue(afk_presence["afk"])
-        self.assertEqual((afk_presence["position_x"], afk_presence["position_y"]), (1200, 900))
-        social.DUEL_OFFERS.remove(saved_offer)
-        social.presence.PRESENCE.pop(afk_presence["token"], None)
-
     def test_join_and_leave_announcements_are_posted_once_to_each_chat_location(self):
         from server import presence
 
@@ -327,7 +301,7 @@ class ProductionBuildingsTests(unittest.TestCase):
             )
             client.disconnect({**character, "zone": "tavern"})
 
-        for location in ("tavern", "backyard", "city", "world_map", "character_room", "world"):
+        for location in ("tavern", "city", "world_map", "character_room", "world"):
             messages = self.database.get_chat_history(character["id"], location)
             status_texts = [message["text"] for message in messages if message["text"].startswith("[ИГРОК] ")]
             self.assertEqual(status_texts, [
@@ -337,43 +311,6 @@ class ProductionBuildingsTests(unittest.TestCase):
 
         afk_presence = presence.get_character_presence(character["id"])
         self.assertTrue(afk_presence["afk"])
-        presence.PRESENCE.pop(afk_presence["token"], None)
-
-    def test_attacking_afk_player_resolves_and_respawns_at_crystal(self):
-        from server import presence
-
-        with running_server(self.database) as client:
-            client.register("offline-target", "secret1")
-            target_user = client.login("offline-target", "secret1")
-            target = client.create_character("OfflineTarget")
-            client.update_presence(target["id"], "backyard")
-            client.disconnect({
-                **target,
-                "zone": "backyard",
-                "position_x": 1200,
-                "position_y": 900,
-                "position_direction": "e",
-            })
-
-            client.register("active-attacker", "secret1")
-            client.login("active-attacker", "secret1")
-            attacker = client.create_character("ActiveAttacker")
-            accepted = client.offer_duel(attacker["id"], "backyard", target["id"])
-            self.assertTrue(accepted["accepted"])
-            result = client.report_battle_result(
-                attacker["id"], "win", target["level"], 80, 20,
-                opponent_id=target["id"], opponent_hp=0, opponent_mp=0,
-            )
-
-        saved_target = self.database.get_character(target_user["id"], target["id"])
-        self.assertEqual((saved_target["hp"], saved_target["mp"]), (1, 1))
-        self.assertEqual(saved_target["zone"], "city")
-        self.assertEqual((saved_target["position_x"], saved_target["position_y"]),
-                         (50 * 32 + 16, 53 * 32 + 16))
-        self.assertTrue(result["afk_opponent"]["defeated"])
-        afk_presence = presence.get_character_presence(target["id"])
-        self.assertTrue(afk_presence["afk"])
-        self.assertEqual(afk_presence["location"], "city")
         presence.PRESENCE.pop(afk_presence["token"], None)
 
     def test_active_player_work_lookup_clears_only_after_finishing_work(self):

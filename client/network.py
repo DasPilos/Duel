@@ -86,6 +86,15 @@ class GameClient:
             authenticated=True,
         )["population"]
 
+    def start_treasury_edict(self, character_id):
+        return self.start_castle_upgrade(character_id, "treasury_edict")
+
+    def start_castle_upgrade(self, character_id, upgrade_id):
+        return self._request(
+            "POST", f"/api/castle/{int(character_id)}/upgrades/{str(upgrade_id)}", {},
+            authenticated=True,
+        )["population"]
+
     def schedule_server_restart(self, minutes=3):
         return self._request(
             "POST", "/api/server/restart-notice",
@@ -121,16 +130,6 @@ class GameClient:
     def list_characters(self):
         return self._request("GET", "/api/characters", authenticated=True)["characters"]
 
-    def list_opponents(self):
-        return self._request("GET", "/api/opponents", authenticated=True)["opponents"]
-
-    def save_opponent(self, opponent):
-        return self._request(
-            "PUT",
-            f"/api/opponents/{opponent['id']}",
-            opponent,
-            authenticated=True,
-        )["opponent"]
 
     def update_presence(self, character_id, location):
         return self._request("POST", "/api/social/presence", {"character_id": character_id, "location": location}, authenticated=True)
@@ -171,50 +170,12 @@ class GameClient:
     def mute_character(self, character_id, muted_character_id, seconds=600):
         return self._request("POST", "/api/chat/mute", {"character_id": character_id, "muted_character_id": muted_character_id, "seconds": seconds}, authenticated=True)
 
-    def offer_duel(self, character_id, location, target_id):
-        return self._request("POST", "/api/social/duel-offers", {"character_id": character_id, "location": location, "target_id": target_id}, authenticated=True)
-
-    def create_duel_application(self, character_id, location, ttl=120):
-        return self._request("POST", "/api/social/duel-applications", {"character_id": character_id, "location": location, "ttl": ttl}, authenticated=True)
-
-    def cancel_duel_application(self, character_id, location):
-        return self._request("POST", "/api/social/duel-applications/cancel", {"character_id": character_id, "location": location}, authenticated=True)
-
-    def duel_board(self, location="tavern"):
-        return self._request("GET", f"/api/social/offers?location={quote(location)}", authenticated=True)
-
-    def list_duel_offers(self, location="tavern"):
-        return self.duel_board(location)["offers"]
-
-    def respond_duel_offer(self, character_id, offer_id, accepted):
-        return self._request("POST", "/api/social/duel-offers/respond", {"character_id": character_id, "offer_id": offer_id, "accepted": accepted}, authenticated=True)
-
     def load_character(self, character_id=None):
         path = "/api/characters/me" if character_id is None else f"/api/characters/{character_id}"
         return self._request("GET", path, authenticated=True)["character"]
 
     def save_character(self, character):
         return self._request("PUT", f"/api/characters/{character['id']}", character, authenticated=True)["character"]
-
-    def audit_match(self, audit):
-        return self._request("POST", "/api/matches/audit", audit, authenticated=True)
-
-    def list_group_battles(self):
-        return self._request("GET", "/api/social/group-battles", authenticated=True)["offers"]
-
-    def create_group_battle(self, character_id, location="backyard", ttl=120, max_participants=10):
-        return self._request("POST", "/api/social/group-battles", {"character_id": character_id, "location": location, "ttl": ttl, "max_participants": max_participants}, authenticated=True)
-
-    def join_group_battle(self, offer_id, character_id, location="backyard"):
-        return self._request(
-            "POST",
-            f"/api/social/group-battles/{offer_id}/join",
-            {"character_id": character_id, "location": location},
-            authenticated=True,
-        )
-
-    def leave_group_battle(self, offer_id, character_id):
-        return self._request("POST", f"/api/social/group-battles/{offer_id}/leave", {"character_id": character_id}, authenticated=True)
 
     def disconnect(self, character=None):
         payload = None
@@ -223,22 +184,6 @@ class GameClient:
         result = self._request("POST", "/api/sessions/disconnect", payload, authenticated=True)
         self.token = None
         return result
-
-    def check_active_battle(self, player_id, opponent_id):
-        """Проверяет наличие активного боя"""
-        return self._request(
-            "GET",
-            f"/api/duel/active-battles/{player_id}/{opponent_id}",
-            authenticated=True
-        )
-
-    def restore_battle_state(self, player_id, opponent_id):
-        """Восстанавливает состояние боя при переподключении"""
-        return self._request(
-            "GET",
-            f"/api/duel/restore/{player_id}/{opponent_id}",
-            authenticated=True
-        )
 
     # ================== ИНВЕНТАРЬ И ЭКИПИРОВКА ==================
     
@@ -291,77 +236,6 @@ class GameClient:
             payload or {},
             authenticated=True,
         )["building"]
-    
-    def get_decks(self, character_id):
-        """Получить боевые колоды персонажа"""
-        return self._request("GET", f"/api/decks/{character_id}", authenticated=True)["decks"]
-
-    def create_deck(self, character_id, name, cards):
-        return self._request(
-            "POST",
-            "/api/decks",
-            {"character_id": character_id, "name": name, "cards": cards},
-            authenticated=True,
-        )["deck"]
-
-    def delete_deck(self, character_id, deck_id):
-        return self._request(
-            "DELETE",
-            f"/api/decks/{int(deck_id)}",
-            {"character_id": character_id},
-            authenticated=True,
-        )
-
-    def report_battle_result(self, character_id, outcome, opponent_level, hp, mp,
-                             opponent_id=None, opponent_hp=None, opponent_mp=None,
-                             battle_record=None):
-        payload = {
-            "character_id": character_id,
-            "outcome": outcome,
-            "opponent_level": opponent_level,
-            "hp": hp,
-            "mp": mp,
-        }
-        if opponent_id is not None:
-            payload.update({
-                "opponent_id": int(opponent_id),
-                "opponent_hp": int(opponent_hp),
-                "opponent_mp": int(opponent_mp),
-            })
-        if battle_record is not None:
-            payload["battle_record"] = battle_record
-        return self._request(
-            "POST",
-            "/api/battle/result",
-            payload,
-            authenticated=True,
-        )
-
-    def list_battle_archive(self, limit=50, offset=0):
-        query = urlencode({"limit": max(1, min(100, int(limit))), "offset": max(0, int(offset))})
-        return self._request(
-            "GET", f"/api/battles/archive?{query}", authenticated=True,
-        )
-
-    def get_battle_archive_record(self, archive_id):
-        return self._request(
-            "GET", f"/api/battles/archive/{int(archive_id)}", authenticated=True,
-        )["battle"]
-
-    def get_card_collection(self, character_id):
-        return self._request(
-            "GET",
-            f"/api/card-collection/{character_id}",
-            authenticated=True,
-        )["collection"]
-
-    def award_battle_card(self, character_id, card_keys):
-        return self._request(
-            "POST",
-            "/api/battle/card-reward",
-            {"character_id": character_id, "card_keys": list(card_keys)},
-            authenticated=True,
-        )["reward"]
     
     # Действия с инвентарём возвращают новое состояние (как get_inventory);
     # use_item дополнительно возвращает обновлённого персонажа в "character".

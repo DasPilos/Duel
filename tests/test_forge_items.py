@@ -151,7 +151,7 @@ class ForgeItemsTest(unittest.TestCase):
                 connection.execute(
                     "UPDATE characters SET stats_json=%s WHERE id=%s",
                     (json.dumps({"strength": 100, "agility": 3, "intuition": 3,
-                                 "wisdom": 3, "intellect": 3, "harmony": 3, "endurance": 3}),
+                                 "wisdom": 3, "intellect": 3, "endurance": 3}),
                      character_id),
                 )
 

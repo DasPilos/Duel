@@ -1,5 +1,5 @@
-BASE_POPULATION_CAPACITY = 10
-CITY_POPULATION_CAPACITY_BY_LEVEL = {2: 14}
+MAX_CITY_LEVEL = 5
+CITY_POPULATION_CAPACITY_BY_LEVEL = {1: 10, 2: 14, 3: 20, 4: 28, 5: 40}
 
 COUNTRY_BUILDING_UNLOCK_LEVELS = {
     "wheat_farm": 1,
@@ -17,17 +17,10 @@ CITY_STORAGE_RESOURCE_UNLOCK_LEVELS = {
     },
     "warehouse": {
         "wood": 1,
-        "board": 3,
         "flax": 3,
         "stone": 2,
         "iron": 3,
-        "iron_ingot": 3,
-        "stone_block": 3,
-        "cotton": 3,
         "leather": 3,
-        "hard_leather": 3,
-        "thick_leather": 3,
-        "cloth": 3,
         "coal": 4,
         "mithril": 4,
         "obsidian": 4,
@@ -84,6 +77,6 @@ def city_upgrade_resources(city_level):
 
 
 def city_population_capacity(city_level, capacity_bonus=0):
-    level = max(1, int(city_level))
-    base_capacity = CITY_POPULATION_CAPACITY_BY_LEVEL.get(level, level * BASE_POPULATION_CAPACITY)
+    level = min(MAX_CITY_LEVEL, max(1, int(city_level)))
+    base_capacity = CITY_POPULATION_CAPACITY_BY_LEVEL[level]
     return base_capacity + max(0, int(capacity_bonus))

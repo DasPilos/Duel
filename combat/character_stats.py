@@ -1,13 +1,13 @@
+from combat.world_stats import HP_PER_ENDURANCE, MANA_PER_INTELLECT
+
 BASE_STAT_VALUE = 3
 STARTING_ENDURANCE_VALUE = 3
 MIN_STAT_VALUE = 3
 STARTING_STAT_POINTS = 5
-ENDURANCE_HP_BONUS = 10
-MANA_PER_INTELLECT = 5
 # Все 7 характеристик персонажа: единая система для всех 6 классов
-STAT_NAMES = ("strength", "agility", "intuition", "wisdom", "intellect", "harmony", "endurance")
+STAT_NAMES = ("strength", "agility", "intuition", "wisdom", "intellect", "endurance")
 
-# ===== 6 КЛАССОВ ПЕРСОНАЖЕЙ =====
+# ===== КЛАССЫ ПЕРСОНАЖЕЙ =====
 PROFESSIONS = {
     # Боец (Warrior) - физический класс с яростью
     "warrior": {
@@ -48,43 +48,17 @@ PROFESSIONS = {
         "unique_resource_base": 50,
         "unique_resource_level_bonus": 9,
     },
-    # Боевой маг (Battle Mage) - магический класс с маной
-    "battle_mage": {
-        "name": "Боевой маг",
-        "hp": 50,
-        "mana": 20,
-        "base_dodge": 0,
-        "base_crit": 5,
-        "base_crit_damage": 50,
-        "unique_resource": "mana",
-        "unique_resource_name": "Мана",
-        "unique_resource_base": None,  # Рассчитывается из интеллекта
-        "unique_resource_level_bonus": None,
-    },
-    # Маг поддержки (Support Mage) - магический класс с маной
-    "support_mage": {
-        "name": "Маг поддержки",
-        "hp": 30,
-        "mana": 45,
-        "base_dodge": 0,
-        "base_crit": 5,
-        "base_crit_damage": 50,
-        "unique_resource": "mana",
-        "unique_resource_name": "Мана",
-        "unique_resource_base": None,  # Рассчитывается из интеллекта
-        "unique_resource_level_bonus": None,
-    },
-    # Гармонист (Harmonist) - магический класс с маной
-    "harmonist": {
-        "name": "Гармонист",
+    # Маг (Mage) - заглушка, описание будет уточнено позже
+    "mage": {
+        "name": "Маг",
         "hp": 35,
-        "mana": 35,
+        "mana": 15,
         "base_dodge": 0,
         "base_crit": 5,
         "base_crit_damage": 50,
         "unique_resource": "mana",
         "unique_resource_name": "Мана",
-        "unique_resource_base": None,  # Рассчитывается из интеллекта
+        "unique_resource_base": None,
         "unique_resource_level_bonus": None,
     },
 }
@@ -133,11 +107,6 @@ def is_valid_profession(profession_type):
     return profession_type in PROFESSIONS
 
 
-def get_profession_names():
-    """Получить список всех профессий (ключей)."""
-    return list(PROFESSIONS.keys())
-
-
 def calculate_max_unique_resource(profession_type, level, intellect=None):
     """
     Рассчитать максимальное значение уникального ресурса для профессии и уровня.
@@ -181,7 +150,7 @@ def minimum_endurance(level):
 
 def calculate_max_hp(level, endurance):
     """Return the maximum health determined by level and endurance."""
-    return ENDURANCE_HP_BONUS * int(endurance)
+    return HP_PER_ENDURANCE * int(endurance)
 
 
 def calculate_max_mana(intellect):

@@ -1,11 +1,8 @@
 import pygame
 
-from combat.card_database import is_mage_profession
-
 from client.network import ServerError
 from core import settings
 from ui.character_card import CharacterCard
-from ui.mage_card import MageCard
 from ui.hud import draw_button, draw_text
 
 
@@ -31,8 +28,6 @@ class CharacterScene:
         self.continue_button = pygame.Rect(760, 920, 400, 50)
         self.delete_button = pygame.Rect(760, 990, 400, 50)
         self.create_new_button = pygame.Rect(60, 850, 400, 50)
-        self.hall_of_fame_button = pygame.Rect(60, 920, 400, 50)
-        self.hall_of_fame_requested = False
         
         # Password confirmation dialog
         self.show_delete_confirmation = False
@@ -96,10 +91,6 @@ class CharacterScene:
                 max_scroll = max(0, len(self.characters) - self.max_visible_characters)
                 self.character_scroll = max(0, min(max_scroll, self.character_scroll - event.y * 1))
         elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-            if self.hall_of_fame_button.collidepoint(event.pos):
-                self.hall_of_fame_requested = True
-                self.finished = True
-                return
             # Continue button
             if self.selected_character is not None:
                 if self.continue_button.collidepoint(event.pos):
@@ -125,7 +116,7 @@ class CharacterScene:
                     actual_index = visible_index + self.character_scroll
                     if 0 <= actual_index < len(self.characters):
                         self.selected_character = self.characters[actual_index]
-                        self.card = MageCard() if is_mage_profession(self.selected_character.get("type")) else CharacterCard()
+                        self.card = CharacterCard()
                         self.card.sync(self.selected_character, title=None, kind="player")
                     return
 
@@ -196,7 +187,6 @@ class CharacterScene:
         
         # Button to create new character
         draw_button(screen, self.create_new_button, "СОЗДАТЬ ПЕРСОНАЖА", self.font, color=(70, 140, 220))
-        draw_button(screen, self.hall_of_fame_button, "ЗАЛ СЛАВЫ", self.font, color=(112, 87, 44))
         
         if self.error:
             draw_text(screen, self.small_font, self.error, 60, 980, (255, 100, 100))

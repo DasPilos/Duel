@@ -8,7 +8,7 @@ from client.network import ServerError
 from core import settings
 from core.currency import Currency
 from core.production_buildings import RESOURCES
-from ui.catalog_icons import draw_building_icon, draw_item_icon
+from ui.catalog_icons import draw_building_icon, draw_item_icon, draw_treasury_coins
 from ui.hud import draw_button
 
 
@@ -19,11 +19,6 @@ TABS = (
     ("tasks", "ЗАДАНИЯ"),
     ("upgrades", "УЛУЧШЕНИЯ"),
 )
-FOOD_STATUS_COLORS = {
-    "Пищи достаточно": (115, 215, 125),
-    "Население не доедает": (245, 205, 80),
-    "В городе голод": (235, 95, 85),
-}
 WORK_COLORS = {"Свободен": (120, 195, 230), "Занят": (120, 215, 130),
                "В пути": (90, 165, 245), "Возвращается": (235, 170, 105),
                "В городе": (220, 185, 115), "Ведёт повозку": (215, 176, 112)}
@@ -87,6 +82,7 @@ class CastleWindow:
         self.confirm_button = pygame.Rect(0, 0, 160, 36)
         self.cancel_button = pygame.Rect(0, 0, 160, 36)
         self.treasury_buttons = {}
+        self.upgrade_buttons = {}
         self.treasury_transfer = None
         self.treasury_quantity = 0
         self.treasury_dragging = False
@@ -183,6 +179,12 @@ class CastleWindow:
                     self._open_treasury_transfer(direction)
                     return
             return
+        if self.tab == "upgrades":
+            for upgrade_id, rect in self.upgrade_buttons.items():
+                if rect.collidepoint(event.pos):
+                    self._start_castle_upgrade(upgrade_id)
+                    return
+            return
         if self.tab != "population":
             return
         thumb = self.citizen_scrollbar_thumb_rect()
@@ -252,6 +254,16 @@ class CastleWindow:
         except (ServerError, AttributeError, KeyError, OSError) as error:
             self.message = str(error)
 
+    def _start_castle_upgrade(self, upgrade_id):
+        try:
+            self.state = self.scene.session.client.start_castle_upgrade(
+                self.scene.session.character["id"], upgrade_id
+            )
+            self.message = "Улучшение замка начато."
+            self.last_refresh = time.monotonic()
+        except (ServerError, AttributeError, KeyError, OSError) as error:
+            self.message = str(error)
+
     def draw(self, screen):
         if not self.is_open:
             return
@@ -292,6 +304,8 @@ class CastleWindow:
             self._draw_governor(screen, state)
         elif self.tab == "tasks":
             self._draw_placeholder(screen, "Заданий пока нет.")
+        elif self.tab == "upgrades":
+            self._draw_upgrades(screen, state)
         else:
             self._draw_placeholder(screen, "Улучшения замка появятся позже.")
         if self.pending_action:
@@ -302,7 +316,7 @@ class CastleWindow:
     def _open_treasury_transfer(self, direction):
         state = self.state or {}
         available = (state.get("personal_currency_copper", 0) if direction == "deposit"
-                     else state.get("treasury_copper", 0))
+                     else state.get("personal_treasury_copper", 0))
         if int(available) <= 0:
             self.message = "Нет доступных монет для перевода."
             return
@@ -375,6 +389,14 @@ class CastleWindow:
             amount_surface = self.font.render(str(amount), True, (232, 225, 205))
             screen.blit(amount_surface, (coin_x + 36, top + 1))
             coin_x += 92
+        personal_text = state.get("personal_treasury_text", "0 меди")
+        screen.blit(self.small_font.render(
+            f"Твой вклад: {personal_text} (можно забрать только свой вклад)",
+            True, (224, 211, 178)), (left, top + 40))
+        if state.get("is_mayor"):
+            screen.blit(self.small_font.render(
+                "Ты мэр города: можешь тратить всю казну на улучшения",
+                True, (243, 218, 158)), (left, top + 22))
         seconds = state.get("tax_tick_seconds_left", 0)
         expected_tax = state.get("expected_tax_text", "0 меди")
         screen.blit(self.small_font.render(
@@ -396,7 +418,8 @@ class CastleWindow:
         pygame.draw.rect(screen, (197, 164, 103), panel, 2, border_radius=7)
         deposit = transfer["direction"] == "deposit"
         title = "Внести монеты в казну" if deposit else "Забрать монеты из казны"
-        source = state.get("personal_currency_text", "0 меди") if deposit else state.get("treasury_text", "0 меди")
+        source = (state.get("personal_currency_text", "0 меди") if deposit
+                  else state.get("personal_treasury_text", "0 меди"))
         label = self.font.render(title, True, (243, 218, 158))
         screen.blit(label, label.get_rect(center=(panel.centerx, panel.top + 40)))
         screen.blit(self.small_font.render(f"Доступно: {source}", True, (201, 200, 185)),
@@ -422,6 +445,85 @@ class CastleWindow:
         draw_button(screen, self.treasury_confirm_button, "ПЕРЕВЕСТИ", self.small_font,
                     color=(74, 126, 69) if self.treasury_quantity else (51, 54, 48),
                     text_color=(238, 235, 217) if self.treasury_quantity else (142, 144, 134))
+
+    def _draw_upgrades(self, screen, state):
+        left = self.rect.left + 32
+        top = self.rect.top + 142
+        header = self.font.render("Улучшения замка", True, (243, 218, 158))
+        screen.blit(header, (left, top))
+        self.upgrade_buttons = {}
+        upgrades = state.get("upgrades") or []
+        personal_treasury = int(state.get("spendable_treasury_copper", state.get("personal_treasury_copper", 0)))
+        treasury = personal_treasury // 100
+        warehouse = state.get("city_resource_storage", {}) or {}
+        card_left = self.rect.left + 24
+        card_width = self.rect.width - 48
+        card_height = 166
+        card_gap = 10
+        curr_y = top + 38
+        for index, upgrade in enumerate(upgrades):
+            card = pygame.Rect(card_left, curr_y + index * (card_height + card_gap),
+                               card_width, card_height)
+            is_complete = bool(upgrade.get("is_complete"))
+            is_active = bool(upgrade.get("is_active"))
+            funds_available = (
+                treasury >= int(upgrade["silver_cost"])
+                and int(warehouse.get("wood", 0)) >= int(upgrade["wood_cost"])
+            )
+            can_start = not is_complete and not is_active and funds_available
+            pygame.draw.rect(screen, (34, 39, 31), card, border_radius=6)
+            pygame.draw.rect(screen, (108, 137, 82) if can_start else (77, 78, 66), card, 1,
+                             border_radius=6)
+            screen.blit(self.font.render(upgrade["name"], True, (232, 218, 184)),
+                        (card.left + 14, card.top + 10))
+            screen.blit(self.small_font.render(
+                f"Требование: {upgrade['requirement']}", True, (161, 201, 148),
+            ), (card.left + 14, card.top + 39))
+            screen.blit(self.small_font.render(
+                f"Результат: {upgrade['result']}", True, (197, 207, 190),
+            ), (card.left + 14, card.top + 62))
+            screen.blit(self.small_font.render(
+                f"Время улучшения: {_format_clock(upgrade['time_seconds'])}", True, (180, 194, 176),
+            ), (card.left + 14, card.top + 82))
+
+            price_y = card.top + 108
+            draw_item_icon(screen, "silver", (card.left + 14, price_y), 32)
+            prefix = self.small_font.render("Твой вклад:", True, (224, 214, 188))
+            screen.blit(prefix, (card.left + 52, price_y + 8))
+            coins_end = draw_treasury_coins(
+                screen, self.small_font, personal_treasury,
+                (card.left + 52 + prefix.get_width() + 8, price_y + 4), icon_size=24, gap=12,
+            )
+            screen.blit(self.small_font.render(
+                f"/ {upgrade['silver_cost']} серебра", True, (224, 214, 188),
+            ), (coins_end, price_y + 8))
+            draw_item_icon(screen, "wood", (card.left + 420, price_y), 32)
+            screen.blit(self.small_font.render(
+                f"{int(warehouse.get('wood', 0))}/{upgrade['wood_cost']} древесины",
+                True, (224, 214, 188),
+            ), (card.left + 458, price_y + 8))
+
+            button = pygame.Rect(card.right - 226, card.top + 113, 210, 38)
+            if is_complete:
+                status = self.small_font.render("УСТАНОВЛЕНО", True, (143, 208, 139))
+                screen.blit(status, status.get_rect(midright=(button.right, button.centery)))
+            elif is_active:
+                status = self.small_font.render(
+                    f"Осталось: {_format_clock(upgrade['seconds_left'])}", True, (132, 193, 231),
+                )
+                screen.blit(status, status.get_rect(midright=(button.right, button.centery)))
+            else:
+                if not funds_available:
+                    label, enabled = "НЕДОСТАТОЧНО", False
+                else:
+                    label, enabled = "НАЧАТЬ", True
+                draw_button(
+                    screen, button, label, self.small_font,
+                    color=(75, 125, 70) if enabled else (49, 51, 46),
+                    text_color=(240, 238, 220) if enabled else (140, 142, 132),
+                )
+                if enabled:
+                    self.upgrade_buttons[upgrade["id"]] = button
 
     def _draw_placeholder(self, screen, text):
         surface = self.font.render(text, True, (205, 199, 185))
@@ -471,9 +573,35 @@ class CastleWindow:
     def _draw_population(self, screen, state, mouse):
         left = self.rect.left + 28
         top = self.rect.top + 137
-        summary = (f"Население: {state.get('population', 0)} / "
+        zone = state.get("food_zone", "green")
+        zone_colors = {
+            "green": (75, 190, 100),
+            "yellow": (232, 191, 67),
+            "red": (218, 69, 65),
+        }
+        zone_color = zone_colors.get(zone, (225, 216, 187))
+        summary = (f"Население {state.get('population', 0)} / "
                    f"{state.get('population_capacity', 10)}")
-        screen.blit(self.font.render(summary, True, (225, 216, 187)), (left, top))
+        if state.get("food_status"):
+            summary += f" ({state['food_status']})"
+        screen.blit(self.font.render(summary, True, zone_color), (left, top))
+        timer_text = None
+        timer_color = zone_color
+        if zone == "green":
+            eta = state.get("new_citizen_eta_seconds")
+            timer_text = ("Новый горожанин прибудет через: "
+                          f"{_format_clock(eta) if eta is not None else '--:--:--'}")
+        elif zone == "yellow":
+            eta = state.get("satiated_eta_seconds")
+            timer_text = ("Население сытое : "
+                          f"{_format_clock(eta) if eta is not None else '--:--:--'}")
+        elif zone == "red":
+            eta = state.get("departure_eta_seconds")
+            timer_text = ("Горожанин покинет город : "
+                          f"{_format_clock(eta) if eta is not None else '--:--:--'}")
+        if timer_text:
+            screen.blit(self.small_font.render(timer_text, True, timer_color),
+                        (left, top + 22))
         self.citizen_actions = {}
         row_height = self.CITIZEN_ROW_HEIGHT
         citizens = sorted(
@@ -510,6 +638,11 @@ class CastleWindow:
                                (72, 174, 95))
             screen.blit(self.small_font.render(meter_label, True, meter_color),
                         (row.left + 220, row.top + 3))
+            death_eta = citizen.get("death_eta_seconds")
+            if satiety <= 10 and death_eta is not None:
+                death_text = f"Смерть через {_format_clock(death_eta)}"
+                screen.blit(self.small_font.render(death_text, True, (226, 66, 58)),
+                            (row.left + 385, row.top + 3))
             meter = pygame.Rect(row.left + 220, row.top + 24, 150, 8)
             pygame.draw.rect(screen, (95, 98, 91), meter, border_radius=3)
             meter_value = strong_hunger if satiety == 0 else satiety

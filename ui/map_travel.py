@@ -283,13 +283,16 @@ def draw_traveling_entities(scene, screen, location="world_map"):
         name = entity.get("cart_name", entity.get("name", "Повозка"))
         label = scene.grid_font.render(str(name), True, (237, 214, 164))
         label_rect = label.get_rect(midbottom=(sx, sy - 28))
-        sprite_key = entity.get("cart_sprite_key", "light")
         icon_size = 32
-        icon_rect = draw_transport_cart_icon(
-            screen, sprite_key,
-            (label_rect.left - icon_size - 4, label_rect.centery - icon_size // 2),
-            icon_size,
-        )
+        icon_position = (label_rect.left - icon_size - 4, label_rect.centery - icon_size // 2)
+        if entity["entity_kind"] == "citizen":
+            from ui.catalog_icons import draw_item_icon
+            icon = draw_item_icon(screen, "citizen", icon_position, icon_size)
+            icon_rect = icon.get_rect(topleft=icon_position) if icon is not None else None
+        else:
+            icon_rect = draw_transport_cart_icon(
+                screen, entity.get("cart_sprite_key", "light"), icon_position, icon_size,
+            )
         if icon_rect is not None:
             label_rect.left = icon_rect.right + 4
         screen.blit(label, label_rect)
@@ -350,7 +353,7 @@ def draw_mobile_hover_card(scene, screen, entity):
 def _draw_wagon_hover_card(scene, screen, entity):
     width, padding, line_height = 340, 12, 36
     bar_height, bar_gap = 8, 5
-    content_height = padding * 2 + line_height * 6 + bar_gap + bar_height + 1
+    content_height = padding * 2 + line_height * 8 + bar_gap + bar_height + 1
     mouse_x, mouse_y = pygame.mouse.get_pos()
     left = min(mouse_x + 16, screen.get_width() - width - 8)
     top = min(mouse_y + 16, screen.get_height() - content_height - 8)
@@ -372,6 +375,31 @@ def _draw_wagon_hover_card(scene, screen, entity):
     screen.blit(scene.small_font.render(movement, True, (128, 203, 245)),
                 (panel.left + padding, line_y))
     line_y += line_height
+
+    speed_kmh = entity.get("speed_kmh")
+    speed_text = f"Скорость: {round(float(speed_kmh))} км/ч" if speed_kmh is not None else "Скорость: —"
+    screen.blit(scene.small_font.render(speed_text, True, (210, 210, 196)),
+                (panel.left + padding, line_y))
+    line_y += line_height
+
+    durability = entity.get("durability")
+    if durability is not None:
+        wear_band = entity.get("wear_band", "good")
+        wear_color = {
+            "broken": (22, 22, 22), "full": (226, 86, 77),
+            "medium": (235, 190, 77), "good": (101, 210, 125),
+        }.get(wear_band, (101, 210, 125))
+        wear_ratio = max(0.0, min(1.0, float(durability) / 100.0))
+        wear_label = f"Износ: {round(float(durability))}%"
+        screen.blit(scene.small_font.render(wear_label, True, wear_color),
+                    (panel.left + padding, line_y))
+        wear_track = pygame.Rect(panel.left + padding + 120, line_y + 8, width - padding * 2 - 120, 8)
+        pygame.draw.rect(screen, (55, 61, 65), wear_track, border_radius=3)
+        wear_fill = wear_track.copy()
+        wear_fill.width = round(wear_track.width * wear_ratio)
+        if wear_fill.width:
+            pygame.draw.rect(screen, wear_color, wear_fill, border_radius=3)
+        line_y += line_height
 
     route_name = str(entity.get("route_name", "—"))
     route_text = f"Маршрут: {route_name}"
@@ -413,9 +441,14 @@ def _draw_wagon_hover_card(scene, screen, entity):
     screen.blit(scene.small_font.render(f"Груз: {cargo_text}", True, (217, 197, 155)), (cargo_x, line_y))
     line_y += line_height
 
-    percent = _route_progress_percent(entity)
     direction = entity.get("direction", "outbound")
-    progress_label = "Путь в город" if direction == "returning" else "Путь к объекту"
+    phase = entity.get("phase")
+    if phase in ("loading", "unloading") and entity.get("cargo_percent") is not None:
+        percent = max(0, min(100, int(round(float(entity["cargo_percent"])))))
+        progress_label = "Погрузка" if phase == "loading" else "Разгрузка"
+    else:
+        percent = _route_progress_percent(entity)
+        progress_label = "Путь в город" if direction == "returning" else "Путь к объекту"
     progress_text = f"{progress_label}: {percent}%"
     screen.blit(scene.small_font.render(progress_text, True, (192, 205, 180)),
                 (panel.left + padding, line_y))

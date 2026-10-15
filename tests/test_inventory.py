@@ -35,7 +35,7 @@ class InventoryTests(unittest.TestCase):
             connection.execute(
                 "UPDATE characters SET stats_json = %s WHERE id = %s",
                 (json.dumps({"strength": strength, "agility": 3, "intuition": 3,
-                             "wisdom": 3, "intellect": 3, "harmony": 3, "endurance": 3}),
+                             "wisdom": 3, "intellect": 3, "endurance": 3}),
                  self.character_id),
             )
 
@@ -43,6 +43,18 @@ class InventoryTests(unittest.TestCase):
         self.assertTrue(self.items.grant_base_equipment(self.character_id))
         self.assertFalse(self.items.grant_base_equipment(self.character_id))
         self.assertEqual({item["item_id"] for item in self.items.get_inventory(self.character_id)}, {90, 91, 92, 93})
+
+    def test_server_keeps_equipment_hp_above_endurance_formula(self):
+        from combat.character_stats import calculate_max_hp
+
+        self.items.add_to_inventory(self.character_id, 23, 1)
+        club = next(item for item in self.items.get_inventory(self.character_id) if item["item_id"] == 23)
+        self.items.equip_item(self.character_id, club["slot_index"])
+        self.assertEqual(self.items.get_equipment(self.character_id).get("weapon", {}).get("item_id"), 23)
+        saved = self.database.save_character(self.user_id, self.character_id, {"hp": 9999, "max_hp": 9999})
+        endurance = saved["stats"]["endurance"]
+        self.assertEqual(saved["max_hp"], calculate_max_hp(saved["level"], endurance) + 20)
+        self.assertEqual(saved["hp"], saved["max_hp"])
 
     def test_equipment_migration_replaces_old_gear_and_keeps_materials(self):
         self.items.add_to_inventory(self.character_id, 20, 1)
@@ -197,14 +209,6 @@ class InventoryTests(unittest.TestCase):
         self.assertTrue(state["equipment"]["shield"].get("_two_handed_shadow"))
         self.assertEqual(state["carried_weight_kg"], 4.0)
 
-    def test_battle_reward_stays_unclaimed_when_it_exceeds_carry_capacity(self):
-        self.assertTrue(self.items.add_to_inventory(self.character_id, 60, 6))
-        reward_id = self.items.add_reward(self.character_id, 60, 1)
-
-        self.assertFalse(self.items.claim_reward(reward_id, self.character_id))
-        self.assertEqual(len(self.items.get_rewards(self.character_id)), 1)
-        self.assertEqual(self.items.get_inventory_state(self.character_id)["carried_weight_kg"], 24)
-
     def test_remove_inventory_item_endpoint_decrements_requested_quantity(self):
         self.set_strength(100)
         self.items.add_to_inventory(self.character_id, 60, 10)
@@ -340,23 +344,20 @@ class InventoryTests(unittest.TestCase):
             character["carry_capacity_kg"],
             character["stats"]["strength"] * 5 + (character["stats"]["endurance"] + 2) * 3,
         )
-        battle = self.database.get_character_for_battle(self.character_id)["character"]
-        self.assertEqual(battle["equipment_bonuses"], {"endurance": 2})
-        self.assertEqual(battle["carry_capacity_kg"], character["carry_capacity_kg"])
 
     def test_shield_bonuses_reach_battle_fighter(self):
-        from scenes.duel_scene import DuelScene
+        from combat.fighter_profile import apply_fighter_profile
 
         self.items.add_to_inventory(self.character_id, 39, 1)
         self.items.equip_item(self.character_id, 0, "shield")
-        character = self.database.get_character_for_battle(self.character_id)["character"]
+        character = self.database.get_character(self.user_id, self.character_id)
         fighter = Fighter("Щитоносец")
 
-        DuelScene._apply_fighter_profile(fighter, character)
+        apply_fighter_profile(fighter, character)
 
         self.assertEqual(fighter.equipment_stat_modifiers["hp"], 20)
         self.assertEqual(fighter.equipment_stat_modifiers["block"], 5)
-        self.assertEqual(fighter.max_hp, 50)
+        self.assertEqual(fighter.max_hp, 56)
 
     def test_fighter_uses_equipment_bonus_without_changing_base_stats(self):
         fighter = Fighter("Воин")

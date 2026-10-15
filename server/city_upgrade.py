@@ -4,6 +4,7 @@ import json
 import math
 
 from core.city_progression import (
+    MAX_CITY_LEVEL,
     city_population_capacity,
     city_storage_resources,
     city_upgrade_resources,
@@ -15,6 +16,10 @@ UPGRADE_TICK_COUNT = 4
 UPGRADE_CYCLE_SECONDS = UPGRADE_TICK_SECONDS * UPGRADE_TICK_COUNT
 UPGRADE_START_GRACE_SECONDS = 15
 LEGACY_SURPLUS_PERCENT = 71
+
+
+def city_upgrade_name(target_level):
+    return f"Улучшение города до ур. {int(target_level)}"
 
 
 def city_upgrade_drain_per_tick(population, population_capacity):
@@ -123,7 +128,7 @@ def _finish_city_upgrade(connection, key, city_level, cycle, finished_at):
     if not completion_failed and resources:
         next_level = city_level + 1
         connection.execute(
-            """UPDATE city_population_state SET castle_level=%s
+            """UPDATE city_population_state SET city_level=%s
                WHERE world_id=%s AND faction=%s""",
             (next_level, *key),
         )
@@ -149,7 +154,7 @@ def _finish_city_upgrade(connection, key, city_level, cycle, finished_at):
 def process_city_upgrade(connection, key, now):
     """Advance due quarter-hour deductions and start only on an exact hour boundary."""
     state = connection.execute(
-        """SELECT castle_level, population_capacity_bonus,
+        """SELECT city_level, population_capacity_bonus,
               city_upgrade_last_hour, city_upgrade_cycle,
                   city_upgrade_last_result
            FROM city_population_state WHERE world_id=%s AND faction=%s FOR UPDATE""",
@@ -158,7 +163,7 @@ def process_city_upgrade(connection, key, now):
     if state is None:
         return None
 
-    city_level = int(state["castle_level"])
+    city_level = int(state["city_level"])
     last_hour = float(state["city_upgrade_last_hour"])
     cycle = _json_object(state["city_upgrade_cycle"])
     last_result = _json_object(state["city_upgrade_last_result"])
@@ -216,12 +221,15 @@ def process_city_upgrade(connection, key, now):
     hour = math.floor(now / 3600) * 3600
     if hour <= last_hour:
         return last_result
-    if now - hour > UPGRADE_START_GRACE_SECONDS:
+    if now - hour > UPGRADE_START_GRACE_SECONDS or city_level >= MAX_CITY_LEVEL:
         _write_upgrade_state(connection, key, hour, {}, last_result)
         return last_result
 
     resources = _city_storage(connection, key, city_level)
     population, population_capacity = _population_state(connection, key, city_level)
+    if population <= 0:
+        _write_upgrade_state(connection, key, hour, {}, last_result)
+        return last_result
     per_tick = city_upgrade_drain_per_tick(population, population_capacity)
     cycle_cost = city_upgrade_cycle_cost(population, population_capacity)
     funded = {
@@ -259,7 +267,7 @@ def process_city_upgrade(connection, key, now):
 
 def city_upgrade_payload(connection, key, now):
     row = connection.execute(
-        """SELECT castle_level, population_capacity_bonus,
+        """SELECT city_level, population_capacity_bonus,
               city_upgrade_last_hour, city_upgrade_cycle,
               city_upgrade_last_result
            FROM city_population_state WHERE world_id=%s AND faction=%s""",
@@ -268,6 +276,7 @@ def city_upgrade_payload(connection, key, now):
     if row is None:
         return {
             "city_level": 1, "population": 4, "active": False,
+            "target_level": 2, "upgrade_name": city_upgrade_name(2),
             "charging_resources": [], "last_result": {},
         }
 
@@ -291,11 +300,14 @@ def city_upgrade_payload(connection, key, now):
     )
     last_hour = float(row["city_upgrade_last_hour"])
     next_start_at = max(0.0, last_hour + 3600)
+    target_level = int(row["city_level"]) + 1
     return {
-        "city_level": int(row["castle_level"]),
+        "city_level": int(row["city_level"]),
+        "target_level": target_level,
+        "upgrade_name": city_upgrade_name(target_level),
         "population": population,
         "population_capacity": city_population_capacity(
-            row["castle_level"], row["population_capacity_bonus"],
+            row["city_level"], row["population_capacity_bonus"],
         ),
         "active": active,
         "started_at": started_at,
@@ -310,7 +322,7 @@ def city_upgrade_payload(connection, key, now):
                 city_upgrade_drain_per_tick(
                     population,
                     int(cycle.get("population_capacity", city_population_capacity(
-                        row["castle_level"], row["population_capacity_bonus"],
+                        row["city_level"], row["population_capacity_bonus"],
                     ))),
                 ) * UPGRADE_TICK_COUNT
                 if cycle.get("drain_formula") == "population_capacity"
@@ -323,7 +335,7 @@ def city_upgrade_payload(connection, key, now):
                 city_upgrade_drain_per_tick(
                     population,
                     int(cycle.get("population_capacity", city_population_capacity(
-                        row["castle_level"], row["population_capacity_bonus"],
+                        row["city_level"], row["population_capacity_bonus"],
                     ))),
                 )
                 if cycle.get("drain_formula") == "population_capacity"

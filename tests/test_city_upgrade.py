@@ -4,11 +4,16 @@ import unittest
 
 from core.production_buildings import building_level_info
 from server.city_population import CityPopulation
-from core.city_progression import city_population_capacity, city_upgrade_resources
+from core.city_progression import (
+    CITY_UPGRADE_RESOURCE_UNLOCK_LEVELS,
+    city_population_capacity,
+    city_upgrade_resources,
+)
 from server.city_upgrade import (
     UPGRADE_TICK_SECONDS,
     city_upgrade_cycle_cost,
     city_upgrade_drain_per_tick,
+    city_upgrade_name,
     city_upgrade_payload,
     process_city_upgrade,
 )
@@ -64,9 +69,9 @@ class CityUpgradeTests(unittest.TestCase):
     def _city_level(self):
         with self.database.connection() as connection:
             return int(connection.execute(
-                "SELECT castle_level FROM city_population_state WHERE world_id=%s AND faction='light'",
+                "SELECT city_level FROM city_population_state WHERE world_id=%s AND faction='light'",
                 (self.database.world_id,),
-            ).fetchone()["castle_level"])
+            ).fetchone()["city_level"])
 
     def _set_population(self, amount):
         with self.database.connection() as connection:
@@ -101,7 +106,33 @@ class CityUpgradeTests(unittest.TestCase):
         self.assertEqual(city_upgrade_drain_per_tick(4, 10), 40)
         self.assertEqual(city_upgrade_cycle_cost(4, 10), 160)
         self.assertEqual(city_population_capacity(2), 14)
+        self.assertEqual(CITY_UPGRADE_RESOURCE_UNLOCK_LEVELS["meat"], CITY_UPGRADE_RESOURCE_UNLOCK_LEVELS["leather"])
+        self.assertEqual(set(city_upgrade_resources(1)), {"wheat", "wood"})
         self.assertEqual(set(city_upgrade_resources(2)), {"wheat", "wood", "stone"})
+
+    def test_city_population_table_and_max_level(self):
+        self.assertEqual(
+            [city_population_capacity(level) for level in range(1, 6)], [10, 14, 20, 28, 40]
+        )
+        self.assertEqual(city_population_capacity(9), 40)
+
+    def test_max_city_level_does_not_start_upgrade(self):
+        self._set_population(40)
+        self._set_storage("barn", "wheat", 1000)
+        self._set_storage("warehouse", "wood", 1000)
+        with self.database.connection() as connection:
+            connection.execute(
+                """UPDATE city_population_state SET city_level=5
+                   WHERE world_id=%s AND faction='light'""",
+                (self.database.world_id,),
+            )
+        self.city.tick_all(now=self.start_at)
+        with self.database.connection() as connection:
+            payload = city_upgrade_payload(
+                connection, (self.database.world_id, "light"), self.start_at
+            )
+        self.assertFalse(payload["active"])
+        self.assertEqual(payload["city_level"], 5)
 
     def test_city_visual_payload_includes_live_population(self):
         with self.database.connection() as connection:
@@ -112,6 +143,8 @@ class CityUpgradeTests(unittest.TestCase):
         self.assertEqual(payload["population"], 4)
         self.assertEqual(payload["population_capacity"], 10)
         self.assertFalse(payload["active"])
+        self.assertEqual(payload["target_level"], 2)
+        self.assertEqual(payload["upgrade_name"], city_upgrade_name(2))
 
     def test_population_ticker_advances_cycle_without_ui_requests(self):
         self._set_storage("barn", "wheat", 1000)
@@ -134,6 +167,8 @@ class CityUpgradeTests(unittest.TestCase):
                 self.start_at + UPGRADE_TICK_SECONDS,
             )
         self.assertEqual(payload["phase_index"], 1)
+        self.assertEqual(payload["upgrade_name"], city_upgrade_name(2))
+        self.assertGreater(payload["finish_at"], self.start_at)
 
     def test_ap_does_not_start_without_resources_for_all_four_ticks(self):
         self._set_storage("barn", "wheat", 1000)
@@ -229,7 +264,7 @@ class CityUpgradeTests(unittest.TestCase):
     def test_level_two_city_with_fourteen_citizens_charges_three_resources(self):
         with self.database.connection() as connection:
             connection.execute(
-                "UPDATE city_population_state SET castle_level=2 WHERE world_id=%s AND faction='light'",
+                "UPDATE city_population_state SET city_level=2 WHERE world_id=%s AND faction='light'",
                 (self.database.world_id,),
             )
         self._set_population(14)
@@ -250,6 +285,65 @@ class CityUpgradeTests(unittest.TestCase):
         self.assertEqual(self._storage("barn", "wheat"), 804)
         self.assertEqual(self._storage("warehouse", "wood"), 804)
         self.assertEqual(self._storage("warehouse", "stone"), 804)
+
+    def test_level_two_city_upgrades_to_level_three_with_wheat_wood_and_stone(self):
+        with self.database.connection() as connection:
+            connection.execute(
+                "UPDATE city_population_state SET city_level=2 WHERE world_id=%s AND faction='light'",
+                (self.database.world_id,),
+            )
+        self._set_population(14)
+        self._set_storage("barn", "wheat", 1000)
+        self._set_storage("warehouse", "wood", 1000)
+        self._set_storage("warehouse", "stone", 1000)
+
+        self._process_at(self.start_at)
+        for tick in range(1, 5):
+            self._process_at(self.start_at + tick * UPGRADE_TICK_SECONDS)
+
+        self.assertEqual(self._city_level(), 3)
+        state = self.city.get_state(self.character_id, self.start_at + 3600)["city_upgrade"]
+        self.assertEqual(state["last_result"]["status"], "completed")
+        self.assertEqual(state["last_result"]["from_level"], 2)
+        self.assertEqual(state["last_result"]["to_level"], 3)
+
+    def test_level_two_city_does_not_start_upgrade_without_stone(self):
+        with self.database.connection() as connection:
+            connection.execute(
+                "UPDATE city_population_state SET city_level=2 WHERE world_id=%s AND faction='light'",
+                (self.database.world_id,),
+            )
+        self._set_population(14)
+        self._set_storage("barn", "wheat", 1000)
+        self._set_storage("warehouse", "wood", 1000)
+        self._set_storage("warehouse", "stone", 0)
+
+        self._process_at(self.start_at)
+        with self.database.connection() as connection:
+            row = connection.execute(
+                "SELECT city_upgrade_cycle FROM city_population_state WHERE world_id=%s AND faction='light'",
+                (self.database.world_id,),
+            ).fetchone()
+        self.assertFalse(row["city_upgrade_cycle"].get("active", False))
+        self.assertEqual(self._city_level(), 2)
+
+    def test_city_without_population_does_not_start_free_upgrade(self):
+        with self.database.connection() as connection:
+            connection.execute(
+                "UPDATE city_citizens SET alive=FALSE WHERE world_id=%s AND faction='light'",
+                (self.database.world_id,),
+            )
+        self._set_storage("barn", "wheat", 0)
+        self._set_storage("warehouse", "wood", 0)
+
+        self._process_at(self.start_at)
+        with self.database.connection() as connection:
+            row = connection.execute(
+                "SELECT city_upgrade_cycle FROM city_population_state WHERE world_id=%s AND faction='light'",
+                (self.database.world_id,),
+            ).fetchone()
+        self.assertFalse(row["city_upgrade_cycle"].get("active", False))
+        self.assertEqual(self._city_level(), 1)
 
     def test_tick_cost_updates_when_population_changes_during_cycle(self):
         self._set_storage("barn", "wheat", 1000)

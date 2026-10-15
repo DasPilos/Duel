@@ -12,13 +12,12 @@ from core.production_buildings import building_resources, upgrade_requirements
 from server.items_database import ItemsDatabase
 from server.production_buildings import ProductionBuildings, STORAGE_RESOURCES_BY_ITEM_ID
 from server.structures import city_structures
-from tests.fixtures import create_test_database, drop_test_database
+from tests.fixtures import create_test_database, drop_test_database, seed_city_treasury
 
 BARN_GOODS = ("berries", "wheat", "meat")
 WAREHOUSE_GOODS = (
-    "wood", "board", "flax", "cotton", "leather", "coal", "stone", "iron", "mithril", "obsidian",
-    "iron_ingot", "steel", "hard_leather", "thick_leather", "cloth", "stone_block",
-    "jet", "malachite", "topaz", "garnet", "emerald", "ruby", "sapphire", "diamond",
+    "wood", "flax", "leather", "coal", "stone", "iron", "mithril", "obsidian",
+    "steel", "jet", "malachite", "topaz", "garnet", "emerald", "ruby", "sapphire", "diamond",
 )
 
 
@@ -30,15 +29,15 @@ class CityStorageServerTests(unittest.TestCase):
         self.character_id = self.database.create_character(user["id"], "Keeper")["id"]
         with self.database.connection() as connection:
             connection.execute(
-                """INSERT INTO city_population_state (world_id, faction, castle_level, last_food_tick_at)
+                """INSERT INTO city_population_state (world_id, faction, city_level, last_food_tick_at)
                    VALUES (%s, 'light', 4, 0) ON CONFLICT (world_id, faction)
-                   DO UPDATE SET castle_level = 4""",
+                   DO UPDATE SET city_level = 4""",
                 (self.database.world_id,),
             )
         with self.database.connection() as connection:
             connection.execute(
                 "UPDATE characters SET stats_json = %s WHERE id = %s",
-                ('{"strength":1000,"agility":3,"intuition":3,"wisdom":3,"intellect":3,"harmony":3,"endurance":3}',
+                ('{"strength":1000,"agility":3,"intuition":3,"wisdom":3,"intellect":3,"endurance":3}',
                  self.character_id),
             )
 
@@ -54,7 +53,7 @@ class CityStorageServerTests(unittest.TestCase):
     def _set_city_level(self, level):
         with self.database.connection() as connection:
             connection.execute(
-                "UPDATE city_population_state SET castle_level=%s WHERE world_id=%s AND faction='light'",
+                "UPDATE city_population_state SET city_level=%s WHERE world_id=%s AND faction='light'",
                 (int(level), self.database.world_id),
             )
 
@@ -104,6 +103,25 @@ class CityStorageServerTests(unittest.TestCase):
         self.assertEqual(barn["storage"], {"wheat": 0, "limit": 1000})
         self.assertEqual(
             warehouse["storage"], {"wood": 0, "stone": 0, "limit": 1000},
+        )
+
+    def test_level_three_storage_adds_berries_flax_leather_and_iron(self):
+        self._set_city_level(3)
+        barn = self.buildings.get_state(self.character_id, "barn", 10000)
+        warehouse = self.buildings.get_state(self.character_id, "warehouse", 10000)
+        self.assertIn("berries", barn["storage"])
+        for resource in ("flax", "leather", "iron"):
+            self.assertIn(resource, warehouse["storage"])
+        for removed in ("board", "iron_ingot", "stone_block", "cotton", "hard_leather", "thick_leather", "cloth"):
+            self.assertNotIn(removed, warehouse["storage"])
+
+    def test_level_three_city_accepts_exactly_the_specified_resources(self):
+        self._set_city_level(3)
+        self.assertEqual(set(building_resources("barn")), {"wheat", "berries", "meat"})
+        warehouse = self.buildings.get_state(self.character_id, "warehouse", 10000)["storage"]
+        self.assertEqual(
+            {resource for resource in ("wood", "leather", "iron", "stone", "flax") if resource in warehouse},
+            {"wood", "leather", "iron", "stone", "flax"},
         )
 
     def test_each_city_storage_resource_has_its_own_capacity(self):
@@ -188,10 +206,7 @@ class CityStorageServerTests(unittest.TestCase):
                 "UPDATE characters SET copper=0,silver=0,gold=0 WHERE id=%s",
                 (self.character_id,),
             )
-            connection.execute(
-                "UPDATE city_population_state SET treasury_copper=4000 WHERE world_id=%s AND faction='light'",
-                (self.database.world_id,),
-            )
+            seed_city_treasury(connection, self.database.world_id, 4000, self.character_id)
         state = self.buildings.get_state(self.character_id, "stable", 10000)
         self.assertEqual(state["horse_price_next_silver"], 10)
         for slot_index, price in enumerate((10, 10, 10, 10)):
@@ -220,11 +235,7 @@ class CityStorageServerTests(unittest.TestCase):
     def test_horse_satiety_uses_wheat_and_idle_or_work_rate(self):
         self.buildings.get_state(self.character_id, "barn", 10000)
         with self.database.connection() as connection:
-            connection.execute(
-                "UPDATE city_population_state SET treasury_copper=1000 "
-                "WHERE world_id=%s AND faction='light'",
-                (self.database.world_id,),
-            )
+            seed_city_treasury(connection, self.database.world_id, 1000, self.character_id)
         self.buildings.purchase_horse(self.character_id, 0, now=10000)
         with self.database.connection() as connection:
             horse_id = connection.execute(
@@ -292,10 +303,7 @@ class CityStorageServerTests(unittest.TestCase):
                 "UPDATE characters SET copper=0,silver=25,gold=0 WHERE id=%s",
                 (self.character_id,),
             )
-            connection.execute(
-                "UPDATE city_population_state SET treasury_copper=5000 WHERE world_id=%s AND faction='light'",
-                (self.database.world_id,),
-            )
+            seed_city_treasury(connection, self.database.world_id, 5000, self.character_id)
         self._deposit_warehouse(self.character_id, 60, 300)
         before = self.buildings.get_state(self.character_id, "stable", 10001)
         self.assertTrue(before["stall_upgrades"]["wooden_stalls"]["can_purchase"])
@@ -320,15 +328,38 @@ class CityStorageServerTests(unittest.TestCase):
         self.assertTrue(shared["stall_upgrades"]["wooden_stalls"]["completed"])
         self.assertTrue(shared["stall_slots"][4]["unlocked"])
 
+    def test_farm_upgrade_uses_only_spendable_treasury_for_non_mayor(self):
+        donor_user = self.database.register("donor", "password")
+        teammate_id = self.database.create_character(donor_user["id"], "Donor")["id"]
+        with self.database.connection() as connection:
+            connection.execute(
+                "UPDATE city_population_state SET treasury_copper=%s WHERE world_id=%s AND faction='light'",
+                (10000, self.database.world_id),
+            )
+            connection.execute(
+                """INSERT INTO city_treasury_contributions (world_id, faction, character_id, contributed_copper)
+                   VALUES (%s, 'light', %s, %s)""",
+                (self.database.world_id, int(teammate_id), 10000),
+            )
+        state = self.buildings.get_state(self.character_id, "farm", 10000)
+        self.assertEqual(state["spendable_treasury_copper"], 0)
+        self.assertEqual(state["treasury_copper"], 10000)
+        with self.assertRaisesRegex(ValueError, "твоих средств"):
+            self.buildings.purchase_farm_upgrade(self.character_id, "ration", now=10001)
+
+    def test_farm_upgrade_mayor_spends_gold_only_treasury(self):
+        with self.database.connection() as connection:
+            seed_city_treasury(connection, self.database.world_id, 10000, self.character_id)
+        state = self.buildings.get_state(self.character_id, "farm", 10000)
+        self.assertEqual(state["spendable_treasury_copper"], 10000)
+        started = self.buildings.purchase_farm_upgrade(self.character_id, "ration", now=10001)
+        self.assertEqual(started["farm_upgrades"]["active_upgrade_id"], "ration")
+
     def test_farm_upgrade_chain_adds_first_field_worker_plough_and_level_two(self):
         farm = self.buildings.get_state(self.character_id, "farm", 10000)
         self.assertEqual(farm["max_workers"], 2)
         with self.database.connection() as connection:
-            connection.execute(
-                "UPDATE city_population_state SET treasury_copper=10000 "
-                "WHERE world_id=%s AND faction='light'",
-                (self.database.world_id,),
-            )
+            seed_city_treasury(connection, self.database.world_id, 10000, self.character_id)
 
         ration = self.buildings.purchase_farm_upgrade(self.character_id, "ration", now=10001)
         self.assertEqual(ration["farm_upgrades"]["active_upgrade_id"], "ration")
@@ -354,11 +385,7 @@ class CityStorageServerTests(unittest.TestCase):
                 "AND building='warehouse' AND resource='wood'",
                 (self.database.world_id,),
             )
-            connection.execute(
-                "UPDATE city_population_state SET treasury_copper=2000 "
-                "WHERE world_id=%s AND faction='light'",
-                (self.database.world_id,),
-            )
+            seed_city_treasury(connection, self.database.world_id, 2000, self.character_id)
         plough = self.buildings.purchase_farm_upgrade(self.character_id, "wooden_plough", now=11803)
         self.assertEqual(plough["farm_upgrades"]["seconds_left"], 3600)
         plough_done = self.buildings.get_state(self.character_id, "farm", 15403)
@@ -371,11 +398,7 @@ class CityStorageServerTests(unittest.TestCase):
                 "AND building='warehouse' AND resource='wood'",
                 (self.database.world_id,),
             )
-            connection.execute(
-                "UPDATE city_population_state SET treasury_copper=5000 "
-                "WHERE world_id=%s AND faction='light'",
-                (self.database.world_id,),
-            )
+            seed_city_treasury(connection, self.database.world_id, 5000, self.character_id)
         level_two = self.buildings.purchase_farm_upgrade(self.character_id, "farm_level_2", now=15404)
         self.assertEqual(level_two["farm_upgrades"]["seconds_left"], 7200)
         completed = self.buildings.get_state(self.character_id, "farm", 22604)
@@ -393,25 +416,21 @@ class CityStorageServerTests(unittest.TestCase):
         self.assertEqual(farm_worksite["capacity"], 5)
 
         with self.database.connection() as connection:
-            connection.execute(
-                "UPDATE city_population_state SET treasury_copper=3000 "
-                "WHERE world_id=%s AND faction='light'",
-                (self.database.world_id,),
-            )
-        ration_level_two = self.buildings.purchase_farm_upgrade(
-            self.character_id, "ration_level_2", now=22605,
+            seed_city_treasury(connection, self.database.world_id, 8000, self.character_id)
+        edge = self.buildings.purchase_farm_upgrade(
+            self.character_id, "plough_field_edge", now=22605,
         )
-        self.assertEqual(ration_level_two["farm_upgrades"]["seconds_left"], 1800)
-        ration_level_two_done = self.buildings.get_state(self.character_id, "farm", 24405)
-        self.assertTrue(ration_level_two_done["farm_upgrades"]["completed"]["ration_level_2"])
-        second_field_slot = next(
-            slot for slot in ration_level_two_done["worker_slots"] if slot["slot_index"] == 1001
-        )
-        self.assertEqual(second_field_slot["resources"], ["wheat"])
-        self.assertEqual(ration_level_two_done["max_workers"], 6)
-        governor = CityPopulation(self.database).get_state(self.character_id, now=24405)
+        self.assertEqual(edge["farm_upgrades"]["seconds_left"], 8400)
+        edge_done = self.buildings.get_state(self.character_id, "farm", 22605 + 8400 + 1)
+        self.assertEqual(edge_done["farm_upgrades"]["extra_places"], {"1": 2})
+        extra_slots = [
+            slot["slot_index"] for slot in edge_done["worker_slots"] if slot["slot_index"] >= 2000
+        ]
+        self.assertEqual(extra_slots, [2101, 2102])
+        self.assertEqual(edge_done["max_workers"], 7)
+        governor = CityPopulation(self.database).get_state(self.character_id, now=22605 + 8400 + 1)
         farm_worksite = next(site for site in governor["worksites"] if site["building"] == "farm")
-        self.assertEqual(farm_worksite["capacity"], 6)
+        self.assertEqual(farm_worksite["capacity"], 7)
 
         with self.database.connection() as connection:
             connection.execute(
@@ -419,29 +438,27 @@ class CityStorageServerTests(unittest.TestCase):
                 "AND building='warehouse' AND resource='wood'",
                 (self.database.world_id,),
             )
-            connection.execute(
-                "UPDATE city_population_state SET treasury_copper=2000 "
-                "WHERE world_id=%s AND faction='light'",
-                (self.database.world_id,),
-            )
-        handle = self.buildings.purchase_farm_upgrade(
-            self.character_id, "wooden_handle", now=24406,
-        )
-        self.assertEqual(handle["farm_upgrades"]["seconds_left"], 3600)
-        handle_done = self.buildings.get_state(self.character_id, "farm", 28006)
-        self.assertTrue(handle_done["farm_upgrades"]["completed"]["wooden_handle"])
-        self.assertEqual(handle_done["worker_slots"][0]["timer_sec_by_resource"]["wheat"], 122)
-        governor = CityPopulation(self.database).get_state(self.character_id, now=28006)
-        self.assertAlmostEqual(governor["city_resource_income_per_hour"]["wheat"], 3600 / 122)
+            seed_city_treasury(connection, self.database.world_id, 9000, self.character_id)
+        whetstone = self.buildings.purchase_farm_upgrade(self.character_id, "whetstone", now=31005)
+        self.assertEqual(whetstone["farm_upgrades"]["seconds_left"], 8400)
+        whetstone_done = self.buildings.get_state(self.character_id, "farm", 31005 + 8400 + 1)
+        self.assertTrue(whetstone_done["farm_upgrades"]["whetstone"])
+        # Plough (5%) and whetstone (15%) reduce the 140s wheat timer together: 140 * 0.80 = 112.
+        self.assertEqual(whetstone_done["worker_slots"][0]["timer_sec_by_resource"]["wheat"], 112)
+
+        with self.database.connection() as connection:
+            seed_city_treasury(connection, self.database.world_id, 10000, self.character_id)
+        sowing = self.buildings.purchase_farm_upgrade(self.character_id, "flax_field_sowing", now=40000)
+        self.assertEqual(sowing["farm_upgrades"]["seconds_left"], 10800)
+        sowing_done = self.buildings.get_state(self.character_id, "farm", 40000 + 10800 + 1)
+        self.assertEqual(sowing_done["level"], 3)
+        self.assertTrue(sowing_done["farm_upgrades"]["completed"]["flax_field_sowing"])
 
     def test_stall_purchase_never_debits_backpack_directly(self):
         items = ItemsDatabase(self.database)
         items.add_to_inventory(self.character_id, 60, 300)
         with self.database.connection() as connection:
-            connection.execute(
-                "UPDATE city_population_state SET treasury_copper=5000 WHERE world_id=%s AND faction='light'",
-                (self.database.world_id,),
-            )
+            seed_city_treasury(connection, self.database.world_id, 5000, self.character_id)
         with self.assertRaisesRegex(ValueError, "общем складе"):
             self.buildings.purchase_stall_upgrade(self.character_id, "wooden_stalls", 10000)
         self.assertEqual(sum(row["quantity"] for row in items.get_inventory(self.character_id)
@@ -462,11 +479,7 @@ class CityStorageServerTests(unittest.TestCase):
         self.assertEqual(initial["storage"]["limit"], 500)
         self.assertEqual(initial["max_workers"], 2)
         with self.database.connection() as connection:
-            connection.execute(
-                """UPDATE city_population_state SET treasury_copper=0
-                   WHERE world_id=%s AND faction='light'""",
-                (self.database.world_id,),
-            )
+            seed_city_treasury(connection, self.database.world_id, 0, self.character_id)
             connection.execute(
                 "UPDATE characters SET copper=0, silver=500, gold=0 WHERE id=%s",
                 (self.character_id,),
@@ -477,7 +490,7 @@ class CityStorageServerTests(unittest.TestCase):
                 (self.database.world_id,),
             )
 
-        with self.assertRaisesRegex(ValueError, "казне недостаточно средств"):
+        with self.assertRaisesRegex(ValueError, "В казне недостаточно твоих средств"):
             self.buildings.purchase_lumber_camp_upgrade(
                 self.character_id, "logging_expansion", now + 0.25,
             )
@@ -491,11 +504,7 @@ class CityStorageServerTests(unittest.TestCase):
             ).fetchone()["silver"]
             self.assertEqual(treasury, 0)
             self.assertEqual(wallet_silver, 500)
-            connection.execute(
-                """UPDATE city_population_state SET treasury_copper=50000
-                   WHERE world_id=%s AND faction='light'""",
-                (self.database.world_id,),
-            )
+            seed_city_treasury(connection, self.database.world_id, 50000, self.character_id)
 
         initial = self.buildings.get_state(self.character_id, "lumber_camp", now + 0.5)
         self.assertEqual(initial["treasury_silver_available"], 500)
@@ -586,10 +595,7 @@ class CityStorageServerTests(unittest.TestCase):
                              if item["item_id"] == 60), 0)
 
         with self.database.connection() as connection:
-            connection.execute(
-                "UPDATE city_population_state SET treasury_copper=1000 WHERE world_id=%s AND faction='light'",
-                (self.database.world_id,),
-            )
+            seed_city_treasury(connection, self.database.world_id, 1000, self.character_id)
         purchased = self.buildings.purchase_cart(self.character_id, now=10004)
         grade = purchased["cart_progress"]["grades"]["1"]
         self.assertFalse(grade["body_owned"])
@@ -606,11 +612,7 @@ class CityStorageServerTests(unittest.TestCase):
                     "AND building='warehouse' AND resource='wood'",
                     (self.database.world_id,),
                 )
-                connection.execute(
-                    "UPDATE city_population_state SET treasury_copper=1000 "
-                    "WHERE world_id=%s AND faction='light'",
-                    (self.database.world_id,),
-                )
+                seed_city_treasury(connection, self.database.world_id, 1000, self.character_id)
             self.buildings.purchase_cart(self.character_id, now=order_time)
 
         queue_full = self.buildings.get_state(self.character_id, "stable", 10008)
@@ -633,7 +635,7 @@ class CityStorageServerTests(unittest.TestCase):
             ["cart_grade_1", "cart_grade_1~2", "cart_grade_1~3", "cart_grade_1~4", "cart_grade_1~5"],
         )
 
-    def test_cart_maintenance_charges_active_time_and_repairs_with_wood(self):
+    def test_cart_wear_accrues_only_while_working_and_repairs_proportionally(self):
         now = 10000
         self.buildings.get_state(self.character_id, "stable", now)
         self.buildings.get_state(self.character_id, "warehouse", now)
@@ -644,88 +646,120 @@ class CityStorageServerTests(unittest.TestCase):
                 (self.database.world_id,),
             )
             connection.execute(
-                """UPDATE building_resources SET storage=3 WHERE world_id=%s AND faction='light'
+                """UPDATE building_resources SET storage=100 WHERE world_id=%s AND faction='light'
                    AND building='warehouse' AND resource='wood'""",
                 (self.database.world_id,),
             )
             stable_key = (self.database.world_id, "light", "stable")
             self.buildings._advance_cart_maintenance(connection, stable_key, now, [])
             self.buildings._advance_cart_maintenance(connection, stable_key, now + 3600, [])
-            idle_stock = connection.execute(
+            idle_wood = connection.execute(
                 """SELECT storage FROM building_resources WHERE world_id=%s AND faction='light'
                    AND building='warehouse' AND resource='wood'""",
                 (self.database.world_id,),
             ).fetchone()["storage"]
-        self.assertEqual(idle_stock, 3)
+        self.assertEqual(idle_wood, 100)
 
         active_convoy = [{
             "cart_id": "cart_grade_1", "status": "outbound", "phase": "outbound",
-            "started_at": now + 3600, "arrival_at": now + 7200,
+            "started_at": now + 3600, "arrival_at": now + 3600 + 1200,
         }]
         with self.database.connection() as connection:
             self.buildings._advance_cart_maintenance(
-                connection, stable_key, now + 7200, active_convoy,
-            )
-            stock_after_paid_hour = connection.execute(
-                """SELECT storage FROM building_resources WHERE world_id=%s AND faction='light'
-                   AND building='warehouse' AND resource='wood'""",
-                (self.database.world_id,),
-            ).fetchone()["storage"]
-        self.assertEqual(stock_after_paid_hour, 1)
-
-        active_convoy[0].update(started_at=now + 7200, arrival_at=now + 10800)
-        with self.database.connection() as connection:
-            self.buildings._advance_cart_maintenance(
-                connection, stable_key, now + 10800, active_convoy,
+                connection, stable_key, now + 3600 + 1200, active_convoy,
             )
             row = connection.execute(
                 """SELECT cart_wear_json FROM stable_cart_progress
                    WHERE world_id=%s AND faction='light' AND building='stable' AND grade=1""",
                 (self.database.world_id,),
             ).fetchone()
-            self.assertEqual(row["cart_wear_json"]["cart_grade_1"]["durability"], 99.0)
-            connection.execute(
-                """UPDATE building_resources SET storage=1 WHERE world_id=%s AND faction='light'
-                   AND building='warehouse' AND resource='wood'""",
-                (self.database.world_id,),
-            )
+        self.assertEqual(row["cart_wear_json"]["cart_grade_1"]["durability"], 99.0)
 
         repaired = self.buildings.repair_cart(
-            self.character_id, "cart_grade_1", now=now + 10801,
+            self.character_id, "cart_grade_1", now=now + 5000,
         )
         cart = repaired["available_carts"][0]
         self.assertEqual(cart["durability"], 100)
         self.assertFalse(cart["broken"])
-        self.assertEqual(repaired["warehouse_storage"]["wood"], 0)
+        self.assertEqual(repaired["warehouse_storage"]["wood"], 99)
 
         with self.database.connection() as connection:
             connection.execute(
                 """UPDATE stable_cart_progress SET cart_wear_json=%s::jsonb
                    WHERE world_id=%s AND faction='light' AND building='stable' AND grade=1""",
-                (json.dumps({"cart_grade_1": {"durability": 0, "updated_at": now + 10802}}),
+                (json.dumps({"cart_grade_1": {"durability": 0, "updated_at": now + 6000}}),
                  self.database.world_id),
             )
-            connection.execute(
-                """UPDATE building_resources SET storage=100 WHERE world_id=%s AND faction='light'
-                   AND building='warehouse' AND resource='wood'""",
-                (self.database.world_id,),
-            )
-        broken = self.buildings.get_state(self.character_id, "stable", now + 10802)
+        broken = self.buildings.get_state(self.character_id, "stable", now + 6000)
         self.assertEqual(broken["available_carts"][0]["status"], "Сломана")
         self.assertFalse(broken["available_carts"][0]["dispatch_available"])
-        self.assertEqual(broken["available_carts"][0]["repair_wood_cost"], 100)
+        self.assertEqual(broken["available_carts"][0]["repair_wood_cost"], 70)
         repaired = self.buildings.repair_cart(
-            self.character_id, "cart_grade_1", now=now + 10803,
+            self.character_id, "cart_grade_1", now=now + 6001,
         )
         self.assertEqual(repaired["available_carts"][0]["durability"], 100)
-        self.assertEqual(repaired["warehouse_storage"]["wood"], 0)
+        self.assertEqual(repaired["warehouse_storage"]["wood"], 99 - 70)
+
+    def test_cart_repair_rejects_full_durability_and_sets_auto_repair_mode(self):
+        now = 20000
+        self.buildings.get_state(self.character_id, "stable", now)
+        with self.database.connection() as connection:
+            connection.execute(
+                """UPDATE stable_cart_progress SET body_owned=TRUE, body_count=1
+                   WHERE world_id=%s AND faction='light' AND building='stable' AND grade=1""",
+                (self.database.world_id,),
+            )
+        with self.assertRaisesRegex(ValueError, "не нуждается в ремонте"):
+            self.buildings.repair_cart(self.character_id, "cart_grade_1", now=now)
+
+        state = self.buildings.set_cart_auto_repair(
+            self.character_id, "cart_grade_1", "always", now=now,
+        )
+        self.assertEqual(state["available_carts"][0]["auto_repair"], "always")
+        state = self.buildings.set_cart_auto_repair(
+            self.character_id, "cart_grade_1", None, now=now,
+        )
+        self.assertIsNone(state["available_carts"][0]["auto_repair"])
+        with self.assertRaises(ValueError):
+            self.buildings.set_cart_auto_repair(
+                self.character_id, "cart_grade_1", "bogus", now=now,
+            )
+
+    def test_cart_repair_price_curve(self):
+        from core.cart_progress import cart_repair_wood_cost
+        self.assertEqual(cart_repair_wood_cost(100), 0)
+        self.assertEqual(cart_repair_wood_cost(99), 1)
+        self.assertEqual(cart_repair_wood_cost(1), 40)
+        self.assertEqual(cart_repair_wood_cost(65), 14)
+        self.assertEqual(cart_repair_wood_cost(0), 70)
+
+    def test_cart_rename_normalizes_truncates_and_clears(self):
+        now = 21000
+        self.buildings.get_state(self.character_id, "stable", now)
+        with self.database.connection() as connection:
+            connection.execute(
+                """UPDATE stable_cart_progress SET body_owned=TRUE, body_count=1
+                   WHERE world_id=%s AND faction='light' AND building='stable' AND grade=1""",
+                (self.database.world_id,),
+            )
+        state = self.buildings.rename_cart(
+            self.character_id, "cart_grade_1", "  Быстрая   телега  ", now=now,
+        )
+        self.assertEqual(state["available_carts"][0]["name"], "Быстрая телега")
+        self.assertEqual(state["available_carts"][0]["custom_name"], "Быстрая телега")
+
+        state = self.buildings.rename_cart(
+            self.character_id, "cart_grade_1", "Я" * 60, now=now,
+        )
+        self.assertEqual(len(state["available_carts"][0]["name"]), 24)
+
+        state = self.buildings.rename_cart(self.character_id, "cart_grade_1", "   ", now=now)
+        self.assertNotEqual(state["available_carts"][0]["custom_name"], "Я" * 24)
+        self.assertEqual(state["available_carts"][0]["name"], "Лёгкая повозка")
 
     def test_cart_purchase_rejects_shortage_without_partial_debit(self):
         with self.database.connection() as connection:
-            connection.execute(
-                "UPDATE city_population_state SET treasury_copper=500 WHERE world_id=%s AND faction='light'",
-                (self.database.world_id,),
-            )
+            seed_city_treasury(connection, self.database.world_id, 500, self.character_id)
         with self.assertRaisesRegex(ValueError, "Недостаточно ресурсов на общем складе"):
             self.buildings.purchase_cart(self.character_id, now=10004)
         state = self.buildings.get_state(self.character_id, "stable", 10004)
@@ -736,10 +770,7 @@ class CityStorageServerTests(unittest.TestCase):
         items = ItemsDatabase(self.database)
         items.add_to_inventory(self.character_id, 60, 100)
         with self.database.connection() as connection:
-            connection.execute(
-                "UPDATE city_population_state SET treasury_copper=2000 WHERE world_id=%s AND faction='light'",
-                (self.database.world_id,),
-            )
+            seed_city_treasury(connection, self.database.world_id, 2000, self.character_id)
 
         with self.assertRaisesRegex(ValueError, "Отдельные взносы за повозку отключены"):
             self.buildings.contribute_cart(self.character_id, "wood", 100, 10001, source="backpack")
@@ -1005,12 +1036,12 @@ class CityStorageWindowTests(unittest.TestCase):
             "building_id": "lumber_camp", "name": "Лесопилка",
             "resources": [
                 {"id": "wood", "label": "Древесина"},
+                {"id": "stone", "label": "Камень"},
                 {"id": "berries", "label": "Ягоды"},
-                {"id": "flax", "label": "Лён"},
             ],
         }]
         window.destination_state = {
-            "storage": {"wood": 20, "berries": 10, "flax": 5, "limit": 1000},
+            "storage": {"wood": 20, "stone": 10, "berries": 5, "limit": 1000},
         }
         window.transport_draft["destination_id"] = "lumber_camp"
         window.transport_popup = ("resource", 0)
@@ -1020,7 +1051,7 @@ class CityStorageWindowTests(unittest.TestCase):
         window.state["city_upgrade"]["city_level"] = 2
         self.assertEqual(
             window._transport_popup_items(),
-            [("wood", "Древесина"), ("berries", "Ягоды"), ("flax", "Лён")],
+            [("wood", "Древесина"), ("stone", "Камень")],
         )
 
     def test_transport_farm_destination_loads_production_storage_for_resource_picker(self):
@@ -1303,6 +1334,45 @@ class CityStorageWindowTests(unittest.TestCase):
             [True] * 4,
         )
 
+    def test_level_two_to_three_upgrade_replaces_palisade_in_four_stages(self):
+        stages_seen = []
+        for phase_index in range(4):
+            with self.subTest(phase_index=phase_index):
+                self.scene.city_upgrade_state = {
+                    "city_level": 2,
+                    "active": True,
+                    "phase_index": phase_index,
+                }
+                with patch.object(
+                    self.scene, "_draw_stone_wall_segments",
+                ) as draw_stone:
+                    self.scene._draw_city_upgrade_construction(self.screen)
+                stages = [call.args[-1] for call in draw_stone.call_args_list]
+                expected = (
+                    ["stone"] * phase_index
+                    + ["building"]
+                    + ["wood"] * (3 - phase_index)
+                )
+                self.assertEqual(stages, expected)
+                stages_seen.append(phase_index)
+        self.assertEqual(stages_seen, [0, 1, 2, 3])
+
+    def test_level_three_city_draws_only_stone_walls(self):
+        from scenes.city.rendering import CITY_PALISADE_SECTIONS
+
+        self.scene.city_upgrade_state = {"city_level": 3, "active": False}
+        with patch.object(
+            self.scene, "_draw_stone_wall_segments",
+        ) as draw_stone, patch.object(
+            self.scene, "_draw_palisade_section",
+        ) as draw_wood:
+            self.scene._draw_city_upgrade_construction(self.screen)
+        self.assertEqual(draw_wood.call_count, 0)
+        self.assertEqual(
+            [call.args[-1] for call in draw_stone.call_args_list],
+            ["stone"] * len(CITY_PALISADE_SECTIONS),
+        )
+
     def test_global_city_home_count_follows_l1_and_l2_only(self):
         from scenes.city.exterior import draw_city_exterior
         from scenes.city.sprite_modules import draw_residence
@@ -1401,23 +1471,23 @@ class CityStorageWindowTests(unittest.TestCase):
                 "id": "cart_grade_1", "grade": 1, "instance": 1,
                 "name": "Лёгкая повозка", "sprite_key": "light", "status": "Сломана",
                 "durability": 0, "max_durability": 100, "broken": True,
-                "repair_wood_cost": 100, "maintenance_wood_per_hour": 0,
+                "repair_wood_cost": 70,
             },
             {
                 "id": "cart_grade_1~2", "grade": 1, "instance": 2,
                 "name": "Лёгкая повозка", "sprite_key": "light", "status": "В пути",
                 "durability": 65, "max_durability": 100, "broken": False,
-                "repair_wood_cost": 35, "maintenance_wood_per_hour": 2,
+                "repair_wood_cost": 14,
             },
         ]
         window._sync_cart_progress()
         window._draw_carts(self.screen)
 
-        cards = window.cart_card_rects
-        self.assertEqual(set(cards), {"cart_grade_1", "cart_grade_1~2"})
-        self.assertEqual(cards["cart_grade_1"].top, cards["cart_grade_1~2"].top)
+        self.assertEqual(set(window.cart_name_rects), {"cart_grade_1", "cart_grade_1~2"})
+        rows = [window.cart_name_rects[key].top for key in ("cart_grade_1", "cart_grade_1~2")]
+        self.assertLess(rows[0], rows[1])
         self.assertIn("cart_grade_1", window.cart_repair_buttons)
-        self.assertNotIn("cart_grade_1~2", window.cart_repair_buttons)
+        self.assertIn("cart_grade_1~2", window.cart_repair_buttons)
         with patch.object(window, "_building_action") as building_action:
             window.handle_event(pygame.event.Event(
                 pygame.MOUSEBUTTONDOWN, button=1,
@@ -1426,6 +1496,56 @@ class CityStorageWindowTests(unittest.TestCase):
         building_action.assert_called_once_with(
             "cart/repair", {"cart_id": "cart_grade_1"},
         )
+
+    def test_cart_repair_is_hidden_at_full_durability(self):
+        window = self.scene.stable_window
+        window.is_open = True
+        window.tab = "carts"
+        self.client.cart_progress["grades"]["1"].update(body_owned=True, body_count=1)
+        window.state = self.client.get_building("stable", 1)
+        window.state["available_carts"] = [{
+            "id": "cart_grade_1", "grade": 1, "instance": 1,
+            "name": "Лёгкая повозка", "sprite_key": "light", "status": "Свободна",
+            "durability": 100, "max_durability": 100, "broken": False,
+            "repair_wood_cost": 0,
+        }]
+        window._sync_cart_progress()
+        window._draw_carts(self.screen)
+        self.assertNotIn("cart_grade_1", window.cart_repair_buttons)
+
+    def test_cart_name_double_click_opens_rename_and_saves_via_server(self):
+        window = self.scene.stable_window
+        window.is_open = True
+        window.tab = "carts"
+        self.client.cart_progress["grades"]["1"].update(body_owned=True, body_count=1)
+        window.state = self.client.get_building("stable", 1)
+        window.state["available_carts"] = [{
+            "id": "cart_grade_1", "grade": 1, "instance": 1,
+            "name": "Лёгкая повозка", "sprite_key": "light", "status": "Свободна",
+            "durability": 80, "max_durability": 100, "broken": False,
+            "repair_wood_cost": 8,
+        }]
+        window._sync_cart_progress()
+        window._draw_carts(self.screen)
+        pos = window.cart_name_rects["cart_grade_1"].center
+        click = pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=pos)
+        with patch("ui.stable_window.pygame.time.get_ticks", return_value=1000):
+            window.handle_event(click)
+        with patch("ui.stable_window.pygame.time.get_ticks", return_value=1200):
+            window.handle_event(click)
+        self.assertIsNotNone(window.cart_rename)
+        self.assertEqual(window.cart_rename["text"], "Лёгкая повозка")
+        for _ in range(len("Лёгкая повозка")):
+            window.handle_event(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_BACKSPACE))
+        window.handle_event(pygame.event.Event(pygame.TEXTINPUT, text="Бык"))
+        window.handle_event(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_BACKSPACE))
+        window.handle_event(pygame.event.Event(pygame.TEXTINPUT, text="ик"))
+        with patch.object(window, "_building_action") as building_action:
+            window.handle_event(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_RETURN))
+        building_action.assert_called_once_with(
+            "cart/rename", {"cart_id": "cart_grade_1", "name": "Быик"},
+        )
+        self.assertIsNone(window.cart_rename)
 
     def test_resident_houses_follow_population_without_opening_castle(self):
         self.client.population = 10
@@ -1476,8 +1596,7 @@ class CityStorageWindowTests(unittest.TestCase):
             character={"id": 1, "name": "Тест", "level": 1, "type": "warrior"},
             client=self.client,
             social_snapshot=lambda location: {
-                "occupants": [], "messages": [], "offers": [],
-                "my_application": None, "group_offers": [],
+                "occupants": [], "messages": [],
             },
         )
         from scenes.city_scene import CityScene
@@ -1736,7 +1855,8 @@ class CityStorageWindowTests(unittest.TestCase):
         self.assertTrue(any("Приставные деревянные денники" in text for text in rendered))
         self.assertTrue(any("Внешний сеновал" in text for text in rendered))
         self.assertTrue(any("Древесина: склад 300/300" in text for text in rendered))
-        self.assertTrue(any("Серебро: казна 100/50" in text for text in rendered))
+        self.assertTrue(any("Казна:" in text for text in rendered))
+        self.assertTrue(any("/ 50 серебра" in text for text in rendered))
         self.assertEqual(sum(text.startswith("Оплата при покупке") for text in rendered), 2)
         self.assertEqual(window.stall_contribution_buttons, {})
         self.assertIn("wooden_stalls", window.stall_upgrade_buttons)
@@ -1963,7 +2083,7 @@ class CityStorageWindowTests(unittest.TestCase):
         window.state = self.client.get_building("stable", 1)
         window.state["available_carts"] = [{
             "id": "cart_grade_1", "name": "Лёгкая повозка", "status": "Свободна",
-            "can_travel": False, "dispatch_available": False,
+            "can_travel": False,
             "dispatch_available": True, "horse_slots": 1, "resource_slots": 1,
         }]
         window.state["stall_slots"][0]["horse"] = {
@@ -2099,7 +2219,7 @@ class CityStorageWindowTests(unittest.TestCase):
         self.assertTrue(any("100 древесины + 10 серебра" in text for text in rendered))
         self.assertIn("ИЗГОТОВИТЬ", rendered)
         self.assertFalse(any("Слотов для товаров" in text for text in rendered))
-        self.assertFalse(any("500 тайлов/час" in text for text in rendered))
+        self.assertFalse(any("тайлов/час" in text for text in rendered))
 
     def test_cart_stays_unavailable_until_production_completes(self):
         window = self.scene.stable_window
@@ -2294,12 +2414,14 @@ class CityStorageWindowTests(unittest.TestCase):
         self.assertTrue(grade_two_unlocked(progress))
 
     def test_light_cart_revised_base_spec(self):
-        from core.cart_progress import CART_GRADES, cart_load_speed_ratio, cart_stats
+        from core.cart_progress import CART_GRADES, cart_load_speed_ratio, cart_stats, tiles_to_km
 
         grade = CART_GRADES["1"]
         stats = cart_stats({"wheels": 0, "sides": 0, "axles": 0})
         self.assertEqual(stats["empty_tiles_per_hour"], 500)
         self.assertEqual(stats["seconds_per_tile"], 7.2)
+        self.assertAlmostEqual(tiles_to_km(stats["empty_tiles_per_hour"]), 10.0)
+        self.assertAlmostEqual(tiles_to_km(200), 4.0)
         self.assertEqual(stats["capacity_kg"], 300)
         self.assertEqual(stats["full_load_speed_penalty_percent"], 70)
         self.assertEqual(grade["resource_slots"], 1)

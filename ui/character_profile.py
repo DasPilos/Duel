@@ -3,11 +3,20 @@ from types import SimpleNamespace
 from combat.character_stats import (
     adjust_stats,
     calculate_max_hp,
+    calculate_max_mana,
     is_debug_unlimited,
     minimum_endurance,
 )
-from combat.mechanics import get_critical_chance, get_dodge_chance, get_critical_damage_multiplier, weapon_damage_range
-from core.carry_weight import carried_weight_kg
+from combat.weapon_damage import weapon_damage_range
+from combat.world_stats import (
+    CRIT_DAMAGE_MULTIPLIER,
+    get_attack_backswing,
+    get_attack_windup,
+    get_move_speed,
+    get_own_crit_percent,
+    get_own_dodge_percent,
+)
+from core.carry_weight import carried_weight_kg, character_movement_speed_multiplier
 
 
 DEFAULT_STATS = {
@@ -16,7 +25,6 @@ DEFAULT_STATS = {
     "intuition": 5,
     "wisdom": 5,
     "intellect": 5,
-    "harmony": 5,
     "endurance": 5,
 }
 
@@ -99,6 +107,10 @@ def normalize_character_profile(profile, *, title=None, kind="player"):
 
     profile_dict["max_hp"] = max(int(profile_dict["max_hp"]), 1)
     profile_dict["max_mp"] = max(int(profile_dict["max_mp"]), 1)
+    stats = profile_dict.get("stats") or {}
+    if "endurance" in stats and "intellect" in stats and not profile_dict.get("max_hp_includes_equipment"):
+        profile_dict["max_hp"] = max(calculate_max_hp(profile_dict["level"], stats["endurance"]), 1)
+        profile_dict["max_mp"] = max(calculate_max_mana(stats["intellect"]), 1)
     profile_dict["hp"] = min(int(profile_dict["hp"]), profile_dict["max_hp"])
     profile_dict["mp"] = min(int(profile_dict["mp"]), profile_dict["max_mp"])
     profile_dict["title"] = title
@@ -123,6 +135,24 @@ def effective_stats(profile):
         if stat_name in stats:
             stats[stat_name] = int(stats[stat_name]) + int(value)
     return stats
+
+
+def combat_speed_values(profile):
+    """Скорость атаки (замах + откат, сек) и передвижения (px/с) с учётом веса и экипировки.
+
+    move_speed_bonus — прирост скорости передвижения от надетых предметов.
+    """
+    carry_multiplier = character_movement_speed_multiplier(profile)
+    fighter = SimpleNamespace(**{key: int(value) for key, value in effective_stats(profile).items()})
+    base_fighter = SimpleNamespace(**{key: int(value) for key, value in dict(profile.get("stats", {})).items()})
+    attack_seconds = get_attack_windup(fighter) + get_attack_backswing(fighter)
+    move_speed = round(get_move_speed(fighter, carry_multiplier))
+    base_move_speed = round(get_move_speed(base_fighter, carry_multiplier))
+    return {
+        "attack_seconds": round(attack_seconds, 2),
+        "move_speed": move_speed,
+        "move_speed_bonus": move_speed - base_move_speed,
+    }
 
 
 def displayed_hp_values(profile):
@@ -201,7 +231,6 @@ STAT_ROWS = (
     ("intuition", "Интуиция", "Крит"),
     ("wisdom", "Мудрость", "Маг Урон"),
     ("intellect", "Интеллект", None),
-    ("harmony", "Гармония", None),
     ("endurance", "Выносливость", "Блок"),
 )
 
@@ -237,17 +266,14 @@ def derived_values(profile):
     own = SimpleNamespace(
         agility=int(stats.get("agility", 0)),
         intuition=int(stats.get("intuition", 0)),
-        equipment_stat_modifiers=equipment_bonuses,
     )
 
-    # Рассчитать крит урон
-    crit_chance = int(get_critical_chance(None, None))
-    crit_multiplier = get_critical_damage_multiplier(own)
-    crit_damage = int(crit_multiplier * 100)
+    crit_chance = int(get_own_crit_percent(own))
+    crit_damage = int(CRIT_DAMAGE_MULTIPLIER * 100)
 
     values = {
         "Урон": _damage_text(stats.get("strength", 0), weapon),
-        "Уворот": f"{int(get_dodge_chance(None, own))}%",
+        "Уворот": f"{int(get_own_dodge_percent(own))}%",
         "Крит": f"{crit_chance}% × {crit_damage}%",
         "Маг Урон": _damage_text(stats.get("wisdom", 0), weapon),
         "HP": displayed_hp_values(profile)[1],

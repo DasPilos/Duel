@@ -5,15 +5,10 @@ import sys
 
 import pygame
 
-from combat.card_database import is_mage_profession
 from core.settings import FPS, HEIGHT, WIDTH
-from scenes.duel_scene import DuelScene
-from scenes.mage_battle_scene import MageBattleScene
 from scenes.character_scene import CharacterScene
-from scenes.hall_of_fame_scene import HallOfFameScene
 from scenes.create_character_scene import CreateCharacterScene
 from scenes.tavern_scene import TavernScene
-from scenes.backyard_scene import BackyardScene
 from scenes.town.character_room import CharacterRoom
 from scenes.world_map_scene import WorldMapScene
 from scenes.city_scene import CityScene
@@ -26,7 +21,7 @@ from ui.server_status_hud import ServerStatusHUD
 
 
 # Сцены, где инвентарь открывается клавишей I (не в бою и не в меню входа)
-INVENTORY_SCENES = (TavernScene, CharacterRoom, WorldMapScene, CityScene, BackyardScene)
+INVENTORY_SCENES = (TavernScene, CharacterRoom, WorldMapScene, CityScene)
 
 
 def inventory_session(scene):
@@ -53,12 +48,9 @@ def ensure_equipment_loaded(scene):
 
 
 def text_input_focused(scene):
-    """Игрок печатает в чате или вводит имя колоды — клавиша I должна остаться буквой"""
+    """Игрок печатает в чате — клавиша I должна остаться буквой"""
     message_input = getattr(getattr(scene, "chat", None), "message_input", None)
-    if getattr(message_input, "focused", False):
-        return True
-    deck_panel = getattr(getattr(scene, "profile_overlay", None), "deck_panel", None)
-    return bool(getattr(deck_panel, "creating", False))
+    return bool(getattr(message_input, "focused", False))
 
 
 def close_scene_ui(scene):
@@ -72,7 +64,7 @@ def scene_session(scene):
 
 
 def server_status_visible(scene, transition, exit_menu):
-    if transition or exit_menu.is_open or exit_menu.quitting or isinstance(scene, DuelScene):
+    if transition or exit_menu.is_open or exit_menu.quitting:
         return False
     session = scene_session(scene)
     if session is None or not getattr(session, "character", None):
@@ -82,7 +74,6 @@ def server_status_visible(scene, transition, exit_menu):
             "castle_menu_open", "barn_menu_open", "warehouse_menu_open", "stable_menu_open",
             "forge_menu_open", "workshop_menu_open", "barracks_menu_open",
             "engineering_menu_open", "university_menu_open", "academy_menu_open",
-            "mage_school_menu_open",
         )
         if any(getattr(scene, name, False) for name in menu_flags):
             return False
@@ -116,6 +107,9 @@ def checkpoint_for_scene(scene):
             "position_y": scene.player_y,
             "position_direction": scene.player_direction,
         })
+        fighter = getattr(scene, "combat_fighter", None)
+        if fighter is not None:
+            checkpoint.update({"hp": fighter.hp, "mp": fighter.mp})
     elif isinstance(scene, CityScene):
         checkpoint.update({
             "zone": "city",
@@ -123,14 +117,10 @@ def checkpoint_for_scene(scene):
             "position_y": scene.player_y,
             "position_direction": scene.player_direction,
         })
-    elif isinstance(scene, BackyardScene):
-        checkpoint["zone"] = "backyard"
     elif isinstance(scene, CharacterRoom):
         checkpoint["zone"] = "character_room"
     elif isinstance(scene, TavernScene):
         checkpoint["zone"] = "tavern"
-    elif isinstance(scene, DuelScene):
-        checkpoint["zone"] = "backyard"
     return checkpoint
 
 
@@ -142,8 +132,6 @@ def scene_for_saved_character(session):
         return WorldMapScene(session, spawn_pos=(*position, direction))
     if character.get("zone") == "city" and all(value is not None for value in position):
         return CityScene(session, spawn_pos=(*position, direction))
-    if character.get("zone") == "backyard":
-        return BackyardScene(session)
     if character.get("zone") == "character_room":
         return CharacterRoom(session)
     return TavernScene(session)
@@ -155,9 +143,8 @@ def disconnect_scene(scene):
     if session is None:
         return None
     close_scene_ui(scene)
-    fighter = scene.player if isinstance(scene, DuelScene) else None
     try:
-        session.disconnect(fighter=fighter, character=checkpoint)
+        session.disconnect(character=checkpoint)
     except ServerError as error:
         return str(error)
     return None
@@ -169,29 +156,13 @@ def start_disconnect(scene, executor):
         return None
     checkpoint = checkpoint_for_scene(scene)
     close_scene_ui(scene)
-    fighter = scene.player if isinstance(scene, DuelScene) else None
-    return executor.submit(session.disconnect, fighter=fighter, character=checkpoint)
+    return executor.submit(session.disconnect, character=checkpoint)
 
 
 def apply_passive_regen(scene, dt):
-    # Во время боя не применяем пассивную регенерацию, кроме как при просмотре результатов
-    if isinstance(scene, DuelScene):
-        if scene.phase != "result":
-            return
-        session = scene.online_session
-        if session is None:
-            return
-        session.passive_regenerate(dt, in_tavern=False)
-        amount = getattr(session, "last_regen_amount", 0)
-        if amount > 0 and hasattr(scene, "profile_overlay"):
-            scene.profile_overlay.player_card.sync(
-                session.character,
-                title="ТЕКУЩИЙ ИГРОК",
-                kind="player",
-            )
-            scene.profile_overlay.player_card.show_regen(amount)
+    # На карте мира HP ведёт боевой файтер (сохраняется через WorldMapScene), иначе сессия перезапишет бой.
+    if isinstance(scene, WorldMapScene):
         return
-    
     session = getattr(scene, "session", None)
     if session is not None:
         session.passive_regenerate(dt, in_tavern=isinstance(scene, TavernScene))
@@ -206,7 +177,7 @@ def apply_passive_regen(scene, dt):
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Мини-дуэль")
+    parser = argparse.ArgumentParser(description="Мир Duel")
     parser.add_argument("--online", action="store_true")
     parser.add_argument("--username", default=os.getenv("GAME_USERNAME"))
     parser.add_argument("--password", default=os.getenv("GAME_PASSWORD"))
@@ -222,15 +193,12 @@ def main():
     screen = pygame.display.set_mode((WIDTH, HEIGHT), pygame.NOFRAME)
 
     clock = pygame.time.Clock()
-    if args.online:
-        scene = TitleScene(
-            args.server,
-            args.username or "",
-            args.password or "",
-        )
-        pygame.key.start_text_input()
-    else:
-        scene = DuelScene()
+    scene = TitleScene(
+        args.server,
+        args.username or "",
+        args.password or "",
+    )
+    pygame.key.start_text_input()
 
     transition = SceneTransition()
     inventory = InventoryWindow()
@@ -336,10 +304,6 @@ def main():
                     if scene.cancelled:
                         scene.session.disconnect()
                         running = False
-                    elif scene.hall_of_fame_requested:
-                        close_scene_ui(scene)
-                        session = scene.session
-                        transition.start(screen, lambda: HallOfFameScene(session))
                     elif scene.create_new_character:
                         # Transition to character creation scene
                         close_scene_ui(scene)
@@ -349,11 +313,6 @@ def main():
                         close_scene_ui(scene)
                         session = scene.session
                         transition.start(screen, lambda: scene_for_saved_character(session))
-
-                elif args.online and isinstance(scene, HallOfFameScene) and scene.finished:
-                    close_scene_ui(scene)
-                    session = scene.session
-                    transition.start(screen, lambda: CharacterScene(session))
 
                 elif args.online and isinstance(scene, CreateCharacterScene) and scene.finished:
                     pygame.key.stop_text_input()
@@ -386,7 +345,7 @@ def main():
                         elif scene.navigate == "world_map":
                             transition.start(screen, lambda: WorldMapScene(session))
                         else:
-                            transition.start(screen, lambda: BackyardScene(session))
+                            transition.start(screen, lambda: TavernScene(session))
 
                 elif args.online and isinstance(scene, WorldMapScene) and scene.finished:
                     close_scene_ui(scene)
@@ -410,35 +369,6 @@ def main():
                     close_scene_ui(scene)
                     session = scene.session
                     transition.start(screen, lambda: TavernScene(session))
-
-                elif args.online and isinstance(scene, BackyardScene) and scene.finished:
-                    session = scene.session
-                    if scene.navigate == "tavern" or scene.cancelled:
-                        close_scene_ui(scene)
-                        transition.start(screen, lambda: TavernScene(session))
-                    else:
-                        opponent = scene.opponent
-                        close_scene_ui(scene)
-                        if is_mage_profession(session.character.get("type")):
-                            transition.start(screen, lambda: MageBattleScene(session, opponent))
-                        else:
-                            transition.start(screen, lambda: DuelScene(session, opponent))
-
-                elif args.online and isinstance(scene, DuelScene) and scene.return_to_tavern:
-                    scene.return_to_tavern = False
-                    close_scene_ui(scene)
-                    session = scene.online_session
-                    # Если персонаж погиб (hp <= 0), возрождаем у Кристалла Жизни в городе (а не в таверне)
-                    if getattr(scene, "player", None) and scene.player.hp <= 0:
-                        if session and getattr(session, "character", None):
-                            session.character["hp"] = session.character.get("max_hp", 100)
-                            try:
-                                session.client.save_character(session.character)
-                            except Exception:
-                                pass
-                        transition.start(screen, lambda: CityScene(session, gate="crystal"))
-                    else:
-                        transition.start(screen, lambda: TavernScene(session))
 
             if not transition.active:
                 server_status_hud.update(

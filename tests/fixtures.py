@@ -31,6 +31,21 @@ def drop_test_database(database):
         connection.execute(f'DROP SCHEMA IF EXISTS "{database.schema}" CASCADE')
 
 
+def seed_city_treasury(connection, world_id, copper, character_id, faction="light"):
+    """Set the city treasury and credit all of it to one contributor, so they can spend it."""
+    connection.execute(
+        "UPDATE city_population_state SET treasury_copper=%s WHERE world_id=%s AND faction=%s",
+        (int(copper), world_id, faction),
+    )
+    connection.execute(
+        """INSERT INTO city_treasury_contributions (world_id, faction, character_id, contributed_copper)
+           VALUES (%s, %s, %s, %s)
+           ON CONFLICT (world_id, faction, character_id)
+           DO UPDATE SET contributed_copper = EXCLUDED.contributed_copper""",
+        (world_id, faction, int(character_id), int(copper)),
+    )
+
+
 @contextmanager
 def running_server(database):
     """Start a GameRequestHandler-backed HTTP server bound to the given database.

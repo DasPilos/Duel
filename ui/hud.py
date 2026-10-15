@@ -1,4 +1,45 @@
+import math
+import time
+
 import pygame
+
+from core import settings
+
+
+_upgrade_line_font = None
+
+
+def upgrade_line_font():
+    # Тот же размер, что у плашки «Игроков онлайн» (ServerStatusHUD).
+    global _upgrade_line_font
+    if _upgrade_line_font is None:
+        _upgrade_line_font = pygame.font.SysFont(settings.FONT_NAME, 18)
+    return _upgrade_line_font
+
+
+def draw_city_upgrade_line(screen, font, upgrade, castle_upgrades=None):
+    """Строки справа вверху: активные улучшения города и замка с таймером до завершения."""
+    items = [upgrade, *(castle_upgrades or [])]
+    lines = []
+    for item in items:
+        if not (item or {}).get("active") or item.get("finish_at") is None:
+            continue
+        seconds_left = max(0, math.ceil(float(item["finish_at"]) - time.time()))
+        hours, rest = divmod(seconds_left, 3600)
+        minutes, seconds = divmod(rest, 60)
+        timer = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+        name = item.get("upgrade_name") or "Улучшение"
+        lines.append(f"{name} · осталось {timer}")
+    y = 20
+    for text in lines:
+        surf = font.render(text, True, (255, 200, 90))
+        bg = surf.get_rect(topright=(settings.WIDTH - 20, y)).inflate(16, 8)
+        bg_surf = pygame.Surface(bg.size, pygame.SRCALPHA)
+        pygame.draw.rect(bg_surf, (15, 18, 24, 215), bg_surf.get_rect(), border_radius=5)
+        pygame.draw.rect(bg_surf, (220, 180, 70), bg_surf.get_rect(), 1, border_radius=5)
+        screen.blit(bg_surf, bg.topleft)
+        screen.blit(surf, surf.get_rect(center=bg.center))
+        y = bg.bottom + 6
 
 
 def draw_text(screen, font, text, x, y, color=(230, 230, 230)):
@@ -11,36 +52,6 @@ def draw_text(screen, font, text, x, y, color=(230, 230, 230)):
     # уменьшите y — текст поднимется выше.
     surface = font.render(str(text), True, color)
     screen.blit(surface, (x, y))
-
-
-def draw_bar(
-    screen,
-    x,
-    y,
-    width,
-    height,
-    value,
-    max_value,
-    bg=(60, 60, 60),
-    fg=(80, 200, 120),
-):
-    # width — ширина полосы HP или MP.
-    # height — высота полосы HP или MP.
-    pygame.draw.rect(
-        screen,
-        bg,
-        (x, y, width, height),
-        border_radius=6,
-    )
-
-    ratio = 0 if max_value <= 0 else max(0, min(1, value / max_value))
-
-    pygame.draw.rect(
-        screen,
-        fg,
-        (x, y, int(width * ratio), height),
-        border_radius=6,
-    )
 
 
 def draw_button(
@@ -74,40 +85,6 @@ def draw_button(
     screen.blit(surface, text_rect)
 
     return hovered
-
-
-def draw_silhouette(screen, x, y, color):
-    # x — центр силуэта по горизонтали.
-    # y — нижняя точка ног силуэта.
-    #
-    # Изменяйте x, чтобы передвинуть силуэт влево или вправо.
-    # Изменяйте y, чтобы передвинуть силуэт вверх или вниз.
-    dark = (45, 48, 62)
-
-    # Размер головы — 48.
-    pygame.draw.circle(screen, dark, (x, y - 125), 48)
-    pygame.draw.circle(screen, color, (x, y - 125), 48, 4)
-
-    # Размер туловища: ширина 130, высота 190.
-    pygame.draw.rect(
-        screen,
-        dark,
-        (x - 65, y - 70, 130, 190),
-        border_radius=30,
-    )
-    pygame.draw.rect(
-        screen,
-        color,
-        (x - 65, y - 70, 130, 190),
-        width=4,
-        border_radius=30,
-    )
-
-    # Последнее число в каждой линии — её толщина.
-    pygame.draw.line(screen, color, (x - 55, y - 40), (x - 125, y + 100), 24)
-    pygame.draw.line(screen, color, (x + 55, y - 40), (x + 125, y + 100), 24)
-    pygame.draw.line(screen, color, (x - 30, y + 115), (x - 45, y + 270), 30)
-    pygame.draw.line(screen, color, (x + 30, y + 115), (x + 45, y + 270), 30)
 
 
 class FloatingText:
@@ -154,34 +131,6 @@ class FloatingText:
             center=(int(self.x), int(self.y))
         )
         screen.blit(surface, rect)
-
-
-class FloatingImage:
-    def __init__(self, x, y, image, label, font, color, duration=360, velocity=-1.5):
-        self.x = x
-        self.y = y
-        self.image = image
-        self.label = label
-        self.font = font
-        self.color = color
-        self.duration = duration
-        self.max_duration = duration
-        self.vy = velocity
-
-    def update(self):
-        self.y += self.vy
-        self.duration -= 1
-
-    def draw(self, screen):
-        if self.duration <= 0:
-            return
-        image = self.image.copy()
-        if self.duration < self.max_duration // 2:
-            image.set_alpha(int(255 * self.duration / (self.max_duration // 2)))
-        rect = image.get_rect(center=(int(self.x), int(self.y)))
-        screen.blit(image, rect)
-        label = self.font.render(self.label, True, self.color)
-        screen.blit(label, label.get_rect(center=(rect.centerx, rect.bottom - 28)))
 
 
 def update_and_draw_floating_texts(screen, floating_texts):

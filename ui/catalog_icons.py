@@ -1,5 +1,6 @@
 """Shared PNG icon lookup for item and resource labels across UI panels."""
 
+from core.currency import Currency
 from ui.inventory_window import IconCache
 
 
@@ -158,13 +159,17 @@ def draw_item_icon(screen, item_or_key, position, size=32):
     return icon
 
 
-def draw_building_icon(screen, object_id, position, size=32):
-    key = BUILDING_ICON_KEYS.get(str(object_id))
-    if not key:
-        return None
-    icon = _ICON_CACHE.get(key, size)
-    screen.blit(icon, position)
-    return icon
+def draw_treasury_coins(screen, font, copper, position, icon_size=24, gap=16, color=(232, 225, 205)):
+    """Draw a copper total as gold, silver and copper coins; returns the x after the last amount."""
+    gold, rest = divmod(max(0, int(copper)), Currency.COPPER_PER_SILVER * Currency.SILVER_PER_GOLD)
+    silver, copper_left = divmod(rest, Currency.COPPER_PER_SILVER)
+    x, y = position
+    for currency, amount in (("gold", gold), ("silver", silver), ("copper", copper_left)):
+        draw_item_icon(screen, currency, (x, y), icon_size)
+        text = font.render(str(amount), True, color)
+        screen.blit(text, (x + icon_size + 6, y + (icon_size - text.get_height()) // 2))
+        x += icon_size + 6 + text.get_width() + gap
+    return x
 
 
 def draw_building_icon(screen, object_id, position, size=32):

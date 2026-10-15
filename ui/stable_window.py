@@ -14,13 +14,13 @@ from core.cart_progress import (
     DEFAULT_CART_PROGRESS,
     RESOURCE_ITEM_IDS,
     WAREHOUSE_RESOURCE_LABELS,
-    cart_stats,
     grade_two_unlocked,
+    tiles_to_km,
 )
 from core import settings
 from core.currency import Currency
 from core.production_buildings import BUILDINGS, building_resources
-from ui.catalog_icons import draw_building_icon, draw_item_icon
+from ui.catalog_icons import draw_building_icon, draw_item_icon, draw_treasury_coins
 from ui.hud import draw_button
 from ui.material_contribution_dialog import MaterialContributionDialog
 from ui.map_travel import (
@@ -50,6 +50,7 @@ class StableWindow:
     HEADER_HEIGHT = 152
     ROUTE_ROW_HEIGHT = 104
     REFRESH_SECONDS = 5
+    CART_NAME_INPUT_LIMIT = 24
 
     def __init__(self, scene):
         self.scene = scene
@@ -76,9 +77,13 @@ class StableWindow:
         self.cart_node_buttons = {}
         self.cart_purchase_buttons = {}
         self.cart_repair_buttons = {}
+        self.cart_auto_repair_buttons = {}
         self.cart_card_rects = {}
         self.cart_row_rect = pygame.Rect(0, 0, 0, 0)
         self.cart_scroll = 0
+        self.cart_name_rects = {}
+        self.cart_rename = None
+        self.cart_name_click = None
         self.cart_contribution_areas = {}
         self.cart_upgrade_button = pygame.Rect(0, 0, 230, 38)
         self.state_received_at = time.monotonic()
@@ -199,9 +204,30 @@ class StableWindow:
             cart["can_travel"] = ready
             cart["dispatch_available"] = ready
 
+    def _handle_cart_rename_event(self, event):
+        if event.type == pygame.TEXTINPUT:
+            if len(self.cart_rename["text"]) < self.CART_NAME_INPUT_LIMIT:
+                self.cart_rename["text"] += event.text
+        elif event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_ESCAPE:
+                self.cart_rename = None
+            elif event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+                cart_id = self.cart_rename["cart_id"]
+                name = self.cart_rename["text"]
+                self.cart_rename = None
+                self._building_action("cart/rename", {"cart_id": cart_id, "name": name})
+            elif event.key == pygame.K_BACKSPACE:
+                self.cart_rename["text"] = self.cart_rename["text"][:-1]
+        elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            if not self.cart_name_rects.get(self.cart_rename["cart_id"], pygame.Rect(0, 0, 0, 0)).collidepoint(event.pos):
+                self.cart_rename = None
+
     def handle_event(self, event):
         if self.source_picker is not None:
             self._handle_source_picker_event(event)
+            return
+        if self.cart_rename is not None and self.is_open:
+            self._handle_cart_rename_event(event)
             return
         if self.contribution_dialog.is_open:
             result = self.contribution_dialog.handle_event(event)
@@ -239,7 +265,7 @@ class StableWindow:
                 self.stall_scroll = max(0, min(max(0, capacity - 1), self.stall_scroll - event.y))
             elif self.tab == "carts" and self.cart_row_rect.collidepoint(pygame.mouse.get_pos()):
                 cart_count = len((self.state or {}).get("available_carts", []))
-                visible_count = max(1, self.cart_row_rect.width // 232)
+                visible_count = max(1, (self.cart_row_rect.height + 6) // 64)
                 self.cart_scroll = max(
                     0, min(max(0, cart_count - visible_count), self.cart_scroll - event.y)
                 )
@@ -318,9 +344,34 @@ class StableWindow:
                     self._building_action("horse/purchase", {"slot_index": slot_index})
                     return
         elif self.tab == "carts":
+            for cart_id, rect in self.cart_name_rects.items():
+                if not rect.collidepoint(event.pos):
+                    continue
+                now = pygame.time.get_ticks()
+                last = self.cart_name_click
+                if last is not None and last[0] == cart_id and now - last[1] <= 400:
+                    self.cart_name_click = None
+                    current = next((str(c.get("name", "")) for c in
+                                    (self.state or {}).get("available_carts", [])
+                                    if str(c.get("id")) == cart_id), "")
+                    self.cart_rename = {"cart_id": cart_id, "text": current[:self.CART_NAME_INPUT_LIMIT]}
+                else:
+                    self.cart_name_click = (cart_id, now)
+                return
             for cart_id, button in self.cart_repair_buttons.items():
+
                 if button.collidepoint(event.pos):
                     self._building_action("cart/repair", {"cart_id": cart_id})
+                    return
+            for (cart_id, mode), button in self.cart_auto_repair_buttons.items():
+                if button.collidepoint(event.pos):
+                    current = next((c.get("auto_repair") for c in
+                                    (self.state or {}).get("available_carts", [])
+                                    if str(c.get("id")) == cart_id), None)
+                    self._building_action("cart/auto_repair", {
+                        "cart_id": cart_id,
+                        "mode": None if current == mode else mode,
+                    })
                     return
             for grade, button in self.cart_purchase_buttons.items():
                 if button.collidepoint(event.pos):
@@ -378,15 +429,6 @@ class StableWindow:
             }
         except (ServerError, AttributeError, KeyError, OSError, ValueError) as error:
             self.message = str(error)
-
-    def _open_source_picker(self, target, label, remaining, sources):
-        self.source_picker = {
-            "target": target,
-            "label": str(label),
-            "remaining": max(0, int(remaining)),
-            "sources": sources,
-        }
-        self.source_picker_buttons = {}
 
     def _handle_source_picker_event(self, event):
         if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
@@ -1228,7 +1270,7 @@ class StableWindow:
         screen.blit(scene.font.render("Информация о рейсе", True, (222, 204, 166)),
                     (details.left + 12, details.top + 9))
         if cart and route:
-            distance_text = f"{route['distance_tiles']:.2f} тайла"
+            distance_text = f"{tiles_to_km(route['distance_tiles']):.2f} км"
             seconds_per_tile = cart.get("seconds_per_tile")
             time_text = (_format_duration(route["distance_tiles"] * seconds_per_tile)
                          if seconds_per_tile is not None else "—")
@@ -1340,15 +1382,18 @@ class StableWindow:
                     (content.left, content.top))
 
         carts = list(state.get("available_carts", []))
-        card_width, card_height, gap = 220, 188, 12
+        row_height, row_gap = 58, 6
+        list_height = content.height - 90
         self.cart_row_rect = pygame.Rect(content.left, content.top + 40,
-                                         content.width, card_height)
-        visible_count = max(1, (self.cart_row_rect.width + gap) // (card_width + gap))
+                                         content.width, list_height)
+        visible_count = max(1, (list_height + row_gap) // (row_height + row_gap))
         self.cart_scroll = max(0, min(self.cart_scroll, max(0, len(carts) - visible_count)))
         first_cart = self.cart_scroll
         last_cart = min(len(carts), first_cart + visible_count)
         self.cart_repair_buttons = {}
+        self.cart_auto_repair_buttons = {}
         self.cart_card_rects = {}
+        self.cart_name_rects = {}
         self.cart_purchase_buttons = {}
         self.cart_grade_cards = {}
         self.cart_contribution_areas = {}
@@ -1362,58 +1407,88 @@ class StableWindow:
         screen.set_clip(self.cart_row_rect)
         for index in range(first_cart, last_cart):
             cart = carts[index]
-            card = pygame.Rect(
-                self.cart_row_rect.left + (index - first_cart) * (card_width + gap),
-                self.cart_row_rect.top, card_width, card_height,
+            row = pygame.Rect(
+                self.cart_row_rect.left,
+                self.cart_row_rect.top + (index - first_cart) * (row_height + row_gap),
+                self.cart_row_rect.width, row_height,
             )
-            self.cart_card_rects[str(cart["id"])] = card
+            self.cart_card_rects[str(cart["id"])] = row
             durability = max(0.0, min(
                 float(cart.get("max_durability", CART_MAX_DURABILITY)),
                 float(cart.get("durability", CART_MAX_DURABILITY)),
             ))
             maximum = max(1.0, float(cart.get("max_durability", CART_MAX_DURABILITY)))
             ratio = durability / maximum
-            condition_color = ((101, 210, 125) if ratio > 0.65 else
-                               (235, 190, 77) if ratio > 0.30 else
-                               (226, 86, 77) if ratio > 0 else (100, 91, 82))
-            pygame.draw.rect(screen, (37, 40, 36), card, border_radius=4)
-            pygame.draw.rect(screen, (80, 82, 69), card, 1, border_radius=4)
+            band = cart.get("wear_band", "good")
+            condition_color = {
+                "broken": (22, 22, 22), "full": (226, 86, 77),
+                "medium": (235, 190, 77), "good": (101, 210, 125),
+            }.get(band, (101, 210, 125))
+            fill_color = (41, 43, 37) if index % 2 == 0 else (35, 38, 33)
+            pygame.draw.rect(screen, fill_color, row, border_radius=4)
             draw_transport_cart_icon(screen, cart.get("sprite_key", "light"),
-                                     (card.left + 10, card.top + 10), 34)
-            title = f"Повозка {index + 1}"
-            screen.blit(scene.font.render(title, True, (225, 211, 179)),
-                        (card.left + 52, card.top + 14))
+                                     (row.left + 10, row.top + 12), 34)
+
+            name_text = str(cart.get("name", "Повозка"))
+            name_surface = scene.font.render(name_text, True, (225, 211, 179))
+            name_rect = pygame.Rect(row.left + 56, row.top + 8,
+                                    max(name_surface.get_width(), 120), name_surface.get_height())
+            self.cart_name_rects[str(cart["id"])] = name_rect
+            if self.cart_rename is not None and self.cart_rename["cart_id"] == str(cart["id"]):
+                edit_text = self.cart_rename["text"] + "|"
+                edit_rect = pygame.Rect(row.left + 52, row.top + 4, 200, 26)
+                pygame.draw.rect(screen, (58, 52, 38), edit_rect, border_radius=3)
+                pygame.draw.rect(screen, (204, 163, 92), edit_rect, 1, border_radius=3)
+                screen.blit(scene.font.render(edit_text, True, (245, 232, 200)), (edit_rect.left + 6, edit_rect.top + 2))
+            else:
+                screen.blit(name_surface, name_rect.topleft)
             status_color = ((223, 94, 83) if cart.get("broken") else
                             (97, 165, 208) if cart.get("status") == "В пути" else
                             (204, 163, 92) if cart.get("status") == "Ожидает разгрузки" else
                             (163, 190, 143))
-            screen.blit(scene.small_font.render(str(cart.get("status", "Свободна")),
-                                                True, status_color),
-                        (card.left + 12, card.top + 55))
-            wear_percent = max(0, int(round(100 * (1.0 - ratio))))
-            screen.blit(scene.small_font.render(
-                f"Износ {wear_percent}% · прочность {int(durability)}/{int(maximum)}",
-                True, (212, 207, 190)), (card.left + 12, card.top + 82))
-            track = pygame.Rect(card.left + 12, card.top + 108, card.width - 24, 12)
+            screen.blit(self.tiny_font.render(str(cart.get("status", "Свободна")),
+                                              True, status_color),
+                        (row.left + 56, row.top + 36))
+
+            wear_label = self.tiny_font.render("Износ", True, (212, 207, 190))
+            label_x = row.left + 260
+            screen.blit(wear_label, (label_x, row.top + 10))
+            track = pygame.Rect(label_x, row.top + 30, 220, 12)
             pygame.draw.rect(screen, (23, 26, 24), track, border_radius=3)
             fill = pygame.Rect(track.left, track.top, round(track.width * ratio), track.height)
             if fill.width:
                 pygame.draw.rect(screen, condition_color, fill, border_radius=3)
-            maintenance = int(cart.get("maintenance_wood_per_hour", 0))
-            screen.blit(scene.small_font.render(
-                f"Содержание: {maintenance} древесины/ч",
-                True, (201, 194, 174)), (card.left + 12, card.top + 132))
-            if cart.get("broken"):
+            pygame.draw.rect(screen, (120, 118, 104), track, 1, border_radius=3)
+
+            auto_mode = cart.get("auto_repair")
+            auto_options = (("always", "Всегда хорошо"), ("economy", "Экономный ремонт"))
+            auto_x = row.left + 510
+            for option_index, (mode, label) in enumerate(auto_options):
+                toggle = pygame.Rect(auto_x + option_index * 170, row.top + 6, 156, 22)
+                active = auto_mode == mode
+                draw_button(screen, toggle, label, self.tiny_font,
+                            color=(62, 128, 66) if active else (72, 74, 68),
+                            text_color=(238, 236, 220))
+                self.cart_auto_repair_buttons[(str(cart["id"]), mode)] = toggle
+                cost = 20 if mode == "always" else 25
+                cost_surface = self.tiny_font.render(str(cost), True, (212, 207, 190))
+                draw_item_icon(screen, "wood", (toggle.left, row.top + 34), 16)
+                screen.blit(cost_surface, (toggle.left + 20, row.top + 35))
+
+            if durability < maximum:
+                repair_button = pygame.Rect(row.left + 860, row.top + 6, 150, 22)
                 repair_cost = int(cart.get("repair_wood_cost", 0))
-                button = pygame.Rect(card.left + 12, card.bottom - 42, card.width - 24, 32)
-                draw_button(screen, button, f"РЕМОНТ · {repair_cost} ДРЕВЕСИНЫ",
-                            scene.small_font, color=(102, 69, 47),
+                draw_button(screen, repair_button, "РЕМОНТ", self.tiny_font,
+                            color=(102, 69, 47),
                             text_color=(238, 219, 181))
-                self.cart_repair_buttons[str(cart["id"])] = button
+                self.cart_repair_buttons[str(cart["id"])] = repair_button
+                draw_item_icon(screen, "wood", (repair_button.left, row.top + 34), 16)
+                screen.blit(self.tiny_font.render(str(repair_cost), True, (212, 207, 190)),
+                            (repair_button.left + 20, row.top + 35))
         screen.set_clip(old_clip)
 
         if len(carts) > visible_count:
-            hint = scene.tiny_font.render(
+            hint = self.tiny_font.render(
                 f"Повозки {first_cart + 1}–{last_cart} из {len(carts)} · прокрутка",
                 True, (157, 158, 145),
             )
@@ -1479,7 +1554,7 @@ class StableWindow:
             pygame.draw.rect(screen, (169, 143, 92) if active else (74, 76, 65), row_rect, 1)
             title = scene.small_font.render(route["name"], True, (230, 218, 188))
             screen.blit(title, (row_rect.left + 10, row_rect.top + 8))
-            distance = scene.small_font.render(f"{route['distance_tiles']:.2f} тайла", True, (193, 190, 174))
+            distance = scene.small_font.render(f"{tiles_to_km(route['distance_tiles']):.2f} км", True, (193, 190, 174))
             screen.blit(distance, distance.get_rect(topright=(row_rect.right - 10, row_rect.top + 8)))
             icon_x, icon_y = row_rect.left + 10, row_rect.top + 37
             for resource in route.get("resources", []):
@@ -1501,7 +1576,7 @@ class StableWindow:
         screen.blit(title, (panel.left + 16, y))
         y += 34
         screen.blit(scene.small_font.render(
-            f"Расстояние: {route['distance_tiles']:.2f} тайла ({route['distance_pixels']} px)",
+            f"Расстояние: {tiles_to_km(route['distance_tiles']):.2f} км",
             True, (192, 188, 171)), (panel.left + 16, y))
         y += 35
 
@@ -1623,15 +1698,22 @@ class StableWindow:
             silver_remaining = int(progress.get("silver_remaining", config["silver_cost"]))
             wood_available = int(progress.get("wood_in_warehouse", 0))
             silver_available = int(progress.get("treasury_silver_available", 0))
+            treasury_copper = int(progress.get("treasury_copper", silver_available * 100))
             can_purchase = bool(progress.get("can_purchase", False))
             wood_label = f"Древесина: склад {wood_available}/{wood_remaining}"
-            silver_label = f"Серебро: казна {silver_available}/{silver_remaining}"
             draw_item_icon(screen, "wood", (card.left + 16, card.top + 62), 32)
             screen.blit(scene.small_font.render(wood_label, True, (198, 190, 168)),
                         (card.left + 52, card.top + 68))
             draw_item_icon(screen, "silver", (card.left + 16, card.top + 92), 32)
-            screen.blit(scene.small_font.render(silver_label, True, (198, 190, 168)),
-                        (card.left + 52, card.top + 98))
+            prefix = scene.small_font.render("Казна:", True, (198, 190, 168))
+            screen.blit(prefix, (card.left + 52, card.top + 98))
+            coins_end = draw_treasury_coins(
+                screen, scene.small_font, treasury_copper,
+                (card.left + 52 + prefix.get_width() + 8, card.top + 94), icon_size=24, gap=12,
+            )
+            screen.blit(scene.small_font.render(
+                f"/ {silver_remaining} серебра", True, (198, 190, 168)),
+                        (coins_end, card.top + 98))
             if purchased:
                 if progress.get("in_progress", False):
                     seconds_left = max(0, progress.get("seconds_left", 0)
@@ -1731,7 +1813,7 @@ class StableWindow:
         y += 8
         if upgrade["in_progress"]:
             seconds_left = max(0, upgrade["seconds_left"] - (time.monotonic() - self.state_received_at))
-            screen.blit(scene.font.render(f"Идёт улучшение: осталось {format_duration(seconds_left)}",
+            screen.blit(scene.font.render(f"Идёт улучшение: осталось {_format_duration(seconds_left)}",
                                           True, (120, 190, 240)), (panel.left + 18, y))
             return
         self.upgrade_button.topleft = (panel.left + 18, y)

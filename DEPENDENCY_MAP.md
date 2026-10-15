@@ -1,420 +1,122 @@
-# Complete Dependency Map: Duel Combat System
+﻿# Complete Dependency Map: World Combat System
 
 ## Architecture Overview
 
-The Duel game uses a unified 7-stat system for all characters (Warriors, Mages, etc.), centered around the `Fighter` class. All gameplay stats, card mechanics, and combat resolution flow through this single system.
+The only combat mode is world-map combat (`scenes/world_map_scene.py`). Card battles, duels, decks, and the card database have been removed.
 
----
+```
+WorldMapScene
+ ├─ core/player_movement.py      A* tile path, follow_path
+ ├─ combat/world_stats.py        all combat formulas
+ ├─ combat/weapon_damage.py      weapon damage range
+ ├─ combat/fighter_profile.py    applies a character profile to a Fighter
+ ├─ combat/fighter.py            Fighter object (equipment, derived values)
+ ├─ combat/character_stats.py    stat constants, progression, carry capacity
+ ├─ combat/progression.py        level/XP progression
+ └─ core/carry_weight.py         movement multiplier from carried weight
+```
 
 ## Component Hierarchy & Dependencies
 
 ### 1. FIGHTER CLASS (Core Character System)
-**File:** `/combat/fighter.py`
 
-**Stats System (7 unified stats for all character types):**
-```
-Fighter.stats = {
-    "strength": 3,      # Physical damage output
-    "agility": 3,       # Dodge/block chance
-    "intuition": 3,     # Critical hit chance
-    "wisdom": 3,        # Mage spell damage scaling
-    "intellect": 3,     # Max mana pool
-    "harmony": 3,       # Magical effects duration/scaling
-    "endurance": 3 + (level-1)  # Health pool
-}
-```
-
-**Dependencies:**
-
-| Component | Field/Method | Purpose |
-|-----------|---|---|
-| `character_stats.py` → `Fighter.__init__()` | `BASE_STAT_VALUE = 3` | Initialize all 7 stats |
-| `character_stats.py` → `Fighter.__init__()` | `STARTING_ENDURANCE_VALUE = 3` | Level-based endurance scaling |
-| `character_stats.py` → `Fighter.__init__()` | `STARTING_STAT_POINTS = 5` | Stat points for distribution |
-| `character_stats.py` → `calculate_max_hp()` | `ENDURANCE_HP_BONUS = 10` | HP = Endurance × 10 |
-| `character_stats.py` → `calculate_max_mana()` | `MANA_PER_INTELLECT = 5` | Mana = Intellect × 5 |
-| `Fighter._effective_stat()` | `temporary_stat_modifiers[stat]` | Turn debuffs/buffs |
-| `Fighter._effective_stat()` | `equipment_stat_modifiers[stat]` | Item bonuses |
-
----
+`combat/fighter.py` holds a character's stats, equipment modifiers, and current HP/MP. `recalculate_parameters` sets derived values, so world values (`get_world_max_hp`, `get_world_max_mana`) are applied after it.
 
 ### 2. CHARACTER_STATS (Stat Formulas & Constants)
-**File:** `/combat/character_stats.py`
 
-**Key Constants:**
-```python
-BASE_STAT_VALUE = 3
-STARTING_ENDURANCE_VALUE = 3
-MIN_STAT_VALUE = 3
-STARTING_STAT_POINTS = 5
-ENDURANCE_HP_BONUS = 10
-MANA_PER_INTELLECT = 5
-STAT_NAMES = ("strength", "agility", "intuition", "wisdom", "intellect", "harmony", "endurance")
-```
+`combat/character_stats.py` defines the seven stats (strength, agility, intuition, endurance, wisdom, intellect, plus the free points), profession data, stat-point progression, and carry capacity.
 
-**Level Progression Formulas:**
+- Starting stats and free points are defined here.
+- Four classes are offered at character creation: Warrior, Archer, Assassin, Mage.
 
-| Formula | Code | Result |
-|---------|------|--------|
-| **Stat Points at Level N** | `5 + (3 * (N-1))` | Level 1: 5 pts, Level 2: 8 pts, Level 10: 32 pts |
-| **Min Endurance at Level N** | `3 + max(0, N-1)` | Level 1: 3, Level 10: 12 |
-| **Max HP** | `Endurance × 10` | Endurance 5 = 50 HP |
-| **Max Mana** | `Intellect × 5` | Intellect 4 = 20 Mana |
+### 3. WORLD_STATS (Combat Formulas)
 
-**Functions Used By:**
-- `Fighter.__init__()` → calls `total_stat_points(level)`, `calculate_max_hp()`, `calculate_max_mana()`
-- `Fighter.recalculate_parameters()` → recalculates HP/Mana from current stats
-- `adjust_stats()` → applies stat changes with validation
+`combat/world_stats.py` is the single source for combat values:
 
----
+- Reach and move speed (`get_attack_reach`, `get_move_speed`).
+- Dodge and critical chances, which depend on both attacker and defender (`get_world_dodge_chance`, `get_world_crit_chance`).
+- Base damage and defense (`get_world_base_damage`, `get_defense`).
+- HP, mana, and their regeneration (`get_world_max_hp`, `get_hp_regen_per_second`, `get_world_max_mana`, `get_mana_regen_per_second`).
+- The hit resolver `resolve_world_melee_attack(attacker, defender, rng)`.
 
-### 3. CARDBATTLE (Combat System)
-**File:** `/combat/card_battle.py`
+Imports: `random`, `math`. Used by `scenes/world_map_scene.py` and the character panel (`ui/character_profile_overlay.py`, `ui/character_profile.py`).
 
-**Core Mechanic Chain:**
-```
-Turn Start → Generate Action Points → Player Selection → Resolve Cards → Update Stats → Turn End
-```
+### 4. WEAPON_DAMAGE & FIGHTER_PROFILE
 
-**Action Points Generation (Turn Start):**
+- `combat/weapon_damage.py`: `weapon_damage_range(equipment)` reads the equipped weapon's damage range.
+- `combat/fighter_profile.py`: `apply_fighter_profile(fighter, profile)` copies the character's stats onto the Fighter, using the base stat value from `character_stats`.
 
-| Stat | Formula | Example |
-|------|---------|---------|
-| All 4 stats | `max(0, stat_value) // 4` + `(remainder × 25% chance)` | Strength 13 → 3 guaranteed + 25% chance for +1 |
+### 5. WORLD_MAP_SCENE (Combat Driver)
 
-**Code Reference:** `points_from_stat(value)` in card_battle.py, lines 31-34
+`scenes/world_map_scene.py` owns:
 
-```python
-def points_from_stat(value, rng=None):
-    guaranteed, remainder = divmod(max(0, int(value)), 4)
-    return guaranteed + int(rng.random() < remainder * 0.25)
-```
+- Right-click movement and attack targeting (`_set_move_target`, `_set_attack_target`, `_update_attack_target`).
+- The windup and backswing movement gate: the character does not move while `attack_windup > 0` or `attack_backswing > 0` (`update`).
+- Striking a mob (`_strike_mob`) and the swing animation placeholder (`_start_attack_swing`).
+- Mob patrol, aggro, leash, chase, and respawn (`_update_mobs`, `_update_mob_patrol`, `_update_mob_chase`, `_respawn_mob`).
+- Damage numbers (lasting `DAMAGE_NUMBER_DURATION`).
 
-**Dependencies:**
+Constants: `MOB_*`, `PLAYER_*`, and `DAMAGE_NUMBER_DURATION` at the top of the file.
 
-| Component | Field/Method | Purpose |
-|-----------|---|---|
-| `Fighter.strength` property | `_effective_stat("strength")` | Action points generation |
-| `Fighter.agility` property | `_effective_stat("agility")` | Action points generation |
-| `Fighter.intuition` property | `_effective_stat("intuition")` | Action points generation |
-| `Fighter.endurance` property | `_effective_stat("endurance")` | Action points generation |
-| `Fighter.wisdom` property | `_effective_stat("wisdom")` | Mage damage scaling |
-| `Fighter.intellect` property | `_effective_stat("intellect")` | Mana pool cap |
-| `Fighter.harmony` property | `_effective_stat("harmony")` | Mage effect duration |
-| `Fighter.mp` | Mana points | Mage card cost deduction |
-| `Card.mana_cost` | Mage card resource | Deducted from `Fighter.mp` |
-| `Card.costs` property | Stat action point costs | Deducted from `action_points[stat]` |
+### 6. PLAYER_MOVEMENT (Pathfinding)
 
----
+`core/player_movement.py`:
 
-### 4. CARD DATABASE (Card Definition & Loading)
-**File:** `/combat/card_database.py`
+- `find_tile_path` builds an A* path over the tile grid.
+- `follow_path` moves the character along it.
 
-**Card Dataclass Fields:**
-```python
-@dataclass(frozen=True)
-class Card:
-    key: str                    # Unique ID like "mage_flash"
-    name: str                   # Display name
-    group_name: str             # Category (e.g., "Магия: Огонь")
-    strength_cost: int          # Action points required
-    intuition_cost: int
-    agility_cost: int
-    endurance_cost: int
-    effect_type: str            # Type like "mage_damage_status"
-    effect_data: dict           # Effect parameters (JSON)
-    level: int                  # Card level
-    mana_cost: int = 0          # Mage card mana cost (NEW FIELD)
-    price_copper/silver/gold: int   # Currency costs
-    drop_chance: float          # Battle reward probability
-    image_path: str             # Asset path
-    effect_duration: int        # Effect duration in turns
-```
-
-**Mana Cost Handling:**
-- **Previous System:** Mana cost buried in `effect_data["mana_cost"]` ❌
-- **New System:** Direct `card.mana_cost` field ✅
-- **Usage:** `can_select()` checks `fighter.mp >= card.mana_cost` before allowing play
-- **Deduction:** `_resolve_card()` deducts `card.mana_cost` from `fighter.mp` when card executes
-
-**Database Schema (SQLite):**
-```
-cards table:
-  key TEXT PRIMARY KEY
-  name TEXT
-  group_name TEXT
-  strength/intuition/agility/endurance_cost INTEGER
-  effect_type TEXT
-  effect_data TEXT (JSON string)
-  level INTEGER
-  price_* INTEGER
-  drop_chance REAL
-  image_path TEXT
-  effect_duration INTEGER
-  mana_cost INTEGER (NEW COLUMN)
-  enabled INTEGER
-```
-
-**Data Flow:**
-1. `_mage_card()` helper creates Card objects with mana_cost field
-2. `initialize_database()` creates/migrates schema, adds mana_cost column
-3. `load_cards()` reads cards from DB, reconstructs Card objects with all fields
-4. Cards returned to `CardBattle.__init__()`
-
----
-
-### 5. MECHANICS (Combat Calculations)
-**File:** `/combat/mechanics.py`
-
-**Dodge Calculation:**
-```
-base_dodge = Agility × 2.0 %
-clamped_max = 70%
-```
-
-**Critical Damage Multiplier:**
-```
-base = 1.5
-intuition_bonus = Intuition × 0.05
-total = 1.5 + (Intuition × 0.05)
-
-Example: Intuition 10 = 1.5 + 0.5 = 2.0× damage
-```
-
-**Functions:**
-- `get_dodge_chance(attacker, defender)` → Returns base dodge % based on stats
-- `get_critical_chance(attacker, defender)` → Returns base critical % (5% fixed)
-- `get_critical_damage_multiplier(attacker)` → Returns total multiplier from intuition
-- `weapon_damage_range(weapon_data)` → Rolls weapon dice
-
-**Used By CardBattle:**
-- `_resolve_card()` calls these functions for each hit calculation (lines 1137-1226)
-
----
+Movement is tile-based; the path is recalculated when the target moves.
 
 ## Stat Effectiveness Reference
 
-### Action Points (Per-Turn Generation)
-**Source:** Each of 4 stats generate points per turn
-**Formula:** `(Stat ÷ 4) + (Remainder × 25% chance)`
-**Cap:** No hard cap, scales infinitely with stats
-**Usage:** Pay action points to play cards
+| Stat | Effect |
+|---|---|
+| Strength | +2 base damage per point |
+| Agility | +5% dodge per point; +5 px/s move speed |
+| Intuition | +5% crit per point; +1 px attack reach |
+| Endurance | +12 max HP; +1 defense; +1 HP regen per 3 s |
+| Wisdom | +2 magic damage per point (no magic attacks on the map yet) |
+| Intellect | +6 max mana; +1 mana regen per second |
 
-| Stat | Purpose | Secondary |
-|------|---------|-----------|
-| **Strength** | Phys damage | Action points |
-| **Agility** | Dodge % | Action points |
-| **Intuition** | Critical multiplier | Action points |
-| **Endurance** | Health pool | Cannot be manually increased |
-
-### Mage-Only Stats
-**Source:** Mages use same 7-stat system as Warriors
-**Additional Uses:**
-
-| Stat | Formula | Effect |
-|------|---------|--------|
-| **Wisdom** | Direct bonus | Mage damage output |
-| **Intellect** | `× 5` | Max mana pool |
-| **Harmony** | `÷ 6` (duration), `× 0.25` (bonus) | Mage effect duration/scaling |
-
-**Mana Regen (Per Turn in Mage Mode):**
-```
-Restored = 8 + (Wisdom ÷ 2)
-```
-
----
+Opponent stats reduce the chance: −3% dodge per opponent agility point, −3% crit per opponent intuition point.
 
 ## Damage Calculation Flow
 
-**File:** `/combat/card_battle.py` lines 1137-1226 (`_resolve_card()`)
+`resolve_world_melee_attack(attacker, defender, rng)`:
 
-```
-For each hit in card.hits:
-├─ 1. DODGE CHECK
-│  ├─ base_dodge = get_dodge_chance(attacker, defender)
-│  ├─ + defender.card_dodge_bonus
-│  ├─ + defender.temporary_dodge_chance_modifier
-│  ├─ - attacker.card_anti_dodge_bonus - card.anti_dodge
-│  └─ If dodged → continue to next hit
-│
-├─ 2. DAMAGE ROLL
-│  └─ damage = roll_dice(card.dice) + attacker.strength + weapon_roll
-│
-├─ 3. CRITICAL CHECK
-│  ├─ crit_chance = get_critical_chance(attacker, defender)
-│  ├─ + attacker.card_critical_bonus + card.critical_bonus
-│  ├─ + attacker.temporary_critical_chance_modifier
-│  └─ If critical:
-│     ├─ multiplier = get_critical_damage_multiplier(attacker)
-│     ├─ damage *= multiplier * card.critical_multiplier
-│     └─ damage += card.critical_bonus_damage
-│
-├─ 4. APPLY DAMAGE
-│  ├─ total_damage = floor(total_damage * defender.card_damage_ratio)
-│  ├─ reduction = defender.card_damage_reduce
-│  └─ defender.take_damage(max(0, total_damage - reduction))
-│
-└─ 5. SPECIAL EFFECTS
-   ├─ damage_stat_debuff → reduce opponent's stat
-   ├─ damage_critical_debuff → reduce opponent's crit%
-   ├─ damage_dodge_debuff → reduce opponent's dodge%
-   ├─ damage_recoil → attacker takes damage
-   └─ damage_dodge_critical_debuff → both penalties
-```
+1. Dodge roll against `get_world_dodge_chance(defender, attacker)`. A dodge ends the attack.
+2. Base damage: `get_world_base_damage` (strength × 2 + weapon roll).
+3. Critical roll against `get_world_crit_chance(attacker, defender)`. A critical multiplies base damage by 1.5.
+4. Block roll against the defender's equipment `block` modifier, only if the attack comes from the front sector (±67.5° around `defender_facing`). A block on a non-critical hit ends the attack with damage 0. A block on a critical hit halves the critical damage.
+5. Defense: subtract `get_defense(defender)` from the damage, never below 0.
 
----
+## Mob Behavior
 
-## Mage-Specific Systems
+| Parameter | Value |
+|---|---|
+| Stats | level-1 character formulas, endurance `MOB_ENDURANCE` |
+| Weapon | club from the forge catalog (`MOB_CLUB_ITEM`) |
+| Patrol square | 7×7 tiles around `MOB_PATROL_CENTER_TILE` |
+| Patrol speed | `MOB_PATROL_SPEED` (40 px/s), 1.5 s pause per waypoint |
+| Aggro | player enters the patrol square |
+| Chase speed | `MOB_CHASE_SPEED` = `BASE_MOVE_SPEED` (160 px/s) |
+| Leash | `MOB_LEASH_RADIUS_TILES` (40 tiles from the respawn point) |
+| Respawn | `MOB_RESPAWN_DELAY` (30 s), at the center of the square |
 
-**File:** `/combat/card_battle.py`
+## Timed Effects
 
-### Mana Cost System
-- **Storage:** `Fighter.mp` (current), `Fighter.max_mp` (calculated from intellect)
-- **Per-card cost:** `Card.mana_cost` field (mage cards have non-zero values)
-- **Checking:** `can_select()` method line 615 checks `fighter.mp >= card.mana_cost`
-- **Deduction:** `_resolve_card()` line 957 deducts `card.mana_cost` from `fighter.mp`
-- **Regen:** `_start_turn()` adds `8 + wisdom//2` to mana per turn (mage mode only)
-- **Burn card:** Can burn a card to restore `20% of max_mp`
+The attack windup is the only timed effect in world combat:
 
-### Mage Status Effects
-- **Storage:** `mage_statuses[side]` list
-- **Types:** "огонь" (fire), "вода" (water), "холод" (cold), "электро" (electro)
-- **Applied:** Via mage effect resolution (lines 1005-1134)
-- **Duration:** Tracked per status with countdown
-
-### Mage Shields
-- **Storage:** `mage_shields[side]` (HP pool separate from fighter HP)
-- **Applied:** When shield > 0, damage goes to shield first
-- **Duration:** Expires after N turns via `timed_damage_ratio_effects`
-
-### Mage Damage Bonuses
-- **Storage:** `mage_damage_bonus_ratio` on Fighter
-- **Applied:** Multiplied into mage damage calculations
-- **Duration:** Tracked in `timed_damage_ratio_effects[side]`
-
-### Mage Golems
-- **Storage:** `mage_golems[side]` list
-- **Stats:** HP (scaled by wisdom), damage (scaled by wisdom), stun ability
-- **Behavior:** Attacks defender, can stun
-
-### Mage Clouds
-- **Storage:** `mage_clouds[side]` list
-- **Damage:** Per-turn damage to enemy
-- **Duration:** Scaled by harmony stat
-
----
-
-## Timed Effects System
-
-**Storage Structures:**
-```
-timed_stat_effects[side] = [
-    {"stat": "strength", "amount": -2, "expires_after_turn": 5},
-    ...
-]
-
-timed_critical_effects[side] = [
-    {"amount": -10, "expires_after_turn": 5},
-    ...
-]
-
-timed_dodge_effects[side] = [
-    {"amount": -15, "expires_after_turn": 5},
-    ...
-]
-
-timed_damage_ratio_effects[side] = [
-    {"ratio": 0.8, "expires_after_turn": 5},
-    ...
-]
-```
-
-**Expiration Check (line 1259-1281):**
-- Each turn, effects with `expires_after_turn <= current_turn` are removed
-- Stat modifiers are reversed on the Fighter object
-- Damage ratio effects are recalculated
-
----
-
-## Card Selection & Validation Flow
-
-**File:** `/combat/card_battle.py`
-
-### Selection Process
-1. **`can_select(side, card)` checks:**
-   - Line 610-617
-   - Verify freeze/stun status
-   - Calculate action point costs: `sum(item.costs[stat] for item in selected[side])`
-   - Check remaining points: `action_points[side][stat] - used[stat] >= cost`
-   - Check mana (if mage): `fighter.mp >= card.mana_cost`
-
-2. **`select_card(side, card_key)` action:**
-   - Add card to `selected[side]`
-   - Reserve action points (not deducted until turn resolves)
-
-3. **`confirm_selection(side)` action:**
-   - Lock in selection, prevent changes
-   - Cards stay in `selected[side]` until `resolve_turn()`
-
-4. **`_spend_points(side, card)` deduction (line 1314-1316):**
-   - Called during `_resolve_card()`
-   - Deduct stat costs: `action_points[side][stat] -= cost`
-   - Deduct mana: `fighter.mp -= card.mana_cost` (inside mage card handlers)
-
----
-
-## Removed Components
-
-**Removed Files (No longer used, conflicting constants):**
-- ❌ `/core/character/base.py` - Abstract base class (unused)
-- ❌ `/core/character/warrior.py` - Had 4-stat system with STARTING_ENDURANCE = 4
-- ❌ `/core/character/mage.py` - Had unused `get_all_stats()`, `get_max_mana()` methods
-- ❌ `/core/stats/mage_stats.py` - Duplicated constants with wrong values
-
-**Reason:** Fighter class is the active, unified system. Core/character and core/stats added confusion with conflicting constants and duplicate code.
-
----
-
-## Summary: Complete Dependency Chain
-
-```
-GameLoop
-├─ Fighter (Combat participant)
-│  ├─ character_stats.py (Formulas for HP, Mana, Stat Points)
-│  ├─ mechanics.py (Dodge, Critical, Weapon damage)
-│  └─ Fighter.stats (7-stat dict)
-│
-├─ CardBattle (Turn resolution)
-│  ├─ Fighter.strength/agility/intuition/wisdom/intellect/harmony/endurance (Action point generation)
-│  ├─ Fighter.mp (Mana check for mage cards)
-│  ├─ Card.mana_cost (Direct mana resource)
-│  ├─ Card.costs (Action point costs)
-│  ├─ Card.effect_type (Damage, status, buff, etc.)
-│  ├─ Card.effect_data (Effect parameters)
-│  ├─ mechanics.py (Dodge/crit calculations)
-│  ├─ Fighter.temporary_stat_modifiers (Debuff tracking)
-│  ├─ mage_* effects (Status, shields, clouds, golems)
-│  └─ timed_*_effects (Duration tracking)
-│
-└─ Card Database
-   ├─ load_cards() (Load from SQLite)
-   ├─ Card dataclass (7 stat costs + mana_cost)
-   └─ Card.group_name ("Магия: *" for mage cards)
-```
-
----
+- A windup (`attack_windup`, `get_attack_windup`: 0.5 s base minus 0.02 s per intuition point) runs before each strike. The strike applies when it ends, if the target is still in reach; otherwise the attack ends as a miss. A windup is cancelled only by a player action (a right click on the ground or a target change), or by the mob returning past its leash.
+- A backswing (`attack_backswing`, `get_attack_backswing`: 0.5 s base minus 0.02 s per agility point) runs after each strike. The next windup cannot start during it.
+- While the windup or backswing is above 0, the character does not move. When both end, a queued path resumes.
+- Regeneration (HP and mana) runs each frame in `update`.
 
 ## Consistency Verification Checklist
 
-✅ **Fighter System** - Unified 7-stat system
-✅ **Action Points** - Generated from 4 primary stats per turn
-✅ **HP System** - Calculated from Endurance (× 10)
-✅ **Mana System** - Calculated from Intellect (× 5)
-✅ **Mana Cost** - Card.mana_cost field (no longer buried in effect_data)
-✅ **Mage Stats** - Wisdom/Intellect/Harmony scale mage effects
-✅ **Level Scaling** - Endurance increases with level
-✅ **Stat Points** - 5 starting + 3 per level
-✅ **Database Schema** - Includes mana_cost column
-✅ **No Dead Code** - Removed unused core/character/ and core/stats/ directories
-✅ **Consistent Constants** - All in character_stats.py
-
+- [ ] Formula changes are made in `combat/world_stats.py`, not inline in the scene.
+- [ ] `BATTLE_MATH.md` and this file match the code.
+- [ ] `tests/test_world_stats.py` covers bounds, zero and negative inputs, and equipment.
+- [ ] `tests/test_world_terrain.py` covers the windup movement gate.
+- [ ] `tests/test_player_movement.py` covers A* paths and stall handling.
+- [ ] The character panel (`ui/character_profile_overlay.py`) shows values from `world_stats`.

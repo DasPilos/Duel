@@ -11,31 +11,24 @@ from ui.hud import draw_button, draw_text
 class ChatPanel:
     ROOM_NAMES = {
         "tavern": "ТРАКТИР",
-        "backyard": "ЗАДНИЙ ДВОР",
         "city": "ГОРОД",
         "world_map": "ОТКРЫТЫЙ МИР",
         "character_room": "КОМНАТА ПЕРСОНАЖА",
     }
 
-    def __init__(self, session, location, battle_source=None, profile_overlay=None):
+    def __init__(self, session, location, profile_overlay=None):
         self.session = session
         self.location = location
-        self.battle_source = battle_source
         # Единственная карточка профиля: чат не владеет собственным отдельным попапом.
         self.profile_overlay = profile_overlay
         self.collapsed = False
         self.channel = "Общий"
         self.occupants = []
         self.messages = []
-        self.offers = []
-        self.group_offers = []
-        self.my_application = None
         self.private_target = None
-        self.duel_accepted = None
         self.last_character_click = 0
         self.last_character_position = None
         self.people_scroll = 0
-        self.afk_challenge_buttons = {}
         self.error = ""
         self.elapsed = 0.0
         self.background_poller = None
@@ -152,8 +145,7 @@ class ChatPanel:
             self.session.update_presence(self.location)
             occupants = sorted(self.session.list_occupants(self.location), key=lambda item: item.get("name", "").casefold())
             messages = self.session.list_messages(self.location)
-            board = self.session.duel_board(self.location)
-            return {"occupants": occupants, "messages": messages, "offers": board.get("offers", []), "my_application": board.get("my_application")}, None
+            return {"occupants": occupants, "messages": messages}, None
         except ServerError as error:
             return None, error
 
@@ -163,36 +155,11 @@ class ChatPanel:
         self.travelers_received_at = state.get("travelers_received_at", self.travelers_received_at)
         self.messages = state["messages"]
         self.message_list.set_messages(self._visible_messages())
-        self.offers = state["offers"]
-        self.group_offers = state.get("group_offers", [])
-        server_application = state["my_application"]
-        if server_application is not None and server_application.get("status") == "accepted" and self.duel_accepted is None:
-            self._resolve_application_opponent(server_application)
-        self.my_application = server_application if server_application is not None and server_application.get("status") == "pending" else None
         self.error = ""
         self.traveling_convoys = state.get("traveling_convoys", self.traveling_convoys)
         self.convoys_received_at = state.get("convoys_received_at", self.convoys_received_at)
 
-    def _resolve_application_opponent(self, application):
-        """Заявка игрока была принята (например, ботом по истечении срока ожидания) — запускаем бой."""
-        accepted_by = application.get("accepted_by")
-        opponent = next(
-            (item for item in self.occupants if str(item.get("character_id")) == str(accepted_by)),
-            None,
-        )
-        if opponent is not None:
-            self.duel_accepted = opponent
-
-    def _clear_expired_application(self):
-        if self.my_application is None or self.my_application.get("status", "pending") != "pending":
-            return
-        created_at = float(self.my_application.get("created_at", 0))
-        ttl = float(self.my_application.get("ttl", settings.DUEL_APPLICATION_TTL_SECONDS))
-        if time.time() >= created_at + ttl:
-            self.my_application = None
-
     def update(self, dt):
-        self._clear_expired_application()
         self.message_input.update(dt)
         if self.background_poller is not None:
             state, error = self.background_poller.poll()
@@ -255,11 +222,6 @@ class ChatPanel:
         for visible_index, occupant in enumerate(self.occupants[self.people_scroll:self.people_scroll + visible_rows]):
             rect = pygame.Rect(self.people_rect.x, self.people_rect.y + visible_index * row_height, self.people_rect.width, 25)
             if rect.collidepoint(event.pos):
-                challenge_button = self.afk_challenge_buttons.get(str(occupant.get("character_id")))
-                if (event.button == 1 and challenge_button is not None
-                        and challenge_button.collidepoint(event.pos)):
-                    self._challenge_afk_player(occupant)
-                    return True
                 if event.button == 3 and self.profile_overlay is not None:
                     self.profile_overlay.open(occupant, counterpart=self.session.character)
                 elif event.button == 1 and self._is_double_character_click(event.pos):
@@ -290,26 +252,6 @@ class ChatPanel:
             return True
         return False
 
-    def _challenge_afk_player(self, occupant):
-        try:
-            result = self.session.offer_duel(self.location, occupant.get("character_id"))
-            if result.get("accepted"):
-                self.duel_accepted = {**occupant, **result.get("offer", {})}
-            else:
-                self.error = result.get("message", "Не удалось начать поединок")
-        except ServerError as error:
-            self.error = str(error)
-
-    def _challenge_bot(self, bot):
-        try:
-            result = self.session.offer_duel(self.location, bot.get("character_id"))
-            if result.get("accepted"):
-                self.duel_accepted = bot
-            else:
-                self.error = result.get("message", "Бот не принял вызов")
-        except ServerError as error:
-            self.error = str(error)
-
     def _is_double_character_click(self, position):
         now = pygame.time.get_ticks()
         is_double = (
@@ -323,9 +265,6 @@ class ChatPanel:
     def send_message(self):
         if self.channel == "Личные" and self.private_target is None:
             self.error = "Сначала выберите персонажа двойным левым кликом"
-            return
-        if self.channel == "Лог боя":
-            self.error = "В лог боя нельзя отправлять сообщения"
             return
         text = self.message_input.text.strip()
         if not text:
@@ -358,28 +297,12 @@ class ChatPanel:
                 if message.get("recipient_id") is not None
                 and {str(message.get("sender_id")), str(message.get("recipient_id"))} == {own_id, target_id}
             ]
-        if self.channel == "Лог боя" and self.battle_source is not None:
-            result = []
-            for index, comment in enumerate(self.battle_source.comments):
-                segments = comment.get("segments", [])
-                if segments:
-                    result.append({
-                        "id": f"battle-{index}",
-                        "sender_id": "commentator",
-                        "sender": "Комментатор",
-                        "segments": [
-                            {"text": "Комментатор: ", "color": (170, 170, 170)},
-                            *segments,
-                        ],
-                        "created_at": index,
-                    })
-            return result
         return []
 
     def draw(self, screen):
         if self.collapsed:
             self.toggle_rect = pygame.Rect(screen.get_width() - 80, screen.get_height() - 25, 70, 25)
-            draw_button(screen, self.toggle_rect, "ЛОГ БОЯ", pygame.font.SysFont("arial", 12), color=(75, 105, 155))
+            draw_button(screen, self.toggle_rect, "ЧАТ", pygame.font.SysFont("arial", 12), color=(75, 105, 155))
             return
         pygame.draw.rect(screen, (25, 27, 38), self.panel_rect, border_radius=8)
         pygame.draw.rect(screen, (60, 65, 80), self.panel_rect, width=2, border_radius=8)
@@ -400,7 +323,6 @@ class ChatPanel:
         visible_rows = max(1, self.people_rect.height // row_height)
         max_scroll = max(0, len(self.occupants) - visible_rows)
         self.people_scroll = max(0, min(max_scroll, self.people_scroll))
-        self.afk_challenge_buttons = {}
         if max_scroll:
             thumb_height = max(18, int((visible_rows / max(1, len(self.occupants))) * (self.people_rect.height - 14)))
             thumb_y = self.people_rect.y + 7 + int(self.people_scroll / max_scroll * (self.people_rect.height - 14 - thumb_height))
@@ -418,12 +340,6 @@ class ChatPanel:
                 self.people_rect.y + visible_index * row_height + 4,
                 (135, 139, 145) if is_afk else (215, 215, 225),
             )
-            if is_afk and self.location == "backyard":
-                challenge_button = pygame.Rect(self.people_rect.right - 69,
-                                               self.people_rect.y + visible_index * row_height + 1, 58, 23)
-                self.afk_challenge_buttons[str(occupant.get("character_id"))] = challenge_button
-                draw_button(screen, challenge_button, "ДУЭЛЬ", pygame.font.SysFont("arial", 12),
-                            color=(91, 63, 50), text_color=(228, 207, 174))
         screen.set_clip(previous_clip)
         if self.error:
             draw_text(screen, pygame.font.SysFont("arial", 14), self.error, self.panel_rect.x + 12, self.panel_rect.bottom - 20, (255, 120, 100))

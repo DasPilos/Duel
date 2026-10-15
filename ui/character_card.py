@@ -9,15 +9,15 @@ from core.carry_weight import character_carry_capacity, load_color
 from ui.character_profile import (
     adjust_profile_level,
     adjust_profile_stat,
+    combat_speed_values,
     DERIVED_COLORS,
     STAT_ROWS,
     derived_values,
     displayed_hp_values,
     effective_stats,
     normalize_character_profile,
-    profile_from_fighter,
 )
-from ui.hud import draw_bar, draw_button, draw_text, FloatingText, update_and_draw_floating_texts
+from ui.hud import draw_button, draw_text, FloatingText, update_and_draw_floating_texts
 from ui import equipment_slots
 from ui.inventory_window import IconCache
 from ui.sprite_loader import FighterSprite
@@ -132,10 +132,6 @@ class CharacterCard:
         """Apply a level change to the canonical card state (test characters only)."""
         return adjust_profile_level(self.state, delta)
 
-    def update_from_fighter(self, fighter, *, title=None, kind="player"):
-        self.sync(profile_from_fighter(fighter), title=title, kind=kind)
-        return self.state
-
     def draw(
         self,
         screen,
@@ -144,14 +140,16 @@ class CharacterCard:
         border_color=(80, 180, 120),
         title=None,
         editable=False,
-        card_preview=None,
         show_tabs=False,  # Новый параметр для показа закладок
         slot_highlight=None,  # слот, подсвечиваемый при перетаскивании предмета
         dragged_slot=None,  # слот, предмет из которого сейчас перетаскивают
+        mob_mode=False,  # карточка моба: без ID, XP, валюты, веса и кнопок изменения характеристик
+        sprite=None,  # спрайт для режима моба (по умолчанию спрайт карточки)
     ):
         if profile is not None:
             self.sync(profile, title=title, kind="player")
         normalized = self.state
+        sprite = sprite or self.sprite
         overlay = pygame.Surface(frame.size, pygame.SRCALPHA)
         overlay.fill((30, 32, 45, 225))
         screen.blit(overlay, frame.topleft)
@@ -168,7 +166,8 @@ class CharacterCard:
         name_rect = name_surface.get_rect(topleft=(x, name_y))
         screen.blit(name_surface, name_rect)
         character_id = normalized.get("character_id", normalized.get("id", "-"))
-        draw_text(screen, self.small_font, f"ID: {character_id}", name_rect.right + 20, name_y, (170, 175, 185))
+        if not mob_mode:
+            draw_text(screen, self.small_font, f"ID: {character_id}", name_rect.right + 20, name_y, (170, 175, 185))
 
         level_y = frame.y + 48
         level = int(normalized["level"])
@@ -181,19 +180,25 @@ class CharacterCard:
             draw_button(screen, minus, "-", self.small_font, color=(235, 235, 235), hover_color=(210, 80, 80), text_color=(30, 32, 45))
             draw_button(screen, plus, "+", self.small_font, color=(235, 235, 235), hover_color=(80, 200, 120), text_color=(30, 32, 45))
             xp_x = plus.right + 20
-        next_xp = xp_to_next(level)
-        xp_text = "XP: максимум" if next_xp == 0 else f"XP: {normalized.get('xp', 0)}/{next_xp}"
-        draw_text(screen, self.small_font, xp_text, xp_x, level_y, (255, 220, 120))
+        if not mob_mode:
+            next_xp = xp_to_next(level)
+            xp_text = "XP: максимум" if next_xp == 0 else f"XP: {normalized.get('xp', 0)}/{next_xp}"
+            draw_text(screen, self.small_font, xp_text, xp_x, level_y, (255, 220, 120))
 
         hp_y = frame.y + 100
         mp_y = frame.y + 140
-        bar_width = 280
-        bar_height = 11
+        bar_width = 360
+        bar_height = 14
         current_hp, max_hp = displayed_hp_values(normalized)
         self._draw_resource(screen, x, hp_y, bar_width, bar_height, "HP", current_hp, max_hp, (210, 80, 80))
         self._draw_resource(screen, x, mp_y, bar_width, bar_height, "MP", normalized["mp"], normalized["max_mp"], (60, 140, 220))
-        
-        # Отображение валюты под MP шкалой
+
+        stats_header_y = self._stats_header_y(frame)
+        sprite_top = equipment_slots.draw_paperdoll(
+            screen, frame, sprite, self.icons, self.small_font,
+            normalized.get("equipment", {}), slot_highlight, dragged_slot,
+        )
+        shoe_slot = equipment_slots.slot_rects(frame)["feet"]
         copper = int(normalized.get("copper", 0))
         silver = int(normalized.get("silver", 0))
         gold = int(normalized.get("gold", 0))
@@ -208,25 +213,47 @@ class CharacterCard:
                 "gold": gold,
             },
         )
-
-        stats_header_y = self._stats_header_y(frame)
-        sprite_top = equipment_slots.draw_paperdoll(
-            screen, frame, self.sprite, self.icons, self.small_font,
-            normalized.get("equipment", {}), slot_highlight, dragged_slot,
+        if not mob_mode:
+            capacity_kg = character_carry_capacity(normalized)
+            carried_kg = float(normalized.get("carried_weight_kg", 0))
+            carry_text = self.small_font.render(
+                f"Грузоподъёмность: {carried_kg:g}/{capacity_kg} кг",
+                True,
+                load_color(carried_kg, capacity_kg),
+            )
+            carry_rect = carry_text.get_rect(midtop=(frame.centerx, shoe_slot.bottom + 10))
+            carry_back = carry_rect.inflate(12, 6)
+            pygame.draw.rect(screen, (24, 29, 30), carry_back, border_radius=4)
+            pygame.draw.rect(screen, (82, 88, 76), carry_back, 1, border_radius=4)
+            screen.blit(carry_text, carry_rect)
+            speed_anchor_y = carry_back.bottom + 6
+        else:
+            speed_anchor_y = shoe_slot.bottom + 10
+        speeds = combat_speed_values(normalized)
+        speed_lines = (
+            (f"Скорость атаки: {speeds['attack_seconds']:g} с", (235, 215, 150), 0),
+            (
+                f"Скорость передвижения: {speeds['move_speed']} px/с",
+                (150, 220, 255),
+                speeds["move_speed_bonus"],
+            ),
         )
-        shoe_slot = equipment_slots.slot_rects(frame)["feet"]
-        capacity_kg = character_carry_capacity(normalized)
-        carried_kg = float(normalized.get("carried_weight_kg", 0))
-        carry_text = self.small_font.render(
-            f"Грузоподъёмность: {carried_kg:g}/{capacity_kg} кг",
-            True,
-            load_color(carried_kg, capacity_kg),
-        )
-        carry_rect = carry_text.get_rect(midtop=(frame.centerx, shoe_slot.bottom + 10))
-        carry_back = carry_rect.inflate(12, 6)
-        pygame.draw.rect(screen, (24, 29, 30), carry_back, border_radius=4)
-        pygame.draw.rect(screen, (82, 88, 76), carry_back, 1, border_radius=4)
-        screen.blit(carry_text, carry_rect)
+        speed_top = speed_anchor_y
+        for line_text, line_color, line_bonus in speed_lines:
+            line_surface = self.small_font.render(line_text, True, line_color)
+            bonus_surface = None
+            if line_bonus:
+                bonus_surface = self.small_font.render(f" {line_bonus:+d}", True, (140, 230, 150))
+            total_width = line_surface.get_width() + (bonus_surface.get_width() if bonus_surface else 0)
+            line_rect = pygame.Rect(0, speed_top, total_width, line_surface.get_height())
+            line_rect.midtop = (frame.centerx, speed_top)
+            line_back = line_rect.inflate(12, 6)
+            pygame.draw.rect(screen, (24, 29, 30), line_back, border_radius=4)
+            pygame.draw.rect(screen, (82, 88, 76), line_back, 1, border_radius=4)
+            screen.blit(line_surface, line_rect)
+            if bonus_surface:
+                screen.blit(bonus_surface, (line_rect.x + line_surface.get_width(), line_rect.y))
+            speed_top = line_back.bottom + 4
         for floating_text in self.regen_floating_texts:
             floating_text.x = frame.centerx
             floating_text.y = sprite_top - 12
@@ -234,24 +261,31 @@ class CharacterCard:
 
         draw_text(screen, self.small_font, "ХАРАКТЕРИСТИКИ", x, stats_header_y, border_color)
         stats = effective_stats(normalized)
-        draw_text(screen, self.small_font, f"Свободные очки: {normalized['stat_points']}", x, stats_header_y - 22, (255, 220, 120))
+        if not mob_mode:
+            draw_text(screen, self.small_font, f"Свободные очки: {normalized['stat_points']}", x, stats_header_y - 22, (255, 220, 120))
         derived = derived_values(normalized)
-        preview = self._card_preview(card_preview or [])
-        derived_x = self._stat_text_right(frame) + settings.STAT_DERIVED_GAP + 50
+        derived_x = self._stat_text_right(frame) + settings.STAT_DERIVED_GAP + 50 + settings.STAT_CONTROL_SHIFT_X
+        base_stats = normalized.get("stats") or {}
+        equipment_bonuses = normalized.get("equipment_bonuses") or {}
         for index, (key, label, derived_key) in enumerate(STAT_ROWS):
             row_y = self._stat_row_y(frame, index)
-            draw_text(screen, self.small_font, f"{label}: {stats.get(key, 0)}", x, row_y, (255, 255, 255))
+            base_text = f"{label}: {base_stats.get(key, stats.get(key, 0))}"
+            draw_text(screen, self.small_font, base_text, x, row_y, (255, 255, 255))
+            bonus = int(equipment_bonuses.get(key, 0)) if key in base_stats else 0
+            if bonus:
+                bonus_x = x + self.small_font.size(base_text)[0] + self.small_font.size(" ")[0]
+                draw_text(screen, self.small_font, f"{bonus:+d}", bonus_x, row_y, (140, 230, 150))
             if derived_key and derived_key in derived:
                 unit = " кг" if derived_key == "Грузоподъёмность" else ""
                 draw_text(
                     screen,
                     self.small_font,
-                    f"{derived_key}: {derived[derived_key]}{unit}{preview.get(derived_key, '')}",
+                    f"{derived_key}: {derived[derived_key]}{unit}",
                     derived_x,
                     row_y,
                     DERIVED_COLORS.get(derived_key, (255, 255, 255)),
                 )
-            if editable:
+            if editable and not mob_mode:
                 minus, plus = self._stat_control_rects(frame, row_y)
                 draw_button(
                     screen,
@@ -321,7 +355,7 @@ class CharacterCard:
         labels = {
             "strength": "Сила", "agility": "Ловкость", "intuition": "Интуиция",
             "endurance": "Выносливость", "wisdom": "Мудрость", "intellect": "Интеллект",
-            "harmony": "Гармония", "hp": "HP", "mp": "MP", "dodge": "% Уворот",
+            "hp": "HP", "mp": "MP", "dodge": "% Уворот",
             "block": "% Блок",
         }
         for stat, value in (item.get("bonuses") or {}).items():
@@ -352,56 +386,8 @@ class CharacterCard:
         ).size("Выносливость: 30")[0]
 
     @staticmethod
-    def _card_preview(cards):
-        damage_dice = []
-        dodge_bonus = 0
-        critical_bonus = 0
-        heal_dice = []
-        for card in cards:
-            data = card.effect_data
-            if card.effect_type in ("damage", "damage_reduce", "damage_recoil", "multi_damage"):
-                dice = data.get("dice")
-                if dice:
-                    damage_dice.append((dice, data.get("hits", 1)))
-            if card.effect_type == "dodge":
-                dodge_bonus += int(data.get("bonus", 0))
-            if card.effect_type == "critical":
-                critical_bonus += int(data.get("bonus", 0))
-            if card.effect_type == "heal":
-                dice = data.get("dice")
-                if dice:
-                    heal_dice.append(dice)
-
-        preview = {}
-        damage_range = CharacterCard._dice_range(damage_dice)
-        heal_range = CharacterCard._dice_range([(dice, 1) for dice in heal_dice])
-        if damage_range:
-            preview["Урон"] = f" + {damage_range}"
-        if dodge_bonus:
-            preview["Уворот"] = f" + {dodge_bonus}%"
-        if critical_bonus:
-            preview["Крит"] = f" + {critical_bonus}%"
-        if heal_range:
-            preview["HP"] = f" + {heal_range}"
-        return preview
-
-    @staticmethod
-    def _dice_range(dice_parts):
-        minimum = maximum = 0
-        for expression, multiplier in dice_parts:
-            try:
-                count, sides = expression.lower().split("d")
-                minimum += int(multiplier)
-                maximum += int(count) * int(sides) * int(multiplier)
-            except (AttributeError, TypeError, ValueError):
-                continue
-        if not maximum:
-            return ""
-        return str(minimum) if minimum == maximum else f"{minimum}-{maximum}"
-
-    @staticmethod
     def _stat_control_rects(frame, row_y):
-        text_right = CharacterCard._stat_text_right(frame) + settings.STAT_DERIVED_GAP + 7
+        text_right = CharacterCard._stat_text_right(frame) + settings.STAT_DERIVED_GAP + 7 + settings.STAT_CONTROL_SHIFT_X
         control_top = row_y + 5
         minus = pygame.Rect(
             text_right + settings.STAT_CONTROL_GAP,
@@ -459,8 +445,13 @@ class CharacterCard:
             cursor_x = amount_rect.right + 18
 
     def _draw_resource(self, screen, x, y, width, height, name, value, maximum, color):
-        draw_text(screen, self.small_font, f"{name}: {value}/{maximum}", x, y - 24, (220, 225, 235))
-        draw_bar(screen, x, y, width, height, value, maximum, fg=color)
+        """Полоска ресурса с подписью «ХП x/y» или «МП x/y» над ней."""
+        ratio = max(0.0, min(1.0, value / max(1, maximum)))
+        label = self.small_font.render(f"{name} {int(value)}/{int(maximum)}", True, (210, 215, 225))
+        screen.blit(label, (x, y - label.get_height() - 2))
+        bar_rect = pygame.Rect(x, y, width, height)
+        pygame.draw.rect(screen, (40, 10, 10), bar_rect)
+        pygame.draw.rect(screen, color, (bar_rect.x, bar_rect.y, int(bar_rect.width * ratio), bar_rect.height))
     
     def _draw_tabs(self, screen, frame, border_color):
         """Рисует закладки (вкладки) для инвентаря"""

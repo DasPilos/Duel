@@ -4,18 +4,26 @@ import json
 import math
 import time
 
-from core.cart_progress import CART_GRADES, cart_load_speed_ratio, cart_stats
+from core.cart_progress import (
+    CART_GRADES, cart_durability_band, cart_load_speed_ratio, cart_stats, tiles_to_km,
+)
 from core.city_progression import city_storage_resources, unlocked_country_buildings
-from core.currency import Currency
 from core.production_buildings import building_level_info, building_resources
 from server.city_population import DEFAULT_FACTION
-from server.database import SYSTEM_USER_ID, lock_character
+from server.database import lock_character
 from server.production_buildings import ProductionBuildings, STORAGE_ITEM_IDS
 from server.world_roads import PRODUCTION_BUILDING_IDS, roads_payload, route_position
 
 ACTIVE_STATUSES = ("outbound", "blocked")
 PROVISION_SECONDS = 5
 RESOURCE_RETRY_SECONDS = 60
+
+
+def _cart_durability(cart_wear_json, cart_id):
+    cart_wear = cart_wear_json or {}
+    if isinstance(cart_wear, str):
+        cart_wear = json.loads(cart_wear)
+    return float((cart_wear.get(cart_id) or {}).get("durability", 100))
 
 
 def _production_building(road_building_id):
@@ -26,6 +34,30 @@ def _json_list(value):
     if isinstance(value, str):
         value = json.loads(value)
     return list(value or [])
+
+
+def _planned_cargo_kg(cargo_json):
+    total = 0.0
+    for slot in _json_list(cargo_json):
+        total += float(slot.get("planned", slot.get("quantity", 0))) * float(slot.get("unit_weight_kg", 0))
+    return total
+
+
+def _cargo_fill_percent(cargo_json, phase):
+    planned_kg = 0.0
+    current_kg = 0.0
+    for slot in _json_list(cargo_json):
+        unit = float(slot.get("unit_weight_kg", 0))
+        planned = float(slot.get("planned", slot.get("quantity", 0)))
+        planned_kg += planned * unit
+        current_kg += float(slot.get("quantity", 0)) * unit
+    if planned_kg <= 0:
+        return 0
+    if phase == "loading":
+        return int(min(100, current_kg / planned_kg * 100))
+    if phase == "unloading":
+        return int(min(100, current_kg / planned_kg * 100))
+    return 0
 
 
 class TransportService:
@@ -56,103 +88,6 @@ class TransportService:
     @staticmethod
     def _where():
         return "world_id = %s AND faction = %s AND building = %s"
-
-    def _load_cargo(self, connection, world_id, destination_id, resource_ids,
-                    capacity_kg, exclude_convoy_id, now):
-        building = _production_building(destination_id)
-        destination_key = (int(world_id), DEFAULT_FACTION, building)
-        warehouse_key = (int(world_id), DEFAULT_FACTION, "warehouse")
-        barn_key = (int(world_id), DEFAULT_FACTION, "barn")
-        city_level = self.production._city_level(connection, world_id, DEFAULT_FACTION)
-        available_city_resources = set(city_storage_resources(
-            "barn", city_level, building_resources("barn")
-        )) | set(city_storage_resources(
-            "warehouse", city_level, building_resources("warehouse")
-        ))
-        if any(resource_id not in available_city_resources for resource_id in resource_ids):
-            return [], 0.0, {}
-        self._ensure_building(connection, warehouse_key, now)
-        self._ensure_building(connection, destination_key, now)
-        barn_resources = set(building_resources("barn"))
-        source_buildings = {
-            resource_id: ("barn" if resource_id in barn_resources else "warehouse")
-            for resource_id in resource_ids
-        }
-        if "barn" in source_buildings.values():
-            self._ensure_building(connection, barn_key, now)
-
-        destination_state = self.production._state(connection, destination_key)
-        destination_capacity = int(building_level_info(
-            int(destination_state["level"]), building,
-        )["storage"])
-        destination_resources = self.production._resources(connection, destination_key)
-        reserved_rows = connection.execute(
-            """SELECT cargo_json FROM transport_convoys
-               WHERE world_id=%s AND faction=%s AND destination_building_id=%s
-                 AND status IN ('outbound','blocked') AND id<>%s""",
-            (world_id, DEFAULT_FACTION, destination_id, int(exclude_convoy_id)),
-        ).fetchall()
-        reserved = sum(
-            int(slot.get("quantity", 0))
-            for row in reserved_rows for slot in _json_list(row["cargo_json"])
-        )
-        reserved_by_resource = {}
-        for row in reserved_rows:
-            for slot in _json_list(row["cargo_json"]):
-                resource_id = str(slot.get("resource_id", ""))
-                reserved_by_resource[resource_id] = (
-                    reserved_by_resource.get(resource_id, 0) + int(slot.get("quantity", 0))
-                )
-        destination_free = {
-            resource_id: max(
-                0, destination_capacity
-                - int(destination_resources.get(resource_id, {}).get("storage", 0))
-                - reserved_by_resource.get(resource_id, 0),
-            )
-            for resource_id in set(resource_ids)
-        }
-        source_keys = {"warehouse": warehouse_key, "barn": barn_key}
-        source_resources = {
-            source_building: self.production._resources(connection, source_keys[source_building])
-            for source_building in set(source_buildings.values())
-        }
-        slot_count = max(1, len(resource_ids))
-        slot_weight_budget = int(capacity_kg) / slot_count
-        cargo, cargo_weight = [], 0.0
-        for resource_id in resource_ids:
-            item_id = STORAGE_ITEM_IDS.get(resource_id)
-            source_building = source_buildings[resource_id]
-            source_stock = source_resources[source_building].get(resource_id)
-            if item_id is None or source_stock is None:
-                source_name = "городском амбаре" if source_building == "barn" else "общем складе"
-                raise ValueError(f"Ресурс {resource_id} отсутствует в {source_name}")
-            item = connection.execute(
-                "SELECT weight FROM items_catalog WHERE id=%s", (int(item_id),),
-            ).fetchone()
-            unit_weight = 0.0 if item is None else float(item["weight"] or 0)
-            if unit_weight <= 0:
-                raise ValueError(f"Не задан вес ресурса {resource_id}")
-            per_slot_capacity = max(0, math.floor((slot_weight_budget + 1e-9) / unit_weight))
-            quantity = min(
-                int(source_stock["storage"]), destination_free[resource_id], per_slot_capacity,
-            )
-            if quantity <= 0:
-                return [], 0.0, source_buildings
-            cargo.append({
-                "resource_id": resource_id, "item_id": int(item_id),
-                "quantity": quantity, "unit_weight_kg": unit_weight,
-            })
-            cargo_weight += quantity * unit_weight
-            destination_free[resource_id] -= quantity
-            slot_weight_budget = max(0.0, slot_weight_budget - quantity * unit_weight)
-        for item in cargo:
-            connection.execute(
-                """UPDATE building_resources SET storage=storage-%s
-                   WHERE world_id=%s AND faction=%s AND building=%s AND resource=%s""",
-                (item["quantity"], world_id, DEFAULT_FACTION,
-                 source_buildings[item["resource_id"]], item["resource_id"]),
-            )
-        return cargo, cargo_weight, source_buildings
 
     def _driver_can_continue(self, connection, driver_id):
         driver = connection.execute(
@@ -194,14 +129,15 @@ class TransportService:
 
     def _start_pinned_leg(self, connection, convoy, world_id, now):
         cart = connection.execute(
-            """SELECT upgrades_json FROM stable_cart_progress
+            """SELECT upgrades_json, cart_wear_json FROM stable_cart_progress
                WHERE world_id=%s AND faction=%s AND building='stable' AND grade=%s""",
             (int(world_id), DEFAULT_FACTION, int(convoy["cart_grade"])),
         ).fetchone()
         upgrades = {} if cart is None else cart["upgrades_json"] or {}
         if isinstance(upgrades, str):
             upgrades = json.loads(upgrades)
-        stats = cart_stats(upgrades)
+        durability = 100.0 if cart is None else _cart_durability(cart["cart_wear_json"], convoy["cart_id"])
+        stats = cart_stats(upgrades, durability)
         distance = float(self.routes[convoy["destination_building_id"]]["distance_tiles"])
         travel_seconds = max(1, int(math.ceil(distance * float(stats["seconds_per_tile"]))))
         connection.execute(
@@ -231,14 +167,15 @@ class TransportService:
         self._ensure_building(connection, source_key, now)
         source_resources = self.production._resources(connection, source_key)
         cart = connection.execute(
-            """SELECT upgrades_json FROM stable_cart_progress
+            """SELECT upgrades_json, cart_wear_json FROM stable_cart_progress
                WHERE world_id=%s AND faction=%s AND building='stable' AND grade=%s""",
             (int(world_id), DEFAULT_FACTION, int(convoy["cart_grade"])),
         ).fetchone()
         upgrades = {} if cart is None else cart["upgrades_json"] or {}
         if isinstance(upgrades, str):
             upgrades = json.loads(upgrades)
-        stats = cart_stats(upgrades)
+        durability = 100.0 if cart is None else _cart_durability(cart["cart_wear_json"], convoy["cart_id"])
+        stats = cart_stats(upgrades, durability)
         capacity_kg = int(convoy["capacity_kg"])
         slot_weight_budget = capacity_kg / max(1, len(resource_ids))
         barn_resources = set(building_resources("barn"))
@@ -305,7 +242,7 @@ class TransportService:
                 continue
             cargo.append({
                 "resource_id": resource_id, "item_id": int(item_id),
-                "quantity": quantity, "unit_weight_kg": unit_weight,
+                "planned": quantity, "quantity": 0, "unit_weight_kg": unit_weight,
             })
             quantity_weight = quantity * unit_weight
             cargo_weight += quantity_weight
@@ -321,21 +258,15 @@ class TransportService:
             self._start_return_leg(connection, convoy, now)
             return True
 
-        for item in cargo:
-            connection.execute(
-                """UPDATE building_resources SET storage=storage-%s
-                   WHERE world_id=%s AND faction=%s AND building=%s AND resource=%s""",
-                (item["quantity"], int(world_id), DEFAULT_FACTION, source_building, item["resource_id"]),
-            )
         grade = CART_GRADES[str(convoy["cart_grade"])]
         load_seconds = max(1, int(math.ceil(
             cargo_weight / max(0.01, float(grade.get("load_kg_per_minute", 3))) * 60
         )))
         connection.execute(
-            """UPDATE transport_convoys SET cargo_json=%s::jsonb, cargo_weight_kg=%s,
+            """UPDATE transport_convoys SET cargo_json=%s::jsonb, cargo_weight_kg=0,
                phase='loading', status='outbound', started_at=%s, travel_seconds=%s,
                arrival_at=%s, waiting_for_resources=FALSE, delivered_quantity=0 WHERE id=%s""",
-            (json.dumps(cargo, ensure_ascii=False), cargo_weight, now, load_seconds,
+            (json.dumps(cargo, ensure_ascii=False), now, load_seconds,
              now + load_seconds, int(convoy["id"])),
         )
         connection.execute(
@@ -345,16 +276,134 @@ class TransportService:
         )
         return True
 
+    def _transfer_allowed_kg(self, convoy, now, rate_key, unlimited):
+        if unlimited:
+            return math.inf
+        grade = CART_GRADES[str(convoy["cart_grade"])]
+        rate_kg_per_second = max(0.01, float(grade.get(rate_key, 3))) / 60.0
+        return rate_kg_per_second * max(0.0, float(now) - float(convoy["started_at"]))
+
+    def _transfer_targets(self, slots, allowed_kg):
+        """Unit count each slot may reach after allowed_kg of transfer, filled in slot order."""
+        targets = []
+        used_kg = 0.0
+        for slot in slots:
+            planned = int(slot.get("planned", slot.get("quantity", 0)))
+            unit = max(0.0, float(slot.get("unit_weight_kg", 0)))
+            if math.isinf(allowed_kg) or unit <= 0:
+                count = planned
+            else:
+                count = min(planned, max(0, math.floor((allowed_kg - used_kg + 1e-9) / unit)))
+            targets.append(count)
+            used_kg += count * unit
+        return targets
+
+    def _advance_loading(self, connection, convoy, world_id, now, *, unlimited=False, close=False):
+        cargo = _json_list(convoy["cargo_json"])
+        targets = self._transfer_targets(
+            cargo, self._transfer_allowed_kg(convoy, now, "load_kg_per_minute", unlimited),
+        )
+        source_key = (int(world_id), DEFAULT_FACTION, _production_building(convoy["destination_building_id"]))
+        stock_left = {
+            resource_id: int(row["storage"])
+            for resource_id, row in self.production._resources(connection, source_key).items()
+        }
+        for slot, target in zip(cargo, targets):
+            resource_id = str(slot["resource_id"])
+            quantity = int(slot.get("quantity", 0))
+            available = stock_left.get(resource_id, 0)
+            move = min(target - quantity, available)
+            if move <= 0:
+                continue
+            connection.execute(
+                f"UPDATE building_resources SET storage = storage - %s WHERE {self._where()} AND resource = %s",
+                (move, *source_key, resource_id),
+            )
+            stock_left[resource_id] = available - move
+            slot["quantity"] = quantity + move
+        if close:
+            cargo = [
+                {key: value for key, value in slot.items() if key != "planned"}
+                for slot in cargo if int(slot.get("quantity", 0)) > 0
+            ]
+        weight = sum(int(slot.get("quantity", 0)) * float(slot.get("unit_weight_kg", 0)) for slot in cargo)
+        connection.execute(
+            "UPDATE transport_convoys SET cargo_json=%s::jsonb, cargo_weight_kg=%s WHERE id=%s",
+            (json.dumps(cargo, ensure_ascii=False), weight, int(convoy["id"])),
+        )
+        return {**dict(convoy), "cargo_json": cargo, "cargo_weight_kg": weight}
+
+    def _reserved_city_quantity(self, connection, world_id, convoy_id, resource_id):
+        rows = connection.execute(
+            """SELECT cargo_json FROM transport_convoys
+               WHERE world_id=%s AND faction=%s AND status IN ('outbound','blocked')
+                 AND phase IN ('returning','unloading') AND id<>%s""",
+            (int(world_id), DEFAULT_FACTION, int(convoy_id)),
+        ).fetchall()
+        total = 0
+        for row in rows:
+            for slot in _json_list(row["cargo_json"]):
+                if str(slot.get("resource_id", "")) == resource_id:
+                    total += int(slot.get("quantity", 0))
+        return total
+
+    def _advance_unloading(self, connection, convoy, world_id, now, *, unlimited=False):
+        cargo = _json_list(convoy["cargo_json"])
+        if not cargo:
+            return dict(convoy)
+        targets = self._transfer_targets(
+            cargo, self._transfer_allowed_kg(convoy, now, "unload_kg_per_minute", unlimited),
+        )
+        barn_resources = set(building_resources("barn"))
+        city_level = self.production._city_level(connection, world_id, DEFAULT_FACTION)
+        available_city_resources = set(city_storage_resources(
+            "barn", city_level, building_resources("barn")
+        )) | set(city_storage_resources(
+            "warehouse", city_level, building_resources("warehouse")
+        ))
+        for slot, target in zip(cargo, targets):
+            resource_id = str(slot["resource_id"])
+            if resource_id not in available_city_resources:
+                continue
+            planned = int(slot.get("planned", slot.get("quantity", 0)))
+            quantity = int(slot.get("quantity", 0))
+            want = target - (planned - quantity)
+            if want <= 0 or quantity <= 0:
+                continue
+            building = "barn" if resource_id in barn_resources else "warehouse"
+            key = (int(world_id), DEFAULT_FACTION, building)
+            self._ensure_building(connection, key, now)
+            state = self.production._state(connection, key)
+            limit = int(building_level_info(int(state["level"]), building)["storage"])
+            stock = self.production._resources(connection, key).get(resource_id)
+            free = max(0, limit - (0 if stock is None else int(stock["storage"]))
+                       - self._reserved_city_quantity(connection, world_id, convoy["id"], resource_id))
+            move = min(want, free, quantity)
+            if move <= 0:
+                continue
+            connection.execute(
+                f"UPDATE building_resources SET storage = storage + %s WHERE {self._where()} AND resource = %s",
+                (move, *key, resource_id),
+            )
+            slot["quantity"] = quantity - move
+        weight = sum(int(slot.get("quantity", 0)) * float(slot.get("unit_weight_kg", 0)) for slot in cargo)
+        connection.execute(
+            "UPDATE transport_convoys SET cargo_json=%s::jsonb, cargo_weight_kg=%s WHERE id=%s",
+            (json.dumps(cargo, ensure_ascii=False), weight, int(convoy["id"])),
+        )
+        return {**dict(convoy), "cargo_json": cargo, "cargo_weight_kg": weight}
+
     def _start_return_leg(self, connection, convoy, now):
         cart = connection.execute(
-            """SELECT upgrades_json FROM stable_cart_progress
+            """SELECT upgrades_json, cart_wear_json FROM stable_cart_progress
                WHERE world_id=%s AND faction=%s AND building='stable' AND grade=%s""",
             (int(convoy["world_id"]), DEFAULT_FACTION, int(convoy["cart_grade"])),
         ).fetchone()
         upgrades = {} if cart is None else cart["upgrades_json"] or {}
         if isinstance(upgrades, str):
             upgrades = json.loads(upgrades)
-        stats = cart_stats(upgrades)
+        durability = 100.0 if cart is None else _cart_durability(cart["cart_wear_json"], convoy["cart_id"])
+        stats = cart_stats(upgrades, durability)
         distance = float(self.routes[convoy["destination_building_id"]]["distance_tiles"])
         capacity = max(1, int(convoy["capacity_kg"]))
         speed_ratio = cart_load_speed_ratio(
@@ -393,6 +442,13 @@ class TransportService:
                    WHERE id=%s""",
                 (started_at, now + return_seconds, int(convoy["id"])),
             )
+        elif phase == "loading" and float(convoy["arrival_at"]) > now:
+            connection.execute(
+                "UPDATE transport_convoys SET pinned=FALSE,waiting_for_resources=FALSE WHERE id=%s",
+                (int(convoy["id"]),),
+            )
+            final = self._advance_loading(connection, convoy, world_id, now, close=True)
+            self._start_return_leg(connection, {**dict(convoy), **final}, now)
         elif phase in ("outbound", "loading", "waiting_for_resources"):
             connection.execute(
                 "UPDATE transport_convoys SET pinned=FALSE,waiting_for_resources=FALSE WHERE id=%s",
@@ -412,15 +468,18 @@ class TransportService:
         return True
 
     def _start_unloading(self, connection, convoy, now):
+        cargo = [{**slot, "planned": int(slot.get("quantity", 0))}
+                 for slot in _json_list(convoy["cargo_json"])]
+        planned_kg = sum(slot["planned"] * float(slot.get("unit_weight_kg", 0)) for slot in cargo)
         grade = CART_GRADES[str(convoy["cart_grade"])]
         unload_seconds = max(1, int(math.ceil(
-            float(convoy["cargo_weight_kg"])
-            / max(0.01, float(grade.get("unload_kg_per_minute", 3))) * 60
+            planned_kg / max(0.01, float(grade.get("unload_kg_per_minute", 3))) * 60
         )))
         connection.execute(
             """UPDATE transport_convoys SET status='outbound', phase='unloading',
-               started_at=%s, travel_seconds=%s, arrival_at=%s WHERE id=%s""",
-            (now, unload_seconds, now + unload_seconds, int(convoy["id"])),
+               cargo_json=%s::jsonb, started_at=%s, travel_seconds=%s, arrival_at=%s WHERE id=%s""",
+            (json.dumps(cargo, ensure_ascii=False), now, unload_seconds,
+             now + unload_seconds, int(convoy["id"])),
         )
 
     def _estimate_pinned_cargo_weight(self, connection, convoy, world_id):
@@ -482,6 +541,10 @@ class TransportService:
         return total_weight
 
     def _unload_at_city(self, connection, convoy, world_id, now):
+        fresh = connection.execute(
+            "SELECT cargo_json FROM transport_convoys WHERE id=%s", (int(convoy["id"]),),
+        ).fetchone()
+        convoy = {**dict(convoy), "cargo_json": fresh["cargo_json"]}
         barn_resources = set(building_resources("barn"))
         city_level = self.production._city_level(connection, world_id, DEFAULT_FACTION)
         available_city_resources = set(city_storage_resources(
@@ -493,6 +556,9 @@ class TransportService:
         remaining = []
         for item in cargo:
             resource_id = str(item["resource_id"])
+            quantity = max(0, int(item.get("quantity", 0)))
+            if quantity <= 0:
+                continue
             if resource_id not in available_city_resources:
                 remaining.append(item)
                 continue
@@ -503,15 +569,14 @@ class TransportService:
             limit = int(building_level_info(int(state["level"]), building)["storage"])
             rows = self.production._resources(connection, key)
             stock = rows.get(resource_id)
-            free = max(0, limit - (0 if stock is None else int(stock["storage"])))
-            quantity = max(0, int(item.get("quantity", 0)))
+            free = max(0, limit - (0 if stock is None else int(stock["storage"]))
+                       - self._reserved_city_quantity(connection, world_id, convoy["id"], resource_id))
             accepted = min(quantity, free)
             if accepted:
                 connection.execute(
                     f"UPDATE building_resources SET storage=storage+%s WHERE {self._where()} AND resource=%s",
                     (accepted, *key, resource_id),
                 )
-                free -= accepted
             if accepted < quantity:
                 remaining.append({**item, "quantity": quantity - accepted})
 
@@ -547,6 +612,18 @@ class TransportService:
         self.production._advance_cart_maintenance(
             connection, (int(world_id), DEFAULT_FACTION, "stable"), now,
         )
+        in_progress = connection.execute(
+            """SELECT * FROM transport_convoys
+               WHERE world_id = %s AND faction = %s AND status = 'outbound'
+                 AND phase IN ('loading','unloading') AND arrival_at > %s
+               ORDER BY id FOR UPDATE""",
+            (int(world_id), DEFAULT_FACTION, float(now)),
+        ).fetchall()
+        for convoy in in_progress:
+            if convoy["phase"] == "loading":
+                self._advance_loading(connection, convoy, world_id, now)
+            else:
+                self._advance_unloading(connection, convoy, world_id, now)
         rows = connection.execute(
             """SELECT * FROM transport_convoys
                WHERE world_id = %s AND faction = %s AND status IN ('outbound','blocked')
@@ -565,12 +642,15 @@ class TransportService:
                     self._finish_convoy(connection, int(convoy["id"]), now)
                 continue
             if phase == "loading":
-                self._start_return_leg(connection, convoy, now)
+                final = self._advance_loading(connection, convoy, world_id, now,
+                                              unlimited=True, close=True)
+                self._start_return_leg(connection, {**dict(convoy), **final}, now)
                 continue
             if phase == "returning":
                 self._start_unloading(connection, convoy, now)
                 continue
             if phase == "unloading":
+                self._advance_unloading(connection, convoy, world_id, now, unlimited=True)
                 self._unload_at_city(connection, convoy, world_id, now)
                 continue
             if phase == "resting":
@@ -629,10 +709,15 @@ class TransportService:
                 if accepted < quantity:
                     remaining.append({**slot, "quantity": quantity - accepted})
             if remaining:
+                remaining_weight = sum(
+                    int(item["quantity"]) * float(item.get("unit_weight_kg", 0))
+                    for item in remaining
+                )
                 connection.execute(
-                    """UPDATE transport_convoys SET cargo_json = %s::jsonb,
+                    """UPDATE transport_convoys SET cargo_json = %s::jsonb, cargo_weight_kg = %s,
                        delivered_quantity = %s, status = 'blocked', phase='outbound' WHERE id = %s""",
-                    (json.dumps(remaining, ensure_ascii=False), delivered, int(convoy["id"])),
+                    (json.dumps(remaining, ensure_ascii=False), remaining_weight, delivered,
+                     int(convoy["id"])),
                 )
                 continue
 
@@ -765,10 +850,7 @@ class TransportService:
             ))
             if cart is None or cart_instance > body_count:
                 raise ValueError("Эта повозка ещё не куплена")
-            cart_wear = cart["cart_wear_json"] or {}
-            if isinstance(cart_wear, str):
-                cart_wear = json.loads(cart_wear)
-            durability = float(cart_wear.get(cart_id, {}).get("durability", 100))
+            durability = _cart_durability(cart["cart_wear_json"], cart_id)
             if durability <= 0:
                 raise ValueError("Повозка сломана. Отремонтируйте её древесиной")
             active_cart = connection.execute(
@@ -824,7 +906,7 @@ class TransportService:
             upgrades = cart["upgrades_json"] or {}
             if isinstance(upgrades, str):
                 upgrades = json.loads(upgrades)
-            stats = cart_stats(upgrades)
+            stats = cart_stats(upgrades, durability)
             capacity_kg = int(stats["capacity_kg"])
             cargo, cargo_weight = [], 0.0
             if not pinned:
@@ -973,27 +1055,35 @@ class TransportService:
                 total = max(1, int(row["travel_seconds"]))
                 phase_progress = min(1.0, max(0.0, (now - float(row["started_at"])) / total))
                 cart = connection.execute(
-                    """SELECT upgrades_json FROM stable_cart_progress
+                    """SELECT upgrades_json, cart_wear_json FROM stable_cart_progress
                        WHERE world_id=%s AND faction=%s AND building='stable' AND grade=%s""",
                     (world_id, DEFAULT_FACTION, int(row["cart_grade"])),
                 ).fetchone()
                 upgrades = {} if cart is None else cart["upgrades_json"] or {}
                 if isinstance(upgrades, str):
                     upgrades = json.loads(upgrades)
-                stats = cart_stats(upgrades)
+                durability = 100.0 if cart is None else _cart_durability(cart["cart_wear_json"], row["cart_id"])
+                stats = cart_stats(upgrades, durability)
                 distance = float(route["distance_tiles"])
                 outbound_seconds = max(1, int(math.ceil(distance * stats["seconds_per_tile"])))
                 cargo_weight = max(0.0, float(row["cargo_weight_kg"]))
-                if cargo_weight <= 0 and row["pinned"] and phase in ("outbound", "loading", "waiting_for_resources"):
+                actual_speed_ratio = cart_load_speed_ratio(
+                    cargo_weight, row["capacity_kg"], stats["full_load_speed_penalty_percent"],
+                )
+                if cargo_weight <= 0 and row["pinned"] and phase in ("outbound", "waiting_for_resources"):
                     cargo_weight = self._estimate_pinned_cargo_weight(connection, row, world_id)
+                planned_weight = _planned_cargo_kg(row["cargo_json"])
+                if planned_weight <= 0:
+                    planned_weight = cargo_weight
                 cart_config = CART_GRADES[str(row["cart_grade"])]
                 load_per_minute = max(0.01, float(cart_config.get("load_kg_per_minute", 3)))
                 unload_per_minute = max(0.01, float(cart_config.get("unload_kg_per_minute", 3)))
-                load_seconds = max(1, int(math.ceil(cargo_weight / load_per_minute * 60))) if cargo_weight > 0 else 0
-                unload_seconds = max(1, int(math.ceil(cargo_weight / unload_per_minute * 60))) if cargo_weight > 0 else 0
+                load_seconds = max(1, int(math.ceil(planned_weight / load_per_minute * 60))) if planned_weight > 0 else 0
+                unload_seconds = max(1, int(math.ceil(planned_weight / unload_per_minute * 60))) if planned_weight > 0 else 0
                 speed_ratio = cart_load_speed_ratio(
                     cargo_weight, row["capacity_kg"], stats["full_load_speed_penalty_percent"],
                 )
+                cargo_percent = _cargo_fill_percent(row["cargo_json"], phase)
                 return_seconds = max(1, int(math.ceil(distance * stats["seconds_per_tile"] / speed_ratio)))
                 phase_index = {
                     "outbound": 0, "loading": 1, "waiting_for_resources": 1,
@@ -1063,6 +1153,9 @@ class TransportService:
                     "cart_grade": int(row["cart_grade"]),
                     "cart_name": CART_GRADES[str(row["cart_grade"])]["name"],
                     "cart_sprite_key": CART_GRADES[str(row["cart_grade"])].get("sprite_key", "light"),
+                    "speed_kmh": tiles_to_km(stats["empty_tiles_per_hour"] * actual_speed_ratio),
+                    "durability": round(durability),
+                    "wear_band": cart_durability_band(durability),
                     "destination_building_id": row["destination_building_id"],
                     "destination_name": route["name"], "route_name": route["name"],
                     "driver_citizen_id": int(row["driver_citizen_id"]),
@@ -1079,6 +1172,7 @@ class TransportService:
                     "movement_text": phase_status,
                     "direction": direction, "travel_seconds": total,
                     "seconds_remaining": eta, "progress_percent": int(progress * 100),
+                    "cargo_percent": cargo_percent,
                     "position_x": position[0], "position_y": position[1],
                     "position_direction": position[2],
                     "started_at": float(row["started_at"]),

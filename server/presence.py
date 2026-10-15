@@ -1,8 +1,6 @@
 import copy
 import time
 
-from server.world import get_bot_opponents
-
 
 PRESENCE_TTL = 15
 PRESENCE = {}
@@ -78,15 +76,6 @@ def mark_afk(token, user_id, character):
     PRESENCE[token] = entry
 
 
-def character_level(character_id, location):
-    """Возвращает уровень персонажа, если он сейчас присутствует в локации."""
-    cleanup()
-    for item in PRESENCE.values():
-        if item["character_id"] == character_id and item["location"] == location:
-            return item["level"]
-    return None
-
-
 def occupants(user_id, location):
     cleanup()
     result = [
@@ -94,17 +83,6 @@ def occupants(user_id, location):
         for item in PRESENCE.values()
         if item["location"] == location
     ]
-    if location in {"backyard", "tavern"}:
-        result.extend(
-            {
-                **bot,
-                "character_id": bot["id"],
-                "kind": "bot",
-                "location": location,
-            }
-            for bot in get_bot_opponents()
-            if bot.get("zone") == location
-        )
     return result
 
 

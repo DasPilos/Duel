@@ -168,9 +168,10 @@ class ProductionBuildingWindowTests(unittest.TestCase):
         self.assertTrue(scene.building_window.is_open)
         self.assertEqual(scene.building_window.selected_plot, 0)
         self.assertTrue(scene.building_window.player_is_working())
+        before = (scene.player_x, scene.player_y)
         scene.handle_event(pygame.event.Event(
             pygame.MOUSEBUTTONDOWN, button=1, pos=(20, 20)))
-        self.assertIsNone(scene.player_target)
+        self.assertEqual((scene.player_x, scene.player_y), before)
 
     def test_windows_draw_every_tab(self):
         for object_id in ("wheat_farm", "lumber_camp"):
@@ -497,9 +498,9 @@ class ProductionBuildingWindowTests(unittest.TestCase):
         window.state["farm_upgrades"] = {
             "completed": {
                 "ration": True, "wooden_plough": True, "farm_level_2": True,
-                "ration_level_2": False, "wooden_handle": False,
+                "plough_field_edge": False, "whetstone": False, "flax_field_sowing": False,
             },
-            "ration_plots": [0], "wooden_plough": True, "wooden_handle": False,
+            "ration_plots": [0], "wooden_plough": True,
             "active_upgrade_id": None, "seconds_left": 0,
         }
         window.state["warehouse_storage"] = {"wood": 100}
@@ -526,11 +527,13 @@ class ProductionBuildingWindowTests(unittest.TestCase):
             self.scene.small_font = original_small
             self.scene.font = original_font
 
-        self.assertTrue(any("Раздать пай" in text for text in rendered))
-        self.assertTrue(any("Деревянная рукоять" in text for text in rendered))
+        self.assertTrue(any("Перепахать окрайну" in text for text in rendered))
+        self.assertTrue(any("Точильный камень" in text for text in rendered))
+        self.assertTrue(any("Засеять поле льна" in text for text in rendered))
         self.assertFalse(any("Самозахват" in text for text in rendered))
         self.assertFalse(any("Усиленный деревянный плуг" in text for text in rendered))
-        self.assertEqual(set(window.farm_upgrade_buttons), {"ration_level_2", "wooden_handle"})
+        self.assertNotIn("ration_level_2", window.farm_upgrade_buttons)
+        self.assertNotIn("wooden_handle", window.farm_upgrade_buttons)
 
     def test_lumber_camp_upgrade_tab_shows_three_chain_cards(self):
         window = self._open("lumber_camp")
@@ -574,8 +577,9 @@ class ProductionBuildingWindowTests(unittest.TestCase):
         self.assertIn("Результат: +8% к скорости вырубки", rendered)
         self.assertIn("Результат: Лесопилка — уровень 2", rendered)
         self.assertIn("Время улучшения: 40 мин", rendered)
-        self.assertIn("Казна: 100/50 серебра", rendered)
-        self.assertIn("Казна: 100/70 серебра", rendered)
+        self.assertIn("Доступно:", rendered)
+        self.assertIn("/ 50 серебра", rendered)
+        self.assertIn("/ 70 серебра", rendered)
         self.assertIn("300/300 древесины", rendered)
         self.assertIn("Время улучшения: 1 ч 0 мин", rendered)
         self.assertIn("Время улучшения: 2 ч 20 мин", rendered)
@@ -705,13 +709,25 @@ class ProductionBuildingWindowTests(unittest.TestCase):
         self.assertEqual(self.client.calls, [("farm", "storage/deposit", None)])
         self.assertEqual(self.client.last_payload, {"resource": "wheat", "quantity": 6})
 
-    def test_upgrade_button_spends_shared_storage_directly(self):
+    def test_upgrade_card_spends_shared_storage_directly(self):
         window = self._open("lumber_camp")
         window.tab = "upgrade"
+        window.state["level"] = 1
+        window.state["lumber_camp_upgrades"] = {
+            "completed": {"logging_expansion": False, "strong_handle": False,
+                          "lumber_camp_level_2": False},
+            "bonus_plots": [], "strong_handle": False,
+            "active_upgrade_id": None, "seconds_left": 0,
+        }
+        window.state["warehouse_storage"] = {"wood": 300}
+        window.state["treasury_silver_available"] = 100
         self.scene.draw(self.screen)
         self.assertEqual(window.deposit_buttons, {})
-        self._click(window.upgrade_button.center)
-        self.assertEqual(self.client.calls, [("lumber_camp", "upgrade/start", None)])
+        with patch.object(window, "_request") as request:
+            self._click(window.building_upgrade_buttons["logging_expansion"].center)
+        request.assert_called_once_with(
+            "lumber-camp/upgrade", {"upgrade_id": "logging_expansion"},
+        )
 
     def test_rift_mines_draw_and_respond_to_clicks(self):
         window = self._open("mountain_rift")
@@ -719,15 +735,15 @@ class ProductionBuildingWindowTests(unittest.TestCase):
             window.tab = tab
             self.scene.draw(self.screen)
         window.tab = "production"
-        self.assertEqual([group["kind"] for group in window.groups], ["iron_mine", "stone_mine", "mithril_mine", "obsidian_mine"])
-        self.assertEqual([group["places"] for group in window.groups], [10, 6, 6, 3])
+        self.assertEqual([group["kind"] for group in window.groups], ["stone_mine", "iron_mine", "mithril_mine", "obsidian_mine"])
+        self.assertEqual([group["places"] for group in window.groups], [7, 10, 6, 3])
         geometry = window.plot_geometry()
         self._click(geometry[0]["center"])
         self._confirm_worker_action(window)
         self.assertEqual(self.client.city_calls, [("assign", "mountain_rift", 0, 1)])
         self.assertEqual(self.client.calls, [])
         self._click(geometry[1]["center"])
-        self.assertEqual(window.message, "Прииск камня откроется на 2 уровне")
+        self.assertEqual(window.message, "Прииск железа откроется на 2 уровне")
 
     def test_barnyard_pen_grows_and_hires(self):
         window = self._open("barnyard")

@@ -36,9 +36,10 @@ both city-level and building-level unlocks.
 Farm slots follow the plot ranges in `core/production_buildings.py`. Level 1 has a
 500-unit store and two places on wheat field one. Samozakhvat adds a place there;
 the +5% wooden plough and Samozakhvat unlock farm level 2, whose 800-unit store
-opens wheat field two with two places. Level-two “Раздать пай” adds a place to
-field two. The separate wooden handle adds +8% wheat speed; together with the
-plough the bonus is +13%. The level-two ration slot remains attached to field two.
+opens wheat field two with two places. Level-two “Перепахать окрайну” adds two
+places to field two. “Точильный камень” adds +15% wheat speed; together with the
+plough the bonus is +20%. “Засеять поле льна” requires the whetstone and raises
+the farm to level 3.
 
 Stable cart instances are world/faction state. Active convoys consume 2 wood/hour
 from the shared warehouse; idle or resting carts consume none. Durability and repair
@@ -47,8 +48,7 @@ broken carts. Migrations run in order at server startup.
 
 ## Persistence
 
-PostgreSQL is configured by `DATABASE_URL`; `WORLD_ID` defaults to 1. On Windows, libpq reads passwords from `%APPDATA%\postgresql\pgpass.conf`. Passwords, database dumps, `bot_state.json`, and virtual environments do not belong in commits. `cards.sqlite3` is a static client catalog; it is not the authoritative game database.
-
+PostgreSQL is configured by `DATABASE_URL`; `WORLD_ID` defaults to 1. On Windows, libpq reads passwords from `%APPDATA%\postgresql\pgpass.conf`. Passwords, database dumps, `bot_state.json`, and virtual environments do not belong in commits.
 Schema changes belong in ordered SQL files under `server/migrations/`. Keep queries parameterized and world-scoped. Use the existing `Database` pool and service classes rather than opening ad-hoc connections in request handlers.
 
 ## Battle Rules

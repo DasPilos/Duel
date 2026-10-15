@@ -9,17 +9,19 @@ import pygame
 
 from client.network import ServerError
 from core import settings
+from core.currency import Currency
 from core.production_buildings import (
     FARM_UPGRADES,
     LUMBER_CAMP_UPGRADES,
-    FARM_RATION_SLOT_BASE,
+    BUILDING_BONUS_SLOT_BASE,
     RESOURCES,
     building_config,
     building_level_info,
     building_resources,
+    farm_extra_slot_index,
     plot_slot_ranges,
 )
-from ui.catalog_icons import draw_building_icon, draw_item_icon
+from ui.catalog_icons import draw_building_icon, draw_item_icon, draw_treasury_coins
 from ui.hud import draw_button
 from ui.material_contribution_dialog import MaterialContributionDialog
 from ui.storage_meter import draw_storage_meter
@@ -128,21 +130,6 @@ def format_clock(seconds):
     hours, rest = divmod(max(0, int(seconds)), 3600)
     minutes, secs = divmod(rest, 60)
     return f"{hours} ч {minutes:02d} м {secs:02d} с"
-
-
-def wrap_text_lines(font, text, max_width):
-    lines = []
-    current = ""
-    for word in text.split(" "):
-        trial = f"{current} {word}".strip()
-        if font.size(trial)[0] <= max_width or not current:
-            current = trial
-        else:
-            lines.append(current)
-            current = word
-    if current:
-        lines.append(current)
-    return lines
 
 
 def point_in_polygon(point, polygon):
@@ -373,15 +360,6 @@ class ProductionBuildingWindow:
             f"Вместимость каждого товара: {info['storage']}. Горожан: {info['max_workers']}."
         )
 
-    def harvest_countdown(self):
-        state = self.state
-        if state is None or self.workers() <= 0:
-            return "ожидание рабочего"
-        if self.storage_is_full():
-            return "склад заполнен"
-        seconds = state.get("next_harvest_seconds")
-        return "—" if seconds is None else format_clock(seconds - self._since_received())
-
     def production_per_hour(self):
         rates = {}
         for slot in self._state().get("worker_slots", []):
@@ -572,17 +550,6 @@ class ProductionBuildingWindow:
             plot["tent"] = (int(cx - normal[0] * side * 70 + along[0] * 95), int(cy - normal[1] * side * 70 + along[1] * 95))
             plots.append(plot)
         return plots
-        for index, plot in enumerate(self.plot_geometry()):
-            if plot["rect"].collidepoint(position) and point_in_polygon(position, plot["points"]):
-                return index
-        return None
-
-    def plot_slots(self, index):
-        """Слоты участка, которые уже есть на сервере (участок открыт, если есть все его слоты)."""
-        by_index = {slot["slot_index"]: slot for slot in self._state().get("worker_slots", [])}
-        wanted = plot_slot_ranges(self.building)[index]
-        slots = [by_index[i] for i in wanted if i in by_index]
-        return slots if len(slots) == len(wanted) else None
 
     def _pen_geometry(self, area):
         """Загон: площадь пропорциональна числу мест, на 10 уровне — почти всё поле; домики рядом под ним."""
@@ -621,13 +588,20 @@ class ProductionBuildingWindow:
         """Открытые слоты участка (есть на сервере) или None, если участок ещё закрыт."""
         by_index = {slot["slot_index"]: slot for slot in self._state().get("worker_slots", [])}
         slots = [by_index[i] for i in self.groups[index]["slots"] if i in by_index]
-        if self.building == "farm" and index in self._state().get("farm_upgrades", {}).get("ration_plots", []):
-            extra_slot_index = FARM_RATION_SLOT_BASE + index
-            if extra_slot_index in by_index:
-                slots.append(by_index[extra_slot_index])
+        if self.building == "farm":
+            farm_upgrades = self._state().get("farm_upgrades", {})
+            if index in farm_upgrades.get("ration_plots", []):
+                extra_slot_index = BUILDING_BONUS_SLOT_BASE + index
+                if extra_slot_index in by_index:
+                    slots.append(by_index[extra_slot_index])
+            extra_places = int(farm_upgrades.get("extra_places", {}).get(str(index), 0))
+            for place_number in range(1, extra_places + 1):
+                extra_slot_index = farm_extra_slot_index(index, place_number)
+                if extra_slot_index in by_index:
+                    slots.append(by_index[extra_slot_index])
         elif (self.building == "lumber_camp"
               and index in self._state().get("lumber_camp_upgrades", {}).get("bonus_plots", [])):
-            extra_slot_index = FARM_RATION_SLOT_BASE + index
+            extra_slot_index = BUILDING_BONUS_SLOT_BASE + index
             if extra_slot_index in by_index:
                 slots.append(by_index[extra_slot_index])
         return slots or None
@@ -1259,40 +1233,6 @@ class ProductionBuildingWindow:
         draw_button(screen, self.confirm_no_button, "ОТМЕНА", self.scene.small_font,
                     color=(63, 59, 51), text_color=(220, 214, 194))
 
-    def _draw_player_work_status(self, screen):
-        work = self._state().get("player_work")
-        if not work:
-            return
-        plot_index = next((index for index, group in enumerate(self.groups)
-                           if work["slot_index"] in group["slots"]), None)
-        if plot_index is None:
-            return
-        plot = self.plot_geometry()[plot_index]
-        rect = pygame.Rect(plot["rect"].left - 290, plot["rect"].top + 8, 280, 94)
-        rect.clamp_ip(self.rect)
-        pygame.draw.rect(screen, (18, 25, 27), rect, border_radius=5)
-        pygame.draw.rect(screen, (109, 166, 112), rect, 1, border_radius=5)
-        name = self.scene.session.character.get("name", "Игрок")
-        title = self.scene.small_font.render(f"Добывает: {name}", True, (193, 230, 183))
-        screen.blit(title, (rect.left + 10, rect.top + 8))
-        seconds_left = max(0, work["seconds_to_next"] - self._since_received())
-        timer = self.scene.grid_font.render(
-            f"До начисления: {format_clock(seconds_left)}", True, (226, 213, 176)
-        )
-        screen.blit(timer, (rect.left + 10, rect.top + 34))
-        totals = work.get("total_produced", {})
-        screen.blit(self.scene.grid_font.render("Добыто:", True, (198, 211, 195)),
-                    (rect.left + 10, rect.top + 58))
-        icon_x = rect.left + 70
-        for resource in work.get("resources", []):
-            draw_item_icon(screen, resource, (icon_x, rect.top + 50), 32)
-            label = self.scene.grid_font.render(
-                f"{RESOURCES[resource]['label']}: {totals.get(resource, 0)}",
-                True, (198, 211, 195),
-            )
-            screen.blit(label, (icon_x + 38, rect.top + 59))
-            icon_x += 42 + label.get_width() + 8
-
     def _draw_worker_stats(self, screen):
         rect = self.worker_stats_rect()
         state = self._state()
@@ -1461,7 +1401,10 @@ class ProductionBuildingWindow:
         self._draw_building_upgrade_cards(
             screen, curr_y, FARM_UPGRADES, state.get("farm_upgrades", {}),
             "required_farm_level",
-            {"farm_level_2": ("ration", "wooden_plough")},
+            {
+                "farm_level_2": ("ration", "wooden_plough"),
+                "flax_field_sowing": ("whetstone",),
+            },
         )
 
     def _draw_lumber_camp_upgrade_cards(self, screen, curr_y):
@@ -1479,6 +1422,7 @@ class ProductionBuildingWindow:
         completed = progress.get("completed", {})
         warehouse = state.get("warehouse_storage", {}) or {}
         treasury = int(state.get("treasury_silver_available", 0))
+        spendable_copper = int(state.get("spendable_treasury_copper", treasury * Currency.COPPER_PER_SILVER))
         building_level = int(state.get("level", 1))
         active_id = progress.get("active_upgrade_id")
         seconds_left = max(0, int(progress.get("seconds_left", 0) - self._since_received()))
@@ -1505,8 +1449,14 @@ class ProductionBuildingWindow:
                 and all(completed.get(required_id, False)
                         for required_id in prerequisites.get(upgrade_id, ()))
             )
+            if "gold_cost" in upgrade:
+                price_copper = Currency.to_copper(gold=int(upgrade["gold_cost"]))
+                price_text = f"/ {upgrade['gold_cost']} золота"
+            else:
+                price_copper = Currency.to_copper(silver=int(upgrade["silver_cost"]))
+                price_text = f"/ {upgrade['silver_cost']} серебра"
             funds_available = (
-                treasury >= int(upgrade["silver_cost"])
+                spendable_copper >= price_copper
                 and all(int(warehouse.get(resource, 0)) >= int(amount)
                         for resource, amount in upgrade["materials"].items())
             )
@@ -1533,18 +1483,23 @@ class ProductionBuildingWindow:
 
             price_y = card.top + 108
             draw_item_icon(screen, "silver", (card.left + 14, price_y), 32)
-            silver_text = scene.small_font.render(
-                f"Казна: {treasury}/{upgrade['silver_cost']} серебра", True, (224, 214, 188)
+            prefix = scene.small_font.render("Доступно:", True, (224, 214, 188))
+            screen.blit(prefix, (card.left + 52, price_y + 8))
+            coins_end = draw_treasury_coins(
+                screen, scene.small_font, spendable_copper,
+                (card.left + 52 + prefix.get_width() + 8, price_y + 4), icon_size=24, gap=12,
             )
-            screen.blit(silver_text, (card.left + 52, price_y + 8))
+            screen.blit(scene.small_font.render(
+                price_text, True, (224, 214, 188)
+            ), (coins_end, price_y + 8))
             wood_cost = int(upgrade["materials"].get("wood", 0))
             if wood_cost:
-                draw_item_icon(screen, "wood", (card.left + 250, price_y), 32)
+                draw_item_icon(screen, "wood", (card.left + 420, price_y), 32)
                 wood_text = scene.small_font.render(
                     f"{int(warehouse.get('wood', 0))}/{wood_cost} древесины",
                     True, (224, 214, 188),
                 )
-                screen.blit(wood_text, (card.left + 288, price_y + 8))
+                screen.blit(wood_text, (card.left + 458, price_y + 8))
 
             button = pygame.Rect(card.right - 226, card.top + 113, 210, 38)
             if is_complete:

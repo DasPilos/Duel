@@ -9,11 +9,10 @@ def _draw_completed_fence(screen, bounds, side, scale, level):
     wood = (82, 54, 34) if level < 5 else (105, 112, 111)
     rail = (158, 109, 61) if level < 5 else (168, 176, 174)
     step = max(5, round(18 * scale))
+    gap = max(4, round(24 * scale))
     if side in (0, 1):
         y = bounds.top if side == 0 else bounds.bottom
-        left, right = bounds.left, bounds.right
-        gap_left, gap_right = bounds.centerx - max(4, round(24 * scale)), bounds.centerx + max(4, round(24 * scale))
-        intervals = ((left, gap_left), (gap_right, right))
+        intervals = ((bounds.left, bounds.centerx - gap), (bounds.centerx + gap, bounds.right))
         for x1, x2 in intervals:
             pygame.draw.line(screen, wood, (x1, y), (x2, y), max(2, round(5 * scale)))
             pygame.draw.line(screen, rail, (x1, y - 2), (x2, y - 2), max(1, round(2 * scale)))
@@ -22,9 +21,7 @@ def _draw_completed_fence(screen, bounds, side, scale, level):
                                  (post_x, y + round(7 * scale)), max(1, round(2 * scale)))
     else:
         x = bounds.right if side == 2 else bounds.left
-        top, bottom = bounds.top, bounds.bottom
-        gap_top, gap_bottom = bounds.centery - max(4, round(24 * scale)), bounds.centery + max(4, round(24 * scale))
-        intervals = ((top, gap_top), (gap_bottom, bottom))
+        intervals = ((bounds.top, bounds.centery - gap), (bounds.centery + gap, bounds.bottom))
         for y1, y2 in intervals:
             pygame.draw.line(screen, wood, (x, y1), (x, y2), max(2, round(5 * scale)))
             pygame.draw.line(screen, rail, (x - 2, y1), (x - 2, y2), max(1, round(2 * scale)))
@@ -64,11 +61,49 @@ def _draw_trench(screen, bounds, scale):
                          (bounds.right - 4, min(y + trench_length, bounds.bottom - 4)), 3)
 
 
+def _draw_stone_fence(screen, bounds, side, scale):
+    """Tall grey stone wall with merlons, split at the same gate gap as the wooden fence."""
+    stone = (96, 104, 104)
+    stone_dark = (60, 66, 67)
+    height = max(4, round(7 * scale))
+    gap = max(4, round(24 * scale))
+    merlon = max(3, round(6 * scale))
+    if side in (0, 1):
+        y = bounds.top if side == 0 else bounds.bottom
+        intervals = ((bounds.left, bounds.centerx - gap), (bounds.centerx + gap, bounds.right))
+        for x1, x2 in intervals:
+            pygame.draw.rect(screen, stone, (x1, y - height, x2 - x1, height * 2))
+            pygame.draw.rect(screen, stone_dark, (x1, y - height, x2 - x1, height * 2), 1)
+            for mx in range(x1, x2 - merlon + 1, merlon * 2):
+                pygame.draw.rect(screen, stone_dark, (mx, y - height - merlon // 2, merlon, merlon // 2 + 1))
+    else:
+        x = bounds.right if side == 2 else bounds.left
+        intervals = ((bounds.top, bounds.centery - gap), (bounds.centery + gap, bounds.bottom))
+        for y1, y2 in intervals:
+            pygame.draw.rect(screen, stone, (x - height, y1, height * 2, y2 - y1))
+            pygame.draw.rect(screen, stone_dark, (x - height, y1, height * 2, y2 - y1), 1)
+            for my in range(y1, y2 - merlon + 1, merlon * 2):
+                pygame.draw.rect(screen, stone_dark, (x - height - merlon // 2, my, merlon // 2 + 1, merlon))
+
+
+def _draw_stone_wall_stage(screen, bounds, side, scale, stage):
+    """Draw one side during the 2 -> 3 upgrade: 'stone', 'building', or 'wood'."""
+    if stage == "stone":
+        _draw_stone_fence(screen, bounds, side, scale)
+    elif stage == "building":
+        _draw_work_logs(screen, bounds, (side,), scale)
+        _draw_stone_fence(screen, bounds, side, scale * 0.5)
+    else:
+        _draw_completed_fence(screen, bounds, side, scale, 2)
+
+
 def draw_city_exterior(screen, rect, visual_state):
     """Compose walls, gates, corner towers, keep, homes, and AP stage."""
-    tier = city_visual_tier(visual_state.get("city_level", 1))
+    city_level = int(visual_state.get("city_level", 1))
+    tier = city_visual_tier(city_level)
     active = bool(visual_state.get("active"))
     phase = min(3, int(visual_state.get("phase_index", 0))) if active else -1
+    upgrading_to_three = active and city_level == 2
     scale = max(0.2, min(rect.width, rect.height) / 480)
     inset = max(3, round(12 * scale))
     bounds = rect.inflate(-2 * inset, -2 * inset)
@@ -95,24 +130,36 @@ def draw_city_exterior(screen, rect, visual_state):
         for x in range(tower.left + 3, tower.right - merlon, merlon * 2):
             pygame.draw.rect(screen, (34, 40, 41), (x, tower.top - 2, merlon, merlon // 2 + 1))
 
-    if tier >= 2:
-        completed_sides = (0, 1, 2, 3)
-    elif not active or phase == 0:
-        completed_sides = ()
-    elif phase == 2:
-        completed_sides = (1, 2)
+    if city_level >= 3:
+        for side in (0, 1, 2, 3):
+            _draw_stone_fence(screen, bounds, side, scale)
+    elif upgrading_to_three:
+        for side in (0, 1, 2, 3):
+            if side < phase:
+                stage = "stone"
+            elif side == phase:
+                stage = "building"
+            else:
+                stage = "wood"
+            _draw_stone_wall_stage(screen, bounds, side, scale, stage)
+    elif tier >= 2:
+        for side in (0, 1, 2, 3):
+            _draw_completed_fence(screen, bounds, side, scale, tier)
     else:
-        completed_sides = (1, 2, 3) if phase == 3 else ()
-
-    for side in completed_sides:
-        _draw_completed_fence(screen, bounds, side, scale, tier)
-
-    if active and tier == 1:
-        if phase == 0:
-            _draw_trench(screen, bounds, scale)
+        if not active or phase == 0:
+            completed_sides = ()
+        elif phase == 2:
+            completed_sides = (1, 2)
         else:
-            incomplete = tuple(side for side in (0, 1, 2, 3) if side not in completed_sides)
-            _draw_work_logs(screen, bounds, incomplete, scale)
+            completed_sides = (1, 2, 3) if phase == 3 else ()
+        for side in completed_sides:
+            _draw_completed_fence(screen, bounds, side, scale, tier)
+        if active:
+            if phase == 0:
+                _draw_trench(screen, bounds, scale)
+            else:
+                incomplete = tuple(side for side in (0, 1, 2, 3) if side not in completed_sides)
+                _draw_work_logs(screen, bounds, incomplete, scale)
 
     gate_width = max(8, round(48 * scale))
     gate_height = max(6, round(24 * scale))

@@ -1,10 +1,7 @@
 from combat.character_stats import (
     BASE_STAT_VALUE,
     STARTING_ENDURANCE_VALUE,
-    STARTING_STAT_POINTS,
-    PROFESSIONS,
     UNIQUE_RESOURCE_RECOVERY,
-    UNIQUE_RESOURCE_GAIN,
     total_stat_points,
     adjust_stats,
     calculate_max_hp,
@@ -13,7 +10,7 @@ from combat.character_stats import (
     get_profession_data,
     is_valid_profession,
 )
-from combat.mechanics import weapon_damage_range
+from combat.weapon_damage import weapon_damage_range
 from combat.progression import apply_xp
 
 
@@ -24,7 +21,6 @@ class Fighter:
         "intuition": "Интуиция",
         "wisdom": "Мудрость",
         "intellect": "Интеллект",
-        "harmony": "Гармония",
         "endurance": "Выносливость",
     }
 
@@ -46,7 +42,6 @@ class Fighter:
             "intuition": BASE_STAT_VALUE,
             "wisdom": BASE_STAT_VALUE,
             "intellect": BASE_STAT_VALUE,
-            "harmony": BASE_STAT_VALUE,
             "endurance": STARTING_ENDURANCE_VALUE + max(0, int(level) - 1),
         }
         self.temporary_stat_modifiers = {
@@ -106,10 +101,6 @@ class Fighter:
         return self._effective_stat("intellect")
 
     @property
-    def harmony(self):
-        return self._effective_stat("harmony")
-
-    @property
     def endurance(self):
         return self._effective_stat("endurance")
 
@@ -154,8 +145,6 @@ class Fighter:
 
     def set_profession(self, profession_type):
         """Сменить класс бойца по профилю персонажа (ресурс класса, бонус лучника)."""
-        if profession_type == "mage":  # старый тип персонажа
-            profession_type = "battle_mage"
         if not is_valid_profession(profession_type) or profession_type == self.profession_type:
             return
         if self.profession_type == "archer":

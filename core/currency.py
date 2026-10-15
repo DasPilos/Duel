@@ -79,11 +79,6 @@ class Currency:
         
         return self
     
-    @staticmethod
-    def normalize_dict(copper, silver, gold):
-        """Normalize currency values and return as dict"""
-        return Currency(copper, silver, gold).normalize().to_dict()
-
     def add_copper_amount(self, amount):
         self.copper += int(amount)
         return self.normalize()

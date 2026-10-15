@@ -27,20 +27,22 @@ class WorldEventWatcher:
     def _food_announcement(previous, current):
         if current == previous or current is None:
             return None
-        if current == "В городе голод":
+        if current in {"В городе голод", "в городе нечего есть, может начаться голод"}:
             return "food:hunger", {"event": "hunger"}, [
                 "Летописец сообщает: в городе начался голод.",
                 "В городе не хватает еды — жители голодают.",
                 "Запасы пищи истощены: город охватил голод.",
             ]
-        if current == "Население не доедает":
+        if current in {"Население не доедает", "в городе нестабильные поставки еды"}:
             return "food:shortage", {"event": "food_shortage"}, [
                 "Жителям города не хватает пищи.",
                 "Запасы еды сократились: население недоедает.",
                 "Летописец предупреждает: в городе нехватка продовольствия.",
             ]
-        if current == "Пищи достаточно" and previous in {
+        if current in {"Пищи достаточно", "в городе достаточно еды для роста"} and previous in {
             "В городе голод", "Население не доедает",
+            "в городе нечего есть, может начаться голод",
+            "в городе нестабильные поставки еды",
         }:
             return "food:recovered", {"event": "food_recovered"}, [
                 "Запасы пищи восстановлены — город снова обеспечен.",
@@ -150,13 +152,9 @@ def world_event_snapshot(database, now=None):
 
 
 def run_world_event_watcher(database, stop_event, *, interval=POLL_SECONDS, watcher=None):
-    from server.ai_commentator import enqueue_world_comment
-
     watcher = watcher or WorldEventWatcher(
         lambda: world_event_snapshot(database),
-        lambda event_key, context, lines: enqueue_world_comment(
-            database, event_key, context, lines,
-        ),
+        lambda event_key, context, lines: LOGGER.info("World event %s: %s", event_key, lines[0]),
     )
     while not stop_event.is_set():
         try:

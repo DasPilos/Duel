@@ -12,40 +12,22 @@ from server.database import Database
 from server.items_database import ItemsDatabase
 from server.forge import Forge
 from server import maintenance, social
-from server.world import run_bot_battle_tick
 from core.production_buildings import BUILDINGS
 from server.production_buildings import DEFAULT_FACTION, ProductionBuildings
 from server.city_population import CityPopulation
 from server.city_upgrade import city_upgrade_payload
-from server.ai_commentator import enqueue_battle_comment, prewarm_local_model
 from server.world_events import run_world_event_watcher
 from server.transport import TransportService
-from server.world_events import run_world_event_watcher
 from server.world_map import terrain_payload
 from server.structures import city_structures
 from server.world_roads import roads_payload
-from core.currency import Currency
-from combat.anticheat import score_match
-from combat.fighter import Fighter
-from combat.progression import apply_xp, battle_currency_reward, battle_xp
-from combat.card_database import (
-    card_allowed_for,
-    card_to_dict,
-    cards_for_type,
-    choose_battle_reward,
-    deck_validation_error,
-    load_cards,
-)
 
 
 class GameRequestHandler(BaseHTTPRequestHandler):
-    CHAT_LOCATIONS = ("tavern", "backyard", "city", "world_map", "character_room")
+    CHAT_LOCATIONS = ("tavern", "city", "world_map", "character_room")
     database = Database()
     items_database = ItemsDatabase(database)
     chat_send_times = {}
-    battle_result_times = {}
-    # Результат боя шлёт клиент: не чаще одного боя за это время
-    BATTLE_RESULT_MIN_INTERVAL = 20
 
     def _send(self, status, payload):
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -130,117 +112,6 @@ class GameRequestHandler(BaseHTTPRequestHandler):
         if increase + requested_points > current_points + decrease:
             raise ValueError("Характеристики изменяются сервером")
 
-        current_currency = Currency.from_dict(current)
-        requested_currency = Currency.from_dict(payload)
-        if requested_currency.total_copper() > current_currency.total_copper():
-            raise ValueError("Валюта начисляется сервером")
-
-    def _apply_battle_result(self, user_id, character_id, body):
-        character = self.database.get_character(user_id, character_id)
-        if character is None:
-            raise ValueError("Персонаж не найден")
-        outcome = str(body.get("outcome", ""))
-        if outcome not in ("win", "draw", "loss"):
-            raise ValueError("Некорректный исход боя")
-        now = time.time()
-        last = self.battle_result_times.get(character_id, 0)
-        if now - last < self.BATTLE_RESULT_MIN_INTERVAL:
-            raise ValueError("Результат боя уже засчитан")
-        self.battle_result_times[character_id] = now
-        opponent_level = max(1, min(1000, int(body.get("opponent_level", character["level"]))))
-
-        fighter = Fighter(character["name"], character["level"], profession_type=character.get("type", "warrior"))
-        fighter.stats = dict(character["stats"])
-        fighter.stat_points = character["stat_points"]
-        fighter.xp = character["xp"]
-        fighter.recalculate_parameters()
-        fighter.hp = max(0, min(int(body.get("hp", character["hp"])), fighter.max_hp))
-        xp = battle_xp(character["level"], opponent_level, outcome)
-        apply_xp(fighter, xp, restore_hp=False)
-
-        copper, silver = (
-            battle_currency_reward(character["level"], opponent_level)
-            if outcome == "win" else (0, 0)
-        )
-        currency = Currency.from_dict(character)
-        currency.add(copper, silver, 0)
-        saved = self.database.save_character(user_id, character_id, {
-            **character,
-            **currency.to_dict(),
-            "level": fighter.level,
-            "xp": fighter.xp,
-            "stats": fighter.stats,
-            "stat_points": fighter.stat_points,
-            "hp": fighter.hp,
-            "mp": max(0, min(int(body.get("mp", character["mp"])), character["max_mp"])),
-        })
-        afk_result = self._apply_afk_defender_result(character_id, body)
-        battle_archive_id = None
-        replay = body.get("battle_record")
-        if replay is not None:
-            battle_archive_id = self.database.save_battle_archive(
-                character_id, body.get("opponent_id"), outcome, replay,
-            )
-        enqueue_battle_comment(self.database, character_id, body.get("opponent_id"), outcome)
-        return {
-            "character": saved,
-            "xp": xp,
-            "currency": {"copper": copper, "silver": silver, "gold": 0},
-            "afk_opponent": afk_result,
-            "battle_archive_id": battle_archive_id,
-        }
-
-    def _apply_afk_defender_result(self, attacker_id, body):
-        opponent_id = body.get("opponent_id")
-        if opponent_id is None or body.get("opponent_hp") is None or body.get("opponent_mp") is None:
-            return None
-        opponent_id = int(opponent_id)
-        battle = self.database.get_active_battle(int(attacker_id), opponent_id)
-        if (battle is None or not battle.get("opponent_afk")
-                or battle.get("battle_data", {}).get("mode") != "afk_defense"):
-            return None
-
-        presence = social.get_character_presence(opponent_id)
-        if presence is None or not presence.get("afk"):
-            self.database.delete_active_battle(int(attacker_id), opponent_id)
-            return None
-        target = self.database.get_character_for_battle(opponent_id)
-        if target is None:
-            self.database.delete_active_battle(int(attacker_id), opponent_id)
-            return None
-
-        character = target["character"]
-        hp = max(0, min(int(body["opponent_hp"]), character["max_hp"]))
-        mp = max(0, min(int(body["opponent_mp"]), character["max_mp"]))
-        defeated = hp <= 0
-        checkpoint = {**character, "hp": hp, "mp": mp}
-        if defeated:
-            checkpoint.update({
-                "hp": 1,
-                "mp": 1,
-                "zone": "city",
-                "position_x": 50 * 32 + 16,
-                "position_y": 53 * 32 + 16,
-                "position_direction": "n",
-            })
-        saved = self.database.save_character(target["user_id"], opponent_id, checkpoint)
-        social.update_afk_character(saved)
-        self.database.delete_active_battle(int(attacker_id), opponent_id)
-        return {"character_id": opponent_id, "hp": saved["hp"], "mp": saved["mp"], "defeated": defeated}
-
-    def _card_collection(self, character):
-        character_id = character["id"]
-        self.database.ensure_starter_cards(
-            character_id,
-            [card.key for card in cards_for_type(character.get("type"))],
-        )
-        cards_by_key = {card.key: card for card in load_cards()}
-        collection = []
-        for entry in self.database.get_card_collection(character_id):
-            card = cards_by_key.get(entry["card_key"])
-            if card is not None:
-                collection.append({**entry, **card_to_dict(card)})
-        return collection
 
     def _check_chat_rate(self, character_id):
         now = time.time()
@@ -303,15 +174,9 @@ class GameRequestHandler(BaseHTTPRequestHandler):
             } else "s"
         if social.update_presence(token, user_id, character, location):
             self._announce_player_status(character, "присоединился к игре")
-        offers = social.offers_for(character_id)
-        if location == "backyard":
-            offers += social.public_offers(location, character_id)
         self._send(200, {
             "occupants": social.occupants(user_id, location),
             "messages": self.database.get_chat_history(character_id, location),
-            "offers": offers,
-            "my_application": social.own_public_offer(character_id, location),
-            "group_offers": social.group_battle_offers() if location == "backyard" else [],
         })
 
     def _handle_server_status(self):
@@ -324,18 +189,6 @@ class GameRequestHandler(BaseHTTPRequestHandler):
             "server_timezone": config.SERVER_TIMEZONE,
         })
 
-    def _handle_social_offers(self):
-        token = self._token()
-        user_id = self.database.user_id_by_token(token)
-        character = self.database.get_character(user_id)
-        location = self._query().get("location", ["tavern"])[0]
-        offers = social.offers_for(character["id"])
-        if location == "backyard":
-            offers += social.public_offers(location, character["id"])
-        self._send(200, {
-            "offers": offers,
-            "my_application": social.own_public_offer(character["id"], location),
-        })
 
     def _handle_chat_message(self, body, *, validation_error, prevent_self_message=False):
         token = self._token()
@@ -365,22 +218,6 @@ class GameRequestHandler(BaseHTTPRequestHandler):
             if path == "/api/server/status":
                 self._handle_server_status()
                 return
-            if path == "/api/battles/archive":
-                self.database.user_id_by_token(self._token())
-                query = self._query()
-                limit = int(query.get("limit", [50])[0])
-                offset = int(query.get("offset", [0])[0])
-                self._send(200, self.database.list_battle_archive(limit, offset))
-                return
-            if path.startswith("/api/battles/archive/"):
-                self.database.user_id_by_token(self._token())
-                archive_id = int(path.rsplit("/", 1)[1])
-                battle = self.database.get_battle_archive(archive_id)
-                if battle is None:
-                    self._send(404, {"error": "Запись боя не найдена"})
-                else:
-                    self._send(200, {"battle": battle})
-                return
             if path == "/download/client":
                 self._send_client_download()
                 return
@@ -397,10 +234,10 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                 self.database.user_id_by_token(self._token())
                 with self.database.connection() as connection:
                     state = connection.execute(
-                        "SELECT castle_level FROM city_population_state WHERE world_id=%s AND faction=%s",
+                        "SELECT city_level FROM city_population_state WHERE world_id=%s AND faction=%s",
                         (self.database.world_id, DEFAULT_FACTION),
                     ).fetchone()
-                city_level = 1 if state is None else int(state["castle_level"])
+                city_level = 1 if state is None else int(state["city_level"])
                 with self.database.connection() as connection:
                     city_visual_state = city_upgrade_payload(
                         connection, (self.database.world_id, DEFAULT_FACTION), time.time()
@@ -476,10 +313,6 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                 convoys = TransportService(self.database).get_world_convoys(character_id)
                 self._send(200, {"convoys": convoys})
                 return
-            if path == "/api/opponents":
-                user_id = self.database.user_id_by_token(self._token())
-                self._send(200, {"opponents": self.database.get_opponents(user_id)})
-                return
             if path == "/api/social/occupants":
                 self._handle_social_occupants()
                 return
@@ -494,22 +327,6 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                 return
             if path == "/api/social/snapshot":
                 self._handle_social_snapshot()
-                return
-            if path == "/api/social/offers":
-                self._handle_social_offers()
-                return
-            if path == "/api/social/group-battles":
-                self._token()
-                self._send(200, {"offers": social.group_battle_offers()})
-                return
-            if path.startswith("/api/social/group-battles/"):
-                self._token()
-                offer_id = path.rsplit("/", 1)[1]
-                offer = social.group_battle_offer(offer_id)
-                if offer is None:
-                    self._send(404, {"error": "Заявка группового боя не найдена"})
-                else:
-                    self._send(200, {"offer": offer})
                 return
             if path.startswith("/api/characters/"):
                 character_id = int(path.rsplit("/", 1)[1])
@@ -562,27 +379,6 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                    self._send(200, {"storage": storage})
                return
             
-            if path.startswith("/api/decks/"):
-               character_id = int(path.rsplit("/", 1)[1])
-               user_id = self.database.user_id_by_token(self._token())
-               character = self.database.get_character(user_id, character_id)
-               if character is None:
-                   self._send(404, {"error": "Персонаж не найден"})
-               else:
-                   decks = self.items_database.get_decks(character_id)
-                   self._send(200, {"decks": decks})
-               return
-
-            if path.startswith("/api/card-collection/"):
-               character_id = int(path.rsplit("/", 1)[1])
-               user_id = self.database.user_id_by_token(self._token())
-               character = self.database.get_character(user_id, character_id)
-               if character is None:
-                  self._send(404, {"error": "Персонаж не найден"})
-               else:
-                  self._send(200, {"collection": self._card_collection(character)})
-               return
-            
             self._send(404, {"error": "Маршрут не найден"})
         except (ValueError, json.JSONDecodeError) as error:
             self._handle_error(error)
@@ -605,7 +401,25 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                     )
                     self._send(200, {"population": state})
                     return
-                if len(parts) != 7 or parts[4] != "citizens" or parts[6] not in ("assign", "recall"):
+                if len(parts) == 5 and parts[4] == "treasury-edict":
+                    user_id = self.database.user_id_by_token(self._token())
+                    character_id = int(parts[3])
+                    if self.database.get_character(user_id, character_id) is None:
+                        raise ValueError("Персонаж не найден")
+                    state = CityPopulation(self.database).start_treasury_edict(character_id)
+                    self._send(200, {"population": state})
+                    return
+                if len(parts) == 6 and parts[4] == "upgrades":
+                    user_id = self.database.user_id_by_token(self._token())
+                    character_id = int(parts[3])
+                    if self.database.get_character(user_id, character_id) is None:
+                        raise ValueError("Персонаж не найден")
+                    state = CityPopulation(self.database).start_castle_upgrade(
+                        character_id, parts[5]
+                    )
+                    self._send(200, {"population": state})
+                    return
+
                     self._send(404, {"error": "Путь замка не найден"})
                     return
                 user_id = self.database.user_id_by_token(self._token())
@@ -648,36 +462,12 @@ class GameRequestHandler(BaseHTTPRequestHandler):
             if path == "/api/login":
                 self._send(200, self.database.login(str(body.get("username", "")), str(body.get("password", ""))))
                 return
-            if path == "/api/decks":
-                user_id = self.database.user_id_by_token(self._token())
-                character_id = int(body.get("character_id", 0))
-                character = self.database.get_character(user_id, character_id)
-                if character is None:
-                    raise ValueError("Персонаж не найден")
-                name = str(body.get("name", "")).strip()
-                if not 1 <= len(name) <= 32:
-                    raise ValueError("Название колоды: от 1 до 32 символов")
-                cards = body.get("cards", {})
-                if isinstance(cards, list):
-                    if len(cards) != len(set(map(str, cards))):
-                        raise ValueError("Карты в колоде не должны повторяться")
-                    cards = {str(key): 1 for key in cards}
-                if not isinstance(cards, dict):
-                    raise ValueError("Некорректный состав колоды")
-                cards = {str(key): 1 for key in cards}
-                owned_keys = {entry["card_key"] for entry in self._card_collection(character)}
-                error = deck_validation_error(list(cards), character.get("type"), owned_keys)
-                if error:
-                    raise ValueError(error)
-                deck_id = self.items_database.create_deck(character_id, name, cards)
-                self._send(201, {"deck": self.items_database.get_deck(deck_id)})
-                return
             if path == "/api/characters":
                 user_id = self.database.user_id_by_token(self._token())
                 name = str(body.get("name", "")).strip()
                 profession_type = str(body.get("profession_type", "warrior")).strip().lower()
                 self.database.validate_character_name(name)
-                valid_professions = ["warrior", "archer", "assassin", "battle_mage", "support_mage", "harmonist"]
+                valid_professions = ["warrior", "archer", "assassin", "mage"]
                 if profession_type not in valid_professions:
                     raise ValueError(f"Профессия должна быть одной из: {', '.join(valid_professions)}")
                 character = self.database.create_character(user_id, name, profession_type)
@@ -756,6 +546,14 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                     state = buildings.purchase_cart(character_id, body.get("grade", 1))
                 elif action == "cart/repair" and building == "stable":
                     state = buildings.repair_cart(character_id, body.get("cart_id", ""))
+                elif action == "cart/rename" and building == "stable":
+                    state = buildings.rename_cart(
+                        character_id, body.get("cart_id", ""), body.get("name", "")
+                    )
+                elif action == "cart/auto_repair" and building == "stable":
+                    state = buildings.set_cart_auto_repair(
+                        character_id, body.get("cart_id", ""), body.get("mode")
+                    )
                 elif action == "transport/dispatch" and building == "stable":
                     convoy = TransportService(self.database).dispatch(character_id, body)
                     state = ProductionBuildings(self.database).get_state(character_id, "stable")
@@ -794,10 +592,7 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                 if character_id is not None and body.get("character") is not None:
                     saved_character = self.database.get_character(user_id, character_id)
                     if saved_character is not None:
-                        try:
-                            social.cancel_public_duel_offer(character_id, "backyard")
-                        except ValueError:
-                            pass
+
                         social.mark_afk(token, user_id, saved_character)
                         self._announce_player_status(saved_character, "покинул сервер")
                 self._send(200, result)
@@ -859,231 +654,6 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                 )
                 self._send(200, {"ok": True})
                 return
-            if path == "/api/matches/audit":
-                self._token()
-                audit = dict(body)
-                audit.pop("xp", None)
-                audit.pop("xp_awarded_a", None)
-                audit.pop("xp_awarded_b", None)
-                audit.update(score_match(
-                    pair_matches_24h=int(audit.get("pair_matches_24h", 0)),
-                    pair_wins_24h=int(audit.get("pair_wins_24h", 0)),
-                    turns=int(audit.get("turns", 0)),
-                    median_turns=int(audit.get("median_turns", 0)),
-                    surrender=bool(audit.get("surrender", False)),
-                    afk_turns=int(audit.get("afk_turns", 0)),
-                    level_difference=int(audit.get("level_b", 1)) - int(audit.get("level_a", 1)),
-                    same_device=bool(audit.get("same_device", False)),
-                    new_account_farming=bool(audit.get("new_account_farming", False)),
-                    client_xp_submitted=bool(body.get("xp") is not None),
-                ))
-                result = self.database.record_match_audit(audit)
-                self._send(201, {**result, "xp": 0, "flags": audit["signals"], "denied": audit["action"] == "xp_denied"})
-                return
-            if path == "/api/battle/result":
-                user_id = self.database.user_id_by_token(self._token())
-                character_id = int(body.get("character_id", 0))
-                self._send(200, self._apply_battle_result(user_id, character_id, body))
-                return
-            if path == "/api/battle/card-reward":
-                user_id = self.database.user_id_by_token(self._token())
-                character_id = int(body.get("character_id", 0))
-                character = self.database.get_character(user_id, character_id)
-                if character is None:
-                    raise ValueError("Персонаж не найден")
-                eligible_keys = body.get("card_keys", [])
-                if not isinstance(eligible_keys, list) or len(eligible_keys) > 100:
-                    raise ValueError("Некорректный список карт боя")
-                eligible_key_set = {str(key) for key in eligible_keys}
-                eligible_cards = [
-                    card for card in load_cards()
-                    if card.key in eligible_key_set
-                    and card_allowed_for(card, character.get("type"))
-                ]
-                reward = choose_battle_reward(eligible_cards)
-                if reward is None:
-                    self._send(200, {"reward": None})
-                    return
-                collection_entry = self.database.add_card_to_collection(
-                    character_id,
-                    reward.key,
-                )
-                self._send(200, {
-                    "reward": {
-                        **collection_entry,
-                        **card_to_dict(reward),
-                    },
-                })
-                return
-            if path == "/api/social/duel-offers":
-                token = self._token()
-                user_id = self.database.user_id_by_token(token)
-                character = self.database.get_character(user_id, int(body["character_id"]))
-                target_id = body.get("target_id")
-                location = body.get("location", "backyard")
-                if character is None or not target_id or location != "backyard":
-                    raise ValueError("Предложение поединка недоступно")
-                if social.pending_public_offer(character["id"], location) is not None:
-                    raise ValueError("Пока активна ваша заявка, вы не можете бросать вызов")
-                target = next((item for item in social.occupants(user_id, location) if str(item["character_id"]) == str(target_id)), None)
-                if target is None:
-                    raise ValueError("Персонаж не найден в локации")
-                if target.get("type", "warrior") != character.get("type", "warrior"):
-                    raise ValueError("Нельзя вызвать персонажа другого класса")
-                if character["hp"] < character["max_hp"]:
-                    raise ValueError("Нельзя вступить в бой: здоровье должно быть полностью восстановлено")
-                if target.get("hp", target.get("max_hp")) < target.get("max_hp", 0):
-                    raise ValueError("Нельзя вступить в бой: здоровье соперника должно быть полностью восстановлено")
-                if target.get("kind") == "bot":
-                    error = social.backyard_duel_error(character, target)
-                    if error:
-                        raise ValueError(error)
-                    offer = social.add_duel_offer(
-                        {"character_id": character["id"], "name": character["name"]},
-                        target_id,
-                        location,
-                    )
-                    offer["status"] = "accepted"
-                    offer["accepted_by"] = target["character_id"]
-                    self._send(201, {"accepted": True, "offer": offer})
-                    return
-                if target.get("afk"):
-                    target_id = int(target["character_id"])
-                    if (self.database.get_active_battle(character["id"], target_id)
-                            or self.database.get_active_battle(target_id, character["id"])):
-                        raise ValueError("Один из персонажей уже участвует в бою")
-                    offer = social.add_duel_offer(
-                        {"character_id": character["id"], "name": character["name"]},
-                        target_id,
-                        location,
-                    )
-                    offer["status"] = "accepted"
-                    offer["accepted_by"] = target_id
-                    self.database.save_active_battle(
-                        character["id"], target_id,
-                        {"mode": "afk_defense", "location": location},
-                    )
-                    self.database.mark_opponent_afk(character["id"], target_id, True)
-                    self._send(201, {"accepted": True, "offer": offer})
-                    return
-                offer = social.add_duel_offer(
-                    {"character_id": character["id"], "name": character["name"]},
-                    target_id,
-                    location,
-                )
-                self._send(201, {"accepted": False, "offer": offer})
-                return
-            if path == "/api/social/group-battles":
-                token = self._token()
-                user_id = self.database.user_id_by_token(token)
-                character = self.database.get_character(user_id, int(body["character_id"]))
-                if character is None or body.get("location") != "backyard":
-                    raise ValueError("Заявка группового боя недоступна")
-                if character["hp"] < character["max_hp"]:
-                    raise ValueError("Для группового боя здоровье должно быть полностью восстановлено")
-                if social.has_active_application(character["id"]):
-                    raise ValueError("Нельзя одновременно участвовать в нескольких заявках")
-                ttl = max(120, min(int(body.get("ttl", 120)), 1800))
-                max_participants = int(body.get("max_participants", 10))
-                if max_participants not in (6, 8, 10):
-                    raise ValueError("Размер команды может быть только 6, 8 или 10")
-                offer = social.create_group_battle_offer(character, ttl, max_participants)
-                self._send(201, {"offer": offer})
-                return
-            if path.startswith("/api/social/group-battles/") and path.endswith("/join"):
-                token = self._token()
-                user_id = self.database.user_id_by_token(token)
-                character = self.database.get_character(user_id, int(body["character_id"]))
-                if character is None or body.get("location") != "backyard":
-                    raise ValueError("Присоединение к групповому бою недоступно")
-                if character["hp"] < character["max_hp"]:
-                    raise ValueError("Для группового боя здоровье должно быть полностью восстановлено")
-                if social.has_active_application(character["id"]):
-                    raise ValueError("Нельзя одновременно участвовать в нескольких заявках")
-                offer_id = path.split("/api/social/group-battles/", 1)[1].rsplit("/join", 1)[0]
-                offer = social.join_group_battle_offer(offer_id, character)
-                self._send(200, {"offer": offer})
-                return
-            if path.startswith("/api/social/group-battles/") and path.endswith("/leave"):
-                token = self._token()
-                user_id = self.database.user_id_by_token(token)
-                character = self.database.get_character(user_id, int(body["character_id"]))
-                if character is None:
-                    raise ValueError("Персонаж не найден")
-                offer_id = path.split("/api/social/group-battles/", 1)[1].rsplit("/leave", 1)[0]
-                offer = social.leave_group_battle_offer(offer_id, character["id"])
-                self._send(200, {"offer": offer})
-                return
-            if path == "/api/social/duel-applications":
-                token = self._token()
-                user_id = self.database.user_id_by_token(token)
-                character = self.database.get_character(user_id, int(body["character_id"]))
-                if character is None or body.get("location") != "backyard":
-                    raise ValueError("Заявка недоступна")
-                if character["hp"] < character["max_hp"]:
-                    raise ValueError("Нельзя подать заявку: здоровье должно быть полностью восстановлено")
-                if social.has_active_application(character["id"]):
-                    raise ValueError("Нельзя одновременно участвовать в нескольких заявках")
-                offer = social.add_public_duel_offer(
-                    {
-                        "character_id": character["id"],
-                        "name": character["name"],
-                    },
-                    "backyard",
-                    max(120, min(int(body.get("ttl", 120)), 1800)),
-                )
-                self._send(201, {"application": offer})
-                return
-            if path == "/api/social/duel-applications/cancel":
-                token = self._token()
-                user_id = self.database.user_id_by_token(token)
-                character = self.database.get_character(user_id, int(body["character_id"]))
-                if character is None or body.get("location") != "backyard":
-                    raise ValueError("Отмена заявки недоступна")
-                self._send(200, {"application": social.cancel_public_duel_offer(character["id"], "backyard")})
-                return
-            if path == "/api/social/duel-offers/respond":
-                token = self._token()
-                user_id = self.database.user_id_by_token(token)
-                character = self.database.get_character(user_id, int(body["character_id"]))
-                if character is None:
-                    raise ValueError("Персонаж не найден")
-                if body.get("accepted") and character["hp"] < character["max_hp"]:
-                    raise ValueError("Нельзя вступить в бой: здоровье должно быть полностью восстановлено")
-                if body.get("accepted") and social.has_active_application(character["id"]):
-                    raise ValueError("Сначала отмените свою заявку, чтобы вступить в бой")
-                offer = next(
-                    (item for item in social.DUEL_OFFERS if item["id"] == body["offer_id"]),
-                    None,
-                )
-                afk_defender_id = None
-                if offer is not None and str(offer["sender_id"]).lstrip("-").isdigit():
-                    sender_id = int(offer["sender_id"])
-                    sender = self.database.get_character_for_battle(sender_id)
-                    sender_character = sender["character"] if sender is not None else None
-                    if sender_character is not None and sender_character.get("type", "warrior") != character.get("type", "warrior"):
-                        raise ValueError("Нельзя принять вызов персонажа другого класса")
-                    sender_presence = social.get_character_presence(sender_id)
-                    if (body.get("accepted") and offer.get("target_id") is None
-                            and sender_presence and sender_presence.get("afk")):
-                        if sender_character is None:
-                            raise ValueError("Персонаж уже недоступен")
-                        if sender_character["hp"] < sender_character["max_hp"]:
-                            raise ValueError("Нельзя вступить в бой: здоровье соперника должно быть полностью восстановлено")
-                        if (self.database.get_active_battle(character["id"], sender_id)
-                                or self.database.get_active_battle(sender_id, character["id"])):
-                            raise ValueError("Этот персонаж уже участвует в бою")
-                        afk_defender_id = sender_id
-                offer = social.respond_duel_offer(character["id"], body["offer_id"], bool(body.get("accepted")))
-                if afk_defender_id is not None:
-                    self.database.save_active_battle(
-                        character["id"], afk_defender_id,
-                        {"mode": "afk_defense", "location": "backyard"},
-                    )
-                    self.database.mark_opponent_afk(character["id"], afk_defender_id, True)
-                self._send(200, {"offer": offer})
-                return
-            
             # ============= API ИНВЕНТАРЯ (действия) =============
             # Каждое действие отвечает новым состоянием рюкзака и экипировки
             if path in ("/api/inventory/move", "/api/inventory/use", "/api/inventory/drop",
@@ -1140,36 +710,9 @@ class GameRequestHandler(BaseHTTPRequestHandler):
         except Exception as error:
             self._handle_server_error(error)
 
-    def do_DELETE(self):
-        try:
-            path = urlparse(self.path).path.rstrip("/")
-            if path.startswith("/api/decks/"):
-                deck_id = int(path.rsplit("/", 1)[1])
-                body = self._body()
-                user_id = self.database.user_id_by_token(self._token())
-                character_id = int(body.get("character_id", 0))
-                character = self.database.get_character(user_id, character_id)
-                if character is None:
-                    raise ValueError("Персонаж не найден")
-                if not self.items_database.delete_deck(character_id, deck_id):
-                    raise ValueError("Колода не найдена")
-                self._send(200, {"deleted": True})
-                return
-            self._send(404, {"error": "Маршрут не найден"})
-        except (ValueError, json.JSONDecodeError) as error:
-            self._handle_error(error)
-        except Exception as error:
-            self._handle_server_error(error)
-
     def do_PUT(self):
         try:
             path = urlparse(self.path).path.rstrip("/")
-            if path.startswith("/api/opponents/"):
-                opponent_id = path.rsplit("/", 1)[1]
-                user_id = self.database.user_id_by_token(self._token())
-                opponent = self.database.update_bot(user_id, opponent_id, self._body())
-                self._send(200, {"opponent": opponent})
-                return
             if path.startswith("/api/characters/"):
                 character_id = int(path.rsplit("/", 1)[1])
                 user_id = self.database.user_id_by_token(self._token())
@@ -1204,70 +747,43 @@ class GameHTTPServer(ThreadingHTTPServer):
 def run():
     print("Подготавливаю дороги к загородным постройкам...")
     roads_payload()
-    prewarm_local_model()
     server = GameHTTPServer((config.HOST, config.PORT), GameRequestHandler)
-    stop_bot_battles = threading.Event()
+    stop_event = threading.Event()
     restart_requested = threading.Event()
-    bot_battle_thread = threading.Thread(
-        target=_run_bot_battles,
-        args=(stop_bot_battles,),
-        name="bot-battle-scheduler",
-        daemon=True,
-    )
-    bot_battle_thread.start()
     restart_thread = threading.Thread(
         target=_run_scheduled_restart,
-        args=(server, stop_bot_battles, restart_requested),
+        args=(server, stop_event, restart_requested),
         name="scheduled-server-restart",
         daemon=True,
     )
     restart_thread.start()
     population_thread = threading.Thread(
         target=_run_city_population,
-        args=(stop_bot_battles,),
+        args=(stop_event,),
         name="city-population-ticks",
         daemon=True,
     )
     population_thread.start()
     world_event_thread = threading.Thread(
         target=run_world_event_watcher,
-        args=(GameRequestHandler.database, stop_bot_battles),
+        args=(GameRequestHandler.database, stop_event),
         name="world-event-watcher",
         daemon=True,
     )
     world_event_thread.start()
-    world_events_thread = threading.Thread(
-        target=run_world_event_watcher,
-        args=(GameRequestHandler.database, stop_bot_battles),
-        name="world-event-watcher",
-        daemon=True,
-    )
-    world_events_thread.start()
     print(f"Game server: http://{config.HOST}:{config.PORT}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         print("\nGame server stopped")
     finally:
-        stop_bot_battles.set()
-        bot_battle_thread.join(timeout=2)
+        stop_event.set()
         restart_thread.join(timeout=2)
         population_thread.join(timeout=2)
         world_event_thread.join(timeout=2)
-        world_events_thread.join(timeout=2)
         server.server_close()
     if restart_requested.is_set():
         raise SystemExit(1)
-
-
-def _run_bot_battles(stop_event):
-    while not stop_event.is_set():
-        try:
-            run_bot_battle_tick()
-        except Exception:
-            traceback.print_exc()
-        if stop_event.wait(1):
-            break
 
 
 def _run_scheduled_restart(server, stop_event, restart_requested):
@@ -1285,7 +801,7 @@ def _run_city_population(stop_event):
             population.tick_all()
         except Exception:
             traceback.print_exc()
-        if stop_event.wait(10):
+        if stop_event.wait(1):
             break
 
 

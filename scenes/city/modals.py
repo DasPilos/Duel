@@ -9,7 +9,7 @@ from core.forge_recipes import (
     format_forge_time,
     FORGE_QUEUE_LIMIT,
 )
-from core.cart_progress import CART_GRADES, cart_stats
+from core.cart_progress import CART_GRADES, cart_stats, tiles_to_km
 from ui.catalog_icons import draw_building_icon, draw_item_icon
 from ui.hud import draw_button
 from ui.map_travel import draw_transport_cart_icon
@@ -413,7 +413,7 @@ class CityModalsMixin:
             screen.blit(pop_overlay, (0, 0))
 
             pop_w = 580
-            pop_h = 560
+            pop_h = 521
             pop_x = (settings.WIDTH - pop_w) // 2
             pop_y = (settings.HEIGHT - pop_h) // 2
             self.forge_popup_rect = pygame.Rect(pop_x, pop_y, pop_w, pop_h)
@@ -449,7 +449,6 @@ class CityModalsMixin:
                 ("Вес (кг)", p_item["weight_str"]),
                 ("Бафы", p_item["buffs"]),
                 ("Характеристика", p_item["stats"]),
-                ("Колода", p_item["deck"]),
                 ("Изготовления:", p_item["duration_str"]),
                 ("Цена:", p_item["price_str"]),
             ]
@@ -657,7 +656,7 @@ class CityModalsMixin:
                     (1, 1, "Упряжка", str(config["horse_count"])),
                     (0, 2, "Погрузка", f"{config['load_kg_per_minute']} кг/мин"),
                     (1, 2, "Разгрузка", f"{config['unload_kg_per_minute']} кг/мин"),
-                    (0, 3, "Скорость без груза", f"{stats['empty_tiles_per_hour']} тайлов/час"),
+                    (0, 3, "Скорость без груза", f"{round(tiles_to_km(stats['empty_tiles_per_hour']))} км/ч"),
                     (1, 3, "Полная загрузка", f"штраф -{stats['full_load_speed_penalty_percent']}%"),
                 )
                 spec_column_width = (row.width - 24) // 2

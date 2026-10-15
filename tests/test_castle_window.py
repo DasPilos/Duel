@@ -11,6 +11,7 @@ class CastleWindowTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         pygame.font.init()
+        pygame.display.init()
 
     def test_assignment_and_recall_require_confirmation(self):
         citizen = {
@@ -112,7 +113,7 @@ class CastleWindowTests(unittest.TestCase):
         ))
         self.assertEqual(client.calls, [(9, "deposit", 250)])
 
-        window.state = {**state, "treasury_copper": 150}
+        window.state = {**state, "treasury_copper": 150, "personal_treasury_copper": 150}
         window._open_treasury_transfer("withdraw")
         self.assertEqual(window.treasury_transfer["maximum"], 150)
         window.handle_event(pygame.event.Event(
@@ -195,6 +196,112 @@ class CastleWindowTests(unittest.TestCase):
         self.assertNotIn("Ваши монеты: 2 серебра", rendered)
         self.assertFalse(any(text.startswith("За тик:") for text in rendered))
 
+    def test_castle_upgrades_tab_lists_the_treasury_edict(self):
+        window = CastleWindow(object())
+        state = {
+            "treasury_copper": 1000,
+            "personal_treasury_copper": 1000,
+            "city_resource_storage": {"wood": 40},
+            "upgrades": [{
+                "id": "treasury_edict",
+                "name": "Казначейский указ",
+                "requirement": "Нет",
+                "result": "+10 меди налога с каждого платящего горожанина",
+                "silver_cost": 5,
+                "wood_cost": 30,
+                "time_seconds": 4800,
+                "is_complete": False,
+                "is_active": False,
+                "seconds_left": 0,
+            }],
+        }
+        rendered = []
+        original_font = window.small_font
+        original_title_font = window.font
+
+        class Recorder:
+            def __init__(self, font):
+                self.font = font
+
+            def render(self, text, *args):
+                rendered.append(str(text))
+                return self.font.render(text, *args)
+
+            def __getattr__(self, name):
+                return getattr(self.font, name)
+
+        window.small_font = Recorder(original_font)
+        window.font = Recorder(original_title_font)
+        screen = pygame.Surface((window.rect.right + 1, window.rect.bottom + 1))
+        window._draw_upgrades(screen, state)
+
+        self.assertIn("Казначейский указ", rendered)
+        self.assertIn("Требование: Нет", rendered)
+        self.assertIn("Результат: +10 меди налога с каждого платящего горожанина", rendered)
+        self.assertIn("Время улучшения: 01:20:00", rendered)
+        self.assertIn("НАЧАТЬ", rendered)
+        self.assertIn("treasury_edict", window.upgrade_buttons)
+
+    def test_castle_upgrade_button_starts_the_clicked_upgrade(self):
+        started = []
+
+        class Client:
+            def start_castle_upgrade(self, character_id, upgrade_id):
+                started.append((character_id, upgrade_id))
+                return {"upgrades": []}
+
+        scene = SimpleNamespace(
+            session=SimpleNamespace(client=Client(), character={"id": 7}),
+            city_population_count=4,
+        )
+        window = CastleWindow(scene)
+        window.is_open = True
+        window.tab = "upgrades"
+        window.upgrade_buttons = {"plot_for_building": pygame.Rect(10, 10, 100, 30)}
+
+        window.handle_event(pygame.event.Event(
+            pygame.MOUSEBUTTONDOWN, button=1, pos=(20, 20),
+        ))
+
+        self.assertEqual(started, [(7, "plot_for_building")])
+        self.assertEqual(window.message, "Улучшение замка начато.")
+
+    def test_castle_upgrades_tab_blocks_edict_without_wood(self):
+        window = CastleWindow(object())
+        state = {
+            "treasury_copper": 1000,
+            "city_resource_storage": {"wood": 0},
+            "upgrades": [{
+                "id": "treasury_edict",
+                "name": "Казначейский указ",
+                "requirement": "Нет",
+                "result": "+10 меди",
+                "silver_cost": 5,
+                "wood_cost": 30,
+                "time_seconds": 4800,
+                "is_complete": False,
+                "is_active": False,
+                "seconds_left": 0,
+            }],
+        }
+        rendered = []
+        original_font = window.small_font
+
+        class Recorder:
+            def render(self, text, *args):
+                rendered.append(str(text))
+                return original_font.render(text, *args)
+
+            def __getattr__(self, name):
+                return getattr(original_font, name)
+
+        window.small_font = Recorder()
+        screen = pygame.Surface((window.rect.right + 1, window.rect.bottom + 1))
+        window._draw_upgrades(screen, state)
+
+        self.assertIn("НЕДОСТАТОЧНО", rendered)
+        self.assertNotIn("treasury_edict", window.upgrade_buttons)
+
     def test_population_uses_color_satiety_bars_and_strong_hunger_meter(self):
         from ui.catalog_icons import draw_item_icon
 
@@ -206,7 +313,8 @@ class CastleWindowTests(unittest.TestCase):
             "population_capacity": 10,
             "citizens": [
                 {"id": 1, "name": "Красная", "satiety": 8, "strong_hunger": 0,
-                 "satisfaction": "starving", "work_status": "Свободен"},
+                 "satisfaction": "starving", "work_status": "Свободен",
+                 "death_eta_seconds": 8700},
                 {"id": 2, "name": "Чёрная", "satiety": 0, "strong_hunger": 35,
                  "satisfaction": "starving", "work_status": "Свободен"},
                 {"id": 3, "name": "Жёлтая", "satiety": 25, "strong_hunger": 0,
@@ -215,7 +323,8 @@ class CastleWindowTests(unittest.TestCase):
                  "satisfaction": "satisfied", "work_status": "Свободен"},
             ],
             "food_storage": {"wheat": 0, "berries": 0, "meat": 0},
-            "food_status": "В городе голод",
+            "food_status": "в городе нечего есть, может начаться голод",
+            "food_zone": "red",
             "worksites": [],
         }
         rendered = {}
@@ -230,12 +339,15 @@ class CastleWindowTests(unittest.TestCase):
                 return getattr(original_font, name)
 
         window.small_font = Recorder()
+        window.font = Recorder()
         screen = pygame.Surface((window.rect.right + 1, window.rect.bottom + 1))
         with patch("ui.castle_window.draw_item_icon", wraps=draw_item_icon) as draw_icon:
             with patch("pygame.mouse.get_pos", return_value=(0, 0)):
                 window.draw(screen)
 
         self.assertEqual(rendered["Сытность 8%"], (226, 66, 58))
+        self.assertEqual(rendered["Смерть через 02:25:00"], (226, 66, 58))
+        self.assertIn("Население 4 / 10 (в городе нечего есть, может начаться голод)", rendered)
         self.assertEqual(rendered["Сильный голод 35%"], (15, 15, 15))
         self.assertEqual(rendered["Сытность 25%"], (232, 184, 48))
         self.assertEqual(rendered["Сытность 31%"], (72, 174, 95))
@@ -245,6 +357,34 @@ class CastleWindowTests(unittest.TestCase):
         citizen_icons = [call for call in draw_icon.call_args_list if call.args[1] == "citizen"]
         self.assertEqual(len(citizen_icons), 4)
         self.assertTrue(all(call.args[3] == 32 for call in citizen_icons))
+
+        window.state.update(
+            food_zone="red",
+            food_status="в городе нечего есть, может начаться голод",
+            departure_eta_seconds=3600,
+        )
+        with patch("pygame.mouse.get_pos", return_value=(0, 0)):
+            window._draw_population(screen, window.state, (0, 0))
+        self.assertEqual(rendered["Горожанин покинет город : 01:00:00"], (218, 69, 65))
+
+        window.state.update(
+            food_zone="yellow",
+            food_status="в городе не стабильно с поставками еды",
+            satiated_eta_seconds=59,
+        )
+        with patch("pygame.mouse.get_pos", return_value=(0, 0)):
+            window._draw_population(screen, window.state, (0, 0))
+        self.assertEqual(rendered["Население сытое : 00:00:59"], (232, 191, 67))
+
+        window.state.update(
+            food_zone="green",
+            food_status="в городе достаточно еды для роста",
+            new_citizen_eta_seconds=3600,
+        )
+        with patch("pygame.mouse.get_pos", return_value=(0, 0)):
+            window._draw_population(screen, window.state, (0, 0))
+        self.assertEqual(rendered["Новый горожанин прибудет через: 01:00:00"], (75, 190, 100))
+
 
     def test_population_lists_free_citizens_before_workers(self):
         window = CastleWindow(object())
@@ -284,7 +424,7 @@ class CastleWindowTests(unittest.TestCase):
         with patch("pygame.mouse.get_pos", return_value=(0, 0)):
             window._draw_population(screen, state, (0, 0))
 
-        self.assertIn("Население: 2 / 10", rendered)
+        self.assertIn("Население 2 / 10", rendered)
         self.assertFalse(any(text.startswith("Уровень города:") for text in rendered))
         self.assertFalse(any(text.startswith("Амбар:") for text in rendered))
         self.assertFalse(any(text.startswith("Проверка запасов") for text in rendered))
@@ -417,13 +557,15 @@ class CastleWindowTests(unittest.TestCase):
             window._draw_governor(screen, {
                 "city_resource_income_per_hour": {
                     "wheat": 16.0, "berries": 3.0, "meat": 1.0, "wood": 15.0,
+                    "stone": 0.0,
                 },
                 "city_resource_consumption_per_hour": {
                     "wheat": 9.6, "berries": 2.4, "meat": 2.0, "wood": 0.0,
+                    "stone": 0.0,
                 },
                 "city_resource_trend": {
                     "wheat": "upgrade_ready", "berries": "surplus", "meat": "deficit",
-                    "wood": "surplus",
+                    "wood": "surplus", "stone": "deficit",
                 },
             })
 
@@ -432,12 +574,13 @@ class CastleWindowTests(unittest.TestCase):
         self.assertIn("16,0 в час", rendered)
         self.assertIn("9,6 в час", rendered)
         self.assertIn("Древесина", rendered)
+        self.assertIn("Камень", rendered)
         self.assertIn("15,0 в час", rendered)
         self.assertIn("Есть небольшой +", rendered)
         self.assertIn("На ап города", rendered)
         self.assertIn("Дефицит", rendered)
         icon_keys = [call.args[1] for call in draw_icon.call_args_list]
-        self.assertEqual(icon_keys, ["wheat", "wheat", "berries", "meat", "wood"])
+        self.assertEqual(icon_keys, ["wheat", "wheat", "berries", "meat", "wood", "stone"])
 
 
 if __name__ == "__main__":

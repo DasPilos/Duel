@@ -11,12 +11,12 @@ EXTENSIONS = ('.py', '.js', '.ts', '.html', '.css', '.json', '.md', '.sql')
 IGNORE_DIRS = {
     'venv', '.venv', '.venv_313', '.git', 'node_modules', '__pycache__', 
     'dist', 'build', '.idea', '.vscode',
-    'assets', 'backup_20260914', 'battle_archive', 'sound original', 'ui'
+    'assets', 'backup_20260914', 'ui'
 }
 
 # Файлы-исключения, которые забивают контекст огромным количеством текста
 IGNORE_FILES = {
-    'debug.log', 'debug_out.txt', 'cards.sqlite3', 'client_package.zip'
+    'debug.log', 'debug_out.txt', 'client_package.zip'
 }
 
 def count_tokens():

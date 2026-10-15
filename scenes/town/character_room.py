@@ -1,5 +1,5 @@
 """
-Сцена комнаты персонажа - место где можно просматривать экипировку, сундуки и колоды
+Комната персонажа - место где можно просматривать экипировку и сундуки
 """
 
 import pygame
@@ -35,12 +35,7 @@ class CharacterRoom:
             self.background = None
 
         # Профиль оверлей (для просмотра карточки персонажа)
-        self.profile_overlay = CharacterProfileOverlay(
-            self.small_font,
-            collection_loader=getattr(self.session, "get_card_collection", None),
-            deck_loader=getattr(self.session, "get_decks", None),
-            deck_creator=getattr(self.session, "create_deck", None),
-        )
+        self.profile_overlay = CharacterProfileOverlay(self.small_font)
         self.chat = (ChatPanel(session, "character_room", profile_overlay=self.profile_overlay)
                      if hasattr(session, "social_snapshot") else None)
 
@@ -49,7 +44,6 @@ class CharacterRoom:
         self.tabs = {
             "equipment": {"label": "⚔️ Экипировка", "x": 30, "y": 30, "w": 140, "h": 40},
             "storage": {"label": "📚 Сундуки", "x": 180, "y": 30, "w": 140, "h": 40},
-            "decks": {"label": "📃 Колоды", "x": 330, "y": 30, "w": 140, "h": 40},
         }
 
         # Кнопка инвентаря в верхнем правом углу (рядом с закрытием)
@@ -70,15 +64,12 @@ class CharacterRoom:
         self.selected_item = None
         self.equipment_data = {}
         self.storage_data = {}
-        self.decks_data = []
 
         # Музыка - останавливаем таверну, это отдельная сцена
         stop_tavern_music()
 
     def handle_event(self, event):
         """Обработка событий"""
-        if self.profile_overlay.handle_event(event):
-            return
         if self.chat is not None and self.chat.handle_event(event):
             return
         # Сначала обрабатываем profile_overlay
@@ -137,9 +128,6 @@ class CharacterRoom:
 
         if not self.storage_data and self.current_tab == "storage":
             self._load_storage()
-
-        if not self.decks_data and self.current_tab == "decks":
-            self._load_decks()
 
     def draw(self, screen):
         """Рисование сцены"""
@@ -226,8 +214,6 @@ class CharacterRoom:
             self._draw_equipment(screen)
         elif self.current_tab == "storage":
             self._draw_storage(screen)
-        elif self.current_tab == "decks":
-            self._draw_decks(screen)
 
     def _draw_equipment(self, screen):
         """Рисует экипировку"""
@@ -261,7 +247,7 @@ class CharacterRoom:
                 # Бонусы
                 bonuses = equipment.get("bonuses", {})
                 if bonuses:
-                    stat_labels = {"strength": "Сила", "agility": "Ловкость", "intuition": "Интуиция", "endurance": "Выносливость", "wisdom": "Мудрость", "intellect": "Интеллект", "harmony": "Гармония", "hp": "HP", "mp": "MP", "dodge": "% Уворот", "block": "% Блок"}
+                    stat_labels = {"strength": "Сила", "agility": "Ловкость", "intuition": "Интуиция", "endurance": "Выносливость", "wisdom": "Мудрость", "intellect": "Интеллект", "hp": "HP", "mp": "MP", "dodge": "% Уворот", "block": "% Блок"}
                     bonuses_text = ", ".join([f"+{v} {stat_labels.get(k, k)}" for k, v in bonuses.items()])
                     bonuses_surface = self.small_font.render(bonuses_text, True, (100, 200, 100))
                     screen.blit(bonuses_surface, (start_x + 250, y + 25))
@@ -296,34 +282,6 @@ class CharacterRoom:
                     )
                     screen.blit(item_text, (50, item_y))
 
-    def _draw_decks(self, screen):
-        """Рисует колоды"""
-        title = self.large_font.render("📃 КОЛОДЫ", True, (220, 200, 150))
-        screen.blit(title, (50, 150))
-
-        if not self.decks_data:
-            empty_text = self.font.render("Колоды не найдены", True, (150, 150, 150))
-            screen.blit(empty_text, (50, 220))
-            return
-
-        for i, deck in enumerate(self.decks_data):
-            y = 220 + i * 80
-
-            deck_text = self.font.render(
-                f"📃 {deck.get('name', f'Колода {i+1}')}",
-                True,
-                (220, 200, 150)
-            )
-            screen.blit(deck_text, (50, y))
-
-            # Информация о картах
-            cards_info = self.small_font.render(
-                f"Карт: {len(deck.get('cards', {}))} | Последнее обновление: {deck.get('created_at', 'N/A')}",
-                True,
-                (150, 150, 150)
-            )
-            screen.blit(cards_info, (50, y + 35))
-
     # ==================== ЗАГРУЗКА ДАННЫХ ====================
 
     def _load_equipment(self):
@@ -341,14 +299,6 @@ class CharacterRoom:
         except Exception as e:
             print(f"Ошибка загрузки сундука: {e}")
             self.storage_data = {}
-
-    def _load_decks(self):
-        """Загружает колоды с сервера"""
-        try:
-            self.decks_data = self.session.client.get_decks(self.session.character["id"])
-        except Exception as e:
-            print(f"Ошибка загрузки колод: {e}")
-            self.decks_data = []
 
     def close(self):
         """Закрытие ресурсов сцены"""

@@ -6,7 +6,7 @@ from server.city_population import CityPopulation
 from server.items_database import ItemsDatabase
 from server.production_buildings import ProductionBuildings
 from server.transport import TransportService
-from tests.fixtures import create_test_database, drop_test_database, running_server
+from tests.fixtures import create_test_database, drop_test_database, running_server, seed_city_treasury
 
 
 class TransportServiceTests(unittest.TestCase):
@@ -21,10 +21,7 @@ class TransportServiceTests(unittest.TestCase):
         self.production.get_state(self.character_id, "stable", now=self.now)
         self.production.get_state(self.character_id, "warehouse", now=self.now)
         with self.database.connection() as connection:
-            connection.execute(
-                "UPDATE city_population_state SET treasury_copper=10000 WHERE world_id=%s AND faction='light'",
-                (self.database.world_id,),
-            )
+            seed_city_treasury(connection, self.database.world_id, 10000, self.character_id)
             connection.execute(
                 "UPDATE stable_cart_progress SET body_owned=TRUE WHERE world_id=%s AND faction='light' AND grade=1",
                 (self.database.world_id,),
@@ -166,6 +163,31 @@ class TransportServiceTests(unittest.TestCase):
         self.assertEqual(returned[0]["cargo"], [])
         self.assertNotEqual(returned[0]["status"], "Ожидает ресурсы")
 
+    def test_world_convoy_payload_includes_actual_speed_kmh(self):
+        service = TransportService(self.database)
+        service.dispatch(self.character_id, self._payload(), now=self.now + 2)
+
+        returned = service.get_world_convoys(self.character_id, now=self.now + 3)
+
+        self.assertEqual(len(returned), 1)
+        self.assertIn("speed_kmh", returned[0])
+        self.assertGreater(returned[0]["speed_kmh"], 0)
+
+    def test_empty_pinned_outbound_cart_speed_is_not_penalized_by_planned_cargo(self):
+        payload = self._payload()
+        payload["pinned"] = True
+        service = TransportService(self.database)
+        service.dispatch(self.character_id, payload, now=self.now + 2)
+
+        returned = service.get_world_convoys(self.character_id, now=self.now + 3)
+
+        self.assertEqual(len(returned), 1)
+        self.assertEqual(returned[0]["phase"], "outbound")
+        self.assertEqual(returned[0]["cargo_kg"], 0)
+        self.assertIsInstance(returned[0]["durability"], int)
+        self.assertIn(returned[0]["wear_band"], {"broken", "full", "medium", "good"})
+        self.assertGreater(returned[0]["speed_kmh"], 5)
+
     def test_dispatched_horse_uses_work_satiety_rate(self):
         TransportService(self.database).dispatch(
             self.character_id, self._payload(), now=self.now + 2
@@ -261,27 +283,23 @@ class TransportServiceTests(unittest.TestCase):
     def test_dispatch_uses_destination_capacity_per_resource(self):
         service = TransportService(self.database)
         self.production.get_state(self.character_id, "barn", now=self.now)
+        self.production.get_state(self.character_id, "warehouse", now=self.now)
         self.production.get_state(self.character_id, "lumber_camp", now=self.now)
         with self.database.connection() as connection:
             connection.execute(
-                "UPDATE city_population_state SET castle_level=2 WHERE world_id=%s AND faction='light'",
+                "UPDATE city_population_state SET city_level=2 WHERE world_id=%s AND faction='light'",
                 (self.database.world_id,),
             )
             connection.execute(
                 """UPDATE building_resources SET storage=500 WHERE world_id=%s AND faction='light'
-                   AND building='lumber_camp' AND resource='wood'""",
-                (self.database.world_id,),
-            )
-            connection.execute(
-                """UPDATE building_resources SET storage=1 WHERE world_id=%s AND faction='light'
-                   AND building='barn' AND resource='berries'""",
+                   AND building='warehouse' AND resource='wood'""",
                 (self.database.world_id,),
             )
 
         payload = self._payload()
-        payload["resource_ids"] = ["berries"]
+        payload["resource_ids"] = ["wood"]
         convoy = service.dispatch(self.character_id, payload, now=self.now + 2)
-        self.assertEqual(convoy["cargo"][0]["resource_id"], "berries")
+        self.assertEqual(convoy["cargo"][0]["resource_id"], "wood")
 
     def test_wheat_convoy_loads_from_barn(self):
         self.production.get_state(self.character_id, "barn", now=self.now)
@@ -350,16 +368,23 @@ class TransportServiceTests(unittest.TestCase):
 
         cart_stats_value = cart_stats({"wheels": 0, "sides": 0, "axles": 0})
         one_way_empty = math.ceil(50.11 * cart_stats_value["seconds_per_tile"])
-        loading = service.get_world_convoys(self.character_id, now=self.now + 3 + one_way_empty)[0]
+        arrived = service.get_world_convoys(self.character_id, now=self.now + 3 + one_way_empty)[0]
+        self.assertEqual(arrived["phase"], "loading")
+        loading = service.get_world_convoys(self.character_id, now=self.now + 3 + one_way_empty + 30)[0]
         self.assertEqual(loading["id"], convoy_id)
         self.assertEqual(loading["phase"], "loading")
         self.assertEqual(loading["cargo"][0]["resource_id"], "wheat")
         self.assertGreater(loading["cargo_kg"], 0)
+        self.assertGreater(loading["cargo_percent"], 0)
+        self.assertLess(loading["cargo_percent"], 100)
         self.assertEqual([stage["state"] for stage in loading["route_stages"]],
                  ["complete", "current", "future", "future"])
-        expected_load = math.ceil(loading["cargo_kg"] / 60 * 60)
-        expected_unload = math.ceil(loading["cargo_kg"] / 40 * 60)
-        self.assertEqual(loading["seconds_remaining"], expected_load)
+        planned_kg = sum(
+            slot["planned"] * slot["unit_weight_kg"] for slot in loading["cargo"]
+        )
+        expected_load = math.ceil(planned_kg / 60 * 60)
+        expected_unload = math.ceil(planned_kg / 40 * 60)
+        self.assertEqual(loading["route_stages"][1]["seconds"], expected_load - 30)
         self.assertEqual(loading["route_stages"][3]["seconds"], expected_unload)
         self.assertGreater(expected_unload, expected_load)
         with self.database.connection() as connection:
@@ -370,7 +395,7 @@ class TransportServiceTests(unittest.TestCase):
             ).fetchone()["storage"]
         self.assertLess(farm_wheat, 1000)
 
-        load_end = self.now + 3 + one_way_empty + loading["seconds_remaining"] + 1
+        load_end = self.now + 3 + one_way_empty + expected_load + 1
         returning = service.get_world_convoys(self.character_id, now=load_end)[0]
         self.assertEqual(returning["phase"], "returning")
         self.assertGreater(returning["travel_seconds"], one_way_empty)

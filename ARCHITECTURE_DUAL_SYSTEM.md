@@ -613,11 +613,10 @@ characters (ОДНА ТАБЛИЦА, поле type различает тип!)
 
 ### Для ОП2 (новый разработчик):
 1. Прочитать ЭТУ архитектуру (ARCHITECTURE_DUAL_SYSTEM.md)
-2. Прочитать MAGE_DEVELOPER_GUIDE.md для деталей
-3. Создать `core/character/mage.py` (используя `BaseCharacter`)
-4. Использовать ОБЩИЕ методы БД для валюты
-5. Создать `scenes/mage_duel_scene.py` (своя боевая система)
-6. НЕ менять warrior код и НЕ дублировать валюту
+2. Создать `core/character/mage.py` (используя `BaseCharacter`)
+3. Использовать ОБЩИЕ методы БД для валюты
+4. Создать `scenes/mage_duel_scene.py` (своя боевая система)
+5. НЕ менять warrior код и НЕ дублировать валюту
 
 ---
 

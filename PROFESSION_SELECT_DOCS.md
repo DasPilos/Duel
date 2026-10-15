@@ -192,7 +192,6 @@ python main.py --online --username testuser --password testpass123 --server http
 ### Контрольный список для OP2
 - [ ] Прочитать этот документ
 - [ ] Посмотреть ARCHITECTURE_DUAL_SYSTEM.md для понимания БД
-- [ ] Посмотреть MAGE_DEVELOPER_GUIDE.md для полной спецификации
 - [ ] Запустить игру и создать мага для проверки работы
 - [ ] Проверить, что маг создается в БД с type='mage'
 - [ ] Начать работу над Phase 1 (Mage class + core stats)

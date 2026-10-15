@@ -10,6 +10,7 @@ from scenes.tavern_scene import TavernScene
 from ui.chat.panel import ChatPanel
 from ui.character_card import CharacterCard
 from ui.character_profile import (
+    combat_speed_values,
     derived_values,
     displayed_hp_values,
     normalize_character_profile,
@@ -46,8 +47,42 @@ class CharacterStatTests(unittest.TestCase):
         self.assertEqual(carried_weight_kg(inventory, equipment), 17)
 
     def test_max_hp_formula_matches_level_and_endurance(self):
-        self.assertEqual(calculate_max_hp(1, 5), 50)
-        self.assertEqual(calculate_max_hp(3, 7), 70)
+        self.assertEqual(calculate_max_hp(1, 5), 60)
+        self.assertEqual(calculate_max_hp(3, 7), 84)
+
+    def test_player_max_hp_is_consistent_between_world_server_and_card(self):
+        from combat.world_stats import get_world_max_hp
+        stats = {"strength": 3, "agility": 3, "intuition": 3, "wisdom": 3,
+                 "intellect": 3, "endurance": 5}
+        fighter = Fighter("Игрок", level=1)
+        fighter.stats.update(stats)
+        fighter.recalculate_parameters()
+        self.assertEqual(fighter.max_hp, calculate_max_hp(1, 5))
+        self.assertEqual(get_world_max_hp(fighter), calculate_max_hp(1, 5))
+        server_profile = normalize_character_profile({
+            "hp": 60, "max_hp": 60, "stats": stats,
+        })
+        self.assertEqual(displayed_hp_values(server_profile), (60, 60))
+
+    def test_card_recalculates_stale_saved_max_values_like_combat(self):
+        from combat.world_stats import get_world_max_hp, get_world_max_mana
+        stats = {"strength": 5, "agility": 5, "intuition": 5, "wisdom": 5,
+                 "intellect": 5, "endurance": 5}
+        stale_profile = normalize_character_profile({
+            "hp": 30, "max_hp": 30, "mp": 15, "max_mp": 15, "stats": stats,
+        })
+        fighter = Fighter("Игрок", level=1)
+        fighter.stats.update(stats)
+        self.assertEqual(stale_profile["max_hp"], get_world_max_hp(fighter))
+        self.assertEqual(stale_profile["max_mp"], get_world_max_mana(fighter))
+        self.assertEqual(stale_profile["max_mp"], 30)
+
+    def test_mana_formula_is_single_source_for_combat_and_profile(self):
+        from combat import character_stats
+        from combat.world_stats import MANA_PER_INTELLECT
+        self.assertEqual(character_stats.MANA_PER_INTELLECT, MANA_PER_INTELLECT)
+        self.assertEqual(character_stats.calculate_max_mana(5), MANA_PER_INTELLECT * 5)
+
 
     def test_profile_model_normalizes_fighter_and_derived_values(self):
         fighter = Fighter("Тест")
@@ -56,10 +91,10 @@ class CharacterStatTests(unittest.TestCase):
         self.assertEqual(profile["stats"], fighter.stats)
         self.assertEqual(derived_values(profile), {
             "Урон": 3,
-            "Уворот": "6%",
-            "Крит": "5% × 165%",
+            "Уворот": "15%",
+            "Крит": "15% × 150%",
             "Маг Урон": 3,
-            "HP": 30,
+            "HP": 36,
         })
 
     def test_profile_recovers_weight_when_server_snapshot_has_zero(self):
@@ -125,6 +160,126 @@ class CharacterStatTests(unittest.TestCase):
         finally:
             pygame.quit()
 
+    def test_character_card_shows_hp_and_mp_labels_above_bars(self):
+        pygame.init()
+        try:
+            card = CharacterCard()
+            rendered = []
+            real_font = card.small_font
+
+            class SpyFont:
+                def render(self, text, *args, **kwargs):
+                    rendered.append(text)
+                    return real_font.render(text, *args, **kwargs)
+
+                def get_height(self):
+                    return real_font.get_height()
+
+            card.small_font = SpyFont()
+            surface = pygame.Surface((400, 300))
+            card._draw_resource(surface, 10, 100, 280, 11, "HP", 163, 185, (210, 80, 80))
+            card._draw_resource(surface, 10, 140, 280, 11, "MP", 7, 20, (60, 140, 220))
+
+            self.assertIn("HP 163/185", rendered)
+            self.assertIn("MP 7/20", rendered)
+        finally:
+            pygame.quit()
+
+    def test_character_card_shows_attack_and_move_speed_under_carry(self):
+        pygame.init()
+        try:
+            card = CharacterCard()
+            rendered = []
+            real_font = card.small_font
+
+            class SpyFont:
+                def render(self, text, *args, **kwargs):
+                    rendered.append(text)
+                    return real_font.render(text, *args, **kwargs)
+
+                def get_height(self):
+                    return real_font.get_height()
+
+            card.small_font = SpyFont()
+            fighter = Fighter("Тест")
+            profile = normalize_character_profile(profile_from_fighter(fighter))
+            expected = combat_speed_values(profile)
+            surface = pygame.Surface((settings.CHARACTER_CARD_WIDTH, settings.CHARACTER_CARD_HEIGHT), pygame.SRCALPHA)
+            frame = pygame.Rect(0, 0, settings.CHARACTER_CARD_WIDTH, settings.CHARACTER_CARD_HEIGHT)
+            card.draw(surface, frame, profile=profile)
+
+            self.assertIn(f"Скорость атаки: {expected['attack_seconds']:g} с", rendered)
+            self.assertIn(f"Скорость передвижения: {expected['move_speed']} px/с", rendered)
+        finally:
+            pygame.quit()
+
+    def test_equipment_movement_speed_bonus_is_shown_in_green(self):
+        pygame.init()
+        try:
+            card = CharacterCard()
+            rendered = []
+            real_font = card.small_font
+
+            class SpyFont:
+                def render(self, text, *args, **kwargs):
+                    rendered.append(text)
+                    return real_font.render(text, *args, **kwargs)
+
+                def get_height(self):
+                    return real_font.get_height()
+
+                def size(self, text):
+                    return real_font.size(text)
+
+            card.small_font = SpyFont()
+            fighter = Fighter("Тест")
+            profile = normalize_character_profile(profile_from_fighter(fighter))
+            profile["equipment_bonuses"] = {"agility": 4}
+            expected = combat_speed_values(profile)
+            self.assertEqual(expected["move_speed_bonus"], 20)
+            surface = pygame.Surface((settings.CHARACTER_CARD_WIDTH, settings.CHARACTER_CARD_HEIGHT), pygame.SRCALPHA)
+            frame = pygame.Rect(0, 0, settings.CHARACTER_CARD_WIDTH, settings.CHARACTER_CARD_HEIGHT)
+            card.draw(surface, frame, profile=profile)
+
+            self.assertIn(f"Скорость передвижения: {expected['move_speed']} px/с", rendered)
+            self.assertIn(" +20", rendered)
+        finally:
+            pygame.quit()
+
+    def test_mob_card_shows_attack_and_move_speed_without_carry(self):
+        pygame.init()
+        try:
+            card = CharacterCard()
+            rendered = []
+            real_font = card.small_font
+
+            class SpyFont:
+                def render(self, text, *args, **kwargs):
+                    rendered.append(text)
+                    return real_font.render(text, *args, **kwargs)
+
+                def get_height(self):
+                    return real_font.get_height()
+
+                def size(self, text):
+                    return real_font.size(text)
+
+            card.small_font = SpyFont()
+            fighter = Fighter("Скелет", level=1)
+            fighter.stats.update({"strength": 3, "agility": 3, "intuition": 3, "wisdom": 3,
+                                  "intellect": 3, "endurance": 4})
+            profile = profile_from_fighter(fighter)
+            expected = combat_speed_values(normalize_character_profile(profile))
+            surface = pygame.Surface((settings.CHARACTER_CARD_WIDTH, settings.CHARACTER_CARD_HEIGHT), pygame.SRCALPHA)
+            frame = pygame.Rect(0, 0, settings.CHARACTER_CARD_WIDTH, settings.CHARACTER_CARD_HEIGHT)
+            card.draw(surface, frame, profile=profile, mob_mode=True)
+
+            self.assertIn(f"Скорость атаки: {expected['attack_seconds']:g} с", rendered)
+            self.assertIn(f"Скорость передвижения: {expected['move_speed']} px/с", rendered)
+            self.assertFalse(any(text.startswith("Грузоподъёмность") for text in rendered))
+        finally:
+            pygame.quit()
+
     def test_character_card_currency_icons_are_30_pixels(self):
         pygame.init()
         try:
@@ -180,14 +335,32 @@ class CharacterStatTests(unittest.TestCase):
         finally:
             pygame.quit()
 
+    def test_profile_overlay_close_cross_sits_in_player_card_corner(self):
+        pygame.init()
+        try:
+            overlay = CharacterProfileOverlay(pygame.font.Font(None, 18))
+            overlay.open({"name": "Игрок", "stats": {}})
+            overlay._player_only = True
+
+            close = overlay.close_button
+
+            self.assertTrue(overlay.player_frame.collidepoint(close.center))
+            self.assertEqual(close.right, overlay.player_frame.right - 10)
+            self.assertEqual(close.top, overlay.player_frame.top + 10)
+            action, _ = overlay.handle_click(close.center)
+            self.assertEqual(action, "close")
+            self.assertFalse(overlay.is_open)
+        finally:
+            pygame.quit()
+
     def test_stat_buttons_grow_without_moving(self):
         pygame.init()
         try:
             frame = pygame.Rect(20, 120, 500, 955)
             minus, plus = CharacterCard._stat_control_rects(frame, frame.bottom - 92)
 
-            self.assertEqual(minus.topleft, (176, 988))
-            self.assertEqual(plus.topleft, (195, 988))
+            self.assertEqual(minus.topleft, (176 + settings.STAT_CONTROL_SHIFT_X, 988))
+            self.assertEqual(plus.topleft, (195 + settings.STAT_CONTROL_SHIFT_X, 988))
             self.assertEqual(minus.size, (13, 13))
             self.assertEqual(plus.size, (13, 13))
         finally:
@@ -207,9 +380,6 @@ class CharacterStatTests(unittest.TestCase):
 
                 def list_messages(self, location):
                     return []
-
-                def duel_board(self, location):
-                    return {"offers": []}
 
             overlay = CharacterProfileOverlay(pygame.font.Font(None, 18))
             panel = ChatPanel(Session(), "tavern", profile_overlay=overlay)
@@ -240,9 +410,6 @@ class CharacterStatTests(unittest.TestCase):
 
                 def list_messages(self, location):
                     return []
-
-                def duel_board(self, location):
-                    return {"offers": []}
 
             panel = ChatPanel(Session(), "tavern")
             message_width = panel.message_list.rect.width
@@ -276,9 +443,6 @@ class CharacterStatTests(unittest.TestCase):
                 def list_messages(self, location):
                     return []
 
-                def duel_board(self, location):
-                    return {"offers": []}
-
             panel = ChatPanel(Session(), "tavern")
             panel.messages = [{"id": 1, "sender_id": 2, "sender": "Игрок", "text": "длинное сообщение " * 40}]
             panel.message_list.set_messages(panel.messages)
@@ -292,44 +456,6 @@ class CharacterStatTests(unittest.TestCase):
 
             self.assertGreater(narrow_line_count, wide_line_count)
             self.assertEqual(panel.message_list._layout_width, panel.message_list.rect.width)
-        finally:
-            pygame.quit()
-
-    def test_tavern_backyard_hotspot_remains_clickable(self):
-        pygame.init()
-        try:
-            class Session:
-                character = {"id": 1, "name": "Игрок"}
-
-                def update_presence(self, location):
-                    return None
-
-                def list_occupants(self, location):
-                    return []
-
-                def list_messages(self, location):
-                    return []
-
-                def duel_board(self, location):
-                    return {"offers": []}
-
-            scene = TavernScene(Session())
-            _, x, y, width, height, _ = next(
-                hotspot for hotspot in scene.tavern_hotspots if hotspot[0] == "Задний двор"
-            )
-            rect = scene._hotspot_rect(x, y, width, height)
-            self.assertEqual(rect, pygame.Rect(1560, 390, 55, 153))
-            scene.chat.panel_rect.x += 100
-            self.assertEqual(scene._hotspot_rect(x, y, width, height), rect)
-            event = pygame.event.Event(
-                pygame.MOUSEBUTTONDOWN,
-                {"button": 1, "pos": rect.center},
-            )
-
-            scene.handle_event(event)
-
-            self.assertTrue(scene.finished)
-            self.assertEqual(scene.navigate, "backyard")
         finally:
             pygame.quit()
 
@@ -361,9 +487,6 @@ class CharacterStatTests(unittest.TestCase):
 
                 def list_messages(self, location):
                     return []
-
-                def duel_board(self, location):
-                    return {"offers": []}
 
                 def save_character_profile(self, profile):
                     self.saved_profiles.append(profile)
@@ -404,24 +527,24 @@ class CharacterStatTests(unittest.TestCase):
             "type": "mage",
             "level": 1,
             "max_hp": 90,
-            "stats": {"wisdom": 3, "intellect": 3, "harmony": 3, "endurance": 4, "agility": 3},
+            "stats": {"wisdom": 3, "intellect": 3, "endurance": 4, "agility": 3},
         }
 
         # Урон = сила 5 + 1 от предмета + меч 5–7
         self.assertEqual(derived_values(warrior), {
-            "Урон": "11-13", "Уворот": "10%", "Крит": "5% × 175%",
+            "Урон": "11-13", "Уворот": "25%", "Крит": "25% × 150%",
             "Маг Урон": "6-8", "HP": 40,
         })
         # Показатели одинаковы для всех классов: маг урон идёт от мудрости
         self.assertEqual(derived_values(mage), {
-            "Урон": 1, "Уворот": "6%", "Крит": "5% × 150%",
+            "Урон": 1, "Уворот": "15%", "Крит": "0% × 150%",
             "Маг Урон": 3, "HP": 90,
         })
 
     def test_equipped_shield_block_is_displayed_in_derived_values(self):
         profile = normalize_character_profile({
             "stats": {"strength": 3, "agility": 3, "intuition": 3, "wisdom": 3,
-                      "intellect": 3, "harmony": 3, "endurance": 3},
+                      "intellect": 3, "endurance": 3},
             "equipment_bonuses": {"hp": 20, "block": 5},
         })
 
@@ -429,13 +552,13 @@ class CharacterStatTests(unittest.TestCase):
 
     def test_equipment_hp_bonus_updates_card_max_without_double_counting_fighter(self):
         server_profile = normalize_character_profile({
-            "hp": 30, "max_hp": 30,
+            "hp": 36, "max_hp": 36,
             "stats": {"strength": 3, "agility": 3, "intuition": 3, "wisdom": 3,
-                      "intellect": 3, "harmony": 3, "endurance": 3},
+                      "intellect": 3, "endurance": 3},
             "equipment_bonuses": {"hp": 20},
         })
-        self.assertEqual(displayed_hp_values(server_profile), (50, 50))
-        self.assertEqual(derived_values(server_profile)["HP"], 50)
+        self.assertEqual(displayed_hp_values(server_profile), (56, 56))
+        self.assertEqual(derived_values(server_profile)["HP"], 56)
 
         fighter = Fighter("Щитоносец")
         fighter.equipment_stat_modifiers = {"hp": 20}
@@ -492,7 +615,7 @@ class CharacterStatTests(unittest.TestCase):
                 "max_hp": 90,
                 "mp": 55,
                 "max_mp": 55,
-                "stats": {"wisdom": 3, "intellect": 3, "harmony": 3, "endurance": 4},
+                "stats": {"wisdom": 3, "intellect": 3, "endurance": 4},
                 "stat_points": 0,
             }
             warrior_opponent = {

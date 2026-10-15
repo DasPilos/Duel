@@ -2,7 +2,7 @@
 import pygame
 from core import settings
 from ui.catalog_icons import draw_building_icon
-from ui.hud import draw_button
+from ui.hud import draw_button, draw_city_upgrade_line, upgrade_line_font
 
 
 class CityHudMixin:
@@ -124,24 +124,21 @@ class CityHudMixin:
         player_gx = int(self.player_x // self.tile_size)
         player_gy = int(self.player_y // self.tile_size)
 
-        # Верхняя панель
-        hud_w = settings.WIDTH - 40
-        hud_h = 42
-        hud_surf = pygame.Surface((hud_w, hud_h), pygame.SRCALPHA)
-        pygame.draw.rect(hud_surf, (15, 18, 24, 235), (0, 0, hud_w, hud_h), border_radius=6)
-        pygame.draw.rect(hud_surf, (220, 180, 70), (0, 0, hud_w, hud_h), 1, border_radius=6)
-        screen.blit(hud_surf, (20, 16))
-
-        # Текст слева: Название города и размер
-        title_surf = self.small_font.render("🏛️ ГОРОД РАДБУРГ (СТОЛИЦА СВЕТА)  [100x100 тайлов]", True, (255, 225, 110))
-        screen.blit(title_surf, (34, 28))
-
-        # Текст по центру: подсказка управления
-        hint_str = "⌨️ [G] Сетка  |  [Пробел] К герою  |  [ПКМ] Идти  |  🚪 ВЫХОД: ТОЛЬКО ЧЕРЕЗ 4 ВОРОТ"
-        hint_surf = self.grid_font.render(hint_str, True, (190, 205, 220))
-        screen.blit(hint_surf, hint_surf.get_rect(center=(settings.WIDTH // 2, 37)))
-
-        # Текст справа: координаты
+        # Координаты героя и курсора — в правом нижнем углу
         coord_str = f"Герой: [{player_gx}, {player_gy}]  |  Курсор: [{hover_gx}, {hover_gy}]"
         coord_surf = self.grid_font.render(coord_str, True, (255, 215, 120))
-        screen.blit(coord_surf, (settings.WIDTH - coord_surf.get_width() - 36, 28))
+        box = coord_surf.get_rect(bottomright=(settings.WIDTH - 20, settings.HEIGHT - 20)).inflate(32, 18)
+        active_rect = getattr(self, "active_window_rect", None)
+        if getattr(self, "active_entity", None) is not None and active_rect is not None:
+            box.bottom = active_rect.top - 8
+        box_surf = pygame.Surface(box.size, pygame.SRCALPHA)
+        pygame.draw.rect(box_surf, (15, 18, 24, 235), box_surf.get_rect(), border_radius=6)
+        pygame.draw.rect(box_surf, (220, 180, 70), box_surf.get_rect(), 1, border_radius=6)
+        screen.blit(box_surf, box.topleft)
+        screen.blit(coord_surf, coord_surf.get_rect(center=box.center))
+
+        draw_city_upgrade_line(
+            screen, upgrade_line_font(),
+            getattr(self, "city_upgrade_state", None),
+            getattr(self, "castle_upgrades_active", None),
+        )

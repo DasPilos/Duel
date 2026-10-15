@@ -5,15 +5,13 @@ import unittest
 from unittest.mock import patch
 
 from client.network import ServerError
-from combat.card_database import Card
 from server.database import Database
 from server.main import GameRequestHandler
-from server import social, world
+from server import social
 from server import maintenance
 from client.state import ChatState
 from ui.chat.widgets import MessageList
 from tests.fixtures import create_test_database, drop_test_database, running_server
-from scenes.duel_scene import DuelScene
 import pygame
 
 
@@ -159,62 +157,6 @@ class ServerPersistenceTests(unittest.TestCase):
 
         self.assertEqual(payload["time_text"], "00:59:59")
 
-    def test_card_collection_persists_and_stacks_duplicate_cards(self):
-        user = self.database.register("collector", "password")
-        character = self.database.create_character(user["id"], "Коллекционер")
-
-        first = self.database.add_card_to_collection(character["id"], "test_card")
-        second = self.database.add_card_to_collection(character["id"], "test_card")
-        collection = self.database.get_card_collection(character["id"])
-
-        self.assertEqual(first["slot_index"], 0)
-        self.assertEqual(second["quantity"], 2)
-        self.assertEqual(len(collection), 1)
-        self.assertEqual(collection[0]["card_key"], "test_card")
-        self.assertEqual(collection[0]["quantity"], 2)
-
-    def test_card_collection_has_sixty_unique_slots(self):
-        user = self.database.register("fullcollector", "password")
-        character = self.database.create_character(user["id"], "Хранитель")
-        for index in range(60):
-            self.database.add_card_to_collection(
-                character["id"],
-                f"card_{index}",
-            )
-
-        with self.assertRaisesRegex(ValueError, "нет свободных"):
-            self.database.add_card_to_collection(character["id"], "overflow")
-
-    def test_client_receives_battle_card_in_collection(self):
-        card = Card(
-            key="reward_card",
-            name="Наградная карта",
-            group_name="Боец: Тест",
-            resource_type="rage",
-            resource_cost=1,
-            effect_type="damage",
-            effect_data={"dice": "1d4"},
-            drop_chance=100,
-            image_path="assets/cards/faces/reward_card.png",
-        )
-        with running_server(self.database) as client:
-            client.register("rewarduser", "password")
-            client.login("rewarduser", "password")
-            character = client.create_character("Победитель")
-            with (
-                patch("server.main.load_cards", return_value=[card]),
-                patch("server.main.choose_battle_reward", return_value=card),
-            ):
-                reward = client.award_battle_card(
-                    character["id"],
-                    ["reward_card"],
-                )
-                collection = client.get_card_collection(character["id"])
-
-        self.assertEqual(reward["key"], "reward_card")
-        self.assertEqual(collection[0]["key"], "reward_card")
-        self.assertEqual(collection[0]["quantity"], 1)
-
     def test_login_applies_offline_regen_before_session_starts(self):
         user = self.database.register("offline_login", "password")
         character = self.database.create_character(user["id"], "Вернувшийся")
@@ -271,49 +213,6 @@ class ServerPersistenceTests(unittest.TestCase):
             self.database.create_character(user["id"], "Слишком длинное имя")
         with self.assertRaises(ValueError):
             self.database.create_character(user["id"], "идиот")
-
-    def test_backyard_contains_brawler_bot(self):
-        user = self.database.register("tester", "password")
-        opponents = self.database.get_opponents(user["id"])
-        brawler = next(item for item in opponents if item["name"] == "Забияка")
-
-        self.assertEqual(brawler["level"], 1)
-        self.assertEqual(
-            brawler["stats"],
-            {
-                "strength": 6,
-                "agility": 3,
-                "intuition": 3,
-                "endurance": 4,
-            },
-        )
-
-    def test_backyard_contains_all_bot_profiles(self):
-        user = self.database.register("tester", "password")
-        opponents = self.database.get_opponents(user["id"])
-        bots = {item["name"]: item for item in opponents if item["kind"] == "bot"}
-
-        expected_names = {item["name"] for item in world.BOT_OPPONENTS}
-        self.assertEqual(set(bots), expected_names)
-
-        self.assertEqual(bots["Безпроводной Душ"]["stats"], {
-            "strength": 3,
-            "agility": 3,
-            "intuition": 6,
-            "endurance": 4,
-        })
-        self.assertEqual(bots["Комфу Падла"]["stats"], {
-            "strength": 3,
-            "agility": 6,
-            "intuition": 3,
-            "endurance": 4,
-        })
-        self.assertEqual(bots["Пахарь"]["stats"], {
-            "strength": 3,
-            "agility": 3,
-            "intuition": 3,
-            "endurance": 7,
-        })
 
     def test_password_is_not_accepted_in_plain_text(self):
         self.database.register("tester", "password")
@@ -414,87 +313,6 @@ class ServerPersistenceTests(unittest.TestCase):
 
         self.assertEqual(message_list.scroll, scroll_position)
 
-    def test_duel_scene_switches_chat_to_battle_log_when_fight_starts(self):
-        pygame.init()
-        scene = DuelScene()
-
-        class DummyChat:
-            def __init__(self):
-                self.channel = "Общий"
-                self.message_list = type("List", (), {"set_messages": lambda self, messages: None})()
-
-            def _visible_messages(self):
-                return []
-
-        scene.chat = DummyChat()
-        scene.start_battle_comments()
-
-        self.assertEqual(scene.chat.channel, "Лог боя")
-        pygame.quit()
-
-    def test_duel_profile_close_click_is_consumed_before_battle_input(self):
-        pygame.init()
-        try:
-            scene = DuelScene()
-            scene.profile_overlay.open({"name": "Соперник", "stats": {}})
-            event = pygame.event.Event(
-                pygame.MOUSEBUTTONDOWN,
-                {"button": 1, "pos": scene.profile_overlay.close_button.center},
-            )
-
-            scene.handle_event(event)
-
-            self.assertFalse(scene.profile_overlay.is_open)
-            self.assertIsNone(scene.attack_zone)
-        finally:
-            pygame.quit()
-
-    def test_duel_application_is_public_and_expires(self):
-        user = self.database.register("tester", "password")
-        character = self.database.create_character(user["id"], "Воин")
-        social.DUEL_OFFERS.clear()
-        application = social.add_public_duel_offer(
-            {"character_id": character["id"], "name": character["name"]},
-            "backyard",
-        )
-
-        self.assertIn(application["id"], {offer["id"] for offer in social.public_offers("backyard")})
-        user_offer = next(
-            offer for offer in social.DUEL_OFFERS
-            if offer["id"] == application["id"]
-        )
-        user_offer["created_at"] -= 121
-        active_ids = {offer["id"] for offer in social.public_offers("backyard")}
-        self.assertNotIn(application["id"], active_ids)
-
-    def test_bot_accepts_only_equal_backyard_duel(self):
-        GameRequestHandler.database = self.database
-        world.update_bot("bot_brawler", 40)
-        social.DUEL_OFFERS.clear()
-        with running_server(self.database) as client:
-            user_id = client.register("botuser", "password")["user"]["id"]
-            client.login("botuser", "password")
-            character = client.create_character("Равный боец")
-            # Level is server-owned, so the test changes it on the server side.
-            character.update({"level": 2})
-            character["stats"]["endurance"] = 4
-            character["max_hp"] = 40
-            character["hp"] = 40
-            character = self.database.save_character(user_id, character["id"], character)
-            with self.assertRaises(ServerError):
-                client.offer_duel(character["id"], "backyard", "bot_brawler")
-
-            character.update({"level": 1})
-            character["stats"]["endurance"] = 3
-            character["max_hp"] = 30
-            character["hp"] = 30
-            character = self.database.save_character(user_id, character["id"], character)
-            result = client.offer_duel(character["id"], "backyard", "bot_brawler")
-
-        self.assertTrue(result["accepted"])
-        self.assertEqual(result["offer"]["status"], "accepted")
-        self.assertEqual(result["offer"]["accepted_by"], "bot_brawler")
-
     def test_client_api_round_trip(self):
         with running_server(self.database) as client:
             client.register("apiuser", "password")
@@ -502,120 +320,14 @@ class ServerPersistenceTests(unittest.TestCase):
             character = client.create_character("Сетевой воин")
             with self.assertRaisesRegex(ServerError, "Опыт начисляется сервером"):
                 client.save_character({**character, "xp": 30})
-            character["zone"] = "backyard"
+            character["zone"] = "tavern"
             saved = client.save_character(character)
             loaded = client.load_character()
             client.disconnect(loaded)
 
         self.assertEqual(saved["xp"], 0)
-        self.assertEqual(loaded["zone"], "backyard")
+        self.assertEqual(loaded["zone"], "tavern")
         self.assertEqual(loaded["name"], "Сетевой воин")
-
-    def test_battle_result_rewards_are_computed_by_server(self):
-        previous_results = dict(GameRequestHandler.battle_result_times)
-        GameRequestHandler.battle_result_times.clear()
-        try:
-            with running_server(self.database) as client:
-                client.register("fighter", "password")
-                client.login("fighter", "password")
-                character = client.create_character("Победитель боя")
-                result = client.report_battle_result(character["id"], "win", 1, 5, 0)
-                self.assertEqual(result["xp"], 20)
-                self.assertEqual(result["currency"], {"copper": 40, "silver": 0, "gold": 0})
-                self.assertEqual(result["character"]["xp"], character["xp"] + 20)
-                self.assertEqual(result["character"]["hp"], 5)
-                with self.assertRaisesRegex(ServerError, "уже засчитан"):
-                    client.report_battle_result(character["id"], "win", 1, 5, 0)
-        finally:
-            GameRequestHandler.battle_result_times.clear()
-            GameRequestHandler.battle_result_times.update(previous_results)
-
-    def test_battle_result_persists_replay_in_server_archive(self):
-        replay = {
-            "id": "hall-of-fame-test-battle",
-            "timestamp": 1234.0,
-            "source": "duel_scene",
-            "turns": 2,
-            "winner": "Архивный герой",
-            "player": {"name": "Архивный герой", "level": 1, "stats": {}, "hp": 5, "max_hp": 10},
-            "enemy": {"name": "Соперник", "level": 1, "stats": {}, "hp": 0, "max_hp": 10},
-            "stats": {"player": {}, "enemy": {}},
-            "hands": {"player": ["first_card"], "enemy": ["second_card"]},
-            "history": [{"turn": 1, "events": [{"side": "player", "card": "first_card"}]}],
-        }
-        with running_server(self.database) as client:
-            client.register("hall-archive-user", "password")
-            client.login("hall-archive-user", "password")
-            character = client.create_character("Архивный герой")
-            result = client.report_battle_result(
-                character["id"], "win", 1, 5, 0, battle_record=replay,
-            )
-            page = client.list_battle_archive(limit=10, offset=0)
-            detail = client.get_battle_archive_record(result["battle_archive_id"])
-
-        self.assertEqual(page["total"], 1)
-        self.assertEqual(page["battles"][0]["player_name"], "Архивный герой")
-        self.assertEqual(detail["replay_json"], replay)
-        self.assertEqual(detail["outcome"], "win")
-
-    def test_backyard_currency_reward_scales_with_opponent_level(self):
-        cases = (
-            ("payout-equal", 1, 1, 40),
-            ("payout-higher", 2, 1, 60),
-            ("payout-lower", 1, 2, 12),
-        )
-        previous_results = dict(GameRequestHandler.battle_result_times)
-        GameRequestHandler.battle_result_times.clear()
-        try:
-            with running_server(self.database) as template_client:
-                for index, (username, player_level, opponent_level, expected_copper) in enumerate(cases):
-                    client = type(template_client)(template_client.base_url)
-                    client.register(username, "password")
-                    client.login(username, "password")
-                    character = client.create_character(f"Hero{index}")
-                    if player_level != character["level"]:
-                        with self.database.connection() as connection:
-                            connection.execute(
-                                "UPDATE characters SET level=%s WHERE id=%s",
-                                (player_level, character["id"]),
-                            )
-                    result = client.report_battle_result(
-                        character["id"], "win", opponent_level, character["hp"], character["mp"],
-                    )
-                    self.assertEqual(result["currency"], {
-                        "copper": expected_copper, "silver": 0, "gold": 0,
-                    })
-        finally:
-            GameRequestHandler.battle_result_times.clear()
-            GameRequestHandler.battle_result_times.update(previous_results)
-
-    def test_human_battle_result_queues_local_chat_commentary(self):
-        previous_results = dict(GameRequestHandler.battle_result_times)
-        GameRequestHandler.battle_result_times.clear()
-        try:
-            with running_server(self.database) as attacker_client:
-                attacker_client.register("commentator-attacker", "password")
-                attacker_client.login("commentator-attacker", "password")
-                attacker = attacker_client.create_character("Лучник")
-
-                defender_client = type(attacker_client)(attacker_client.base_url)
-                defender_client.register("commentator-defender", "password")
-                defender_client.login("commentator-defender", "password")
-                defender = defender_client.create_character("Страж")
-
-                with patch("server.main.enqueue_battle_comment") as enqueue:
-                    attacker_client.report_battle_result(
-                        attacker["id"], "win", defender["level"], attacker["hp"], attacker["mp"],
-                        opponent_id=defender["id"], opponent_hp=defender["hp"],
-                        opponent_mp=defender["mp"],
-                    )
-        finally:
-            GameRequestHandler.battle_result_times.clear()
-            GameRequestHandler.battle_result_times.update(previous_results)
-
-        enqueue.assert_called_once_with(
-            self.database, attacker["id"], defender["id"], "win",
-        )
 
     def test_world_announcements_are_visible_in_every_location_and_server_only(self):
         with running_server(self.database) as client:
@@ -629,7 +341,7 @@ class ServerPersistenceTests(unittest.TestCase):
                 "Запасы зерна в городе подходят к концу.",
             )
 
-            for location in ("tavern", "city", "backyard", "world_map", "character_room"):
+            for location in ("tavern", "city", "world_map", "character_room"):
                 messages = client.list_messages(location, character["id"])
                 self.assertTrue(any(message["text"] == "Запасы зерна в городе подходят к концу." for message in messages))
 
@@ -654,15 +366,6 @@ class ServerPersistenceTests(unittest.TestCase):
                 client.save_character({**saved, "stats": stats})
             with self.assertRaisesRegex(ServerError, "Характеристики изменяются сервером"):
                 client.save_character({**saved, "stat_points": 5})
-
-    def test_client_can_create_duel_application(self):
-        with running_server(self.database) as client:
-            client.register("appuser", "password")
-            client.login("appuser", "password")
-            character = client.create_character("Заявитель")
-            application = client.create_duel_application(character["id"], "backyard")
-
-        self.assertEqual(application["application"]["sender_id"], character["id"])
 
 
 if __name__ == "__main__":

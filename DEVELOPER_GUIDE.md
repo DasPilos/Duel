@@ -73,8 +73,9 @@ withdraw action, subject to the building/city unlocks and backpack capacity.
 Farm progression: level 1 has 500 storage and two wheat-field slots. “Самозахват”
 adds a slot to field one; the separate wooden plough adds 5% wheat speed. Both are
 required for farm level 2, which has 800 storage and opens field two with two slots.
-At level 2, “Раздать пай” adds a slot to field two and the wooden handle adds 8%
-wheat speed. The speed bonuses stack. Farm state is stored in
+At level 2, “Перепахать окрайну” adds two places to field two, and “Точильный камень”
+adds 15% wheat speed. “Засеять поле льна” requires the whetstone and raises the farm
+to level 3. The speed bonuses stack. Farm state is stored in
 `building_states.farm_upgrades_json`; the active timer lives on
 `farm_upgrade_id`/`farm_upgrade_finish_at`.
 

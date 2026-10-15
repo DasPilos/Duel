@@ -7,6 +7,9 @@ CYCLE_DURATION_SEC = 7200
 PLOT_STAGE_COUNT = 4
 FARM_RATION_SLOT_BASE = 1000
 BUILDING_BONUS_SLOT_BASE = FARM_RATION_SLOT_BASE
+# Дополнительные места фермы: FARM_EXTRA_SLOT_BASE + plot_index * 100 + порядковый номер места
+FARM_EXTRA_SLOT_BASE = 2000
+FARM_EXTRA_SLOT_STRIDE = 100
 FARM_UPGRADES = {
     "ration": {
         "name": "Самозахват",
@@ -38,25 +41,36 @@ FARM_UPGRADES = {
         "required_building_level": 1,
         "required_farm_level": 1,
     },
-    "ration_level_2": {
-        "name": "Раздать пай",
+    "plough_field_edge": {
+        "name": "Перепахать окрайну",
         "requirement": "Крестьянское поселение — уровень 2",
-        "result": "+1 место на втором поле пшеницы",
-        "silver_cost": 30,
+        "result": "+2 места на втором поле пшеницы",
+        "silver_cost": 80,
         "materials": {},
-        "time_seconds": 30 * 60,
+        "time_seconds": 140 * 60,
         "plot_index": 1,
+        "extra_places": 2,
         "required_farm_level": 2,
     },
-    "wooden_handle": {
-        "name": "Деревянная рукоять",
+    "whetstone": {
+        "name": "Точильный камень",
         "requirement": "Крестьянское поселение — уровень 2",
-        "result": "+8% к скорости производства пшеницы",
-        "speed_bonus_percent": 8,
-        "silver_cost": 20,
-        "materials": {"wood": 100},
-        "time_seconds": 60 * 60,
+        "result": "+15% к производству пшеницы",
+        "speed_bonus_percent": 15,
+        "silver_cost": 90,
+        "materials": {},
+        "time_seconds": 140 * 60,
         "required_farm_level": 2,
+    },
+    "flax_field_sowing": {
+        "name": "Засеять поле льна",
+        "requirement": "Крестьянское поселение — уровень 2, Точильный камень",
+        "result": "Крестьянское поселение — уровень 3",
+        "gold_cost": 1,
+        "materials": {},
+        "time_seconds": 180 * 60,
+        "required_farm_level": 2,
+        "required_farm_upgrades": ("whetstone",),
     },
 }
 LUMBER_CAMP_UPGRADES = {
@@ -306,7 +320,7 @@ BUILDINGS = {
 }
 
 # Материалы улучшения (id предмета в каталоге) — пока тестовые количества
-UPGRADE_TEST_MATERIALS = {60: 5, 69: 5, 73: 5, 61: 5, 78: 5}  # древесина, камень, железо, доска, каменный блок
+UPGRADE_TEST_MATERIALS = {60: 5, 69: 5, 10: 5}  # древесина, камень, железная руда
 UPGRADE_TIME_HOURS = {1: 2, 2: 4, 3: 8, 4: 16, 5: 24, 6: 32, 7: 40, 8: 48, 9: 56}
 
 
@@ -382,9 +396,19 @@ def plot_slot_ranges(building):
     return ranges
 
 
+def farm_extra_slot_index(plot_index, place_number):
+    return FARM_EXTRA_SLOT_BASE + int(plot_index) * FARM_EXTRA_SLOT_STRIDE + int(place_number)
+
+
 def slot_resources(building, slot_index):
-    if building in ("farm", "lumber_camp") and int(slot_index) >= BUILDING_BONUS_SLOT_BASE:
-        plot_index = int(slot_index) - BUILDING_BONUS_SLOT_BASE
+    slot_index = int(slot_index)
+    if building == "farm" and slot_index >= FARM_EXTRA_SLOT_BASE:
+        plot_index = (slot_index - FARM_EXTRA_SLOT_BASE) // FARM_EXTRA_SLOT_STRIDE
+        plots = building_config(building)["plots"]
+        if 0 <= plot_index < len(plots):
+            return _plot_resources(plots[plot_index])
+    if building in ("farm", "lumber_camp") and BUILDING_BONUS_SLOT_BASE <= slot_index < FARM_EXTRA_SLOT_BASE:
+        plot_index = slot_index - BUILDING_BONUS_SLOT_BASE
         plots = building_config(building)["plots"]
         if 0 <= plot_index < len(plots):
             return _plot_resources(plots[plot_index])
@@ -396,11 +420,6 @@ def slot_resources(building, slot_index):
 
 def slot_resource(building, slot_index):
     return slot_resources(building, slot_index)[0]
-
-
-def plot_stage(cycle_start_time, now, cycle_duration=CYCLE_DURATION_SEC):
-    elapsed = max(0.0, float(now) - float(cycle_start_time))
-    return min(PLOT_STAGE_COUNT - 1, int(elapsed / (cycle_duration / PLOT_STAGE_COUNT)))
 
 
 def max_building_level(building=None):

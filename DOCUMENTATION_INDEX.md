@@ -32,4 +32,3 @@ The following old handoff guides describe a retired split between separate warri
 - [ARCHITECTURE_DUAL_SYSTEM.md](ARCHITECTURE_DUAL_SYSTEM.md)
 - [HANDOFF_GUIDE.md](HANDOFF_GUIDE.md)
 - [OPERATOR2_GUIDE.md](OPERATOR2_GUIDE.md)
-- [MAGE_DEVELOPER_GUIDE.md](MAGE_DEVELOPER_GUIDE.md)

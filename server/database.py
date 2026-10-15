@@ -130,7 +130,6 @@ class Database:
                 "intuition": max(MIN_STAT_VALUE, int(stored.get("intuition", BASE_STAT_VALUE))),
                 "wisdom": max(MIN_STAT_VALUE, int(stored.get("wisdom", BASE_STAT_VALUE))),
                 "intellect": max(MIN_STAT_VALUE, int(stored.get("intellect", BASE_STAT_VALUE))),
-                "harmony": max(MIN_STAT_VALUE, int(stored.get("harmony", BASE_STAT_VALUE))),
                 "endurance": max(minimum_endurance(level), int(stored.get("endurance", minimum_endurance(level)))),
             }
             if stats == stored:
@@ -262,11 +261,12 @@ class Database:
 
     def create_character(self, user_id, name, profession_type="warrior"):
         self.validate_character_name(name)
-        valid_professions = ["warrior", "archer", "assassin", "battle_mage", "support_mage", "harmonist"]
+        valid_professions = ["warrior", "archer", "assassin", "mage"]
         if profession_type not in valid_professions:
             raise ValueError(f"Профессия должна быть одной из: {', '.join(valid_professions)}")
-        
+
         now = time.time()
+
         
         # Единый набор из 7 характеристик для всех персонажей независимо от профессии
         stats = {
@@ -275,7 +275,6 @@ class Database:
             "intuition": BASE_STAT_VALUE,
             "wisdom": BASE_STAT_VALUE,
             "intellect": BASE_STAT_VALUE,
-            "harmony": BASE_STAT_VALUE,
             "endurance": minimum_endurance(1),
         }
         
@@ -336,10 +335,9 @@ class Database:
 
     def update_character_profession(self, user_id, character_id, profession_type):
         """Update the profession marker without changing character stats."""
-        valid_professions = ["warrior", "archer", "assassin", "battle_mage", "support_mage", "harmonist"]
+        valid_professions = ["warrior", "archer", "assassin", "mage"]
         if profession_type not in valid_professions:
             raise ValueError(f"Профессия должна быть одной из: {', '.join(valid_professions)}")
-        
         with self.connection() as connection:
             row = connection.execute(
                 "SELECT user_id FROM characters WHERE id = %s AND world_id = %s",
@@ -389,7 +387,8 @@ class Database:
             characters = []
             for original_row in rows:
                 row = self._apply_passive_regen(connection, original_row, now)
-                character = self._character_payload(row)
+                bonuses = self.equipment_bonuses(connection, row["id"])
+                character = self._character_payload(row, int(bonuses.get("hp", 0)))
 
                 inventory_rows = self._inventory_rows_for_character(connection, row["id"])
 
@@ -498,14 +497,6 @@ class Database:
             (now - config.CHAT_HISTORY_TTL_SECONDS,),
         )
 
-    @staticmethod
-    def _purge_old_battle_logs(connection, now):
-        """Удаляет логи боя старше 24 часов"""
-        connection.execute(
-            "DELETE FROM battle_logs WHERE expires_at < %s",
-            (now,),
-        )
-
     def mark_chat_read(self, character_id, location, message_id):
         now = time.time()
         with self.connection() as connection:
@@ -598,32 +589,6 @@ class Database:
             ).strftime("%H:%M:%S"),
         }
 
-    def get_opponents(self, user_id):
-        from server.world import get_bot_opponents
-
-        now = time.time()
-        with self.connection() as connection:
-            rows = connection.execute(
-                "SELECT * FROM characters WHERE user_id <> %s AND user_id <> %s AND world_id = %s ORDER BY id",
-                (user_id, SYSTEM_USER_ID, self.world_id),
-            ).fetchall()
-            players = [
-                self._character_payload(
-                    self._apply_passive_regen(connection, row, now)
-                )
-                for row in rows
-            ]
-            for opponent in players:
-                opponent["equipment"] = self.equipped_items(connection, opponent["id"])
-        for opponent in players:
-            opponent["kind"] = "player"
-        return get_bot_opponents() + players
-
-    def update_bot(self, user_id, opponent_id, payload):
-        from server.world import update_bot
-
-        return update_bot(opponent_id, payload.get("hp", 0))
-
     def get_character(self, user_id, character_id=None):
         now = time.time()
         with self.connection() as connection:
@@ -640,7 +605,8 @@ class Database:
             if row is None:
                 return None
             row = self._apply_passive_regen(connection, row, now)
-            character = self._character_payload(row)
+            bonuses = self.equipment_bonuses(connection, row["id"])
+            character = self._character_payload(row, int(bonuses.get("hp", 0)))
 
             inventory_rows = self._inventory_rows_for_character(connection, row["id"])
 
@@ -652,25 +618,11 @@ class Database:
                     "effect": inv_row["effect"],
                 }
             character["inventory"] = inventory
-            character["equipment_bonuses"] = self.equipment_bonuses(connection, row["id"])
+            character["equipment_bonuses"] = bonuses
             character["equipment"] = self.equipped_items(connection, row["id"])
             self._update_carry_capacity(character)
 
             return character
-
-    def get_character_for_battle(self, character_id):
-        with self.connection() as connection:
-            row = connection.execute(
-                "SELECT * FROM characters WHERE id = %s AND world_id = %s",
-                (int(character_id), self.world_id),
-            ).fetchone()
-            if row is None:
-                return None
-            character = self._character_payload(row)
-            character["equipment_bonuses"] = self.equipment_bonuses(connection, row["id"])
-            character["equipment"] = self.equipped_items(connection, row["id"])
-            self._update_carry_capacity(character)
-        return {"user_id": row["user_id"], "character": character}
 
     @staticmethod
     def _update_carry_capacity(character):
@@ -711,13 +663,6 @@ class Database:
             for stat, value in json.loads(row["bonuses_json"] or "{}").items():
                 bonuses[stat] = bonuses.get(stat, 0) + int(value)
         return bonuses
-
-    @staticmethod
-    def _has_active_session(connection, user_id, now):
-        return connection.execute(
-            "SELECT 1 FROM sessions WHERE user_id = %s AND last_seen_at > %s LIMIT 1",
-            (user_id, now - config.TOKEN_TTL_SECONDS),
-        ).fetchone() is not None
 
     @staticmethod
     def _apply_passive_regen(connection, row, now):
@@ -782,10 +727,11 @@ class Database:
             "intuition": max(MIN_STAT_VALUE, int(raw_stats.get("intuition", BASE_STAT_VALUE))),
             "wisdom": max(MIN_STAT_VALUE, int(raw_stats.get("wisdom", BASE_STAT_VALUE))),
             "intellect": max(MIN_STAT_VALUE, int(raw_stats.get("intellect", BASE_STAT_VALUE))),
-            "harmony": max(MIN_STAT_VALUE, int(raw_stats.get("harmony", BASE_STAT_VALUE))),
             "endurance": max(minimum_endurance(level), int(raw_stats.get("endurance", minimum_endurance(level)))),
         }
-        updated["max_hp"] = calculate_max_hp(level, updated["stats"]["endurance"])
+        with self.connection() as connection:
+            equipment_hp = int(self.equipment_bonuses(connection, character_id).get("hp", 0))
+        updated["max_hp"] = calculate_max_hp(level, updated["stats"]["endurance"]) + equipment_hp
         updated["hp"] = min(updated["hp"], updated["max_hp"])
         updated["max_mp"] = calculate_max_mana(updated["stats"]["intellect"])
         updated["mp"] = min(updated["mp"], updated["max_mp"])
@@ -811,185 +757,6 @@ class Database:
             )
         return self.get_character(user_id, character_id)
 
-    def save_active_battle(self, player_id, opponent_id, battle_data):
-        """Сохраняет состояние активного боя"""
-        now = time.time()
-        with self.connection() as connection:
-            cursor = connection.execute(
-                "SELECT id FROM active_battles WHERE player_id = %s AND opponent_id = %s",
-                (player_id, opponent_id),
-            )
-            row = cursor.fetchone()
-            if row:
-                connection.execute(
-                    "UPDATE active_battles SET battle_data = %s, updated_at = %s WHERE id = %s",
-                    (json.dumps(battle_data), now, row["id"]),
-                )
-            else:
-                connection.execute(
-                    "INSERT INTO active_battles (player_id, opponent_id, battle_data, created_at, updated_at) VALUES (%s, %s, %s, %s, %s)",
-                    (player_id, opponent_id, json.dumps(battle_data), now, now),
-                )
-
-    def mark_player_afk(self, player_id, opponent_id, is_afk=True):
-        """Отмечает игрока как АФК в боевой системе"""
-        with self.connection() as connection:
-            connection.execute(
-                "UPDATE active_battles SET player_afk = %s WHERE player_id = %s AND opponent_id = %s",
-                (1 if is_afk else 0, player_id, opponent_id),
-            )
-
-    def mark_opponent_afk(self, player_id, opponent_id, is_afk=True):
-        with self.connection() as connection:
-            connection.execute(
-                "UPDATE active_battles SET opponent_afk = %s WHERE player_id = %s AND opponent_id = %s",
-                (1 if is_afk else 0, player_id, opponent_id),
-            )
-
-    def get_active_battle(self, player_id, opponent_id):
-        """Получает сохраненное состояние боя"""
-        with self.connection() as connection:
-            row = connection.execute(
-                "SELECT battle_data, player_afk, opponent_afk FROM active_battles WHERE player_id = %s AND opponent_id = %s",
-                (player_id, opponent_id),
-            ).fetchone()
-            if row:
-                return {
-                    "battle_data": json.loads(row["battle_data"]),
-                    "player_afk": bool(row["player_afk"]),
-                    "opponent_afk": bool(row["opponent_afk"]),
-                }
-            return None
-
-    def delete_active_battle(self, player_id, opponent_id):
-        """Архивирует завершенный бой в логи (вместо удаления)"""
-        with self.connection() as connection:
-            # Получаем данные боя перед удалением
-            battle = connection.execute(
-                "SELECT battle_data, player_afk, opponent_afk FROM active_battles WHERE player_id = %s AND opponent_id = %s",
-                (player_id, opponent_id),
-            ).fetchone()
-            
-            if battle:
-                now = time.time()
-                expires_at = now + 24 * 60 * 60  # 24 часа
-                
-                # Архивируем в battle_logs
-                connection.execute(
-                    """INSERT INTO battle_logs 
-                    (player_id, opponent_id, battle_data, player_afk, opponent_afk, created_at, expires_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)""",
-                    (player_id, opponent_id, battle["battle_data"], battle["player_afk"], 
-                     battle["opponent_afk"], now, expires_at),
-                )
-                
-                # Удаляем из активных боев
-                connection.execute(
-                    "DELETE FROM active_battles WHERE player_id = %s AND opponent_id = %s",
-                    (player_id, opponent_id),
-                )
-                
-                # Автоочистка старых логов (старше 24 часов)
-                self._purge_old_battle_logs(connection, now)
-
-    def get_battle_log(self, player_id, opponent_id):
-        """Получает сохраненный лог боя"""
-        with self.connection() as connection:
-            row = connection.execute(
-                """SELECT battle_data, player_afk, opponent_afk, created_at 
-                FROM battle_logs 
-                WHERE player_id = %s AND opponent_id = %s
-                AND expires_at > %s
-                ORDER BY created_at DESC LIMIT 1""",
-                (player_id, opponent_id, time.time()),
-            ).fetchone()
-            if row:
-                return {
-                    "battle_data": json.loads(row["battle_data"]),
-                    "player_afk": bool(row["player_afk"]),
-                    "opponent_afk": bool(row["opponent_afk"]),
-                    "created_at": row["created_at"],
-                }
-            return None
-
-    def save_battle_archive(self, character_id, opponent_id, outcome, replay):
-        if outcome not in ("win", "draw", "loss"):
-            raise ValueError("Некорректный исход боя")
-        if not isinstance(replay, dict) or not replay.get("id"):
-            raise ValueError("Некорректная запись боя")
-        player = replay.get("player")
-        enemy = replay.get("enemy")
-        if not isinstance(player, dict) or not isinstance(enemy, dict):
-            raise ValueError("В записи боя отсутствуют участники")
-        try:
-            replay_json = json.dumps(replay, ensure_ascii=False, allow_nan=False)
-            player_level = max(1, int(player["level"]))
-            opponent_level = max(1, int(enemy["level"]))
-            turns = max(0, int(replay.get("turns", 0)))
-        except (KeyError, TypeError, ValueError) as error:
-            raise ValueError("Некорректные данные записи боя") from error
-        now = time.time()
-        with self.connection() as connection:
-            character = connection.execute(
-                "SELECT name FROM characters WHERE id=%s AND world_id=%s",
-                (int(character_id), self.world_id),
-            ).fetchone()
-            if character is None:
-                raise ValueError("Персонаж не найден")
-            opponent_character_id = None
-            if opponent_id is not None:
-                opponent_row = connection.execute(
-                    "SELECT id FROM characters WHERE id=%s AND world_id=%s",
-                    (int(opponent_id), self.world_id),
-                ).fetchone()
-                if opponent_row is not None:
-                    opponent_character_id = int(opponent_row["id"])
-            connection.execute(
-                """INSERT INTO battle_archive
-                   (world_id,battle_key,player_character_id,opponent_character_id,
-                    player_name,opponent_name,player_level,opponent_level,winner_name,
-                    outcome,turns,replay_json,created_at)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s)
-                   ON CONFLICT (world_id,battle_key) DO NOTHING""",
-                (self.world_id, str(replay["id"]), int(character_id), opponent_character_id,
-                 character["name"], str(enemy.get("name", "Противник")), player_level,
-                 opponent_level, str(replay.get("winner", "")), outcome, turns,
-                 replay_json, now),
-            )
-            row = connection.execute(
-                "SELECT id FROM battle_archive WHERE world_id=%s AND battle_key=%s",
-                (self.world_id, str(replay["id"])),
-            ).fetchone()
-        return int(row["id"])
-
-    def list_battle_archive(self, limit=50, offset=0):
-        limit = max(1, min(100, int(limit)))
-        offset = max(0, int(offset))
-        with self.connection() as connection:
-            total = int(connection.execute(
-                "SELECT COUNT(*) AS amount FROM battle_archive WHERE world_id=%s",
-                (self.world_id,),
-            ).fetchone()["amount"])
-            rows = connection.execute(
-                """SELECT id,battle_key,player_name,opponent_name,player_level,
-                          opponent_level,winner_name,outcome,turns,created_at
-                   FROM battle_archive WHERE world_id=%s
-                   ORDER BY created_at DESC,id DESC LIMIT %s OFFSET %s""",
-                (self.world_id, limit, offset),
-            ).fetchall()
-        return {"battles": [dict(row) for row in rows], "total": total,
-                "limit": limit, "offset": offset}
-
-    def get_battle_archive(self, archive_id):
-        with self.connection() as connection:
-            row = connection.execute(
-                """SELECT id,battle_key,player_name,opponent_name,player_level,
-                          opponent_level,winner_name,outcome,turns,created_at,replay_json
-                   FROM battle_archive WHERE world_id=%s AND id=%s""",
-                (self.world_id, int(archive_id)),
-            ).fetchone()
-        return None if row is None else dict(row)
-
     @staticmethod
     def _validate_character(character):
         if not 1 <= character["level"] <= 1000:
@@ -1007,11 +774,11 @@ class Database:
             raise ValueError("Валюта не может быть отрицательной")
 
     @staticmethod
-    def _character_payload(row):
+    def _character_payload(row, equipment_hp=0):
         row_dict = dict(row)
         stats = json.loads(row["stats_json"])
         character_type = row["type"] if "type" in row.keys() else "warrior"
-        max_hp = calculate_max_hp(row["level"], stats.get("endurance", minimum_endurance(row["level"])))
+        max_hp = calculate_max_hp(row["level"], stats.get("endurance", minimum_endurance(row["level"]))) + equipment_hp
         max_mp = calculate_max_mana(stats.get("intellect", BASE_STAT_VALUE))
 
         # Нормализуем валюту
@@ -1094,7 +861,7 @@ class Database:
                 self.add_chat_message(
                     bartender_character_id,
                     "tavern",
-                    "Тебе уже хватит, прогуляйся на задний двор прийди в чуство!! ХА-ХА-ХА"
+                    "Тебе уже хватит, иди проспись и приходи в чувство!! ХА-ХА-ХА"
                 )
                 raise ValueError("БАРМАН_ПОЛНОЕ_ЗДОРОВЬЕ")
             
@@ -1118,19 +885,6 @@ class Database:
             
             # Возвращаем обновленного персонажа
             return self.get_character(user_id, character_id)
-    
-    def get_character_inventory(self, character_id):
-        """Получить инвентарь персонажа"""
-        with self.connection() as connection:
-            rows = connection.execute(
-                """SELECT ci.id, d.id as drink_id, d.name, d.effect, d.effect_value, ci.quantity
-                FROM character_inventory ci
-                JOIN drinks d ON ci.drink_id = d.id
-                WHERE ci.character_id = %s
-                ORDER BY d.name""",
-                (character_id,)
-            ).fetchall()
-            return [dict(row) for row in rows]
     
     def use_drink(self, user_id, character_id, inventory_item_id):
         """Использовать напиток из инвентаря"""
@@ -1169,100 +923,3 @@ class Database:
             )
             
             return self.get_character(user_id, character_id)
-
-    def get_card_collection(self, character_id):
-        with self.connection() as connection:
-            rows = connection.execute(
-                """SELECT id, card_key, quantity, slot_index, acquired_at
-                   FROM character_card_collection
-                   WHERE character_id = %s
-                   ORDER BY slot_index""",
-                (character_id,),
-            ).fetchall()
-            return [dict(row) for row in rows]
-
-    def ensure_starter_cards(self, character_id, card_keys):
-        """Один раз кладёт в коллекцию карты класса, чтобы из них можно было собрать колоду."""
-        with self.connection() as connection:
-            lock_character(connection, character_id)
-            granted = connection.execute(
-                "SELECT 1 FROM character_card_grants WHERE character_id = %s",
-                (character_id,),
-            ).fetchone()
-            if granted:
-                return False
-            rows = connection.execute(
-                "SELECT card_key, slot_index FROM character_card_collection WHERE character_id = %s",
-                (character_id,),
-            ).fetchall()
-            owned = {row["card_key"] for row in rows}
-            free_slots = iter(sorted(set(range(60)) - {row["slot_index"] for row in rows}))
-            now = time.time()
-            for card_key in card_keys:
-                if card_key in owned:
-                    continue
-                slot_index = next(free_slots, None)
-                if slot_index is None:
-                    break
-                connection.execute(
-                    """INSERT INTO character_card_collection
-                       (character_id, card_key, quantity, slot_index, acquired_at)
-                       VALUES (%s, %s, 1, %s, %s)""",
-                    (character_id, card_key, slot_index, now),
-                )
-            connection.execute(
-                "INSERT INTO character_card_grants (character_id, starter_cards_at) VALUES (%s, %s)",
-                (character_id, now),
-            )
-            return True
-
-    def add_card_to_collection(self, character_id, card_key):
-        with self.connection() as connection:
-            lock_character(connection, character_id)
-            existing = connection.execute(
-                """SELECT id, quantity, slot_index
-                   FROM character_card_collection
-                   WHERE character_id = %s AND card_key = %s""",
-                (character_id, card_key),
-            ).fetchone()
-            if existing is not None:
-                connection.execute(
-                    """UPDATE character_card_collection
-                       SET quantity = quantity + 1, acquired_at = %s
-                       WHERE id = %s""",
-                    (time.time(), existing["id"]),
-                )
-                return {
-                    "id": existing["id"],
-                    "card_key": card_key,
-                    "quantity": existing["quantity"] + 1,
-                    "slot_index": existing["slot_index"],
-                }
-
-            used_slots = {
-                row["slot_index"]
-                for row in connection.execute(
-                    """SELECT slot_index
-                       FROM character_card_collection
-                       WHERE character_id = %s""",
-                    (character_id,),
-                ).fetchall()
-            }
-            slot_index = next((slot for slot in range(60) if slot not in used_slots), None)
-            if slot_index is None:
-                raise ValueError("В коллекции нет свободных ячеек")
-            now = time.time()
-            entry_id = connection.execute(
-                """INSERT INTO character_card_collection
-                   (character_id, card_key, quantity, slot_index, acquired_at)
-                   VALUES (%s, %s, 1, %s, %s)
-                   RETURNING id""",
-                (character_id, card_key, slot_index, now),
-            ).fetchone()["id"]
-            return {
-                "id": entry_id,
-                "card_key": card_key,
-                "quantity": 1,
-                "slot_index": slot_index,
-                "acquired_at": now,
-            }

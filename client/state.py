@@ -1,13 +1,8 @@
-class ClientState:
-    def __init__(self):
-        self.user = None
-        self.character = None
-        self.connected = False
 
 
 class ChatState:
     def __init__(self):
-        self.channels = ["tavern", "backyard"]
+        self.channels = ["tavern"]
         self.messages_by_channel = {channel: [] for channel in self.channels}
         self.unread_by_channel = {channel: 0 for channel in self.channels}
         self.connection_status = "disconnected"
@@ -26,13 +21,6 @@ class ChatState:
     def add_message(self, channel, message):
         self.replace_messages(channel, [message])
         self.pending_message_ids.discard(message["id"])
-
-    def set_connected(self, user):
-        self.user = user
-        self.connected = True
-
-    def set_character(self, character):
-        self.character = character
 
     def clear(self):
         self.user = None

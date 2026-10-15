@@ -1475,10 +1475,52 @@ class CityRenderMixin:
                     pygame.draw.line(screen, (151, 97, 51), (pile_x - 1, pile_y - 12),
                                      (pile_x - 8, pile_y + 11), 4)
 
+    def _draw_stone_wall_segments(self, screen, section, stage):
+        """Draw one palisade section as stone ('stone'), dismantling ('building') or wood."""
+        if stage == "wood":
+            self._draw_palisade_section(screen, section, complete=True)
+            return
+        for start, end in section:
+            sx1, sy1 = self.world_to_screen(*start)
+            sx2, sy2 = self.world_to_screen(*end)
+            length = math.dist(start, end)
+            horizontal = abs(end[0] - start[0]) >= abs(end[1] - start[1])
+            if stage == "building":
+                self._draw_palisade_section(screen, [(start, end)], complete=False)
+                color, thickness = (96, 104, 104), 8
+            else:
+                color, thickness = (120, 128, 128), 14
+            pygame.draw.line(screen, color, (sx1, sy1), (sx2, sy2), thickness)
+            pygame.draw.line(screen, (60, 66, 67), (sx1, sy1), (sx2, sy2), 2)
+            for distance in range(0, int(length) + 1, 40):
+                fraction = min(1.0, distance / max(1.0, length))
+                wx = start[0] + (end[0] - start[0]) * fraction
+                wy = start[1] + (end[1] - start[1]) * fraction
+                mx, my = self.world_to_screen(wx, wy)
+                if horizontal:
+                    pygame.draw.rect(screen, (60, 66, 67), (mx - 4, my - 16, 8, 6))
+                else:
+                    pygame.draw.rect(screen, (60, 66, 67), (mx - 16, my - 4, 6, 8))
+
     def _draw_city_upgrade_construction(self, screen):
         upgrade = getattr(self, "city_upgrade_state", {})
         city_level = int(upgrade.get("city_level", 1))
+        if city_level >= 3:
+            for section in CITY_PALISADE_SECTIONS:
+                self._draw_stone_wall_segments(screen, section, "stone")
+            return
         if city_level >= 2:
+            if upgrade.get("active"):
+                phase = min(3, int(upgrade.get("phase_index", 0)))
+                for index, section in enumerate(CITY_PALISADE_SECTIONS):
+                    if index < phase:
+                        stage = "stone"
+                    elif index == phase:
+                        stage = "building"
+                    else:
+                        stage = "wood"
+                    self._draw_stone_wall_segments(screen, section, stage)
+                return
             for section in CITY_PALISADE_SECTIONS:
                 self._draw_palisade_section(screen, section, complete=True)
             return
@@ -1515,19 +1557,7 @@ class CityRenderMixin:
         pygame.draw.rect(screen, border_color, bg, 1, border_radius=4)
         screen.blit(surf, surf.get_rect(center=bg.center))
 
-    def _draw_click_effect(self, screen):
-        """Отрисовывает расходящийся маркер клика ПКМ."""
-        if self.click_effect is None:
-            return
 
-        cx, cy = self.world_to_screen(self.click_effect["x"], self.click_effect["y"])
-        progress = 1.0 - (self.click_effect["timer"] / 0.35)
-        radius = int(8 + progress * 16)
-        alpha_val = max(0, int(255 * (1.0 - progress)))
-
-        ring = pygame.Surface((radius * 2 + 4, radius * 2 + 4), pygame.SRCALPHA)
-        pygame.draw.circle(ring, (80, 255, 120, alpha_val), (radius + 2, radius + 2), radius, 2)
-        screen.blit(ring, (cx - radius - 2, cy - radius - 2))
 
     def _draw_player_character(self, screen):
         """Отрисовывает персонажа игрока с 8-направленной анимацией."""

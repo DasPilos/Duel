@@ -6,7 +6,7 @@ from zipfile import ZIP_DEFLATED, ZipFile
 
 
 CLIENT_DIRS = ("client", "combat", "core", "scenes", "ui", "assets")
-ROOT_FILES = ("main.py", "requirements.txt", "cards.sqlite3")
+ROOT_FILES = ("main.py", "requirements.txt")
 EXCLUDED_PARTS = {"__pycache__", ".git"}
 EXCLUDED_SUFFIXES = {".pyc", ".pyo"}
 

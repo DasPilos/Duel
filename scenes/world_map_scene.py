@@ -4,12 +4,31 @@ import random
 import time
 import pygame
 from core import settings
+from core.currency import Currency
 from core.carry_weight import character_movement_speed_multiplier
+from combat.fighter import Fighter
+from combat.fighter_profile import apply_fighter_profile
+from combat.world_stats import (
+    BASE_MOVE_SPEED,
+    get_attack_backswing,
+    get_attack_reach,
+    get_attack_windup,
+    get_hp_regen_per_second,
+    get_mana_regen_per_second,
+    get_move_speed,
+    get_world_max_hp,
+    get_world_max_mana,
+    resolve_world_melee_attack,
+)
+from core.player_movement import find_tile_path, follow_path
 from core.production_buildings import plot_slot_ranges
 from client.network import ServerError
 from client.structures import hydrate_structures
-from ui.hud import draw_button
+from ui.character_card import CharacterCard
+from ui.character_profile import profile_from_fighter
+from ui.hud import draw_button, draw_city_upgrade_line, upgrade_line_font
 from ui.character_profile_overlay import CharacterProfileOverlay
+from ui.sprite_loader import FighterSprite
 from ui.chat import ChatPanel
 from ui.afk_presence import active_player_entities, draw_active_players, draw_afk_players
 from ui.catalog_icons import draw_building_icon
@@ -32,6 +51,53 @@ TOO_FAR_PHRASES = [
     "Туда отсюда не достать",
 ]
 
+
+# Бой с мобами на карте мира: ПКМ по мобу — идти и бить с дистанции до тела моба.
+# Дальность, скорость и HP берутся из характеристик (combat/world_stats.py).
+MOB_LEASH_RADIUS_TILES = 40  # дальше 40 тайлов от точки респауна моб не уходит
+MOB_RESPAWN_DELAY = 30.0
+MOB_CHASE_SPEED = BASE_MOVE_SPEED  # базовая скорость перемещения, как у персонажа
+MOB_LEVEL = 1
+# Базовые характеристики скелета: показываются в карточке и участвуют в формулах боя (combat/world_stats.py).
+MOB_STATS = {"strength": 3, "agility": 3, "intuition": 3, "wisdom": 3, "intellect": 3, "endurance": 4}
+# Монеты моба: при убийстве герой получает MOB_COIN_REWARD_PERCENT % от их суммы (округление вниз).
+MOB_COINS = {"copper": 30, "silver": 0, "gold": 0}
+MOB_COIN_REWARD_PERCENT = 20
+# Регенерация HP/MP уходит на сервер не чаще этого интервала (секунды).
+PLAYER_HP_SAVE_INTERVAL = 2.0
+# Длительность маркера клика ПКМ по земле (секунды).
+CLICK_EFFECT_DURATION = 0.35
+# Дубина скелета: копия предмета id 23 из server/items_database.py (клиент не импортирует серверный каталог).
+MOB_CLUB_ITEM = {
+    "name": "Дубина",
+    "effects": {"requirements": {"strength": 6}, "damage": [3, 10]},
+    "bonuses": {"hp": 20},
+}
+PLAYER_REPATH_INTERVAL = 0.3  # как часто пересчитывать путь к движущемуся мобу
+PLAYER_STALL_TIMEOUT = 0.4  # если персонаж не может продвинуться так долго, путь сбрасывается
+# Замах и откат считаются по характеристикам (get_attack_windup / get_attack_backswing).
+# Во время отката персонаж или моб стоит на месте и не начинает новый замах.
+PLAYER_ATTACK_SWING_HALF_ANGLE = 0.9  # полуразмах дуги в радианах (~52 градуса)
+DAMAGE_NUMBER_DURATION = 5.0
+DAMAGE_COLOR_NORMAL = (255, 255, 255)  # обычный урон — белый
+DAMAGE_COLOR_CRIT = (255, 50, 50)  # критический урон — красный, шрифт вдвое крупнее
+DAMAGE_COLOR_DODGE = (120, 200, 255)  # «Уворот» — голубой
+DAMAGE_COLOR_BLOCK = (190, 195, 205)  # «Блок» — серебристый
+DAMAGE_COLOR_MISS = (200, 200, 200)  # «Промах» — серый
+EDGE_SCROLL_MARGIN = 40  # px от края окна: курсор в этой полосе двигает камеру
+EDGE_SCROLL_SPEED = 600.0  # скорость краевой прокрутки, px экрана в секунду
+DRAG_THRESHOLD = 6  # px: дальше этого ЛКМ — перетаскивание карты, а не клик
+DOUBLE_CLICK_MS = 350
+MOB_SPRITE_SIZE = (90, 53)
+MOB_PATROL_RADIUS_TILES = 3  # квадрат патруля: 7x7 тайлов вокруг точки появления
+MOB_AGGRO_RADIUS_TILES = MOB_PATROL_RADIUS_TILES  # игрок входит в квадрат патруля — моб начинает погоню
+MOB_PATROL_CENTER_TILE = (30, 40)  # центр квадрата патруля в координатах тайлов карты
+MOB_PATROL_SPEED = 40.0  # px/с
+MOB_PATROL_PAUSE = 1.5  # секунд стоит на каждой точке маршрута
+_DIRECTION_VECTORS = {
+    "n": (0.0, -1.0), "ne": (0.7071, -0.7071), "e": (1.0, 0.0), "se": (0.7071, 0.7071),
+    "s": (0.0, 1.0), "sw": (-0.7071, 0.7071), "w": (-1.0, 0.0), "nw": (-0.7071, -0.7071),
+}
 
 # Направления в виде битовых флагов для автотайлинга дороги (классика HoMM3)
 DIR_N = 1
@@ -89,6 +155,9 @@ class WorldMapScene:
     """
 
     CITY_VISUAL_REFRESH_SECONDS = 10.0
+    MINIMAP_SIZE = (256, 128)
+    MINIMAP_MARGIN = (20, 150)
+    OVERHEAD_BAR_HEIGHT = 10  # высота полосок ХП/МП над персонажем и мобом (было 5, вдвое больше)
 
     def __init__(self, session, spawn_gate=None, spawn_pos=None):
         self.session = session
@@ -143,21 +212,20 @@ class WorldMapScene:
             self.player_y = float(self.world_h // 2)
             self.player_direction = "s"
 
-        self.player_target = None
         self.player_speed = 220.0
         self.player_state = "idle"
         self.player_anim_timer = 0.0
-        self.click_effect = None
 
         # Камера центрируется на игроке
         self.camera_x = self.player_x
         self.camera_y = self.player_y
         self.camera_follow_player = True
-
-        # Скролл карты перетаскиванием (drag)
-        self.dragging = False
-        self.drag_start_mouse = (0, 0)
-        self.drag_start_camera = (0.0, 0.0)
+        # Перетаскивание карты ЛКМ и распознавание двойного клика
+        self._press_pos = None
+        self._press_camera = (self.camera_x, self.camera_y)
+        self._dragging = False
+        self._last_click_time = None
+        self._last_click_pos = None
 
         # Шрифты
         self.font = pygame.font.SysFont(settings.FONT_NAME, 20)
@@ -165,12 +233,9 @@ class WorldMapScene:
         self.grid_font = pygame.font.SysFont(settings.FONT_NAME, 11)
         self.badge_font = pygame.font.SysFont(settings.FONT_NAME, 13, bold=True)
         self.large_font = pygame.font.SysFont(settings.FONT_NAME, 24, bold=True)
-        self.profile_overlay = CharacterProfileOverlay(
-            self.small_font,
-            collection_loader=getattr(self.session, "get_card_collection", None),
-            deck_loader=getattr(self.session, "get_decks", None),
-            deck_creator=getattr(self.session, "create_deck", None),
-        )
+        self.damage_font = pygame.font.SysFont(settings.FONT_NAME, 22, bold=True)
+        self.crit_damage_font = pygame.font.SysFont(settings.FONT_NAME, 44, bold=True)
+        self.profile_overlay = CharacterProfileOverlay(self.small_font)
         self.chat = (ChatPanel(session, "world_map", profile_overlay=self.profile_overlay)
                      if hasattr(session, "social_snapshot") else None)
         if self.chat is not None:
@@ -183,7 +248,6 @@ class WorldMapScene:
             self.chat.convoys_provider = self._get_traveling_convoys
 
         # UI элементы
-        self.player_pos_button = pygame.Rect(20, 20, 160, 45)
 
         # Переключатель отображения тонкой сетки (клавиша G)
         self.show_grid = False
@@ -192,12 +256,29 @@ class WorldMapScene:
         self.hovered_entity = None
         self.hovered_mobile_entity = None
         self.active_entity = None
-        self.drag_moved = False
         self.active_window_rect = pygame.Rect(settings.WIDTH - 390, settings.HEIGHT - 255, 365, 215)
         self.active_close_button = pygame.Rect(self.active_window_rect.right - 36, self.active_window_rect.top + 10, 26, 26)
         self.active_action_button = pygame.Rect(self.active_window_rect.left + 16, self.active_window_rect.bottom - 48, self.active_window_rect.width - 32, 34)
+        # Моб, карточка которого закреплена двойным кликом (закрывается крестиком или Escape)
+        self.pinned_mob = None
         self.action_notice = None
         self.action_notice_timer = 0.0
+        self.attack_windup = 0.0  # >0 — идёт замах перед ударом
+        self.attack_windup_total = 0.0  # полная длительность текущего замаха (для дуги)
+        self.attack_backswing = 0.0  # >0 — откат после удара: стоим на месте
+        self.attack_swing_angle = 0.0
+        # HP игрока на сервере: флаг «есть несохранённое изменение» и таймер троттлинга
+        self._hp_dirty = False
+        self._hp_save_timer = 0.0
+        # Управление ПКМ: путь к точке на земле и цель-моб для атаки
+        self.move_path = []
+        self.move_stall = 0.0
+        self.attack_target = None
+        self.repath_timer = 0.0
+        # Маркер клика ПКМ по земле: расходящееся кольцо на точке назначения
+        self.click_effect = None
+        # Боевой Fighter игрока: урон, уворот и крит считаются по его характеристикам и оружию
+        self.combat_fighter = self._build_player_combat_fighter()
 
         # Окна производственных зданий (поселение, лагерь лесорубов); открыто не больше одного
         self.building_windows = {building: ProductionBuildingWindow(self, building) for building in VIEWS}
@@ -205,18 +286,28 @@ class WorldMapScene:
 
         # Всплывающие сообщения в игровом мире
         self.floating_messages = []
+        self.damage_numbers = []
         self.last_too_far_phrase = None
 
         # Строения карты живут на сервере и приходят вместе с рельефом (_load_terrain)
         self.objects = []
+        self.road_tiles = set()
+        self.road_routes = []
+        self.road_travel_seconds = 0
         self.city_visual_state = {"city_level": 1, "active": False}
         self.city_visual_refresh_at = 0.0
+        self.layout_city_level = 1
 
+        self.minimap_surface = None
         self.obstacles = self._load_terrain()
+        self._build_minimap(self.obstacles)
 
         # Анимация строения лесника 10х10 тайлов (3 кадра анимации дыма из assets/forester's1.png)
         self.forester_frames = []
         self._load_forester_sprite()
+
+        # Мобы карты: клиентская сущность с HP, не входит в серверные строения
+        self.mobs = self._create_world_mobs()
 
         # Загрузка 8-направленных спрайтов idle (из assets/2Idle/) и бега (из assets/3run/)
         self.player_directional_frames = {}
@@ -285,6 +376,501 @@ class WorldMapScene:
     def cart_travel_seconds(tile_count):
         """Время в пути повозки по грунтовой дороге для заданного числа тайлов (базовая скорость: 1 тайл = 60 сек)."""
         return tile_count * settings.CART_ROAD_SECONDS_PER_TILE
+
+    @staticmethod
+    def _mob_body_rect(mob):
+        """Прямоугольник тела моба 90х53 в мировых координатах."""
+        return pygame.Rect(0, 0, MOB_SPRITE_SIZE[0], MOB_SPRITE_SIZE[1]).move(
+            int(mob["x"] - MOB_SPRITE_SIZE[0] / 2), int(mob["y"] - MOB_SPRITE_SIZE[1] / 2))
+
+    def _distance_to_mob_body(self, mob):
+        """Расстояние от центра персонажа до ближайшей точки тела моба (0 если внутри)."""
+        rect = self._mob_body_rect(mob)
+        nearest_x = min(max(self.player_x, rect.left), rect.right)
+        nearest_y = min(max(self.player_y, rect.top), rect.bottom)
+        return math.hypot(self.player_x - nearest_x, self.player_y - nearest_y)
+
+    def _set_move_target(self, goal):
+        """Строит путь по тайлам до точки на земле. Возвращает False, если точка недостижима."""
+        path = find_tile_path((self.player_x, self.player_y), goal, self._player_blocked, self.tile_size)
+        self.attack_target = None
+        self.attack_windup = 0.0
+        if path is None:
+            self.move_path = []
+            return False
+        self.move_path = path
+        self.move_stall = 0.0
+        return True
+
+    def _set_attack_target(self, mob):
+        """ПКМ по мобу: запоминаем цель и сразу строим путь до её тела."""
+        if mob is not self.attack_target:
+            self.attack_windup = 0.0
+        self.attack_target = mob
+        self.repath_timer = 0.0
+        self._repath_to_attack_target()
+
+    def _repath_to_attack_target(self):
+        """Путь к движущемуся мобу: цель — центр моба, ходьба останавливается на дистанции удара."""
+        mob = self.attack_target
+        path = find_tile_path((self.player_x, self.player_y), (mob["x"], mob["y"]), self._mob_goal_blocked, self.tile_size)
+        self.move_path = path or []
+        self.move_stall = 0.0
+
+    def _mob_goal_blocked(self, px, py):
+        """Коллизия при погоне за мобом: тело своей цели не считаем препятствием, иначе путь к ней не строится."""
+        if self._check_collision(px, py):
+            return True
+        feet_rect = pygame.Rect(int(px - 10), int(py - 6), 20, 10)
+        for mob in self.mobs:
+            if mob["hp"] <= 0 or mob is self.attack_target:
+                continue
+            if feet_rect.colliderect(self._mob_body_rect(mob)):
+                return True
+        return False
+
+    def _update_attack_target(self, dt):
+        """Двигает персонажа к цели-мобу; в зоне удара — замах, после замаха удар и откат."""
+        mob = self.attack_target
+        if mob is None:
+            return
+        # Откат после удара: стоим на месте, новый замах не начинаем
+        if self.attack_backswing > 0:
+            return
+        if mob["hp"] <= 0:
+            self.attack_target = None
+            self.attack_windup = 0.0
+            self.move_path = []
+            return
+        reach = get_attack_reach(self.combat_fighter)
+        if self.attack_windup <= 0 and self._distance_to_mob_body(mob) > reach:
+            # Идём к цели, пока она вне зоны удара
+            self.repath_timer -= dt
+            if self.repath_timer <= 0 or not self.move_path:
+                self.repath_timer = PLAYER_REPATH_INTERVAL
+                self._repath_to_attack_target()
+            return
+        # Замах стоит на месте и не отменяется, даже если цель ушла из зоны: в конце — удар или промах
+        self.move_path = []
+        if self.attack_windup <= 0:
+            self._face_towards(mob["x"], mob["y"])
+            self.attack_windup = get_attack_windup(self.combat_fighter)
+            self.attack_windup_total = self.attack_windup
+            self._start_attack_swing()
+        self.attack_windup = max(0.0, self.attack_windup - dt)
+        if self.attack_windup <= 0:
+            if self._distance_to_mob_body(mob) <= reach:
+                self._strike_mob(mob)
+            else:
+                self._spawn_attack_label("miss", mob["x"], mob["y"] - MOB_SPRITE_SIZE[1] / 2 - 10)
+            self.attack_backswing = get_attack_backswing(self.combat_fighter)
+
+    def _face_towards(self, x, y):
+        dx, dy = x - self.player_x, y - self.player_y
+        if dx or dy:
+            self.player_direction = self._vector_to_direction(dx, dy)
+            self.player_facing_right = dx >= 0
+
+    def _strike_mob(self, mob):
+        """Удар игрока по мобу после замаха: уворот/блок/крит/урон через resolve_melee_attack."""
+        result = resolve_world_melee_attack(self.combat_fighter, mob["fighter"], random,
+                                            defender_facing=mob.get("facing"),
+                                            attack_vector=(self.player_x - mob["x"], self.player_y - mob["y"]))
+        wx, wy = mob["x"], mob["y"] - MOB_SPRITE_SIZE[1] / 2 - 10
+        if result["outcome"] != "hit":
+            self._spawn_attack_label(result["outcome"], wx, wy)
+            return
+        hp_before = mob["hp"]
+        mob["hp"] = max(0, mob["hp"] - result["damage"])
+        self._spawn_hit_number(hp_before - mob["hp"], result["critical"], wx, wy)
+        if mob["hp"] <= 0:
+            self._on_mob_defeated(mob)
+            notice = "Скелет повержен"
+            if self.action_notice and self.action_notice.startswith("Добыча"):
+                notice = f"{notice}. {self.action_notice}"
+            self.action_notice = notice
+            self.action_notice_timer = 2.0
+
+    def _spawn_attack_label(self, outcome, wx, wy):
+        """Подпись без урона: «Промах», «Уворот» или «Блок»."""
+        if outcome == "dodge":
+            self._spawn_damage_number(wx, wy, 0, DAMAGE_COLOR_DODGE, text="Уворот")
+        elif outcome == "block":
+            self._spawn_damage_number(wx, wy, 0, DAMAGE_COLOR_BLOCK, text="Блок")
+        else:
+            self._spawn_damage_number(wx, wy, 0, DAMAGE_COLOR_MISS, text="Промах")
+
+    def _spawn_hit_number(self, amount, critical, wx, wy):
+        """Цифра урона: белая обычная, красная и вдвое крупнее при критическом ударе."""
+        if critical:
+            self._spawn_damage_number(wx, wy, amount, DAMAGE_COLOR_CRIT, big=True)
+        else:
+            self._spawn_damage_number(wx, wy, amount, DAMAGE_COLOR_NORMAL)
+
+    def _start_attack_swing(self):
+        """Запускает заглушку анимации удара в сторону взгляда персонажа на время замаха."""
+        dx, dy = _DIRECTION_VECTORS.get(self.player_direction, (0.0, 1.0))
+        self.attack_swing_angle = math.atan2(dy, dx)
+
+    def _draw_attack_swing(self, screen):
+        """Заглушка удара: светлая дуга вокруг персонажа на радиусе зоны удара, видна только пока идёт замах."""
+        if self.attack_windup <= 0:
+            return
+        cx, cy = self.world_to_screen(self.player_x, self.player_y)
+        a0 = self.attack_swing_angle - PLAYER_ATTACK_SWING_HALF_ANGLE
+        a1 = self.attack_swing_angle + PLAYER_ATTACK_SWING_HALF_ANGLE
+        reach = get_attack_reach(self.combat_fighter)
+        points = [
+            (cx + math.cos(a) * reach, cy + math.sin(a) * reach)
+            for a in (a0 + (a1 - a0) * i / 8 for i in range(9))
+        ]
+        pygame.draw.lines(screen, (235, 245, 255), False, points, 4)
+
+    def _spawn_damage_number(self, wx, wy, amount, color, text=None, big=False):
+        """Всплывающая надпись над точкой мира (урон, «Промах», «Блок», «Уворот»); висит DAMAGE_NUMBER_DURATION секунд и поднимается вверх.
+
+        big=True — критический урон: шрифт вдвое крупнее.
+        """
+        self.damage_numbers.append({
+            "text": text if text is not None else f"-{amount}",
+            "world_x": float(wx),
+            "world_y": float(wy),
+            "timer": DAMAGE_NUMBER_DURATION,
+            "max_timer": DAMAGE_NUMBER_DURATION,
+            "color": color,
+            "big": big,
+        })
+
+    def _update_damage_numbers(self, dt):
+        """Двигает цифры урона вверх и убирает истёкшие."""
+        for num in self.damage_numbers[:]:
+            num["timer"] -= dt
+            num["world_y"] -= 12.0 * dt
+            if num["timer"] <= 0:
+                self.damage_numbers.remove(num)
+
+    def _draw_damage_numbers(self, screen):
+        """Рисует цифры урона; последние 0.8 с плавно прозрачнеют."""
+        for num in self.damage_numbers:
+            sx, sy = self.world_to_screen(num["world_x"], num["world_y"])
+            if not (-60 <= sx <= settings.WIDTH + 60 and -60 <= sy <= settings.HEIGHT + 60):
+                continue
+            font = self.crit_damage_font if num.get("big") else self.damage_font
+            alpha = int(255 * min(1.0, num["timer"] / 0.8))
+            text_surf = font.render(num["text"], True, num["color"])
+            text_surf.set_alpha(alpha)
+            shadow = font.render(num["text"], True, (10, 10, 12))
+            shadow.set_alpha(alpha)
+            rect = text_surf.get_rect(center=(sx, sy))
+            screen.blit(shadow, rect.move(2, 2))
+            screen.blit(text_surf, rect)
+
+    def _draw_attack_tile(self, screen):
+        """Зелёная подсветка цели атаки: контур тела моба, по которому идёт удар."""
+        mob = self.attack_target
+        if mob is None or mob["hp"] <= 0:
+            return
+        rect = self._mob_body_rect(mob)
+        left, top = self.world_to_screen(rect.left, rect.top)
+        right, bottom = self.world_to_screen(rect.right, rect.bottom)
+        screen_rect = pygame.Rect(left, top, right - left, bottom - top)
+        pygame.draw.rect(screen, (80, 255, 110), screen_rect.inflate(6, 6), 3, border_radius=4)
+
+    def _pick_mob_patrol_point(self, mob):
+        """Случайный центр тайла внутри квадрата патруля, куда моб может встать."""
+        r = MOB_PATROL_RADIUS_TILES
+        for _ in range(20):
+            px = mob["home_x"] + random.randint(-r, r) * self.tile_size
+            py = mob["home_y"] + random.randint(-r, r) * self.tile_size
+            if not self._check_collision(px, py):
+                return (px, py)
+        return None
+
+    def _build_mob_fighter(self):
+        """Боевой Fighter скелета: уровень и базовые характеристики из MOB_STATS, дубина с кузницы (как у игрока)."""
+        fighter = Fighter("Скелет", level=MOB_LEVEL)
+        fighter.stats.update(MOB_STATS)
+        fighter.equipment = {"weapon": MOB_CLUB_ITEM}
+        fighter.equipment_stat_modifiers = dict(MOB_CLUB_ITEM["bonuses"])
+        fighter.recalculate_parameters()
+        self._apply_world_resource_formulas(fighter)
+        fighter.hp = fighter.max_hp
+        return fighter
+
+    def _apply_world_resource_formulas(self, fighter):
+        """Мировые HP и ману считаем по выносливости и интеллекту (combat/world_stats.py); текущие значения не выше максимума."""
+        equipment_hp = int(fighter.equipment_stat_modifiers.get("hp", 0))
+        equipment_mp = int(fighter.equipment_stat_modifiers.get("mp", 0))
+        fighter.max_hp = get_world_max_hp(fighter, equipment_hp)
+        fighter.max_mp = get_world_max_mana(fighter, equipment_mp)
+        fighter.hp = min(fighter.hp, fighter.max_hp)
+        fighter.mp = min(fighter.mp, fighter.max_mp)
+
+    def _build_player_combat_fighter(self):
+        """Боевой Fighter игрока из данных сессии; без персонажа остаётся базовый уровень 1."""
+        fighter = Fighter("Игрок", level=1)
+        character = getattr(self.session, "character", None)
+        if character:
+            apply_fighter_profile(fighter, character)
+        self._apply_world_resource_formulas(fighter)
+        self._hp_regen_accumulator = 0.0
+        self._mp_regen_accumulator = 0.0
+        return fighter
+
+    def _regenerate_player_resources(self, dt):
+        """Регенерация HP и маны игрока: в секунду по формулам выносливости и интеллекта."""
+        fighter = self.combat_fighter
+        hp_before, mp_before = fighter.hp, fighter.mp
+        if fighter.hp < fighter.max_hp:
+            self._hp_regen_accumulator += get_hp_regen_per_second(fighter) * dt
+            gained = int(self._hp_regen_accumulator)
+            if gained:
+                fighter.hp = min(fighter.max_hp, fighter.hp + gained)
+                self._hp_regen_accumulator -= gained
+        else:
+            self._hp_regen_accumulator = 0.0
+        if fighter.mp < fighter.max_mp:
+            self._mp_regen_accumulator += get_mana_regen_per_second(fighter) * dt
+            gained = int(self._mp_regen_accumulator)
+            if gained:
+                fighter.mp = min(fighter.max_mp, fighter.mp + gained)
+                self._mp_regen_accumulator -= gained
+        else:
+            self._mp_regen_accumulator = 0.0
+        if fighter.hp != hp_before or fighter.mp != mp_before:
+            self._hp_dirty = True
+
+    def _flush_player_hp(self, dt):
+        """Отправляет регенерацию на сервер не чаще раза в PLAYER_HP_SAVE_INTERVAL секунд; при полном HP сохраняет сразу."""
+        if not self._hp_dirty:
+            return
+        self._hp_save_timer += dt
+        fighter = self.combat_fighter
+        full = fighter.hp >= fighter.max_hp and fighter.mp >= fighter.max_mp
+        if full or self._hp_save_timer >= PLAYER_HP_SAVE_INTERVAL:
+            self._save_player_hp()
+
+
+    def _on_mob_defeated(self, mob):
+        """Смерть моба: сбрасываем цель, выдаём награду монетами, ставим таймер респауна."""
+        mob["respawn_timer"] = MOB_RESPAWN_DELAY
+        mob["state"] = "dead"
+        mob["attack_windup"] = 0.0
+        mob["attack_backswing"] = 0.0
+        self._reward_mob_coins(mob)
+        if self.attack_target is mob:
+            self.attack_target = None
+            self.attack_windup = 0.0
+            self.move_path = []
+
+    def _reward_mob_coins(self, mob):
+        """Герой забирает MOB_COIN_REWARD_PERCENT % монет моба (вниз). Монеты моба обнуляются до респауна."""
+        coins = mob.get("coins")
+        if not coins:
+            return
+        mob_copper = Currency.to_copper(**coins)
+        mob["coins"] = {"copper": 0, "silver": 0, "gold": 0}
+        reward = mob_copper * MOB_COIN_REWARD_PERCENT // 100
+        if reward <= 0:
+            return
+        try:
+            self.session.add_currency(copper=reward)
+        except ServerError as error:
+            self.action_notice = str(error)
+            self.action_notice_timer = 2.0
+            return
+        self.action_notice = f"Добыча: {Currency.format_amount(reward)}"
+        self.action_notice_timer = 2.0
+
+    def _respawn_mob(self, mob):
+        """Респаун в центре квадрата патруля с полным HP и монетами."""
+        mob["x"], mob["y"] = mob["home_x"], mob["home_y"]
+        mob["hp"] = mob["max_hp"]
+        mob["coins"] = dict(MOB_COINS)
+        mob["fighter"].hp = mob["fighter"].max_hp
+        mob["state"] = "idle"
+        mob["respawn_timer"] = 0.0
+        mob["patrol_target"] = None
+        mob["patrol_pause"] = 0.0
+        mob["attack_windup"] = 0.0
+        mob["attack_backswing"] = 0.0
+
+    def _player_in_mob_aggro_area(self, mob):
+        """Игрок вошёл в квадрат патруля моба (радиус MOB_AGGRO_RADIUS_TILES тайлов от точки респауна)."""
+        reach = MOB_AGGRO_RADIUS_TILES * self.tile_size
+        return (abs(self.player_x - mob["home_x"]) <= reach + self.tile_size / 2
+                and abs(self.player_y - mob["home_y"]) <= reach + self.tile_size / 2)
+
+    def _mob_leash_distance(self, mob, x, y):
+        """Расстояние от точки респауна моба до (x, y)."""
+        return math.hypot(x - mob["home_x"], y - mob["home_y"])
+
+    def _update_mobs(self, dt):
+        """Мобы: патруль, агро на игрока, погоня в пределах поводка, удары и респаун."""
+        for mob in self.mobs:
+            if mob["hp"] <= 0:
+                mob["respawn_timer"] = max(0.0, mob["respawn_timer"] - dt)
+                if mob["respawn_timer"] <= 0:
+                    self._respawn_mob(mob)
+                continue
+            if mob["state"] != "chase" and self._player_in_mob_aggro_area(mob):
+                mob["state"] = "chase"
+                mob["patrol_target"] = None
+            if mob["state"] == "chase":
+                self._update_mob_chase(mob, dt)
+            else:
+                self._update_mob_patrol(mob, dt)
+                if mob["attack_backswing"] > 0:
+                    mob["attack_backswing"] = max(0.0, mob["attack_backswing"] - dt)
+
+    def _update_mob_patrol(self, mob, dt):
+        """Патруль: идёт между случайными точками квадрата, на каждой немного стоит."""
+        if mob["patrol_pause"] > 0:
+            mob["patrol_pause"] = max(0.0, mob["patrol_pause"] - dt)
+            return
+        if mob["patrol_target"] is None:
+            mob["patrol_target"] = self._pick_mob_patrol_point(mob)
+            if mob["patrol_target"] is None:
+                return
+        tx, ty = mob["patrol_target"]
+        dx, dy = tx - mob["x"], ty - mob["y"]
+        dist = math.hypot(dx, dy)
+        step = MOB_PATROL_SPEED * dt
+        if dist <= step:
+            mob["x"], mob["y"] = tx, ty
+            mob["patrol_target"] = None
+            mob["patrol_pause"] = MOB_PATROL_PAUSE
+            return
+        nx = mob["x"] + dx / dist * step
+        ny = mob["y"] + dy / dist * step
+        if self._check_collision(nx, ny):
+            mob["patrol_target"] = None  # путь перекрыт, выбираем другую точку
+        else:
+            mob["x"], mob["y"] = nx, ny
+
+    def _update_mob_chase(self, mob, dt):
+        """Погоня за игроком; если игрок ушёл дальше поводка или цель недостижима — моб возвращается к точке респауна."""
+        # Откат — только таймер следующего удара: моб при этом может идти за игроком
+        if mob["attack_backswing"] > 0:
+            mob["attack_backswing"] = max(0.0, mob["attack_backswing"] - dt)
+        leash = MOB_LEASH_RADIUS_TILES * self.tile_size
+        player_outside_leash = self._mob_leash_distance(mob, self.player_x, self.player_y) > leash
+        if player_outside_leash:
+            mob["state"] = "idle"
+            mob["patrol_target"] = None
+            mob["attack_windup"] = 0.0
+            return
+        # Атака игрока: каждый удар предваряет замах, моб стоит на месте, пока замах идёт
+        reach = get_attack_reach(mob["fighter"])
+        if mob["attack_windup"] <= 0:
+            if self._mob_distance_to_player(mob) > reach:
+                self._move_mob_toward_player(mob, dt)
+                return
+            # Новый замах не начинаем, пока идёт откат предыдущего удара
+            if mob["attack_backswing"] > 0:
+                self._move_mob_toward_player(mob, dt)
+                return
+            mob["attack_windup"] = get_attack_windup(mob["fighter"])
+            mob["attack_windup_total"] = mob["attack_windup"]
+            mob["attack_swing_angle"] = math.atan2(self.player_y - mob["y"], self.player_x - mob["x"])
+            mob["facing"] = mob["attack_swing_angle"]
+        mob["attack_windup"] = max(0.0, mob["attack_windup"] - dt)
+        if mob["attack_windup"] <= 0:
+            if self._mob_distance_to_player(mob) <= reach:
+                self._mob_strike_player(mob)
+            else:
+                # Игрок ушёл из зоны до конца замаха: удар проходит мимо
+                self._spawn_attack_label("miss", mob["x"], mob["y"] - MOB_SPRITE_SIZE[1] / 2 - 10)
+            mob["attack_backswing"] = get_attack_backswing(mob["fighter"])
+
+    def _move_mob_toward_player(self, mob, dt):
+        """Погоня: моб идёт прямо к игроку с базовой скоростью, с учётом препятствий."""
+        dx, dy = self.player_x - mob["x"], self.player_y - mob["y"]
+        dist = math.hypot(dx, dy)
+        if dist <= 0:
+            return
+        mob["facing"] = math.atan2(dy, dx)
+        step = MOB_CHASE_SPEED * dt
+        nx = mob["x"] + dx / dist * step
+        ny = mob["y"] + dy / dist * step
+        if not self._check_collision(nx, ny):
+            mob["x"], mob["y"] = nx, ny
+
+    def _player_facing_angle(self):
+        """Угол взгляда персонажа в радианах (по 8 направлениям), как у мобов в поле facing."""
+        dx, dy = _DIRECTION_VECTORS.get(self.player_direction, (0.0, 1.0))
+        return math.atan2(dy, dx)
+
+    def _mob_distance_to_player(self, mob):
+        """Расстояние от центра моба до ближайшей точки тела игрока (0 если внутри)."""
+        rect = self._mob_body_rect(mob)
+        nearest_x = min(max(self.player_x, rect.left), rect.right)
+        nearest_y = min(max(self.player_y, rect.top), rect.bottom)
+        return math.hypot(self.player_x - nearest_x, self.player_y - nearest_y)
+
+    def _mob_strike_player(self, mob):
+        """Удар скелета по игроку: уворот/блок/урон через resolve_melee_attack, цифра над персонажем на 5 с."""
+        result = resolve_world_melee_attack(mob["fighter"], self.combat_fighter, random,
+                                            defender_facing=self._player_facing_angle(),
+                                            attack_vector=(mob["x"] - self.player_x, mob["y"] - self.player_y))
+        top_y = self.player_y - 40
+        if result["outcome"] != "hit":
+            self._spawn_attack_label(result["outcome"], self.player_x, top_y)
+            return
+        self.combat_fighter.hp = max(0, self.combat_fighter.hp - result["damage"])
+        self._hp_dirty = True
+        self._save_player_hp()
+        self._spawn_hit_number(result["damage"], result["critical"], self.player_x, top_y)
+
+    def _save_player_hp(self):
+        """Сервер хранит HP и ману игрока; бой считается на клиенте, после изменения значения отправляются на сервер."""
+        self._hp_dirty = False
+        self._hp_save_timer = 0.0
+        if self.session is None or getattr(self.session, "character", None) is None:
+            return
+        try:
+            self.session.save_fighter(self.combat_fighter)
+        except ServerError as error:
+            self.action_notice = str(error)
+            self.action_notice_timer = 2.0
+
+    def _create_world_mobs(self):
+        """Мобы на карте мира: скелет 90х53 px, боевые статы 1-го уровня с дубиной (HP по мировым формулам). Спрайт из assets/mobs/skeleton.png."""
+        sprite_path = Path(__file__).resolve().parent.parent / "assets" / "mobs" / "skeleton.png"
+        sprite = None
+        if sprite_path.is_file():
+            try:
+                sprite = pygame.image.load(str(sprite_path)).convert_alpha()
+            except pygame.error as e:
+                print(f"Ошибка загрузки спрайта скелета: {e}")
+        home_x = MOB_PATROL_CENTER_TILE[0] * self.tile_size + self.tile_size // 2
+        home_y = MOB_PATROL_CENTER_TILE[1] * self.tile_size + self.tile_size // 2
+        fighter = self._build_mob_fighter()
+        return [{
+            "id": "mob_skeleton",
+            "entity_kind": "mob",
+            "name": "Скелет",
+            "icon": "💀",
+            "desc": "Нежить с карты мира.",
+            "x": home_x,
+            "y": home_y,
+            "home_x": home_x,
+            "home_y": home_y,
+            "patrol_target": None,
+            "patrol_pause": 0.0,
+            "state": "idle",
+            "attack_windup": 0.0,
+            "attack_windup_total": 0.0,
+            "attack_backswing": 0.0,
+            "attack_swing_angle": 0.0,
+            "facing": 0.0,
+            "radius": 30,
+            "hp": fighter.max_hp,
+            "max_hp": fighter.max_hp,
+            "coins": dict(MOB_COINS),
+            "fighter": fighter,
+            "sprite": sprite,
+        }]
 
     def _load_forester_sprite(self):
         """
@@ -448,11 +1034,19 @@ class WorldMapScene:
                 "x": self.player_x,
                 "y": self.player_y,
                 "radius": 22,
-                "desc": f"Ваш главный герой. Статус: {status_str}. Управляется кликом ПКМ.",
+                "desc": f"Ваш главный герой. Статус: {status_str}. Движение и бой: ПКМ.",
                 "icon": "👤",
             }
 
-        # 2. Проверяем объекты из self.objects (сверху вниз)
+        # 2. Мобы карты: попадание по спрайту 90х53 px
+        for mob in self.mobs:
+            msx, msy = self.world_to_screen(mob["x"], mob["y"])
+            mob_rect = pygame.Rect(0, 0, 90, 53)
+            mob_rect.center = (msx, msy)
+            if mob_rect.collidepoint(screen_pos):
+                return mob
+
+        # 3. Проверяем объекты из self.objects (сверху вниз)
         for obj in reversed(self.objects):
             if obj.get("tile_w", 1) > 1:
                 # Многоклеточный объект (например, лагерь 4х4)
@@ -574,9 +1168,9 @@ class WorldMapScene:
             return
 
         eid = self.active_entity.get("id")
-        if eid == "player":
-            self.profile_overlay.open(self.session.character, None)
-            self.action_notice = None
+        if self.active_entity.get("entity_kind") == "mob":
+            self.action_notice = f"{self.active_entity['name']}: HP {self.active_entity['hp']}/{self.active_entity['max_hp']}"
+            self.action_notice_timer = 2.0
             return
 
         # 1. Слишком далеко -> фраза и отказ во взаимодействии (персонаж не бежит сам)
@@ -623,6 +1217,20 @@ class WorldMapScene:
             "color": color,
         })
 
+    def _player_blocked(self, px, py):
+        """Коллизия для персонажа: препятствия карты и тело моба (спрайт непрозрачный, пройти сквозь него нельзя)."""
+        if self._check_collision(px, py):
+            return True
+        feet_rect = pygame.Rect(int(px - 10), int(py - 6), 20, 10)
+        for mob in self.mobs:
+            if mob["hp"] <= 0:
+                continue
+            body = pygame.Rect(0, 0, MOB_SPRITE_SIZE[0], MOB_SPRITE_SIZE[1])
+            body.center = (int(mob["x"]), int(mob["y"]))
+            if feet_rect.colliderect(body):
+                return True
+        return False
+
     def _check_collision(self, px, py):
         """
         Проверяет коллизию ног персонажа с границами карты и твердыми препятствиями (зданиями, сундуками).
@@ -653,14 +1261,11 @@ class WorldMapScene:
             self.road_travel_seconds = 0
             self.city_visual_state = {"city_level": 1, "active": False}
             return []
-        self.objects = hydrate_structures(terrain.get("objects", []))
+        self._apply_city_layout(terrain)
         self.city_visual_state = dict(terrain.get(
             "city_visual_state", {"city_level": 1, "active": False}
         ))
-        roads = terrain.get("roads", {})
-        self.road_tiles = {tuple(tile) for tile in roads.get("tiles", [])}
-        self.road_routes = roads.get("routes", [])
-        self.road_travel_seconds = roads.get("travel_seconds", 0)
+        self.layout_city_level = int(self.city_visual_state.get("city_level", 1))
         obstacles = []
         for obstacle in terrain.get("obstacles", []):
             points = [tuple(point) for point in obstacle["points"]]
@@ -680,6 +1285,60 @@ class WorldMapScene:
             })
         return obstacles
 
+    def _apply_city_layout(self, terrain):
+        """Строения и дороги зависят от уровня города, поэтому их можно перечитать при апгрейде."""
+        self.objects = hydrate_structures(terrain.get("objects", []))
+        roads = terrain.get("roads", {})
+        self.road_tiles = {tuple(tile) for tile in roads.get("tiles", [])}
+        self.road_routes = roads.get("routes", [])
+        self.road_travel_seconds = roads.get("travel_seconds", 0)
+
+    def _build_minimap(self, obstacles):
+        """Полная карта мира в уменьшении: фон сторон, рельеф, дороги и строения."""
+        width, height = self.MINIMAP_SIZE
+        scale_x = width / self.grid_w
+        scale_y = height / self.grid_h
+        surface = pygame.Surface((width, height))
+        surface.fill((28, 42, 32))
+        pygame.draw.rect(surface, (36, 32, 34), (0, height // 2, width, height - height // 2))
+
+        for obstacle in obstacles:
+            color = {
+                "forest": (16, 44, 22),
+                "lake": (28, 100, 132),
+            }.get(obstacle.get("type"), (74, 72, 62))
+            points = [(x / self.tile_size * scale_x, y / self.tile_size * scale_y) for x, y in obstacle["points"]]
+            if len(points) >= 3:
+                pygame.draw.polygon(surface, color, points)
+
+        for gx, gy in self.road_tiles:
+            surface.set_at((int(gx * scale_x), int(gy * scale_y)), (150, 120, 75))
+
+        for obj in self.objects:
+            x = obj.get("tile_x", 0) * scale_x
+            y = obj.get("tile_y", 0) * scale_y
+            w = max(2, obj.get("tile_w", 1) * scale_x)
+            h = max(2, obj.get("tile_h", 1) * scale_y)
+            color = (230, 190, 90) if obj.get("id") in ("town_radburg", "main_castle") else (200, 200, 210)
+            pygame.draw.rect(surface, color, (x, y, w, h))
+
+        pygame.draw.rect(surface, (220, 180, 70), surface.get_rect(), 2)
+        self.minimap_surface = surface
+
+    def _draw_minimap(self, screen):
+        if self.minimap_surface is None:
+            return
+        width, height = self.MINIMAP_SIZE
+        left = self.MINIMAP_MARGIN[0]
+        top = settings.HEIGHT - self.MINIMAP_MARGIN[1] - height
+        screen.blit(self.minimap_surface, (left, top))
+
+        scale_x = width / self.world_w
+        scale_y = height / self.world_h
+        marker = (left + self.player_x * scale_x, top + self.player_y * scale_y)
+        pygame.draw.circle(screen, (255, 255, 255), (int(marker[0]), int(marker[1])), 3)
+        pygame.draw.circle(screen, (220, 60, 60), (int(marker[0]), int(marker[1])), 2)
+
     def _refresh_city_visual_state(self):
         now = time.monotonic()
         if now < self.city_visual_refresh_at:
@@ -693,6 +1352,16 @@ class WorldMapScene:
             return False
         self.city_visual_state = dict(population.get("city_upgrade", {}))
         self.city_visual_state.setdefault("city_level", int(population.get("castle_level", 1)))
+        self.castle_upgrades_active = [dict(item) for item in population.get("castle_upgrades_active", [])]
+        new_level = int(self.city_visual_state.get("city_level", 1))
+        if new_level != self.layout_city_level:
+            try:
+                terrain = self.session.client.get_map_terrain()
+            except (ServerError, AttributeError, KeyError, OSError):
+                return True
+            self._apply_city_layout(terrain)
+            self.layout_city_level = new_level
+            self._build_minimap(self.obstacles)
         return True
 
     @staticmethod
@@ -811,14 +1480,11 @@ class WorldMapScene:
             if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
                 self.profile_overlay.close()
                 return
-            if self.profile_overlay.handle_event(event):
-                return
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 action, profile = self.profile_overlay.handle_click(event.pos)
                 if action == "stat_change":
                     self._save_profile_card(profile)
-                elif action == "deck_selected":
-                    self.session.selected_deck = profile
+
                 return
 
         if self.chat is not None and self.chat.handle_event(event):
@@ -833,6 +1499,9 @@ class WorldMapScene:
 
         if event.type == pygame.KEYDOWN:
             if event.key == pygame.K_ESCAPE:
+                if self.pinned_mob is not None:
+                    self.pinned_mob = None
+                    return
                 if self.active_entity is not None:
                     self.active_entity = None
                 return
@@ -840,89 +1509,154 @@ class WorldMapScene:
                 self.show_grid = not self.show_grid
                 return
             if event.key == pygame.K_SPACE:
-                # Центрировать камеру на персонаже
+                # Центрировать камеру на персонаже и снова следовать за ним
                 self.camera_x = self.player_x
                 self.camera_y = self.player_y
                 self.camera_follow_player = True
                 self._clamp_camera()
                 return
 
-        # Нажатие кнопок мыши
-        if event.type == pygame.MOUSEBUTTONDOWN:
-            # ЛКМ: клик по кнопкам HUD, выбор/активация объекта или перетаскивание карты
-            if event.button == 1:
-                # 1. Верхний HUD
-                if self.player_pos_button.collidepoint(event.pos):
-                    self.camera_x = self.player_x
-                    self.camera_y = self.player_y
-                    self.camera_follow_player = True
-                    self._clamp_camera()
-                    return
+        # Закреплённая карточка моба поверх карты: клики по ней не уходят в мир
+        if event.type == pygame.MOUSEBUTTONDOWN and self.pinned_mob is not None:
+            if self._mob_card_rect().collidepoint(event.pos):
+                if event.button == 1 and self._mob_card_close_rect().collidepoint(event.pos):
+                    self.pinned_mob = None
+                return
 
-                # 2. Клик внутри активного окна (если открыто)
-                if self.active_entity is not None and self.active_window_rect.collidepoint(event.pos):
-                    if self.active_close_button.collidepoint(event.pos):
-                        self.active_entity = None
-                        return
-                    if self.active_action_button.collidepoint(event.pos):
-                        self._trigger_active_action()
-                        return
-                    return  # Поглощаем клик по телу окна
-
-                # 3. Клик по интерактивному объекту или персонажу -> ДЕЛАЕМ АКТИВНЫМ (персонаж НЕ бежит)
-                clicked_entity = self._find_entity_at(event.pos)
-                if clicked_entity is not None:
-                    self.active_entity = clicked_entity
-                    self.action_notice = None
-                    self.dragging = False
-                    return
-
-                # 4. Клик по пустой земле -> подготовка к драгу
-                self.dragging = True
-                self.drag_start_mouse = event.pos
-                self.drag_start_camera = (self.camera_x, self.camera_y)
-                self.drag_moved = False
-                self.camera_follow_player = False
-
-            # ПКМ (как в Dota/RTS/Diablo): отправить персонажа в точку клика
-            elif event.button == 3:
-                clicked_entity = self._find_entity_at(event.pos)
-                if clicked_entity is not None and clicked_entity.get("id") != "player":
-                    # Клик ПКМ по объекту -> подойти к объекту и упереться перед ним
-                    target = self._get_entity_approach_target(clicked_entity)
-                    tx, ty = target
-                else:
-                    wx, wy = self.screen_to_world(event.pos[0], event.pos[1])
-                    tx = max(self.min_world_x + 16, min(self.max_world_x - 16, wx))
-                    ty = max(self.min_world_y + 16, min(self.max_world_y - 16, wy))
-
-                self.player_target = (tx, ty)
-                self.player_state = "walk"
-                dx = tx - self.player_x
-                dy = ty - self.player_y
-                if dx != 0 or dy != 0:
-                    self.player_direction = self._vector_to_direction(dx, dy)
-                self.player_facing_right = (dx >= 0)
-                self.camera_follow_player = True
-                self.click_effect = {"x": tx, "y": ty, "timer": 0.35}
-
-        elif event.type == pygame.MOUSEBUTTONUP:
-            if event.button == 1:
-                if self.dragging and not self.drag_moved:
-                    # Короткий клик на пустое место без движения мыши -> сбросить активность
+        # ЛКМ: нажатие на кнопки активного окна срабатывает сразу; остальное решается при отпускании
+        # (протяжка ЛКМ — перетаскивание карты, короткий клик — выбор, двойной — действие).
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            if self.active_entity is not None and self.active_window_rect.collidepoint(event.pos):
+                if self.active_close_button.collidepoint(event.pos):
                     self.active_entity = None
-                self.dragging = False
+                    return
+                if self.active_action_button.collidepoint(event.pos):
+                    self._trigger_active_action()
+                    return
+                return  # Поглощаем клик по телу окна
+            self._press_pos = event.pos
+            self._press_camera = (self.camera_x, self.camera_y)
+            self._dragging = False
+            return
 
-        elif event.type == pygame.MOUSEMOTION:
-            if self.dragging:
-                dx = event.pos[0] - self.drag_start_mouse[0]
-                dy = event.pos[1] - self.drag_start_mouse[1]
-                if abs(dx) > 4 or abs(dy) > 4:
-                    self.drag_moved = True
-                    self.camera_x = self.drag_start_camera[0] - (dx / self.zoom)
-                    self.camera_y = self.drag_start_camera[1] - (dy / self.zoom)
-                    self.camera_follow_player = False
-                    self._clamp_camera()
+        if event.type == pygame.MOUSEMOTION and self._press_pos is not None:
+            dx = event.pos[0] - self._press_pos[0]
+            dy = event.pos[1] - self._press_pos[1]
+            if not self._dragging and math.hypot(dx, dy) > DRAG_THRESHOLD:
+                self._dragging = True
+                self.camera_follow_player = False
+            if self._dragging:
+                # Карта едет за курсором: камера уходит в противоположную сторону
+                self.camera_x = self._press_camera[0] - dx / self.zoom
+                self.camera_y = self._press_camera[1] - dy / self.zoom
+                self._clamp_camera()
+            return
+
+        if event.type == pygame.MOUSEBUTTONUP and event.button == 1 and self._press_pos is not None:
+            was_dragging = self._dragging
+            self._press_pos = None
+            self._dragging = False
+            if not was_dragging:
+                self._handle_left_click(event.pos)
+            return
+
+        # ПКМ (как в Dota 2): по мобу — идти и бить, по земле — идти в точку
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 3:
+            if self.active_entity is not None and self.active_window_rect.collidepoint(event.pos):
+                return
+            if self._keyboard_movement_blocked():
+                return
+            wx, wy = self.screen_to_world(*event.pos)
+            mob = self._mob_at_world_point(wx, wy)
+            if mob is not None:
+                self._set_attack_target(mob)
+            else:
+                self._set_move_target((wx, wy))
+                self.click_effect = {"x": wx, "y": wy, "timer": CLICK_EFFECT_DURATION}
+
+    def _handle_left_click(self, pos):
+        """Короткий клик выбирает объект; второй клик в пределах DOUBLE_CLICK_MS — двойной."""
+        now = pygame.time.get_ticks()
+        is_double = (
+            self._last_click_time is not None
+            and self._last_click_pos is not None
+            and now - self._last_click_time < DOUBLE_CLICK_MS
+            and math.hypot(pos[0] - self._last_click_pos[0], pos[1] - self._last_click_pos[1]) <= DRAG_THRESHOLD
+        )
+        # Тройной клик не должен считаться вторым двойным: после двойного трекер сбрасывается
+        self._last_click_time = None if is_double else now
+        self._last_click_pos = None if is_double else pos
+
+        entity = self._find_entity_at(pos)
+        if is_double:
+            self._handle_double_click(entity)
+            return
+        if entity is not None and entity.get("id") == "player":
+            # Одиночный клик по персонажу ничего не открывает: информация — по двойному клику
+            self.active_entity = None
+            self.action_notice = None
+            return
+        self.active_entity = entity
+        self.action_notice = None
+
+    def _handle_double_click(self, entity):
+        if entity is None:
+            return
+        if entity.get("id") == "player":
+            # Двойной клик по персонажу открывает его профиль слева
+            self.active_entity = None
+            self.profile_overlay.open(self.session.character, None)
+            return
+        if entity.get("entity_kind") == "mob":
+            # Двойной клик по мобу закрепляет его карточку справа
+            self.active_entity = None
+            self.pinned_mob = entity
+            return
+        self.active_entity = entity
+        self._trigger_active_action()
+        if self.building_window is not None:
+            # Окно здания заменяет всплывающее окно объекта
+            self.active_entity = None
+
+    def _mob_at_world_point(self, wx, wy):
+        for mob in self.mobs:
+            if mob["hp"] > 0 and self._mob_body_rect(mob).collidepoint(wx, wy):
+                return mob
+        return None
+
+    def _follow_move_path(self, dt):
+        """Идёт по пути из тайлов. Путь сбрасывается при остановке или на последней точке."""
+        if not self.move_path:
+            return False
+        step = get_move_speed(self.combat_fighter, character_movement_speed_multiplier(
+            getattr(self.session, "character", None)
+        )) * dt
+        self.player_x, self.player_y, moved = follow_path(
+            self.player_x, self.player_y, self.move_path, step, self._check_collision
+        )
+        if moved:
+            self.move_stall = 0.0
+            self.player_state = "walk"
+            if self.move_path:
+                dx = self.move_path[0][0] - self.player_x
+                dy = self.move_path[0][1] - self.player_y
+                if dx or dy:
+                    self.player_direction = self._vector_to_direction(dx, dy)
+                    self.player_facing_right = dx >= 0
+        else:
+            self.move_stall += dt
+            if self.move_stall >= PLAYER_STALL_TIMEOUT:
+                self.move_path = []
+                self.move_stall = 0.0
+        if not self.move_path:
+            self.player_state = "idle"
+        return moved
+
+    def _keyboard_movement_blocked(self):
+        """Перемещение ПКМ не работает, пока открыт ввод в чат или окно/оверлей."""
+        if self.building_window is not None and self.building_window.is_open:
+            return True
+        return self.chat is not None and self.chat.message_input.focused and not self.chat.collapsed
 
     def _save_profile_card(self, profile):
         try:
@@ -934,58 +1668,72 @@ class WorldMapScene:
         if saved_profile is not None:
             self.profile_overlay.update_profile(saved_profile)
 
+    def _edge_scroll(self, dt):
+        """Двигает камеру, когда курсор у края экрана (только если окно не перекрывает край)."""
+        if not pygame.mouse.get_focused():
+            return
+        mx, my = pygame.mouse.get_pos()
+        if my <= 75 or (self.chat is not None and self.chat.panel_rect.collidepoint(mx, my)):
+            return
+        if self.active_entity is not None and self.active_window_rect.collidepoint(mx, my):
+            return
+        if self.building_window is not None:
+            return
+        step = EDGE_SCROLL_SPEED / self.zoom * dt
+        dx = 0.0
+        dy = 0.0
+        if mx <= EDGE_SCROLL_MARGIN:
+            dx -= step
+        elif mx >= settings.WIDTH - EDGE_SCROLL_MARGIN:
+            dx += step
+        if my <= EDGE_SCROLL_MARGIN:
+            dy -= step
+        elif my >= settings.HEIGHT - EDGE_SCROLL_MARGIN:
+            dy += step
+        if dx or dy:
+            self.camera_x += dx
+            self.camera_y += dy
+
     def update(self, dt):
         self._refresh_city_visual_state()
         if self.chat is not None:
             self.chat.update(dt)
-        # 1. Движение персонажа к целевой точке (Dota-стиль) с проверкой коллизий
-        if self.player_target is not None:
-            tx, ty = self.player_target
-            dx = tx - self.player_x
-            dy = ty - self.player_y
-            dist = math.hypot(dx, dy)
-            step = self.player_speed * character_movement_speed_multiplier(
-                getattr(self.session, "character", None)
-            ) * dt
+        if self.pinned_mob is not None and (self.pinned_mob["hp"] <= 0
+                                            or not any(m is self.pinned_mob for m in self.mobs)):
+            self.pinned_mob = None
+        # Откат тратит свою часть кадра только на таймер удара; движение по пути идёт полным кадром
+        attack_dt = dt
+        if self.attack_backswing > 0:
+            spent = min(self.attack_backswing, dt)
+            self.attack_backswing -= spent
+            attack_dt = dt - spent
+        if self.click_effect is not None:
+            self.click_effect["timer"] -= dt
+            if self.click_effect["timer"] <= 0:
+                self.click_effect = None
+        self._regenerate_player_resources(dt)
+        self._flush_player_hp(dt)
+        # 1. Движение персонажа: путь по ПКМ (Dota 2) или преследование моба для удара
+        if self.attack_target is not None:
+            self._update_attack_target(attack_dt)
+        else:
+            # Без цели замах не идёт: сбрасываем, чтобы дуга не висела без удара
+            self.attack_windup = 0.0
+        # Во время замаха персонаж стоит на месте (анимация замаха и удар); в откате уже может идти
+        if self.attack_windup > 0:
+            self.player_state = "idle"
+        elif self.move_path:
+            self._follow_move_path(dt)
+        if self.attack_target is None and not self.move_path:
+            self.player_state = "idle"
 
-            if dist <= step or dist < 2.0:
-                if not self._check_collision(tx, ty):
-                    self.player_x = tx
-                    self.player_y = ty
-                self.player_target = None
-                self.player_state = "idle"
-            else:
-                vx = (dx / dist) * step
-                vy = (dy / dist) * step
-
-                moved_x = False
-                moved_y = False
-
-                if vx != 0:
-                    new_x = self.player_x + vx
-                    if not self._check_collision(new_x, self.player_y):
-                        self.player_x = new_x
-                        moved_x = True
-
-                if vy != 0:
-                    new_y = self.player_y + vy
-                    if not self._check_collision(self.player_x, new_y):
-                        self.player_y = new_y
-                        moved_y = True
-
-                if not moved_x and not moved_y:
-                    # Персонаж уперся в объект и остановился перед ним
-                    self.player_target = None
-                    self.player_state = "idle"
-                else:
-                    self.player_state = "walk"
-                    self.player_direction = self._vector_to_direction(dx, dy)
-                    self.player_facing_right = (dx >= 0)
-
-            # Плавное следование камеры за персонажем (если включено)
-            if self.camera_follow_player:
-                self.camera_x += (self.player_x - self.camera_x) * min(1.0, 8.0 * dt)
-                self.camera_y += (self.player_y - self.camera_y) * min(1.0, 8.0 * dt)
+        # Камера следует за персонажем, пока игрок не начал её двигать сам (SPACE возвращает слежение)
+        if self.camera_follow_player:
+            self.camera_x = self.player_x
+            self.camera_y = self.player_y
+        else:
+            self._edge_scroll(dt)
+        self._clamp_camera()
 
         # Проверка наступления персонажа на ворота города Радбург на глобальной карте
         pgx = int(self.player_x // self.tile_size)
@@ -1002,18 +1750,14 @@ class WorldMapScene:
         # 2. Анимационный таймер персонажа
         self.player_anim_timer += dt
 
-        # 3. Эффект клика ПКМ (расходящийся круг)
-        if self.click_effect is not None:
-            self.click_effect["timer"] -= dt
-            if self.click_effect["timer"] <= 0:
-                self.click_effect = None
-
-        # 4. Обновление плавающих сообщений
+        # 3. Обновление плавающих сообщений
         for msg in self.floating_messages[:]:
             msg["timer"] -= dt
             msg["world_y"] -= 20.0 * dt
             if msg["timer"] <= 0:
                 self.floating_messages.remove(msg)
+        self._update_damage_numbers(dt)
+        self._update_mobs(dt)
 
         # 5. Определение сущности под курсором мыши (hover)
         m_pos = pygame.mouse.get_pos()
@@ -1029,32 +1773,6 @@ class WorldMapScene:
             self.action_notice_timer -= dt
             if self.action_notice_timer <= 0:
                 self.action_notice = None
-
-        # 7. Скролл карты стрелками / WASD
-        keys = pygame.key.get_pressed()
-        speed = 850.0 * dt
-        if keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT]:
-            speed *= 2.2
-
-        moved = False
-        if keys[pygame.K_a] or keys[pygame.K_LEFT]:
-            self.camera_x -= speed
-            moved = True
-        if keys[pygame.K_d] or keys[pygame.K_RIGHT]:
-            self.camera_x += speed
-            moved = True
-        if keys[pygame.K_w] or keys[pygame.K_UP]:
-            self.camera_y -= speed
-            moved = True
-        if keys[pygame.K_s] or keys[pygame.K_DOWN]:
-            self.camera_y += speed
-            moved = True
-
-        if moved:
-            self.camera_follow_player = False
-            self._clamp_camera()
-        elif self.camera_follow_player:
-            self._clamp_camera()
 
     # ------------------------------------------------------------------
     # Отрисовка
@@ -1118,10 +1836,14 @@ class WorldMapScene:
         # 2. Рельеф с сервера и интерактивные объекты карты
         self._draw_terrain(screen)
         self._draw_objects(screen)
-
-        # 3. Игровой персонаж и эффекты клика (Dota-стиль)
+        self._draw_attack_tile(screen)
         self._draw_click_effect(screen)
+        self._draw_mobs(screen)
+        self._draw_damage_numbers(screen)
+
+        # 3. Игровой персонаж
         self._draw_player_character(screen)
+        self._draw_attack_swing(screen)
         draw_active_players(self, screen, "world_map")
         draw_traveling_entities(self, screen, "world_map")
         draw_afk_players(self, screen, "world_map")
@@ -1129,25 +1851,79 @@ class WorldMapScene:
         # 4. Всплывающие сообщения в мире ("Слишком далеко" и т.д.)
         self._draw_floating_messages(screen)
 
-        # 5. Всплывающее окно активного объекта (ЛКМ)
+        # 5. Миникарта и HUD рисуются до всех карточек и окон, чтобы карточки перекрывали их
+        self._draw_minimap(screen)
+        self._draw_hud(screen)
+
+        # 6. Координаты рисуются до всплывающих окон, чтобы карточки всегда были поверх них
+        self._draw_coords_box(screen, hover_wx, hover_wy)
+
+        # 7. Всплывающее окно активного объекта (ЛКМ)
         self._draw_active_window(screen)
 
-        # 6. Всплывающее окно при наведении курсора (hover tooltip)
+        # 8. Всплывающее окно при наведении курсора (hover tooltip)
         self._draw_hover_popup(screen, mouse_pos)
 
-        # 7. Верхний HUD и подсказки
-        self._draw_hud(screen, hover_wx, hover_wy)
-
-        # 8. Окно производственного здания
+        # 9. Окно производственного здания
         if self.building_window is not None:
             self.building_window.draw(screen)
         if self.chat is not None:
             self.chat.draw(screen)
-        if (self.hovered_mobile_entity is not None
+        if self.pinned_mob is not None:
+            self._draw_mob_hover_card(screen, self.pinned_mob, closable=True)
+        if self.profile_overlay.is_open:
+            self.profile_overlay.update_profile(self._own_player_card_profile())
+            self.profile_overlay.draw(screen, show_player_only=True)
+        elif (self.hovered_mobile_entity is not None
                 and self.hovered_mobile_entity.get("entity_kind") == "player"):
             draw_mobile_hover_card(self, screen, self.hovered_mobile_entity)
-        else:
-            self.profile_overlay.draw(screen, opponent=self.session.character, show_player_only=True)
+
+    def _draw_mob_windup(self, screen, mob, sx, sy):
+        """Телеграф замаха моба: тусклая дуга зоны удара в сторону игрока, яркая часть заполняется по мере замаха."""
+        if mob["attack_windup"] <= 0:
+            return
+        total = mob["attack_windup_total"] or mob["attack_windup"]
+        progress = 1.0 - mob["attack_windup"] / total
+        radius = MOB_SPRITE_SIZE[0] // 2 + get_attack_reach(mob["fighter"])
+        a0 = mob["attack_swing_angle"] - PLAYER_ATTACK_SWING_HALF_ANGLE
+        a1 = mob["attack_swing_angle"] + PLAYER_ATTACK_SWING_HALF_ANGLE
+
+        def arc_points(end_angle):
+            return [
+                (sx + math.cos(a) * radius, sy + math.sin(a) * radius)
+                for a in (a0 + (end_angle - a0) * i / 8 for i in range(9))
+            ]
+
+        pygame.draw.lines(screen, (90, 40, 40), False, arc_points(a1), 2)
+        if progress > 0:
+            pygame.draw.lines(screen, (255, 110, 80), False, arc_points(a0 + (a1 - a0) * progress), 4)
+
+    def _draw_mobs(self, screen):
+        """Рисует мобов карты 90х53 px по центру их точки, с полоской HP над спрайтом."""
+        for mob in self.mobs:
+            sprite = mob.get("sprite")
+            if sprite is None or mob["hp"] <= 0:
+                continue
+            sx, sy = self.world_to_screen(mob["x"], mob["y"])
+            rect = sprite.get_rect(center=(sx, sy))
+            if not rect.colliderect(pygame.Rect(0, 0, settings.WIDTH, settings.HEIGHT)):
+                continue
+            screen.blit(sprite, rect)
+            self._draw_mob_windup(screen, mob, sx, sy)
+
+            is_active = self.active_entity is not None and self.active_entity.get("id") == mob["id"]
+            is_hovered = self.hovered_entity is not None and self.hovered_entity.get("id") == mob["id"]
+            if is_active:
+                pygame.draw.rect(screen, (255, 215, 60), rect.inflate(8, 8), 2, border_radius=6)
+            elif is_hovered:
+                pygame.draw.rect(screen, (80, 200, 255), rect.inflate(8, 8), 2, border_radius=6)
+
+            hp_ratio = max(0.0, min(1.0, mob["hp"] / mob["max_hp"]))
+            bar = pygame.Rect(0, 0, 100, 5)
+            bar.midbottom = (rect.centerx, rect.top - 3)
+            pygame.draw.rect(screen, (40, 10, 10), bar)
+            pygame.draw.rect(screen, (200, 40, 40), (bar.left, bar.top, int(bar.width * hp_ratio), bar.height))
+            self._draw_overhead_label(screen, f"ХП {int(mob['hp'])}/{int(mob['max_hp'])}", (255, 110, 110), (bar.centerx, bar.top - 1))
 
     def _draw_badge(self, screen, cx, bottom_y, text, border_color):
         """Вспомогательный метод для аккуратной плашки с текстом над объектом."""
@@ -1589,6 +2365,100 @@ class WorldMapScene:
             popup.blit(text_surf, (8, 4))
             screen.blit(popup, bg_rect.topleft)
 
+    def _mob_card_rect(self):
+        return pygame.Rect(settings.ENEMY_CARD_RECT)
+
+    def _mob_card_close_rect(self):
+        frame = self._mob_card_rect()
+        return pygame.Rect(frame.right - 34, frame.y + 10, 24, 24)
+
+    def _draw_mob_hover_card(self, screen, mob=None, closable=False):
+        """Карточка моба справа, в стиле карточки игрока (красная рамка).
+
+        closable=True — закреплённая карточка с крестиком в правом верхнем углу.
+        """
+        if mob is None:
+            mob = self.hovered_entity
+        frame = self._mob_card_rect()
+        pygame.draw.rect(screen, (28, 22, 26), frame, border_radius=10)
+        pygame.draw.rect(screen, (200, 70, 70), frame, width=3, border_radius=10)
+
+        fighter = mob.get("fighter")
+        if fighter is not None:
+            fighter.hp = max(0, int(mob.get("hp", 0)))
+            fighter.max_hp = max(1, int(mob.get("max_hp", fighter.max_hp)))
+            profile = profile_from_fighter(fighter)
+            profile["max_mp"] = 0
+            profile["mp"] = 0
+            coins = mob.get("coins") or {}
+            profile["copper"] = int(coins.get("copper", 0))
+            profile["silver"] = int(coins.get("silver", 0))
+            profile["gold"] = int(coins.get("gold", 0))
+            self._mob_card().draw(
+                screen,
+                frame,
+                profile,
+                border_color=(200, 70, 70),
+                title="ВРАГ РЯДОМ",
+                editable=False,
+                mob_mode=True,
+                sprite=self._mob_card_sprite(),
+            )
+
+        if closable:
+            close = self._mob_card_close_rect()
+            pygame.draw.rect(screen, (60, 36, 40), close, border_radius=4)
+            pygame.draw.rect(screen, (200, 70, 70), close, width=1, border_radius=4)
+            pygame.draw.line(screen, (240, 200, 200), (close.x + 7, close.y + 7), (close.right - 7, close.bottom - 7), 2)
+            pygame.draw.line(screen, (240, 200, 200), (close.right - 7, close.y + 7), (close.x + 7, close.bottom - 7), 2)
+
+    def _own_player_card_profile(self):
+        """Профиль своего персонажа с живыми HP/MP боевого бойца (урон и регенерация), а не из сохранения."""
+        profile = dict(self.session.character)
+        fighter = self.combat_fighter
+        profile.update(
+            hp=int(fighter.hp),
+            max_hp=int(fighter.max_hp),
+            mp=int(fighter.mp),
+            max_mp=int(fighter.max_mp),
+            max_hp_includes_equipment=True,
+        )
+        return profile
+
+    def _draw_own_player_hover_card(self, screen):
+        """Карточка своего персонажа слева при наведении — на месте левого профиля (двойной клик)."""
+        character = self._own_player_card_profile()
+        card = CharacterCard.get_or_create(character.get("character_id", character.get("id")))
+        card.draw(
+            screen,
+            pygame.Rect(settings.PLAYER_CARD_RECT),
+            profile=character,
+            border_color=(95, 174, 225),
+            title="ВЫ",
+            editable=False,
+        )
+
+    def _mob_card(self):
+        """Одна карточка моба на сцену: не регистрируется в общем реестре карточек игроков."""
+        if getattr(self, "_mob_card_instance", None) is None:
+            self._mob_card_instance = CharacterCard()
+        return self._mob_card_instance
+
+    def _mob_card_sprite(self):
+        """Спрайт скелета для карточки, масштабированный до размера спрайта игрока."""
+        if getattr(self, "_mob_card_sprite_instance", None) is None:
+            sprite_path = Path(__file__).resolve().parent.parent / "assets" / "mobs" / "skeleton.png"
+            sprite = FighterSprite(path=sprite_path)
+            if sprite.image is not None:
+                target_height = int(sprite.image.get_height() * settings.FIGHTER_SPRITE_SCALE)
+                scale = target_height / sprite.image.get_height()
+                sprite.image = pygame.transform.smoothscale(
+                    sprite.image,
+                    (int(sprite.image.get_width() * scale), target_height),
+                )
+            self._mob_card_sprite_instance = sprite
+        return self._mob_card_sprite_instance
+
     def _draw_hover_popup(self, screen, mouse_pos):
         """Отрисовывает всплывающее окно (tooltip) при наведении курсора на объект."""
         if self.hovered_mobile_entity is not None:
@@ -1596,6 +2466,15 @@ class WorldMapScene:
                 draw_mobile_hover_card(self, screen, self.hovered_mobile_entity)
             return
         if self.hovered_entity is None:
+            return
+        if self.hovered_entity.get("entity_kind") == "mob":
+            if self.pinned_mob is None:
+                self._draw_mob_hover_card(screen)
+            return
+        if self.profile_overlay.is_open or self.pinned_mob is not None:
+            return
+        if self.hovered_entity.get("id") == "player":
+            self._draw_own_player_hover_card(screen)
             return
 
         if self.active_entity and self.active_entity.get("id") == self.hovered_entity.get("id"):
@@ -1680,7 +2559,12 @@ class WorldMapScene:
         title_surf = self.font.render(title, True, (255, 225, 120))
         screen.blit(title_surf, (title_x, rect.top + 12))
 
-        status_surf = self.badge_font.render("● АКТИВЕН", True, (80, 255, 120))
+        status_text = "● АКТИВЕН"
+        status_color = (80, 255, 120)
+        if ent.get("entity_kind") == "mob":
+            status_text = f"HP {ent['hp']} / {ent['max_hp']}"
+            status_color = (255, 110, 110)
+        status_surf = self.badge_font.render(status_text, True, status_color)
         screen.blit(status_surf, (rect.left + 14, rect.top + 40))
 
         m_pos = pygame.mouse.get_pos()
@@ -1730,9 +2614,7 @@ class WorldMapScene:
             pygame.draw.rect(screen, (200, 80, 70), self.active_action_button, width=1, border_radius=4)
             screen.blit(not_surf, not_rect)
         else:
-            if ent.get("id") == "player":
-                action_label = "ИНФОРМАЦИЯ"
-            elif ent.get("id") == "lumber_camp":
+            if ent.get("id") == "lumber_camp":
                 action_label = "ОТКРЫТЬ ЛАГЕРЬ"
             elif ent.get("id") == "black_pit":
                 action_label = "ОТКРЫТЬ КОПЬ"
@@ -1765,7 +2647,7 @@ class WorldMapScene:
             return
 
         cx, cy = self.world_to_screen(self.click_effect["x"], self.click_effect["y"])
-        progress = 1.0 - (self.click_effect["timer"] / 0.35)
+        progress = 1.0 - (self.click_effect["timer"] / CLICK_EFFECT_DURATION)
         radius = int(8 + progress * 16)
         alpha_val = max(0, int(255 * (1.0 - progress)))
 
@@ -1839,33 +2721,65 @@ class WorldMapScene:
             pygame.draw.line(screen, (40, 160, 70), (sx - 2 * facing, cy - 17), (sx - 6 * facing, cy - 22), 2)
             name_y = cy - 23
 
-        # Маркер имени игрока над головой
+        # Над головой: полоска МП у спрайта с подписью, над ней ХП с подписью, сверху ник
+        fighter = self.combat_fighter
+        bar_w, bar_h, gap = 100, self.OVERHEAD_BAR_HEIGHT, 2
+        mp_rect = pygame.Rect(0, 0, bar_w, bar_h)
+        mp_rect.midbottom = (sx, name_y)
+        mp_label = self._draw_overhead_label(screen, f"МП {int(fighter.mp)}/{int(fighter.max_mp)}", (120, 170, 255), (sx, mp_rect.top - 1))
+        hp_rect = pygame.Rect(0, 0, bar_w, bar_h)
+        hp_rect.midbottom = (sx, mp_label.top - gap)
+        hp_label = self._draw_overhead_label(screen, f"ХП {int(fighter.hp)}/{int(fighter.max_hp)}", (255, 110, 110), (sx, hp_rect.top - 1))
+        self._draw_overhead_bar(screen, hp_rect, fighter.hp / max(1, fighter.max_hp), (190, 55, 55))
+        self._draw_overhead_bar(screen, mp_rect, fighter.mp / max(1, fighter.max_mp), (60, 120, 220))
+
         char_name = getattr(self.session, "character", {}).get("name", "Герой") if hasattr(self.session, "character") else "Герой"
         name_surf = self.grid_font.render(char_name, True, (255, 235, 150))
-        n_rect = name_surf.get_rect(midbottom=(sx, name_y))
+        n_rect = name_surf.get_rect(midbottom=(sx, hp_label.top - gap))
         bg = n_rect.inflate(8, 2)
         pygame.draw.rect(screen, (15, 18, 24, 210), bg, border_radius=3)
         pygame.draw.rect(screen, (180, 150, 60), bg, 1, border_radius=3)
         screen.blit(name_surf, n_rect)
 
-    def _draw_hud(self, screen, hover_wx, hover_wy):
-        """Верхняя панель управления и подсказок."""
-        hud_bg = pygame.Rect(0, 0, settings.WIDTH, 75)
-        pygame.draw.rect(screen, (15, 18, 22), hud_bg)
-        pygame.draw.line(screen, (60, 70, 85), (0, 75), (settings.WIDTH, 75), 2)
+    def _draw_overhead_bar(self, screen, rect, ratio, color):
+        """Тонкая полоска ХП/МП над персонажем или мобом (без цифр внутри)."""
+        ratio = max(0.0, min(1.0, ratio))
+        pygame.draw.rect(screen, (40, 10, 10), rect)
+        pygame.draw.rect(screen, color, (rect.x, rect.y, int(rect.width * ratio), rect.height))
 
-        draw_button(screen, self.player_pos_button, "К ГЕРОЮ", self.font, color=(60, 120, 180))
+    def _draw_overhead_label(self, screen, text, color, midbottom):
+        """Подпись «ХП x/y» или «МП x/y» над полоской, с тенью для читаемости. Возвращает прямоугольник подписи."""
+        shadow = self.grid_font.render(text, True, (0, 0, 0))
+        surf = self.grid_font.render(text, True, color)
+        rect = surf.get_rect(midbottom=midbottom)
+        screen.blit(shadow, rect.move(1, 1))
+        screen.blit(surf, rect)
+        return rect
 
+    def _draw_coords_box(self, screen, hover_wx, hover_wy):
+        """Координаты героя и курсора в правом нижнем углу (рисуется под всплывающими окнами)."""
         hover_gx = int(hover_wx // self.tile_size)
         hover_gy = int(hover_wy // self.tile_size)
 
         info_str = f"Карта: 512x256 (32px) | Персонаж: X={int(self.player_x)}, Y={int(self.player_y)} | Тайл: [{hover_gx}, {hover_gy}]"
         info_surf = self.font.render(info_str, True, (240, 240, 240))
-        screen.blit(info_surf, (640, 27))
+        box = info_surf.get_rect(bottomright=(settings.WIDTH - 20, settings.HEIGHT - 20)).inflate(32, 18)
+        box_surf = pygame.Surface(box.size, pygame.SRCALPHA)
+        pygame.draw.rect(box_surf, (15, 18, 24, 235), box_surf.get_rect(), border_radius=6)
+        pygame.draw.rect(box_surf, (220, 180, 70), box_surf.get_rect(), 1, border_radius=6)
+        screen.blit(box_surf, box.topleft)
+        screen.blit(info_surf, info_surf.get_rect(center=box.center))
 
-        hint_str = "ЛКМ - активировать объект | Наведение - всплывающее окно | ПКМ - бежать | Drag ЛКМ - скролл | G - Сетка"
+    def _draw_hud(self, screen):
+        """Строка подсказок внизу и строка улучшений города."""
+        hint_str = "ЛКМ - активировать объект | 2×ЛКМ - инфо о персонаже / моб | ПКМ - идти / атаковать моба | Наведение - всплывающее окно | G - Сетка"
         hint_surf = self.small_font.render(hint_str, True, (160, 170, 180))
         screen.blit(hint_surf, (20, settings.HEIGHT - 25))
+
+        draw_city_upgrade_line(
+            screen, upgrade_line_font(), self.city_visual_state,
+            getattr(self, "castle_upgrades_active", None),
+        )
 
     def close(self):
         pass

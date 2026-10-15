@@ -1,0 +1,87 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Stage requested character files",
+			"type": "shell",
+			"command": "git",
+			"args": [
+				"-C",
+				"E:\\python\\game",
+				"add",
+				"--",
+				"ui/character_card.py",
+				"ui/character_profile.py",
+				"tests/test_character_stats.py"
+			],
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Inspect local repository status",
+			"type": "shell",
+			"command": "git",
+			"args": [
+				"-C",
+				"E:\\python\\game",
+				"status",
+				"--short"
+			],
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Check staged diff whitespace",
+			"type": "shell",
+			"command": "git",
+			"args": [
+				"-C",
+				"E:\\python\\game",
+				"diff",
+				"--cached",
+				"--check"
+			],
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Show staged filenames",
+			"type": "shell",
+			"command": "git",
+			"args": [
+				"-C",
+				"E:\\python\\game",
+				"diff",
+				"--cached",
+				"--name-only"
+			],
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Final local repository status",
+			"type": "shell",
+			"command": "git",
+			"args": [
+				"-C",
+				"E:\\python\\game",
+				"status",
+				"--short"
+			],
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Push current branch to upstream",
+			"type": "shell",
+			"command": "git",
+			"args": [
+				"-C",
+				"E:\\python\\game",
+				"push"
+			],
+			"isBackground": false,
+			"problemMatcher": []
+		}
+	]
+}

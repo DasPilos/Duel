@@ -33,26 +33,6 @@ def _tier_multiplier(level_difference):
     return 0.0
 
 
-def battle_xp(player_level, opponent_level, outcome):
-    """Return XP for a win, draw, or loss against an opponent."""
-    base_xp = {"win": WIN_XP_BASE, "draw": DRAW_XP_BASE, "loss": LOSS_XP_BASE}.get(outcome)
-    if base_xp is None:
-        raise ValueError("Unknown battle outcome")
-    if int(player_level) >= LEVEL_CAP:
-        return 0
-    return int(round(base_xp * _tier_multiplier(int(opponent_level) - int(player_level))))
-
-
-def battle_currency_reward(player_level, opponent_level=None):
-    """Copper reward for a backyard win, adjusted by level difference."""
-    player_level = int(player_level)
-    opponent_level = player_level if opponent_level is None else int(opponent_level)
-    difference = player_level - opponent_level
-    multiplier = 1 + (0.5 * difference if difference >= 0 else 0.7 * difference)
-    copper = max(0, int(round(40 * multiplier)))
-    return copper, 0
-
-
 def apply_xp(fighter, amount, restore_hp=False):
     """Apply XP and level-ups, optionally restoring HP outside combat."""
     if fighter.level >= LEVEL_CAP:

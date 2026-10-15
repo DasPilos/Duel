@@ -13,8 +13,7 @@ from pathlib import Path
 import pygame
 
 from client.network import ServerError
-from combat.card_database import is_mage_profession
-from combat.mechanics import weapon_damage_range
+from combat.weapon_damage import weapon_damage_range
 from core import settings
 from core.currency import Currency
 from ui.equipment_slots import SLOT_LABELS, slot_at, slot_rects
@@ -44,7 +43,6 @@ STAT_LABELS = {
     "endurance": "Выносливость",
     "wisdom": "Мудрость",
     "intellect": "Интеллект",
-    "harmony": "Гармония",
     "hp": "HP",
     "mp": "MP",
     "dodge": "% Уворот",
@@ -362,9 +360,7 @@ class InventoryWindow:
         """Карточка персонажа любого класса — у всех одна и та же кукла со слотами"""
         # Отложенный импорт: карточки сами импортируют IconCache из этого модуля
         from ui.character_card import CharacterCard
-        from ui.mage_card import MageCard
-        card_type = MageCard if is_mage_profession(character.get("type")) else CharacterCard
-        return card_type.get_or_create(character.get("id"))
+        return CharacterCard.get_or_create(character.get("id"))
 
     def _highlight_slot(self):
         """Слот карточки, в который можно бросить перетаскиваемый предмет"""

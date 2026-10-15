@@ -12,9 +12,7 @@ class CreateCharacterScene:
         "warrior": {"emoji": "⚔️", "name": "БОЕЦ"},
         "archer": {"emoji": "🏹", "name": "ЛУЧНИК"},
         "assassin": {"emoji": "🗡️", "name": "АСАСИН"},
-        "battle_mage": {"emoji": "🔥", "name": "БОЙ. МАГ"},
-        "support_mage": {"emoji": "💚", "name": "МАГ ПОДД."},
-        "harmonist": {"emoji": "🎶", "name": "ГАРМОНИСТ"},
+        "mage": {"emoji": "🔮", "name": "МАГ"},
     }
 
     def __init__(self, session):
@@ -32,7 +30,7 @@ class CreateCharacterScene:
         self.name = ""
         self.name_rect = pygame.Rect(640, 80, 600, 46)
 
-        # Profession selection - 6 classes in 2 rows of 3
+        # Profession selection - 4 classes in one row
         self.profession = "warrior"  # Default profession
         self.profession_buttons = {}
         button_width = 280
@@ -40,14 +38,11 @@ class CreateCharacterScene:
         start_x = 180
         start_y = 170
         spacing_x = 320
-        spacing_y = 160
 
-        professions = ["warrior", "archer", "assassin", "battle_mage", "support_mage", "harmonist"]
+        professions = ["warrior", "archer", "assassin", "mage"]
         for i, prof in enumerate(professions):
-            row = i // 3
-            col = i % 3
-            x = start_x + col * spacing_x
-            y = start_y + row * spacing_y
+            x = start_x + i * spacing_x
+            y = start_y
             self.profession_buttons[prof] = pygame.Rect(x, y, button_width, button_height)
 
         # Action buttons
@@ -68,7 +63,7 @@ class CreateCharacterScene:
             if len(self.name) < 15:
                 self.name += event.text
         elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-            # Select profession - check all 6 class buttons
+            # Select profession - check all 3 class buttons
             for profession, rect in self.profession_buttons.items():
                 if rect.collidepoint(event.pos):
                     self.profession = profession

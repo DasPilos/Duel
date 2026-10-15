@@ -45,7 +45,7 @@ class ChannelList:
     def __init__(self, rect, font):
         self.rect = rect
         self.font = font
-        self.channels = ("Общий", "Личные", "Лог боя")
+        self.channels = ("Общий", "Личные")
 
     def draw(self, screen, selected, unread):
         for index, channel in enumerate(self.channels):

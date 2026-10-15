@@ -32,6 +32,16 @@ class WorldEventWatcherTests(unittest.TestCase):
         self.assertEqual(self.watcher.poll(now=140), 1)
         self.assertEqual(self.published[-1][0], "food:recovered")
 
+    def test_wheat_reserve_zone_transitions_announce_shortage_and_hunger(self):
+        self.snapshot["food_status"] = "в городе достаточно еды для роста"
+        self.watcher.poll(now=100)
+        self.snapshot["food_status"] = "в городе нестабильные поставки еды"
+        self.assertEqual(self.watcher.poll(now=120), 1)
+        self.assertEqual(self.published[-1][0], "food:shortage")
+        self.snapshot["food_status"] = "в городе нечего есть, может начаться голод"
+        self.assertEqual(self.watcher.poll(now=140), 1)
+        self.assertEqual(self.published[-1][0], "food:hunger")
+
     def test_full_storage_only_announces_transition_and_refill_after_cooldown(self):
         self.watcher.poll(now=100)
         self.snapshot["storages"] = {

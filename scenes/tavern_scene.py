@@ -1,6 +1,7 @@
 import pygame
 from pathlib import Path
 
+from client.network import ServerError
 from core import settings
 from ui.chat import ChatPanel
 from ui.character_profile_overlay import CharacterProfileOverlay
@@ -20,12 +21,7 @@ class TavernScene:
         self.battle_button = pygame.Rect(780, 850, 360, 55)
         self.inventory_button = pygame.Rect(settings.WIDTH - 70, 10, 50, 50)
         self.map_button = pygame.Rect(settings.WIDTH - 190, 10, 110, 50)
-        self.profile_overlay = CharacterProfileOverlay(
-            self.small_font,
-            collection_loader=getattr(self.session, "get_card_collection", None),
-            deck_loader=getattr(self.session, "get_decks", None),
-            deck_creator=getattr(self.session, "create_deck", None),
-        )
+        self.profile_overlay = CharacterProfileOverlay(self.small_font)
         self.chat = ChatPanel(session, "tavern", profile_overlay=self.profile_overlay)
         self.tavern_shop = TavernShop(self.font, self.small_font)
         
@@ -50,7 +46,6 @@ class TavernScene:
             ("Выход на улицу", 160, 400, 130, 300, "city"),
             ("Главный зал", 944, 373, 126, 141, None),
             ("Комната отдыха", 1160, 443, 69, 85, "character_room"),
-            ("Задний двор", 1560, 390, 55, 153, "backyard"),
             ("Хозяин трактира", 1560, 590, 85, 108, None),
             ("Искатели приключений", 260, 779, 167, 121, None),
         )
@@ -73,25 +68,6 @@ class TavernScene:
         return pygame.Rect(x, y, width, height)
 
     def handle_event(self, event):
-        self.profile_overlay.handle_event(event)
-        if self.profile_overlay.deck_panel.is_open and event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-            action, profile = self.profile_overlay.handle_click(event.pos)
-            if action == "delete_deck":
-                try:
-                    self.session.delete_deck(profile.get("id"))
-                    self.profile_overlay.deck_panel.open(self.session.get_decks())
-                except ServerError as error:
-                    self.tavern_shop.show_error(str(error))
-            return
-        if self.profile_overlay.collection_panel.is_open:
-            # Коллекция модальная: клики (включая «ЗАКРЫТЬ») идут только в неё
-            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                self.profile_overlay.handle_click(event.pos)
-            elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
-                self.profile_overlay.collection_panel.close()
-            return
-        if self.profile_overlay.deck_panel.is_open:
-            return
         if self.chat.handle_event(event):
             return
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
@@ -120,16 +96,6 @@ class TavernScene:
                 return
 
             action, profile = self.profile_overlay.handle_click(event.pos)
-            if action == "delete_deck":
-                try:
-                    self.session.delete_deck(profile.get("id"))
-                    self.profile_overlay.deck_panel.open(self.session.get_decks())
-                except ServerError as error:
-                    self.tavern_shop.show_error(str(error))
-                return
-            if action == "deck_selected":
-                self.session.selected_deck = profile
-                return
             if action == "stat_change":
                 self._save_profile_card(profile)
                 return
@@ -229,7 +195,7 @@ class TavernScene:
         )
         
         if not currency.has_enough_copper(drink["price"]):
-            self.tavern_shop.show_error("ХАЛЯВЫ НЕТ! хочешь выпить иди на задний двор!")
+            self.tavern_shop.show_error("ХАЛЯВЫ НЕТ! хочешь выпить — заплати!")
             return
         
         # Вызываем API для покупки на сервере

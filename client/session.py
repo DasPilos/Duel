@@ -10,7 +10,6 @@ class OnlineSession:
         self.character_name = character_name
         self.user = None
         self.character = None
-        self.selected_deck = None
         self.regen_accumulator = 0.0
         self.regen_mp_accumulator = 0.0
 
@@ -59,21 +58,6 @@ class OnlineSession:
         """Update character profession"""
         self.character = self.client.update_character_profession(character_id, profession_type)
         return self.character
-
-    def list_opponents(self):
-        return self.client.list_opponents()
-
-    def save_opponent(self, opponent):
-        return self.client.save_opponent(opponent)
-
-    def regenerate_character(self, amount):
-        if self.character is None or self.character["hp"] >= self.character["max_hp"]:
-            return self.character
-        self.character["hp"] = min(
-            self.character["max_hp"],
-            self.character["hp"] + max(0, int(amount)),
-        )
-        return self.client.save_character(self.character)
 
     def passive_regenerate(self, dt, in_tavern=False, full_regen_seconds=None):
         self.last_regen_amount = 0
@@ -136,36 +120,6 @@ class OnlineSession:
     def send_message(self, location, text, recipient_id=None):
         return self.client.send_message(self.character["id"], location, text, recipient_id)
 
-    def offer_duel(self, location, target_id):
-        return self.client.offer_duel(self.character["id"], location, target_id)
-
-    def create_duel_application(self, location, ttl=120):
-        return self.client.create_duel_application(self.character["id"], location, ttl)
-
-    def cancel_duel_application(self, location):
-        return self.client.cancel_duel_application(self.character["id"], location)
-
-    def duel_board(self, location="tavern"):
-        return self.client.duel_board(location)
-
-    def list_duel_offers(self, location="tavern"):
-        return self.client.list_duel_offers(location)
-
-    def respond_duel_offer(self, offer_id, accepted):
-        return self.client.respond_duel_offer(self.character["id"], offer_id, accepted)
-
-    def list_group_battles(self):
-        return self.client.list_group_battles()
-
-    def create_group_battle(self, location="backyard", ttl=120, max_participants=10):
-        return self.client.create_group_battle(self.character["id"], location, ttl, max_participants)
-
-    def join_group_battle(self, offer_id, location="backyard"):
-        return self.client.join_group_battle(offer_id, self.character["id"], location)
-
-    def leave_group_battle(self, offer_id):
-        return self.client.leave_group_battle(offer_id, self.character["id"])
-
     @staticmethod
     def _fighter_payload(fighter):
         return {
@@ -179,32 +133,6 @@ class OnlineSession:
             "stats": dict(fighter.stats),
             "stat_points": fighter.stat_points,
         }
-
-    def report_battle_result(self, fighter, outcome, opponent_level, opponent=None,
-                             battle_record=None):
-        """Опыт и деньги за бой начисляет сервер; боец синхронизируется с его ответом."""
-        opponent_id = (opponent or {}).get("character_id", (opponent or {}).get("id"))
-        if opponent_id is not None and not str(opponent_id).lstrip("-").isdigit():
-            opponent_id = None
-        result = self.client.report_battle_result(
-            self.character["id"], outcome, opponent_level, int(fighter.hp), int(fighter.mp),
-            opponent_id=opponent_id,
-            opponent_hp=(opponent or {}).get("hp"),
-            opponent_mp=(opponent or {}).get("mp"),
-            battle_record=battle_record,
-        )
-        self.character = result["character"]
-        for field in ("level", "xp", "stat_points", "hp", "mp"):
-            setattr(fighter, field, self.character[field])
-        fighter.stats = dict(self.character["stats"])
-        fighter.recalculate_parameters()
-        return result
-
-    def list_battle_archive(self, limit=50, offset=0):
-        return self.client.list_battle_archive(limit, offset)
-
-    def get_battle_archive_record(self, archive_id):
-        return self.client.get_battle_archive_record(archive_id)
 
     def save_fighter(self, fighter):
         if self.character is None:
@@ -251,30 +179,6 @@ class OnlineSession:
         
         return self.client.save_character(self.character)
     
-    def subtract_currency(self, copper=0, silver=0, gold=0):
-        """Subtract currency from character, returns True if successful"""
-        from core.currency import Currency
-        
-        if self.character is None:
-            return False
-        
-        current = Currency.from_dict(self.character)
-        if not current.has_enough(copper, silver, gold):
-            return False
-        
-        current.subtract(copper, silver, gold)
-        self.character.update(current.to_dict())
-        self.client.save_character(self.character)
-        return True
-    
-    def get_currency(self):
-        """Get current character currency"""
-        if self.character is None:
-            return None
-        
-        from core.currency import Currency
-        return Currency.from_dict(self.character)
-    
     def get_drinks_list(self):
         """Get available drinks"""
         return self.client.get("drinks")
@@ -312,31 +216,6 @@ class OnlineSession:
         self.character["equipment_bonuses"] = dict(state.get("bonuses", {}))
         return self.character["carried_weight_kg"]
 
-    def get_card_collection(self):
-        if self.character is None:
-            return []
-        return self.client.get_card_collection(self.character["id"])
-
-    def get_decks(self):
-        if self.character is None:
-            return []
-        return self.client.get_decks(self.character["id"])
-
-    def create_deck(self, name, cards):
-        if self.character is None:
-            return None
-        return self.client.create_deck(self.character["id"], name, cards)
-
-    def delete_deck(self, deck_id):
-        if self.character is None:
-            return None
-        return self.client.delete_deck(self.character["id"], deck_id)
-
-    def award_battle_card(self, card_keys):
-        if self.character is None:
-            return None
-        return self.client.award_battle_card(self.character["id"], card_keys)
-    
     def use_drink(self, inventory_item_id):
         """Use a drink from inventory"""
         if self.character is None:

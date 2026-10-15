@@ -51,36 +51,6 @@ NO_HIT_LOG_COLOR = (170, 170, 170)
 
 CHAT_ZONE_START = 775
 
-# Координаты карточного стола
-CARD_TABLE_RECT = (160, 325, 1600, 430)
-PLAYER_HAND_RECT = (10, 850, 1900, 220)
-PLAYER_SELECTED_RECT = (350, 535, 1200, 200)
-ENEMY_SELECTED_RECT = (350, 325, 1200, 200)
-ENEMY_HAND_RECT = (10, 10, 1900, 220)
-CONFIRM_SELECTION_RECT = (800, 765, 320, 42)
-PLAY_CARDS_RECT = (1370, 765, 380, 42)
-TURN_BAR_RECT = (820, 831, 280, 11)
-DECK_RECT = (1584, 440, 150, 200)
-# Сток-колода (сброс) — то же место, что и колода, но на противоположной стороне стола.
-DISCARD_RECT = (186, 440, 150, 200)
-CARD_MOVE_SECONDS = 1.0
-# Пауза перед тем, как первая карта драфта начинает вылетать из колоды.
-DRAFT_REVEAL_START_DELAY_SECONDS = 1.0
-# Перенос карт со стола в руку (стартовый драфт, игрок и оппонент) — 0.5 секунды.
-TABLE_TO_HAND_MOVE_SECONDS = 0.5
-PLAYER_DRAFT_PICK_MOVE_SECONDS = 0.5
-DRAFT_CARD_DELAY_SECONDS = 0.03
-DRAFT_CLEANUP_SECONDS = 1.0
-DAMAGE_ANIMATION_SECONDS = 1.0
-# Полёт карт к спрайтам после "Завершить ход" ускорен в 2 раза.
-ATTACK_ANIMATION_SECONDS = 0.5
-DRAFT_TIMEOUT_SECONDS = 90
-DECK_SHUFFLE_SECONDS = 2.0
-# Полёт сыгранных карт в сток-колоду ускорен в 3 раза.
-DISCARD_MOVE_SECONDS = DECK_SHUFFLE_SECONDS / 3
-HIDE_PLAYER_CARD_RECT = (5, 5, 42, 30)
-HIDE_ENEMY_CARD_RECT = (1873, 5, 42, 30)
-
 # Старые координаты оставлены временно для совместимости с несвязанными сценами.
 ZONE_Y = {
     "head": 200,
@@ -158,7 +128,6 @@ COMMENT_LINE_HEIGHT = 35
 FULL_REGEN_SECONDS = 600
 TAVERN_FULL_REGEN_SECONDS = 300
 ALTAR_FULL_REGEN_SECONDS = 5
-DUEL_APPLICATION_TTL_SECONDS = 120
 
 # Базовая скорость повозки на грунтовых дорогах карты мира (например, ферма -> город): 1 тайл за 60 секунд.
 CART_ROAD_SECONDS_PER_TILE = 60
@@ -173,6 +142,7 @@ STAT_BTN_H = 13
 STAT_CONTROL_GAP = 6
 STAT_BUTTON_GAP = 6
 STAT_DERIVED_GAP = 0
+STAT_CONTROL_SHIFT_X = 70
 
 STAT_CONFIRM_RECT = (760, 520, 400, 50)
 

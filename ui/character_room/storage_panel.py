@@ -37,11 +37,6 @@ class StoragePanel:
         self.scroll_offset = 0
         self.scroll_speed = 50
 
-    def set_storage(self, storage_type: str, items: List[Dict]):
-        """Устанавливает содержимое сундука"""
-        self.storage_items[storage_type] = items
-        self._update_rects()
-
     def _update_rects(self):
         """Обновляет прямоугольники для отображения"""
         self.item_rects = []
