@@ -1,12 +1,10 @@
 # Duel
 
-Duel is a multiplayer RPG with a Pygame client and a Python HTTP server. PostgreSQL is the persistent source of truth. All character classes use the same client and join the shared world selected by `WORLD_ID`; class does not create a separate map, castle, economy, or population.
+Multiplayer RPG: a Pygame client and a Python HTTP server. PostgreSQL is the source of truth. All character professions share one world (`WORLD_ID`).
 
 ## Quick Start (Windows)
 
-Requirements: Python 3.13, PostgreSQL, and the dependencies in `requirements.txt`.
-
-1. Create a virtual environment and install dependencies:
+Requirements: Python 3.13, PostgreSQL, and `requirements.txt`.
 
 ```powershell
 py -3.13 -m venv .venv
@@ -14,9 +12,9 @@ py -3.13 -m venv .venv
 python -m pip install -r requirements.txt
 ```
 
-2. Configure PostgreSQL locally. The default DSN is `postgresql://game@127.0.0.1:5432/game`; put credentials in PostgreSQL's password file, never in source control. Confirm the configured world exists.
+Set `DATABASE_URL` if the default `postgresql://game@127.0.0.1:5432/game` does not fit. Keep the password in the PostgreSQL password file, never in source control.
 
-3. Start the local server in Terminal 1:
+Terminal 1, server:
 
 ```powershell
 $env:HOST = '127.0.0.1'
@@ -25,13 +23,13 @@ $env:WORLD_ID = '1'
 python -m server.main
 ```
 
-4. Start the online client in Terminal 2:
+Terminal 2, online client:
 
 ```powershell
 python main.py --online --server http://127.0.0.1:8765
 ```
 
-The client defaults to local mode when `--online` is omitted. Use an explicit server URL; `127.0.0.1` is local, while `192.168.1.230` is the Z440 host on the private network.
+Without `--online` the client runs in local mode.
 
 ## Tests
 
@@ -39,33 +37,11 @@ The client defaults to local mode when `--online` is omitted. Use an explicit se
 python -m unittest discover -s tests -q
 ```
 
-For a focused check:
+Tests create temporary PostgreSQL schemas. Point `TEST_DATABASE_URL` at a disposable database, never at production.
 
-```powershell
-python -m unittest tests.test_city_population tests.test_world_terrain -q
-python -m unittest tests.test_combat tests.test_card_battle tests.test_physical_effects -q
-```
+## Documentation
 
-Tests create temporary PostgreSQL schemas. Never set `TEST_DATABASE_URL` to production credentials or a production database.
-
-## Client Package
-
-The repository contains the client source, not a committed generated ZIP. Build the downloadable source package with:
-
-```powershell
-python scripts/build_client_package.py
-```
-
-This creates `client_package.zip`; the running server can serve it at `/download/client`. It is a Python source package, not a standalone executable. See [DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md) and [DEPLOYMENT_CHECKLIST.md](DEPLOYMENT_CHECKLIST.md).
-
-## Project Guides
-
-- [Architecture](ARCHITECTURE.md)
-- [Local development](DEVELOPER_GUIDE.md)
-- [Contributing, including battle math](CONTRIBUTING.md)
-- [Battle math source map](BATTLE_MATH.md)
-- [Deployment](DEPLOYMENT_CHECKLIST.md)
-- [Latest Release Notes](docs/RELEASE_NOTES_2026-10-09.md)
-- [Documentation index](DOCUMENTATION_INDEX.md)
-- [Z440 monitor](SERVER_MONITOR.md)
-- [Local AI battle commentator](LOCAL_AI_CHAT.md)
+- [AGENTS.md](AGENTS.md): short map and rules for AI assistants and contributors.
+- [CONTRIBUTING.md](CONTRIBUTING.md): workflow and change rules.
+- [docs/README.md](docs/README.md): index of all project documents.
+- [CHANGELOG.md](CHANGELOG.md): history of changes.
