@@ -1,4 +1,4 @@
-﻿"""Compatibility facade for the focused server social modules."""
+"""Compatibility facade for the focused server social modules."""
 
 from server import bot_chat, chat_cache, presence
 

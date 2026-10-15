@@ -20,7 +20,13 @@ from ui.character_profile import (
 from ui.hud import draw_button, draw_text, FloatingText, update_and_draw_floating_texts
 from ui import equipment_slots
 from ui.inventory_window import IconCache
-from ui.sprite_loader import FighterSprite
+from ui.sprite_loader import FighterSprite, WARRIOR_SPRITE_PATH
+from ui.profession_icons import PROFESSION_ICON_GAP, PROFESSION_ICON_SIZE, draw_profession_icon_before, profession_icon
+
+
+DEFAULT_CARD_BG = (30, 32, 45, 225)
+WARRIOR_CARD_BG = (96, 14, 18, 190)
+WARRIOR_CARD_SPRITE_OFFSET_X = -30  # сдвиг спрайта воина влево; слоты экипировки не двигаются
 
 
 class CharacterCard:
@@ -49,6 +55,7 @@ class CharacterCard:
         self.body_font = pygame.font.SysFont(settings.FONT_NAME, settings.CHARACTER_CARD_BODY_FONT_SIZE)
         self.small_font = pygame.font.SysFont(settings.FONT_NAME, settings.CHARACTER_CARD_SMALL_FONT_SIZE)
         self.sprite = sprite or FighterSprite()
+        self.warrior_sprite = FighterSprite(WARRIOR_SPRITE_PATH, fit_to=self.sprite)
         self.icons = IconCache()
         currency_path = (
             Path(__file__).resolve().parent.parent
@@ -149,9 +156,11 @@ class CharacterCard:
         if profile is not None:
             self.sync(profile, title=title, kind="player")
         normalized = self.state
-        sprite = sprite or self.sprite
+        is_warrior_card = not mob_mode and normalized.get("type") == "warrior"
+        if sprite is None:
+            sprite = self.warrior_sprite if is_warrior_card else self.sprite
         overlay = pygame.Surface(frame.size, pygame.SRCALPHA)
-        overlay.fill((30, 32, 45, 225))
+        overlay.fill(WARRIOR_CARD_BG if is_warrior_card else DEFAULT_CARD_BG)
         screen.blit(overlay, frame.topleft)
         pygame.draw.rect(screen, border_color, frame, width=2, border_radius=8)
         
@@ -162,8 +171,11 @@ class CharacterCard:
         x = frame.x + 20
         name_y = frame.y + 20
         name = normalized["name"]
+        profession = None if mob_mode else normalized.get("type")
+        name_x = x + PROFESSION_ICON_SIZE + PROFESSION_ICON_GAP if profession_icon(profession) is not None else x
         name_surface = self.title_font.render(name, True, (240, 240, 245))
-        name_rect = name_surface.get_rect(topleft=(x, name_y))
+        name_rect = name_surface.get_rect(topleft=(name_x, name_y))
+        draw_profession_icon_before(screen, profession, name_rect)
         screen.blit(name_surface, name_rect)
         character_id = normalized.get("character_id", normalized.get("id", "-"))
         if not mob_mode:
@@ -194,9 +206,11 @@ class CharacterCard:
         self._draw_resource(screen, x, mp_y, bar_width, bar_height, "MP", normalized["mp"], normalized["max_mp"], (60, 140, 220))
 
         stats_header_y = self._stats_header_y(frame)
+        sprite_offset_x = WARRIOR_CARD_SPRITE_OFFSET_X if sprite is self.warrior_sprite else 0
         sprite_top = equipment_slots.draw_paperdoll(
             screen, frame, sprite, self.icons, self.small_font,
             normalized.get("equipment", {}), slot_highlight, dragged_slot,
+            sprite_offset_x=sprite_offset_x,
         )
         shoe_slot = equipment_slots.slot_rects(frame)["feet"]
         copper = int(normalized.get("copper", 0))

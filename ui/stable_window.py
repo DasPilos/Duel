@@ -20,6 +20,7 @@ from core.cart_progress import (
 from core import settings
 from core.currency import Currency
 from core.production_buildings import BUILDINGS, building_resources
+from ui.time_format import format_hms
 from ui.catalog_icons import draw_building_icon, draw_item_icon, draw_treasury_coins
 from ui.hud import draw_button
 from ui.material_contribution_dialog import MaterialContributionDialog
@@ -36,12 +37,6 @@ RESOURCE_COLORS = {
     "leather": (155, 111, 72), "meat": (171, 75, 69), "coal": (63, 63, 67),
 }
 ROUTE_STORAGE_BUILDING_IDS = {"wheat_farm": "farm"}
-
-
-def _format_duration(seconds):
-    hours, remainder = divmod(max(0, int(seconds)), 3600)
-    minutes, seconds = divmod(remainder, 60)
-    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
 
 class StableWindow:
@@ -1008,9 +1003,9 @@ class StableWindow:
                     crew_horses,
                     convoy.get("status", "Свободна"),
                     "",
-                    _format_duration(convoy["cycle_seconds_remaining"])
+                    format_hms(convoy["cycle_seconds_remaining"])
                     if convoy.get("cycle_seconds_remaining") is not None
-                    else _format_duration(convoy["seconds_remaining"])
+                    else format_hms(convoy["seconds_remaining"])
                     if convoy.get("seconds_remaining") is not None else "—",
                 )
                 positions = (row.left + 12, row.left + 430, row.left + 760,
@@ -1074,7 +1069,7 @@ class StableWindow:
                         stage_label = stage_label[:-4] + "..." if len(stage_label) > 4 else stage_label[:-1]
                     seconds = (convoy.get("cycle_seconds_remaining") if is_total
                                else stage.get("seconds"))
-                    clock = _format_duration(seconds) if seconds is not None else "—"
+                    clock = format_hms(seconds) if seconds is not None else "—"
                     title_text = self.tiny_font.render(stage_label, True, color)
                     clock_text = self.tiny_font.render(clock, True, color)
                     screen.blit(title_text, title_text.get_rect(midtop=(cell.centerx, cell.top + 2)))
@@ -1272,7 +1267,7 @@ class StableWindow:
         if cart and route:
             distance_text = f"{tiles_to_km(route['distance_tiles']):.2f} км"
             seconds_per_tile = cart.get("seconds_per_tile")
-            time_text = (_format_duration(route["distance_tiles"] * seconds_per_tile)
+            time_text = (format_hms(route["distance_tiles"] * seconds_per_tile)
                          if seconds_per_tile is not None else "—")
         else:
             distance_text, time_text = "не выбран", "—"
@@ -1718,7 +1713,7 @@ class StableWindow:
                 if progress.get("in_progress", False):
                     seconds_left = max(0, progress.get("seconds_left", 0)
                                        - (time.monotonic() - self.state_received_at))
-                    status_text = f"Идёт улучшение: осталось {_format_duration(seconds_left)}"
+                    status_text = f"Идёт улучшение: осталось {format_hms(seconds_left)}"
                     status_color = (230, 194, 120)
                 else:
                     status_text = "УСТАНОВЛЕНО"
@@ -1726,7 +1721,7 @@ class StableWindow:
                 status = scene.small_font.render(status_text, True, status_color)
                 screen.blit(status, (card.left + 16, card.top + 126))
             else:
-                duration = _format_duration(config["time_seconds"])
+                duration = format_hms(config["time_seconds"])
                 screen.blit(scene.small_font.render(
                     f"Оплата при покупке · установка {duration}", True, (185, 181, 164)),
                             (card.left + 16, card.top + 124))
@@ -1813,7 +1808,7 @@ class StableWindow:
         y += 8
         if upgrade["in_progress"]:
             seconds_left = max(0, upgrade["seconds_left"] - (time.monotonic() - self.state_received_at))
-            screen.blit(scene.font.render(f"Идёт улучшение: осталось {_format_duration(seconds_left)}",
+            screen.blit(scene.font.render(f"Идёт улучшение: осталось {format_hms(seconds_left)}",
                                           True, (120, 190, 240)), (panel.left + 18, y))
             return
         self.upgrade_button.topleft = (panel.left + 18, y)

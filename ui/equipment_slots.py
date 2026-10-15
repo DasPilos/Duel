@@ -78,12 +78,12 @@ def slot_at(frame, position):
     return None
 
 
-def draw_paperdoll(screen, frame, sprite, icons, font, equipment, highlight=None, dragged=None):
+def draw_paperdoll(screen, frame, sprite, icons, font, equipment, highlight=None, dragged=None, sprite_offset_x=0):
     """Рисует спрайт персонажа и слоты вокруг него. Возвращает y верхнего края спрайта."""
     frame = pygame.Rect(frame)
     center_y = area_center_y(frame)
     sprite_height = sprite.image.get_height() * settings.FIGHTER_SPRITE_SCALE if sprite.image is not None else 0
-    sprite.draw(screen, frame.centerx, int(center_y + sprite_height / 2), scale=settings.FIGHTER_SPRITE_SCALE)
+    sprite.draw(screen, frame.centerx + sprite_offset_x, int(center_y + sprite_height / 2), scale=settings.FIGHTER_SPRITE_SCALE)
     draw_slots(screen, frame, icons, font, equipment, highlight, dragged)
     return center_y - sprite_height / 2
 

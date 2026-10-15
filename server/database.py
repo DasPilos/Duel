@@ -206,11 +206,6 @@ class Database:
             ).fetchone()
             if row is None or not self._check_password(password, row["password_hash"]):
                 raise ValueError("Неверное имя пользователя или пароль")
-            for character in connection.execute(
-                "SELECT * FROM characters WHERE user_id = %s AND world_id = %s",
-                (row["id"], self.world_id),
-            ).fetchall():
-                self._apply_passive_regen(connection, character, now)
             token = secrets.token_urlsafe(32)
             connection.execute(
                 "UPDATE users SET last_login_at = %s WHERE id = %s",
@@ -386,7 +381,7 @@ class Database:
             ).fetchall()
             characters = []
             for original_row in rows:
-                row = self._apply_passive_regen(connection, original_row, now)
+                row = self._apply_passive_regen(original_row, now)
                 bonuses = self.equipment_bonuses(connection, row["id"])
                 character = self._character_payload(row, int(bonuses.get("hp", 0)))
 
@@ -400,7 +395,7 @@ class Database:
                         "effect": inv_row["effect"],
                     }
                 character["inventory"] = inventory
-                character["equipment_bonuses"] = self.equipment_bonuses(connection, row["id"])
+                character["equipment_bonuses"] = bonuses
                 character["equipment"] = self.equipped_items(connection, row["id"])
                 self._update_carry_capacity(character)
                 characters.append(character)
@@ -589,6 +584,14 @@ class Database:
             ).strftime("%H:%M:%S"),
         }
 
+    def character_belongs_to_user(self, user_id, character_id):
+        with self.connection() as connection:
+            row = connection.execute(
+                "SELECT 1 FROM characters WHERE id = %s AND user_id = %s AND world_id = %s",
+                (character_id, user_id, self.world_id),
+            ).fetchone()
+        return row is not None
+
     def get_character(self, user_id, character_id=None):
         now = time.time()
         with self.connection() as connection:
@@ -604,7 +607,7 @@ class Database:
                 ).fetchone()
             if row is None:
                 return None
-            row = self._apply_passive_regen(connection, row, now)
+            row = self._apply_passive_regen(row, now)
             bonuses = self.equipment_bonuses(connection, row["id"])
             character = self._character_payload(row, int(bonuses.get("hp", 0)))
 
@@ -665,7 +668,9 @@ class Database:
         return bonuses
 
     @staticmethod
-    def _apply_passive_regen(connection, row, now):
+    def _apply_passive_regen(row, now):
+        # Регенерация считается от сохранённой контрольной точки (hp, updated_at)
+        # и записывается в БД только при следующем сохранении персонажа.
         hp = int(row["hp"])
         max_hp = int(row["max_hp"])
         if hp >= max_hp:
@@ -676,19 +681,13 @@ class Database:
         )
         if recovered_hp == hp:
             return row
-        connection.execute(
-            "UPDATE characters SET hp = %s, updated_at = %s WHERE id = %s",
-            (recovered_hp, now, row["id"]),
-        )
         updated = dict(row)
         updated["hp"] = recovered_hp
-        updated["updated_at"] = now
         return updated
 
     def save_character(self, user_id, character_id, payload):
-        current = self.get_character(user_id, character_id)
-        if current is None:
-            raise ValueError("Персонаж не найден")
+        with self.connection() as connection:
+            current, equipment_hp = self._load_character_for_save(connection, user_id, character_id)
         
         # Нормализуем валюту перед сохранением
         currency = Currency(
@@ -729,8 +728,6 @@ class Database:
             "intellect": max(MIN_STAT_VALUE, int(raw_stats.get("intellect", BASE_STAT_VALUE))),
             "endurance": max(minimum_endurance(level), int(raw_stats.get("endurance", minimum_endurance(level)))),
         }
-        with self.connection() as connection:
-            equipment_hp = int(self.equipment_bonuses(connection, character_id).get("hp", 0))
         updated["max_hp"] = calculate_max_hp(level, updated["stats"]["endurance"]) + equipment_hp
         updated["hp"] = min(updated["hp"], updated["max_hp"])
         updated["max_mp"] = calculate_max_mana(updated["stats"]["intellect"])
@@ -756,6 +753,17 @@ class Database:
                 ),
             )
         return self.get_character(user_id, character_id)
+
+    def _load_character_for_save(self, connection, user_id, character_id):
+        row = connection.execute(
+            "SELECT * FROM characters WHERE id = %s AND user_id = %s AND world_id = %s",
+            (character_id, user_id, self.world_id),
+        ).fetchone()
+        if row is None:
+            raise ValueError("Персонаж не найден")
+        row = self._apply_passive_regen(row, time.time())
+        equipment_hp = int(self.equipment_bonuses(connection, character_id).get("hp", 0))
+        return self._character_payload(row, equipment_hp), equipment_hp
 
     @staticmethod
     def _validate_character(character):

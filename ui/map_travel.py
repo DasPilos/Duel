@@ -1,5 +1,6 @@
 """World-map rendering helpers for traveling citizens and wagon convoys."""
 
+from ui.time_format import format_hms
 import math
 import time
 from pathlib import Path
@@ -7,6 +8,8 @@ from pathlib import Path
 import pygame
 
 from core import settings
+from scenes.player_sprites import player_frame, player_profession
+from ui.profession_icons import profession_icon
 from core.production_buildings import PRODUCTION_ITEM_IDS, RESOURCES
 
 
@@ -21,12 +24,6 @@ ROAD_BUILDING_IDS = {
 _TRANSPORT_SPRITES = {}
 
 
-def _format_eta(seconds):
-    hours, remainder = divmod(max(0, int(seconds)), 3600)
-    minutes, seconds = divmod(remainder, 60)
-    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-
-
 def _format_phase_eta(entity):
     phase = entity.get("phase")
     labels = {
@@ -36,7 +33,7 @@ def _format_phase_eta(entity):
         "waiting_for_resources": "Повторная проверка через",
     }
     label = labels.get(phase, "До прибытия")
-    return f"{label}: {_format_eta(entity.get('eta_seconds', 0))}"
+    return f"{label}: {format_hms(entity.get('eta_seconds', 0))}"
 
 
 def _route_progress_percent(entity):
@@ -270,11 +267,8 @@ def draw_traveling_entities(scene, screen, location="world_map"):
             )
         else:
             direction = entity.get("position_direction", "s")
-            frames = getattr(scene, "player_run_directional_frames", {}).get(direction, [])
-            if not frames:
-                frames = getattr(scene, "player_directional_frames", {}).get(direction, [])
-            if frames:
-                frame = frames[int(time.monotonic() * 8) % len(frames)]
+            frame = player_frame(scene, entity, direction, time.monotonic(), moving=True, run_fps=8.0)
+            if frame is not None:
                 screen.blit(frame, frame.get_rect(midbottom=(sx, sy)))
             else:
                 pygame.draw.ellipse(screen, (13, 15, 17), (sx - 10, sy - 3, 20, 7))
@@ -285,10 +279,14 @@ def draw_traveling_entities(scene, screen, location="world_map"):
         label_rect = label.get_rect(midbottom=(sx, sy - 28))
         icon_size = 32
         icon_position = (label_rect.left - icon_size - 4, label_rect.centery - icon_size // 2)
+        profession_icon_image = profession_icon(player_profession(entity)) if entity["entity_kind"] == "player" else None
         if entity["entity_kind"] == "citizen":
             from ui.catalog_icons import draw_item_icon
             icon = draw_item_icon(screen, "citizen", icon_position, icon_size)
             icon_rect = icon.get_rect(topleft=icon_position) if icon is not None else None
+        elif profession_icon_image is not None:
+            screen.blit(profession_icon_image, icon_position)
+            icon_rect = profession_icon_image.get_rect(topleft=icon_position)
         else:
             icon_rect = draw_transport_cart_icon(
                 screen, entity.get("cart_sprite_key", "light"), icon_position, icon_size,

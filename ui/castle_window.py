@@ -8,6 +8,7 @@ from client.network import ServerError
 from core import settings
 from core.currency import Currency
 from core.production_buildings import RESOURCES
+from ui.time_format import format_hms
 from ui.catalog_icons import draw_building_icon, draw_item_icon, draw_treasury_coins
 from ui.hud import draw_button
 
@@ -31,13 +32,6 @@ FOOD_TREND_STYLES = {
     "surplus": ((244, 195, 75), "Есть небольшой +"),
     "upgrade_ready": ((104, 222, 133), "На ап города"),
 }
-
-
-def _format_clock(seconds):
-    seconds = max(0, int(seconds))
-    hours, remainder = divmod(seconds, 3600)
-    minutes, seconds = divmod(remainder, 60)
-    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
 
 def _citizen_is_free(citizen):
@@ -400,7 +394,7 @@ class CastleWindow:
         seconds = state.get("tax_tick_seconds_left", 0)
         expected_tax = state.get("expected_tax_text", "0 меди")
         screen.blit(self.small_font.render(
-            f"До сбора налогов: {_format_clock(seconds)} (ожидается: {expected_tax})",
+            f"До сбора налогов: {format_hms(seconds)} (ожидается: {expected_tax})",
             True, (190, 205, 184)), (left, top + 58))
         self.treasury_buttons = {
             "deposit": pygame.Rect(left, top + 104, 220, 42),
@@ -483,7 +477,7 @@ class CastleWindow:
                 f"Результат: {upgrade['result']}", True, (197, 207, 190),
             ), (card.left + 14, card.top + 62))
             screen.blit(self.small_font.render(
-                f"Время улучшения: {_format_clock(upgrade['time_seconds'])}", True, (180, 194, 176),
+                f"Время улучшения: {format_hms(upgrade['time_seconds'])}", True, (180, 194, 176),
             ), (card.left + 14, card.top + 82))
 
             price_y = card.top + 108
@@ -509,7 +503,7 @@ class CastleWindow:
                 screen.blit(status, status.get_rect(midright=(button.right, button.centery)))
             elif is_active:
                 status = self.small_font.render(
-                    f"Осталось: {_format_clock(upgrade['seconds_left'])}", True, (132, 193, 231),
+                    f"Осталось: {format_hms(upgrade['seconds_left'])}", True, (132, 193, 231),
                 )
                 screen.blit(status, status.get_rect(midright=(button.right, button.centery)))
             else:
@@ -590,15 +584,15 @@ class CastleWindow:
         if zone == "green":
             eta = state.get("new_citizen_eta_seconds")
             timer_text = ("Новый горожанин прибудет через: "
-                          f"{_format_clock(eta) if eta is not None else '--:--:--'}")
+                          f"{format_hms(eta) if eta is not None else '--:--:--'}")
         elif zone == "yellow":
             eta = state.get("satiated_eta_seconds")
             timer_text = ("Население сытое : "
-                          f"{_format_clock(eta) if eta is not None else '--:--:--'}")
+                          f"{format_hms(eta) if eta is not None else '--:--:--'}")
         elif zone == "red":
             eta = state.get("departure_eta_seconds")
             timer_text = ("Горожанин покинет город : "
-                          f"{_format_clock(eta) if eta is not None else '--:--:--'}")
+                          f"{format_hms(eta) if eta is not None else '--:--:--'}")
         if timer_text:
             screen.blit(self.small_font.render(timer_text, True, timer_color),
                         (left, top + 22))
@@ -640,7 +634,7 @@ class CastleWindow:
                         (row.left + 220, row.top + 3))
             death_eta = citizen.get("death_eta_seconds")
             if satiety <= 10 and death_eta is not None:
-                death_text = f"Смерть через {_format_clock(death_eta)}"
+                death_text = f"Смерть через {format_hms(death_eta)}"
                 screen.blit(self.small_font.render(death_text, True, (226, 66, 58)),
                             (row.left + 385, row.top + 3))
             meter = pygame.Rect(row.left + 220, row.top + 24, 150, 8)
@@ -661,7 +655,7 @@ class CastleWindow:
                     0, int(citizen.get("travel_seconds_left", 0)
                            - (time.monotonic() - self.last_refresh))
                 )
-                work_label += f" {_format_clock(seconds_left)}"
+                work_label += f" {format_hms(seconds_left)}"
             screen.blit(self.small_font.render(work_label, True, WORK_COLORS.get(work_status, (200, 200, 200))),
                         (row.left + 635, row.top + 8))
             action_rect = pygame.Rect(row.right - 142, row.top + 3, 132, 28)
@@ -791,13 +785,13 @@ class CastleWindow:
                          if item["building"] == pending["building"]), {})
             title_text = f"Отправить {citizen.get('name', 'горожанина')} на работу?"
             detail_text = (f"{site.get('name', '')} · путь в одну сторону: "
-                           f"{_format_clock(site.get('travel_seconds', 0))}")
+                           f"{format_hms(site.get('travel_seconds', 0))}")
             confirm_label = "ОТПРАВИТЬ"
         else:
             site = next((item for item in state.get("worksites", [])
                          if item["building"] == citizen.get("job_building")), {})
             title_text = f"Вернуть {citizen.get('name', 'горожанина')} в город?"
-            detail_text = f"Путь домой: {_format_clock(site.get('travel_seconds', 0))}"
+            detail_text = f"Путь домой: {format_hms(site.get('travel_seconds', 0))}"
             confirm_label = "ВЕРНУТЬ"
         title = self.font.render(title_text, True, (243, 218, 158))
         detail = self.small_font.render(detail_text, True, (205, 199, 185))

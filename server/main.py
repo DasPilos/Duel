@@ -256,7 +256,7 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                     raise ValueError("Некорректный путь производственной работы")
                 user_id = self.database.user_id_by_token(self._token())
                 character_id = int(parts[4])
-                if self.database.get_character(user_id, character_id) is None:
+                if not self.database.character_belongs_to_user(user_id, character_id):
                     raise ValueError("Персонаж не найден")
                 work = ProductionBuildings(self.database).active_player_work(character_id)
                 self._send(200, {"work": work})
@@ -267,7 +267,7 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                     raise ValueError("Некорректный путь кузницы")
                 user_id = self.database.user_id_by_token(self._token())
                 character_id = int(parts[3])
-                if self.database.get_character(user_id, character_id) is None:
+                if not self.database.character_belongs_to_user(user_id, character_id):
                     raise ValueError("Персонаж не найден")
                 forge = Forge(self.database, self.items_database)
                 self._send(200, forge.get_state(character_id))
@@ -279,7 +279,7 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                     return
                 building, character_id = parts[3], int(parts[4])
                 user_id = self.database.user_id_by_token(self._token())
-                if self.database.get_character(user_id, character_id) is None:
+                if not self.database.character_belongs_to_user(user_id, character_id):
                     self._send(404, {"error": "Персонаж не найден"})
                 else:
                     state = ProductionBuildings(self.database).get_state(character_id, building)
@@ -292,7 +292,7 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                     return
                 user_id = self.database.user_id_by_token(self._token())
                 character_id = int(parts[3])
-                if self.database.get_character(user_id, character_id) is None:
+                if not self.database.character_belongs_to_user(user_id, character_id):
                     raise ValueError("Персонаж не найден")
                 state = CityPopulation(self.database).get_state(character_id)
                 self._send(200, {"population": state})
@@ -300,7 +300,7 @@ class GameRequestHandler(BaseHTTPRequestHandler):
             if path == "/api/world/traveling-citizens":
                 user_id = self.database.user_id_by_token(self._token())
                 character_id = int(self._query().get("character_id", [0])[0])
-                if self.database.get_character(user_id, character_id) is None:
+                if not self.database.character_belongs_to_user(user_id, character_id):
                     raise ValueError("Персонаж не найден")
                 travelers = CityPopulation(self.database).get_traveling_citizens(character_id)
                 self._send(200, {"citizens": travelers})
@@ -308,7 +308,7 @@ class GameRequestHandler(BaseHTTPRequestHandler):
             if path == "/api/world/traveling-convoys":
                 user_id = self.database.user_id_by_token(self._token())
                 character_id = int(self._query().get("character_id", [0])[0])
-                if self.database.get_character(user_id, character_id) is None:
+                if not self.database.character_belongs_to_user(user_id, character_id):
                     raise ValueError("Персонаж не найден")
                 convoys = TransportService(self.database).get_world_convoys(character_id)
                 self._send(200, {"convoys": convoys})
@@ -394,7 +394,7 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                 if len(parts) == 5 and parts[4] == "treasury":
                     user_id = self.database.user_id_by_token(self._token())
                     character_id = int(parts[3])
-                    if self.database.get_character(user_id, character_id) is None:
+                    if not self.database.character_belongs_to_user(user_id, character_id):
                         raise ValueError("Персонаж не найден")
                     state = CityPopulation(self.database).transfer_treasury(
                         character_id, body.get("direction"), body.get("amount_copper")
@@ -404,7 +404,7 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                 if len(parts) == 5 and parts[4] == "treasury-edict":
                     user_id = self.database.user_id_by_token(self._token())
                     character_id = int(parts[3])
-                    if self.database.get_character(user_id, character_id) is None:
+                    if not self.database.character_belongs_to_user(user_id, character_id):
                         raise ValueError("Персонаж не найден")
                     state = CityPopulation(self.database).start_treasury_edict(character_id)
                     self._send(200, {"population": state})
@@ -412,7 +412,7 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                 if len(parts) == 6 and parts[4] == "upgrades":
                     user_id = self.database.user_id_by_token(self._token())
                     character_id = int(parts[3])
-                    if self.database.get_character(user_id, character_id) is None:
+                    if not self.database.character_belongs_to_user(user_id, character_id):
                         raise ValueError("Персонаж не найден")
                     state = CityPopulation(self.database).start_castle_upgrade(
                         character_id, parts[5]
@@ -424,7 +424,7 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                     return
                 user_id = self.database.user_id_by_token(self._token())
                 character_id, citizen_id = int(parts[3]), int(parts[5])
-                if self.database.get_character(user_id, character_id) is None:
+                if not self.database.character_belongs_to_user(user_id, character_id):
                     raise ValueError("Персонаж не найден")
                 population = CityPopulation(self.database)
                 if parts[6] == "assign":
@@ -481,7 +481,7 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                     raise ValueError("Некорректный путь кузницы")
                 user_id = self.database.user_id_by_token(self._token())
                 character_id = int(parts[3])
-                if self.database.get_character(user_id, character_id) is None:
+                if not self.database.character_belongs_to_user(user_id, character_id):
                     raise ValueError("Персонаж не найден")
                 forge = Forge(self.database, self.items_database)
                 if len(parts) == 5:
@@ -497,7 +497,7 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                     raise ValueError("Некорректный путь здания")
                 building, character_id = parts[3], int(parts[4])
                 user_id = self.database.user_id_by_token(self._token())
-                if self.database.get_character(user_id, character_id) is None:
+                if not self.database.character_belongs_to_user(user_id, character_id):
                     raise ValueError("Персонаж не найден")
                 buildings = ProductionBuildings(self.database)
                 action = "/".join(parts[5:])
@@ -661,7 +661,7 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                         "/api/equipment/equip", "/api/equipment/unequip"):
                user_id = self.database.user_id_by_token(self._token())
                character_id = int(body.get("character_id", 0))
-               if self.database.get_character(user_id, character_id) is None:
+               if not self.database.character_belongs_to_user(user_id, character_id):
                    raise ValueError("Персонаж не найден")
                response = {}
                if path == "/api/inventory/move":
@@ -801,7 +801,7 @@ def _run_city_population(stop_event):
             population.tick_all()
         except Exception:
             traceback.print_exc()
-        if stop_event.wait(1):
+        if stop_event.wait(config.CITY_TICK_INTERVAL_SECONDS):
             break
 
 

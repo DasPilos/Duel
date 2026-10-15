@@ -19,7 +19,7 @@ from core.city_progression import (
 )
 from core.production_buildings import slot_resources
 from server.database import Database, lock_character
-from server import treasury_ledger
+from server import config, treasury_ledger
 from server.production_buildings import (
     DEFAULT_FACTION,
     STORAGE_ITEM_IDS,
@@ -133,6 +133,7 @@ class CityPopulation:
         self.db = database
         self.production = ProductionBuildings(database)
         self._travel_distances = None
+        self._world_dbs = {}
 
     @staticmethod
     def _key(connection, character_id):
@@ -755,8 +756,10 @@ class CityPopulation:
             if state is None:
                 return
             last_tick = float(state["last_food_tick_at"])
-            while last_tick + 3600 <= now:
+            hours_done = 0
+            while last_tick + 3600 <= now and hours_done < config.CITY_CATCHUP_HOURS_PER_PASS:
                 last_tick += 3600
+                hours_done += 1
                 self._ensure_building(connection, key[0], "barn", last_tick)
                 departures.extend(self._sync_citizens(connection, key, last_tick))
                 self._settle_travel(connection, key, last_tick)
@@ -767,11 +770,14 @@ class CityPopulation:
                        WHERE world_id = %s AND faction = %s""",
                     (last_tick, *key),
                 )
-            self._ensure_building(connection, key[0], "barn", now)
-            self._settle_travel(connection, key, now)
-            departures.extend(self._sync_citizens(connection, key, now))
-            process_city_upgrade(connection, key, now)
-            self._complete_castle_upgrades(connection, key, now)
+            # Пока часы простоя не догнаны, события текущего момента не обрабатываем:
+            # иначе они опередят почасовые шаги. Остаток догоняется в следующих проходах.
+            if last_tick + 3600 > now:
+                self._ensure_building(connection, key[0], "barn", now)
+                self._settle_travel(connection, key, now)
+                departures.extend(self._sync_citizens(connection, key, now))
+                process_city_upgrade(connection, key, now)
+                self._complete_castle_upgrades(connection, key, now)
         for event in departures:
             if isinstance(event, tuple):
                 self._announce_citizen_departure(key[0], event[1])
@@ -855,7 +861,10 @@ class CityPopulation:
         self._announce_city_chat(world_id, f"Горожанин покинул город из-за голода: {name}")
 
     def _announce_city_chat(self, world_id, text):
-        world_db = Database(self.db.dsn, schema=self.db.schema, world_id=int(world_id))
+        world_db = self._world_dbs.get(int(world_id))
+        if world_db is None:
+            world_db = Database(self.db.dsn, schema=self.db.schema, world_id=int(world_id))
+            self._world_dbs[int(world_id)] = world_db
         system_character = world_db.ensure_bot_character(f"city_population_{world_id}", "Город")
         world_db.add_chat_message(system_character, "city", text)
 
@@ -866,20 +875,31 @@ class CityPopulation:
         lumber_upgrades = self.production._lumber_camp_upgrades(
             connection, (*key, "lumber_camp"),
         )
+        slots_by_building = {}
+        citizen_ids = set()
         for building in buildings:
-            building_key = (*key, building)
             slots = connection.execute(
                 """SELECT slot_index, worker_id FROM building_worker_slots
                          WHERE world_id=%s AND faction=%s AND building=%s AND occupied=1""",
-                building_key,
+                (*key, building),
             ).fetchall()
+            slots_by_building[building] = slots
             for slot in slots:
                 worker_id = str(slot["worker_id"] or "")
                 if worker_id.startswith("citizen:"):
-                    travel = connection.execute(
-                        "SELECT travel_direction, arrival_at FROM city_citizens WHERE id=%s",
-                        (int(worker_id.split(":", 1)[1]),),
-                    ).fetchone()
+                    citizen_ids.add(int(worker_id.split(":", 1)[1]))
+        travel_by_citizen = {}
+        if citizen_ids:
+            for row in connection.execute(
+                "SELECT id, travel_direction, arrival_at FROM city_citizens WHERE id = ANY(%s)",
+                (sorted(citizen_ids),),
+            ).fetchall():
+                travel_by_citizen[int(row["id"])] = row
+        for building in buildings:
+            for slot in slots_by_building[building]:
+                worker_id = str(slot["worker_id"] or "")
+                if worker_id.startswith("citizen:"):
+                    travel = travel_by_citizen.get(int(worker_id.split(":", 1)[1]))
                     if (travel and travel["travel_direction"] == "outbound"
                             and travel["arrival_at"] is not None
                             and float(travel["arrival_at"]) > float(now)):
@@ -1080,12 +1100,6 @@ class CityPopulation:
             )
         else:
             satiated_eta = None
-        warehouse_level_row = connection.execute(
-            "SELECT level FROM building_states WHERE world_id=%s AND faction=%s AND building='warehouse'",
-            key,
-        ).fetchone()
-        warehouse_level = 1 if warehouse_level_row is None else int(warehouse_level_row["level"])
-        warehouse_capacity = int(building_level_info(warehouse_level, "warehouse")["storage"])
         upgrade_foods = set(city_upgrade_resources(int(state["city_level"])))
         upgrade_cycle_cost = city_upgrade_cycle_cost(len(citizen_list), population_capacity)
         food_trend = {}

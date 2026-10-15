@@ -1,6 +1,8 @@
 import pygame
 
 from core import settings
+from scenes.player_sprites import player_frame, player_profession
+from ui.profession_icons import draw_profession_icon_before
 
 
 def active_player_entities(scene, location):
@@ -24,9 +26,8 @@ def draw_active_players(scene, screen, location):
             continue
 
         direction = occupant.get("position_direction") or "s"
-        frames = getattr(scene, "player_directional_frames", {}).get(direction, [])
-        if frames:
-            sprite = frames[0]
+        sprite = player_frame(scene, occupant, direction, 0.0, moving=False)
+        if sprite is not None:
             sprite_rect = sprite.get_rect(midbottom=(sx, sy))
             screen.blit(sprite, sprite_rect)
             name_y = sprite_rect.top - 4
@@ -41,6 +42,7 @@ def draw_active_players(scene, screen, location):
         background = label_rect.inflate(8, 4)
         pygame.draw.rect(screen, (17, 23, 29), background, border_radius=3)
         pygame.draw.rect(screen, (79, 139, 179), background, 1, border_radius=3)
+        draw_profession_icon_before(screen, player_profession(occupant), background)
         screen.blit(label, label_rect)
 
 
@@ -57,9 +59,9 @@ def draw_afk_players(scene, screen, location):
             continue
 
         direction = occupant.get("position_direction") or "s"
-        frames = getattr(scene, "player_directional_frames", {}).get(direction, [])
-        if frames:
-            sprite = frames[0].copy()
+        sprite = player_frame(scene, occupant, direction, 0.0, moving=False)
+        if sprite is not None:
+            sprite = sprite.copy()
             sprite.fill((135, 139, 145, 255), special_flags=pygame.BLEND_RGBA_MULT)
             sprite_rect = sprite.get_rect(midbottom=(sx, sy))
             screen.blit(sprite, sprite_rect)
@@ -75,4 +77,5 @@ def draw_afk_players(scene, screen, location):
         background = label_rect.inflate(8, 4)
         pygame.draw.rect(screen, (20, 22, 26), background, border_radius=3)
         pygame.draw.rect(screen, (105, 109, 115), background, 1, border_radius=3)
+        draw_profession_icon_before(screen, player_profession(occupant), background)
         screen.blit(label, label_rect)

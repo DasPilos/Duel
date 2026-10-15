@@ -59,6 +59,17 @@ def character_carry_capacity(character):
     return calculate_carry_capacity(strength, endurance)
 
 
+OVERLOAD_RATIO = 0.80  # выше этой доли грузоподъёмности персонаж перегружен (красная зона)
+
+
+def is_overloaded(character):
+    character = character or {}
+    return load_ratio(
+        character.get("carried_weight_kg", 0),
+        character_carry_capacity(character),
+    ) > OVERLOAD_RATIO
+
+
 def character_movement_speed_multiplier(character):
     character = character or {}
     return movement_speed_multiplier(

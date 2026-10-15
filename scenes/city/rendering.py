@@ -3,6 +3,9 @@ import math
 import time
 import pygame
 from core import settings
+from scenes.map_common import draw_map_badge
+from scenes.player_sprites import player_frame, player_profession
+from ui.profession_icons import draw_profession_icon_before
 from scenes.city.sprite_modules import city_visual_tier, draw_keep, draw_residence
 
 def _is_city_road_tile(tile_x, tile_y):
@@ -182,12 +185,7 @@ class CityRenderMixin:
 
     def _draw_badge(self, screen, cx, bottom_y, text, border_color):
         """Вспомогательный метод для аккуратной плашки с текстом над объектом."""
-        surf = self.badge_font.render(text, True, (240, 240, 240))
-        bg = surf.get_rect(midbottom=(cx, bottom_y)).inflate(10, 4)
-        if -50 <= bg.centerx <= settings.WIDTH + 50 and -50 <= bg.centery <= settings.HEIGHT + 50:
-            pygame.draw.rect(screen, (12, 14, 18, 220), bg, border_radius=3)
-            pygame.draw.rect(screen, border_color, bg, 1, border_radius=3)
-            screen.blit(surf, surf.get_rect(center=bg.center))
+        draw_map_badge(self.badge_font, screen, cx, bottom_y, text, border_color)
 
     def _draw_city_objects(self, screen):
         """Отрисовывает интерактивные строения города (Кристалл Жизни, Главный замок, Таверна, Амбар, Склад)."""
@@ -1570,18 +1568,11 @@ class CityRenderMixin:
         screen.blit(shadow_surf, (psx - 16, psy - 5))
 
         direction = getattr(self, "player_direction", "s")
-        current_frame = None
-
-        if self.player_state == "walk":
-            run_frames = self.player_run_directional_frames.get(direction)
-            if run_frames:
-                idx = int(self.player_anim_timer * 10.0) % len(run_frames)
-                current_frame = run_frames[idx]
-        else:
-            idle_frames = self.player_directional_frames.get(direction)
-            if idle_frames:
-                idx = int(self.player_anim_timer * 4.0) % len(idle_frames)
-                current_frame = idle_frames[idx]
+        character = getattr(self.session, "character", None) or {}
+        current_frame = player_frame(
+            self, character, direction, self.player_anim_timer,
+            moving=self.player_state == "walk",
+        )
 
         if current_frame is not None:
             frame_rect = current_frame.get_rect(midbottom=(psx, psy + 2))
@@ -1597,6 +1588,7 @@ class CityRenderMixin:
         name_bg = name_surf.get_rect(midbottom=(psx, psy - 42)).inflate(8, 4)
         pygame.draw.rect(screen, (15, 18, 24, 210), name_bg, border_radius=3)
         pygame.draw.rect(screen, (220, 180, 60), name_bg, 1, border_radius=3)
+        draw_profession_icon_before(screen, player_profession(character), name_bg)
         screen.blit(name_surf, name_surf.get_rect(center=name_bg.center))
 
     def _draw_floating_messages(self, screen):

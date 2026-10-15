@@ -30,11 +30,14 @@ from ui.hud import draw_button, draw_city_upgrade_line, upgrade_line_font
 from ui.character_profile_overlay import CharacterProfileOverlay
 from ui.sprite_loader import FighterSprite
 from ui.chat import ChatPanel
-from ui.afk_presence import active_player_entities, draw_active_players, draw_afk_players
+from ui.afk_presence import draw_active_players, draw_afk_players
 from ui.catalog_icons import draw_building_icon
 from ui.map_travel import draw_mobile_hover_card, draw_traveling_entities, mobile_entity_at
 from ui.production_building_window import VIEWS, ProductionBuildingWindow, object_building, point_in_polygon
 from scenes.city.exterior import draw_city_exterior
+from scenes.map_common import draw_map_badge, screen_px_to_world
+from scenes.player_sprites import load_player_directional_sprites, player_frame, player_profession
+from ui.profession_icons import draw_profession_icon_before
 
 
 # Фразы при попытке взаимодействия с расстояния больше 1 тайла
@@ -312,7 +315,7 @@ class WorldMapScene:
         # Загрузка 8-направленных спрайтов idle (из assets/2Idle/) и бега (из assets/3run/)
         self.player_directional_frames = {}
         self.player_run_directional_frames = {}
-        self._load_player_directional_sprites()
+        load_player_directional_sprites(self)
         self._restore_player_work()
 
     def _restore_player_work(self):
@@ -900,77 +903,6 @@ class WorldMapScene:
             except Exception as e:
                 print(f"Ошибка загрузки спрайта лесника: {e}")
 
-    def _load_player_directional_sprites(self):
-        """
-        Загружает 8-направленные спрайты:
-        1. Idle (assets/2Idle/) - по 4 кадра стойки на месте
-        2. Run (assets/3run/) - по 6 кадров полноценного бега
-        """
-        target_h = 56
-        directions = ["n", "ne", "e", "se", "s", "sw", "w", "nw"]
-
-        # 1. Idle спрайты
-        idle_dir = Path(__file__).resolve().parent.parent / "assets" / "2Idle"
-        if idle_dir.is_dir():
-            for d in directions:
-                d_folder = idle_dir / d
-                if not d_folder.is_dir():
-                    continue
-                frame_files = sorted([
-                    f for f in d_folder.glob("*.png")
-                    if not f.name.endswith("apng.png") and not f.name.endswith("spritesheet.png")
-                ])
-                if not frame_files:
-                    continue
-                sample = pygame.image.load(str(frame_files[0])).convert_alpha()
-                crop_rect = sample.get_bounding_rect()
-                if crop_rect.height <= 0:
-                    continue
-                ratio = target_h / float(crop_rect.height)
-                target_w = max(1, int(crop_rect.width * ratio))
-                frames = []
-                for ff in frame_files:
-                    try:
-                        raw = pygame.image.load(str(ff)).convert_alpha()
-                        cropped = raw.subsurface(crop_rect).copy()
-                        scaled = pygame.transform.smoothscale(cropped, (target_w, target_h))
-                        frames.append(scaled)
-                    except Exception as e:
-                        print(f"[WorldMapScene] Error loading idle {ff}: {e}")
-                if frames:
-                    self.player_directional_frames[d] = frames
-
-        # 2. Run спрайты (бег)
-        run_dir = Path(__file__).resolve().parent.parent / "assets" / "3run"
-        if run_dir.is_dir():
-            for d in directions:
-                d_folder = run_dir / d
-                if not d_folder.is_dir():
-                    continue
-                frame_files = sorted([
-                    f for f in d_folder.glob("*.png")
-                    if not f.name.endswith("apng.png") and not f.name.endswith("spritesheet.png")
-                ])
-                if not frame_files:
-                    continue
-                sample = pygame.image.load(str(frame_files[0])).convert_alpha()
-                crop_rect = sample.get_bounding_rect()
-                if crop_rect.height <= 0:
-                    continue
-                ratio = target_h / float(crop_rect.height)
-                target_w = max(1, int(crop_rect.width * ratio))
-                frames = []
-                for ff in frame_files:
-                    try:
-                        raw = pygame.image.load(str(ff)).convert_alpha()
-                        cropped = raw.subsurface(crop_rect).copy()
-                        scaled = pygame.transform.smoothscale(cropped, (target_w, target_h))
-                        frames.append(scaled)
-                    except Exception as e:
-                        print(f"[WorldMapScene] Error loading run {ff}: {e}")
-                if frames:
-                    self.player_run_directional_frames[d] = frames
-
     @staticmethod
     def _vector_to_direction(dx, dy):
         """Определяет одно из 8 направлений (n, ne, e, se, s, sw, w, nw) по вектору движения."""
@@ -1008,9 +940,7 @@ class WorldMapScene:
 
     def screen_to_world(self, sx, sy):
         """Преобразование экранных пикселей в мировые координаты."""
-        wx = (sx - settings.WIDTH / 2) / self.zoom + self.camera_x
-        wy = (sy - settings.HEIGHT / 2) / self.zoom + self.camera_y
-        return wx, wy
+        return screen_px_to_world(sx, sy, self.zoom, self.camera_x, self.camera_y)
 
     def _clamp_camera(self):
         """Удержание камеры в пределах мира с учетом текущего зума."""
@@ -1804,12 +1734,15 @@ class WorldMapScene:
 
         # 1. Базовая земля (чистая плоская заливка top-down, без искажений)
         half_gy = self.grid_h // 2
+        # Экранная X зависит только от wx, Y только от wy: считаем границы тайлов один раз.
+        edge_x = {gx: self.world_to_screen(gx * self.tile_size, 0)[0]
+                  for gx in range(start_gx, end_gx + 1)}
+        edge_y = {gy: self.world_to_screen(0, gy * self.tile_size)[1]
+                  for gy in range(start_gy, end_gy + 1)}
         for gy in range(start_gy, end_gy):
             for gx in range(start_gx, end_gx):
-                tile_wx = gx * self.tile_size
-                tile_wy = gy * self.tile_size
-                sx, sy = self.world_to_screen(tile_wx, tile_wy)
-                sx2, sy2 = self.world_to_screen(tile_wx + self.tile_size, tile_wy + self.tile_size)
+                sx, sy = edge_x[gx], edge_y[gy]
+                sx2, sy2 = edge_x[gx + 1], edge_y[gy + 1]
 
                 rect = pygame.Rect(sx, sy, sx2 - sx + 1, sy2 - sy + 1)
 
@@ -1927,12 +1860,7 @@ class WorldMapScene:
 
     def _draw_badge(self, screen, cx, bottom_y, text, border_color):
         """Вспомогательный метод для аккуратной плашки с текстом над объектом."""
-        surf = self.badge_font.render(text, True, (240, 240, 240))
-        bg = surf.get_rect(midbottom=(cx, bottom_y)).inflate(10, 4)
-        if -50 <= bg.centerx <= settings.WIDTH + 50 and -50 <= bg.centery <= settings.HEIGHT + 50:
-            pygame.draw.rect(screen, (12, 14, 18, 220), bg, border_radius=3)
-            pygame.draw.rect(screen, border_color, bg, 1, border_radius=3)
-            screen.blit(surf, surf.get_rect(center=bg.center))
+        draw_map_badge(self.badge_font, screen, cx, bottom_y, text, border_color)
 
     def _draw_objects(self, screen):
         """Отрисовывает интерактивные объекты карты из self.objects."""
@@ -2577,8 +2505,6 @@ class WorldMapScene:
 
         pygame.draw.line(screen, (50, 65, 80), (rect.left + 14, rect.top + 62), (rect.right - 14, rect.top + 62), 1)
 
-        gx = int(ent.get("x", 0) // self.tile_size)
-        gy = int(ent.get("y", 0) // self.tile_size)
 
         # Статус дистанции до объекта в активном окне
         in_range = self._is_within_one_tile(ent)
@@ -2679,22 +2605,16 @@ class WorldMapScene:
         elif is_player_hovered:
             pygame.draw.circle(screen, (80, 200, 255), (sx, sy), 22, 2)
 
-        # Выбираем активный набор кадров (бег или покой)
-        if self.player_state == "walk" and self.player_run_directional_frames:
-            frames_dict = self.player_run_directional_frames
-            anim_fps = 10.0  # Энергичный бег (10 кадров/сек)
-        else:
-            frames_dict = self.player_directional_frames
-            anim_fps = 4.0   # Спокойное дыхание на месте (4 кадра/сек)
+        character = getattr(self.session, "character", None) or {}
+        windup_total = self.attack_windup_total or self.attack_windup
+        attacking = self.attack_windup > 0
+        attack_progress = 1.0 - self.attack_windup / max(windup_total, 1e-6) if attacking else 0.0
+        frame_surf = player_frame(
+            self, character, self.player_direction, self.player_anim_timer,
+            moving=self.player_state == "walk", attacking=attacking, attack_progress=attack_progress,
+        )
 
-        direction_frames = frames_dict.get(self.player_direction)
-        if not direction_frames and frames_dict:
-            direction_frames = next(iter(frames_dict.values()))
-
-        if direction_frames:
-            frame_idx = int(self.player_anim_timer * anim_fps) % len(direction_frames)
-            frame_surf = direction_frames[frame_idx]
-
+        if frame_surf is not None:
             # Ноги персонажа касаются земли в точке (sx, sy)
             frame_rect = frame_surf.get_rect(midbottom=(sx, sy))
             screen.blit(frame_surf, frame_rect)
@@ -2739,6 +2659,7 @@ class WorldMapScene:
         bg = n_rect.inflate(8, 2)
         pygame.draw.rect(screen, (15, 18, 24, 210), bg, border_radius=3)
         pygame.draw.rect(screen, (180, 150, 60), bg, 1, border_radius=3)
+        draw_profession_icon_before(screen, player_profession(character), bg)
         screen.blit(name_surf, n_rect)
 
     def _draw_overhead_bar(self, screen, rect, ratio, color):

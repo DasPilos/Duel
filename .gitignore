@@ -5,6 +5,7 @@ server_data.sqlite3
 backups/
 battle_archive/
 debug_*.png
+*.log
 
 debug_out.txt
 full_project_code.txt

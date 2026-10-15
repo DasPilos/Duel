@@ -89,11 +89,12 @@ class WorldTerrainTests(unittest.TestCase):
         self.assertEqual(entity["position_x"], (10.5 * 32))
 
     def test_convoy_hover_eta_uses_hours_minutes_seconds_without_daily_wrap(self):
-        from ui.map_travel import _format_eta, _format_phase_eta
+        from ui.map_travel import _format_phase_eta
+        from ui.time_format import format_hms
 
-        self.assertEqual(_format_eta(89999), "24:59:59")
-        self.assertEqual(_format_eta(61), "00:01:01")
-        self.assertEqual(_format_eta(-1), "00:00:00")
+        self.assertEqual(format_hms(89999), "24:59:59")
+        self.assertEqual(format_hms(61), "00:01:01")
+        self.assertEqual(format_hms(-1), "00:00:00")
         self.assertEqual(
             _format_phase_eta({"phase": "loading", "eta_seconds": 3600}),
             "До конца погрузки: 01:00:00",
@@ -405,7 +406,6 @@ class WorldTerrainTests(unittest.TestCase):
         pygame.init()
         try:
             pygame.display.set_mode((settings.WIDTH, settings.HEIGHT), pygame.HIDDEN)
-            from combat.world_stats import get_attack_windup
             from scenes.world_map_scene import WorldMapScene
 
             hit_patch = patch("scenes.world_map_scene.resolve_world_melee_attack", return_value=dict(FIXED_PLAYER_HIT))
@@ -1122,7 +1122,7 @@ class WorldTerrainTests(unittest.TestCase):
         pygame.init()
         try:
             pygame.display.set_mode((settings.WIDTH, settings.HEIGHT), pygame.HIDDEN)
-            from main import checkpoint_for_scene, scene_for_saved_character
+            from client.app_flow import checkpoint_for_scene, scene_for_saved_character
             from scenes.city_scene import CityScene
             from scenes.world_map_scene import WorldMapScene
 
@@ -1204,7 +1204,7 @@ class WorldTerrainTests(unittest.TestCase):
             pygame.quit()
 
     def test_exit_disconnect_is_submitted_without_blocking_countdown(self):
-        from main import start_disconnect
+        from client.app_flow import start_disconnect
 
         class FakeSession:
             character = {"id": 7, "name": "Test", "zone": "tavern"}
@@ -1241,7 +1241,7 @@ class WorldTerrainTests(unittest.TestCase):
         self.assertEqual(session.checkpoint["id"], 7)
 
     def test_profile_key_action_opens_and_closes_player_card(self):
-        from main import toggle_player_profile
+        from client.app_flow import toggle_player_profile
 
         class Overlay:
             def __init__(self):
@@ -1528,7 +1528,7 @@ class WorldTerrainTests(unittest.TestCase):
         pygame.init()
         try:
             pygame.display.set_mode((settings.WIDTH, settings.HEIGHT), pygame.HIDDEN)
-            from main import checkpoint_for_scene
+            from client.app_flow import checkpoint_for_scene
             from scenes.world_map_scene import WorldMapScene
 
             scene = WorldMapScene(SimpleNamespace(character={"id": 8, "name": "Чек"}, client=SimpleNamespace()))
@@ -1614,7 +1614,7 @@ class WorldTerrainTests(unittest.TestCase):
             pygame.quit()
 
     def test_passive_session_regen_does_not_touch_world_map(self):
-        import main
+        from client.app_flow import apply_passive_regen
         from scenes.world_map_scene import WorldMapScene
 
         calls = []
@@ -1628,7 +1628,7 @@ class WorldTerrainTests(unittest.TestCase):
             pygame.display.set_mode((settings.WIDTH, settings.HEIGHT), pygame.HIDDEN)
             scene = WorldMapScene(SimpleNamespace(character={"id": 12, "name": "Бой"}, client=SimpleNamespace()))
             scene.session = Session()
-            main.apply_passive_regen(scene, 0.5)
+            apply_passive_regen(scene, 0.5)
             self.assertEqual(calls, [])
         finally:
             pygame.quit()
