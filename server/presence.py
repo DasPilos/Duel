@@ -92,6 +92,14 @@ def get_character_presence(character_id):
                  if int(item["character_id"]) == int(character_id)), None)
 
 
+def update_character_vitals(character_id, hp, mp, max_hp, max_mp):
+    """Живые HP/MP из мира видны в списке игроков, поэтому копия присутствия обновляется сразу."""
+    cleanup()
+    for item in PRESENCE.values():
+        if int(item["character_id"]) == int(character_id):
+            item.update({"hp": hp, "mp": mp, "max_hp": max_hp, "max_mp": max_mp})
+
+
 def remove_character_presence(character_id):
     character_id = int(character_id)
     removed = False

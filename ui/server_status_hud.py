@@ -6,13 +6,11 @@ from zoneinfo import ZoneInfo
 
 import pygame
 
-from client.network import ServerError
 from core import settings
 from ui.hud import draw_button
 
 
 class ServerStatusHUD:
-    POLL_SECONDS = 1.0
     PANEL_COLOR = (25, 29, 31)
     BORDER_COLOR = (113, 133, 126)
     TEXT_COLOR = (230, 226, 211)
@@ -20,8 +18,6 @@ class ServerStatusHUD:
 
     def __init__(self):
         self.status = None
-        self.session = None
-        self.poll_elapsed = self.POLL_SECONDS
         self.notice_received_at = time.monotonic()
         self.server_time = None
         self.server_time_received_at = time.monotonic()
@@ -32,19 +28,7 @@ class ServerStatusHUD:
         self.small_font = pygame.font.SysFont(settings.FONT_NAME, 14)
         self.button_font = pygame.font.SysFont(settings.FONT_NAME, 15)
 
-    def update(self, session, dt, *, visible):
-        if session is None or not getattr(session, "character", None):
-            self.session = None
-            return
-        self.session = session
-        self.poll_elapsed += max(0.0, float(dt))
-        if self.poll_elapsed < self.POLL_SECONDS:
-            return
-        self.poll_elapsed = 0.0
-        try:
-            status = session.client.get_server_status()
-        except (ServerError, AttributeError, OSError):
-            return
+    def apply_status(self, status):
         old_notice = (self.status or {}).get("restart_notice")
         new_notice = status.get("restart_notice")
         if (old_notice or {}).get("restart_at") != (new_notice or {}).get("restart_at"):

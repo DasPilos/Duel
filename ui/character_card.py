@@ -17,7 +17,7 @@ from ui.character_profile import (
     effective_stats,
     normalize_character_profile,
 )
-from ui.hud import draw_button, draw_text, FloatingText, update_and_draw_floating_texts
+from ui.hud import draw_button, draw_text
 from ui import equipment_slots
 from ui.inventory_window import IconCache
 from ui.sprite_loader import FighterSprite, WARRIOR_SPRITE_PATH
@@ -75,24 +75,11 @@ class CharacterCard:
             )
         }
         self.state = normalize_character_profile({}, title=None, kind="player")
-        self.regen_floating_texts = []
         
         # Закладки для инвентаря
         self.current_tab = "character"  # character, inventory, equipment, battle
         self.inventory_data = []
         self.selected_inventory_item = None
-
-    def show_regen(self, amount):
-        self.regen_floating_texts.append(
-            FloatingText(
-                0,
-                0,
-                f"+{int(amount)} HP",
-                self.small_font,
-                color=(110, 235, 120),
-                duration=settings.FLOATING_TEXT_DURATION,
-            )
-        )
 
     def sync(self, profile, *, title=None, kind="player"):
         self.state = normalize_character_profile(profile, title=title, kind=kind)
@@ -207,7 +194,7 @@ class CharacterCard:
 
         stats_header_y = self._stats_header_y(frame)
         sprite_offset_x = WARRIOR_CARD_SPRITE_OFFSET_X if sprite is self.warrior_sprite else 0
-        sprite_top = equipment_slots.draw_paperdoll(
+        equipment_slots.draw_paperdoll(
             screen, frame, sprite, self.icons, self.small_font,
             normalized.get("equipment", {}), slot_highlight, dragged_slot,
             sprite_offset_x=sprite_offset_x,
@@ -268,10 +255,6 @@ class CharacterCard:
             if bonus_surface:
                 screen.blit(bonus_surface, (line_rect.x + line_surface.get_width(), line_rect.y))
             speed_top = line_back.bottom + 4
-        for floating_text in self.regen_floating_texts:
-            floating_text.x = frame.centerx
-            floating_text.y = sprite_top - 12
-        update_and_draw_floating_texts(screen, self.regen_floating_texts)
 
         draw_text(screen, self.small_font, "ХАРАКТЕРИСТИКИ", x, stats_header_y, border_color)
         stats = effective_stats(normalized)

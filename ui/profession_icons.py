@@ -5,7 +5,12 @@ import pygame
 
 
 PROFESSION_ICON_DIR = Path(__file__).resolve().parent.parent / "assets" / "ui" / "professions"
-PROFESSION_ICON_FILES = {"warrior": "warrior.png"}
+PROFESSION_ICON_FILES = {
+    "warrior": "warrior.png",
+    "archer": "archer.png",
+    "assassin": "assassin.png",
+    "mage": "mage.png",
+}
 PROFESSION_ICON_SIZE = 32
 PROFESSION_ICON_GAP = 4
 

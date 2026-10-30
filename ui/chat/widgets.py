@@ -2,7 +2,7 @@ import re
 
 import pygame
 
-from ui.hud import draw_button, draw_text
+from ui.hud import draw_button
 
 
 def _split_damage_segments(text, color):
@@ -28,41 +28,6 @@ def _wrap_segments(segments, font, max_width):
             current_width += chunk_width
     lines.append(current_line)
     return lines
-
-
-
-class ChatHeader:
-    def __init__(self, rect, font):
-        self.rect = rect
-        self.font = font
-        self.collapse_rect = pygame.Rect(rect.right - 42, rect.y + 8, 30, 26)
-
-    def draw(self, screen, location, collapsed):
-        return
-
-
-class ChannelList:
-    def __init__(self, rect, font):
-        self.rect = rect
-        self.font = font
-        self.channels = ("Общий", "Личные")
-
-    def draw(self, screen, selected, unread):
-        for index, channel in enumerate(self.channels):
-            color = (90, 145, 220) if channel == selected else (55, 58, 72)
-            item = pygame.Rect(
-                self.rect.x + index * 75,
-                self.rect.y,
-                70,
-                25,
-            )
-            draw_button(screen, item, channel, self.font, color=color)
-
-
-class UnreadBadge:
-    def draw(self, screen, rect, count, font):
-        if count > 0:
-            draw_text(screen, font, f"Новых: {count}", rect.x, rect.y, (255, 220, 120))
 
 
 class MessageItem:

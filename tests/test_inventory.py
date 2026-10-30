@@ -346,6 +346,7 @@ class InventoryTests(unittest.TestCase):
         )
 
     def test_shield_bonuses_reach_battle_fighter(self):
+        from combat.character_stats import calculate_max_hp
         from combat.fighter_profile import apply_fighter_profile
 
         self.items.add_to_inventory(self.character_id, 39, 1)
@@ -357,7 +358,7 @@ class InventoryTests(unittest.TestCase):
 
         self.assertEqual(fighter.equipment_stat_modifiers["hp"], 20)
         self.assertEqual(fighter.equipment_stat_modifiers["block"], 5)
-        self.assertEqual(fighter.max_hp, 56)
+        self.assertEqual(fighter.max_hp, calculate_max_hp(character["level"], character["stats"]["endurance"]) + 20)
 
     def test_fighter_uses_equipment_bonus_without_changing_base_stats(self):
         fighter = Fighter("Воин")

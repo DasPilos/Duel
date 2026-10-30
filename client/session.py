@@ -1,5 +1,4 @@
 from client.network import GameClient, ServerError
-from core import settings
 
 
 class OnlineSession:
@@ -10,8 +9,6 @@ class OnlineSession:
         self.character_name = character_name
         self.user = None
         self.character = None
-        self.regen_accumulator = 0.0
-        self.regen_mp_accumulator = 0.0
 
     def connect(self):
         try:
@@ -42,8 +39,8 @@ class OnlineSession:
         self.character = self.client.load_character(self.character["id"])
         return self.character
 
-    def create_character(self, name, profession_type="warrior"):
-        self.character = self.client.create_character(name, profession_type=profession_type)
+    def create_character(self, name, profession_type="warrior", stats=None):
+        self.character = self.client.create_character(name, profession_type=profession_type, stats=stats)
         return self.character
     
     def delete_character(self, character_id):
@@ -58,37 +55,6 @@ class OnlineSession:
         """Update character profession"""
         self.character = self.client.update_character_profession(character_id, profession_type)
         return self.character
-
-    def passive_regenerate(self, dt, in_tavern=False, full_regen_seconds=None):
-        self.last_regen_amount = 0
-        self.last_mp_regen_amount = 0
-        character = self.character
-        if character is None or (
-            character["hp"] >= character["max_hp"]
-            and character.get("mp", character.get("max_mp", 0)) >= character.get("max_mp", 0)
-        ):
-            self.regen_accumulator = 0.0
-            self.regen_mp_accumulator = 0.0
-            return character
-        full_regen_seconds = full_regen_seconds or (settings.TAVERN_FULL_REGEN_SECONDS if in_tavern else settings.FULL_REGEN_SECONDS)
-        dt = max(0.0, float(dt))
-        self.regen_accumulator += character["max_hp"] / full_regen_seconds * dt
-        self.regen_mp_accumulator += character.get("max_mp", 0) / full_regen_seconds * dt
-        hp_amount = int(self.regen_accumulator)
-        mp_amount = int(self.regen_mp_accumulator)
-        if hp_amount <= 0 and mp_amount <= 0:
-            return character
-        self.regen_accumulator -= hp_amount
-        self.regen_mp_accumulator -= mp_amount
-        previous_hp = character["hp"]
-        previous_mp = character.get("mp", 0)
-        character["hp"] = min(character["max_hp"], character["hp"] + hp_amount)
-        character["mp"] = min(character.get("max_mp", 0), character.get("mp", 0) + mp_amount)
-        result = self.client.save_character(character)
-        self.character = result
-        self.last_regen_amount = max(0, result["hp"] - previous_hp)
-        self.last_mp_regen_amount = max(0, result.get("mp", 0) - previous_mp)
-        return result
 
     def update_presence(self, location):
         return self.client.update_presence(self.character["id"], location)
@@ -120,30 +86,6 @@ class OnlineSession:
     def send_message(self, location, text, recipient_id=None):
         return self.client.send_message(self.character["id"], location, text, recipient_id)
 
-    @staticmethod
-    def _fighter_payload(fighter):
-        return {
-            "name": fighter.name,
-            "level": fighter.level,
-            "xp": fighter.xp,
-            "hp": fighter.hp,
-            "max_hp": fighter.max_hp,
-            "mp": fighter.mp,
-            "max_mp": fighter.max_mp,
-            "stats": dict(fighter.stats),
-            "stat_points": fighter.stat_points,
-        }
-
-    def save_fighter(self, fighter):
-        if self.character is None:
-            return None
-        payload = {
-            **self.character,
-            **self._fighter_payload(fighter),
-        }
-        self.character = self.client.save_character(payload)
-        return self.character
-
     def save_character_profile(self, profile):
         if self.character is None:
             return None
@@ -155,11 +97,9 @@ class OnlineSession:
         self.character = self.client.save_character(payload)
         return self.character
 
-    def disconnect(self, fighter=None, character=None):
+    def disconnect(self, character=None):
         if self.client.token is None:
             return
-        if fighter is not None:
-            self.save_fighter(fighter)
         if character is not None and self.character is not None:
             self.character.update(character)
         self.client.disconnect(self.character)

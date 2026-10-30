@@ -3,7 +3,7 @@ from pathlib import Path
 
 from client.network import ServerError
 from core import settings
-from ui.chat import ChatPanel
+from ui.chat import ChatDialog, PresenceState
 from ui.character_profile_overlay import CharacterProfileOverlay
 from ui.tavern_shop import TavernShop
 from ui.hud import draw_button
@@ -22,7 +22,8 @@ class TavernScene:
         self.inventory_button = pygame.Rect(settings.WIDTH - 70, 10, 50, 50)
         self.map_button = pygame.Rect(settings.WIDTH - 190, 10, 110, 50)
         self.profile_overlay = CharacterProfileOverlay(self.small_font)
-        self.chat = ChatPanel(session, "tavern", profile_overlay=self.profile_overlay)
+        self.presence = PresenceState(session, "tavern")
+        self.chat = ChatDialog(session, "tavern", self.presence)
         self.tavern_shop = TavernShop(self.font, self.small_font)
         
         # Кнопки магазина слева (напитки и скупка) - снаружи панели магазина, вверху
@@ -116,11 +117,15 @@ class TavernScene:
                 self.finished = True
                 return
         if event.type == pygame.KEYDOWN:
+            modal_open = self.tavern_shop.is_open or self.profile_overlay.is_open
+            if not modal_open and self.chat.open_from_key(event):
+                return
             if event.key == pygame.K_ESCAPE:
                 self.cancelled = True
                 self.finished = True
 
     def update(self, dt):
+        self.presence.update(dt)
         self.chat.update(dt)
         self.tavern_shop.update()  # Обновляем таймер ошибок
         update_tavern_music()
@@ -136,11 +141,9 @@ class TavernScene:
             )
             screen.blit(background, (0, 0))
 
-        # Скрываем встроенную в картинку декоративную область чата.
-        # Настоящий ChatPanel рисуется поверх и остается полностью функциональным.
-        if not self.chat.collapsed:
-            chat_cover = self.chat.panel_rect.inflate(6, 6)
-            pygame.draw.rect(screen, (22, 24, 34), chat_cover, border_radius=10)
+        # Декоративная область чата в картинке таверны закрыта, пока диалог не открыт.
+        if not self.chat.visible:
+            pygame.draw.rect(screen, (22, 24, 34), pygame.Rect(settings.CHAT_AREA_RECT).inflate(6, 6), border_radius=10)
 
         mouse_pos = pygame.mouse.get_pos()
         
@@ -263,4 +266,5 @@ class TavernScene:
     
     def close(self):
         stop_tavern_music()
-        self.chat.close()
+        self.presence.close()
+        self.chat.hide()

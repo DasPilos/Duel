@@ -10,6 +10,7 @@ MAX_RESTART_DELAY_SECONDS = 30 * 60
 
 _LOCK = threading.Lock()
 _NOTICE = None
+_CLIENT_RELOAD = None
 
 
 def schedule_restart(*, delay_seconds=DEFAULT_RESTART_DELAY_SECONDS, message=None, now=None):
@@ -48,3 +49,27 @@ def public_notice(*, now=None):
             **_NOTICE,
             "seconds_remaining": max(0, math.ceil(_NOTICE["restart_at"] - now)),
         }
+
+
+def request_client_reload(*, message=None, now=None):
+    """Просит все клиенты перезагрузиться. id по времени, чтобы не совпадал после перезапуска сервера."""
+    now = time.time() if now is None else float(now)
+    notice = {
+        "id": int(now * 1000),
+        "message": message or "Сервер получил важное обновление. Перезагрузите клиент.",
+    }
+    global _CLIENT_RELOAD
+    with _LOCK:
+        _CLIENT_RELOAD = notice
+    return dict(notice)
+
+
+def cancel_client_reload():
+    global _CLIENT_RELOAD
+    with _LOCK:
+        _CLIENT_RELOAD = None
+
+
+def public_client_reload():
+    with _LOCK:
+        return dict(_CLIENT_RELOAD) if _CLIENT_RELOAD is not None else None

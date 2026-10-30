@@ -16,7 +16,13 @@ SERVER_TIMEZONE = os.environ.get("SERVER_TIMEZONE", "Europe/Kyiv")
 CHAT_MAX_LENGTH = 300
 CHAT_RATE_LIMIT_COUNT = 5
 CHAT_RATE_LIMIT_WINDOW = 10
-PASSIVE_REGEN_FULL_SECONDS = 300
+PASSIVE_REGEN_FULL_SECONDS = 600
+PASSIVE_REGEN_TAVERN_FULL_SECONDS = 300
 CHAT_HISTORY_TTL_SECONDS = 48 * 60 * 60
 CITY_TICK_INTERVAL_SECONDS = float(os.environ.get("CITY_TICK_INTERVAL_SECONDS", "1"))
 CITY_CATCHUP_HOURS_PER_PASS = int(os.environ.get("CITY_CATCHUP_HOURS_PER_PASS", "168"))
+
+
+def passive_regen_full_seconds(zone):
+    """Секунд до полного восстановления HP/MP: в таверне быстрее, везде остальное медленнее."""
+    return PASSIVE_REGEN_TAVERN_FULL_SECONDS if zone == "tavern" else PASSIVE_REGEN_FULL_SECONDS

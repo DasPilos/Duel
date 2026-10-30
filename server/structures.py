@@ -3,6 +3,9 @@
 Прямоугольники — [x, y, ширина, высота] в мировых пикселях (тайл 32 px).
 """
 
+from server import world_map
+from server.world_map import IS_TOWER_WORLD
+
 CITY_OBJECTS = [{'id': 'crystal_of_life',
   'name': 'Кристалл Жизни',
   'type': 'Святыня (3х3 тайла)',
@@ -364,6 +367,8 @@ def city_structures():
 
 
 def world_structures(city_level=1):
+        if IS_TOWER_WORLD or world_map.LIVE_MAP:
+            return {"objects": []}
         from core.city_progression import COUNTRY_BUILDING_UNLOCK_LEVELS, unlocked_country_buildings
 
         unlocked = set(unlocked_country_buildings(city_level))

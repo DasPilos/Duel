@@ -3,6 +3,9 @@
 import json
 import math
 import time
+import traceback
+
+from psycopg import errors as pg_errors
 
 from core.currency import Currency
 from core.production_buildings import (
@@ -35,6 +38,7 @@ from server.city_upgrade import (
 )
 
 MIN_POPULATION = 4
+CITY_DEADLOCK_RETRIES = 3
 FULL_MEAL_NUTRITION = 100
 FOOD_VALUE = {"wheat": 10, "berries": 15, "meat": 20}
 FOOD_EXTRACTION_RANK = {"wheat": 1, "berries": 2, "meat": 3}
@@ -852,7 +856,23 @@ class CityPopulation:
             keys = [(int(row["world_id"]), row["faction"])
                     for row in connection.execute("SELECT world_id, faction FROM city_population_state").fetchall()]
         for key in keys:
-            self._process_due(key, now)
+            self._process_city(key, now)
+
+    def _process_city(self, key, now):
+        # Один город не должен срывать проход по остальным. Откат транзакции при deadlock безопасен:
+        # повтор сразу, а если не вышло — следующий проход сделает ту же работу.
+        for attempt in range(1, CITY_DEADLOCK_RETRIES + 1):
+            try:
+                self._process_due(key, now)
+                return
+            except pg_errors.DeadlockDetected:
+                if attempt == CITY_DEADLOCK_RETRIES:
+                    traceback.print_exc()
+                    return
+                time.sleep(0.05 * attempt)
+            except Exception:
+                traceback.print_exc()
+                return
 
     def _announce_starvation_death(self, world_id, name):
         self._announce_city_chat(world_id, f"Горожанин умер от голода: {name}")

@@ -6,11 +6,12 @@ from concurrent.futures import ThreadPoolExecutor
 import pygame
 
 from client.app_flow import (
-    apply_passive_regen,
     close_scene_ui,
     disconnect_scene,
     ensure_equipment_loaded,
     inventory_session,
+    leave_to_lobby,
+    resync_scene,
     scene_for_saved_character,
     scene_session,
     server_status_visible,
@@ -18,8 +19,10 @@ from client.app_flow import (
     text_input_focused,
     toggle_player_profile,
 )
+from client.connection import ConnectionMonitor
 from client.network import ServerError
 from core.settings import FPS, HEIGHT, WIDTH
+from scenes.account_menu_scene import AccountMenuScene
 from scenes.character_scene import CharacterScene
 from scenes.city_scene import CityScene
 from scenes.create_character_scene import CreateCharacterScene
@@ -27,10 +30,12 @@ from scenes.tavern_scene import TavernScene
 from scenes.title_scene import TitleScene
 from scenes.town.character_room import CharacterRoom
 from scenes.world_map_scene import WorldMapScene
+from ui.connection_overlay import ConnectionOverlay
 from ui.exit_menu import ExitMenu
 from ui.inventory_window import InventoryWindow
 from ui.scene_transition import SceneTransition
 from ui.server_status_hud import ServerStatusHUD
+from ui.sfx import stop_run_sound
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Мир Duel")
@@ -46,7 +51,7 @@ def main():
     pygame.init()
     pygame.mixer.init()  # Инициализируем звуковую систему
 
-    screen = pygame.display.set_mode((WIDTH, HEIGHT), pygame.NOFRAME)
+    screen = pygame.display.set_mode((WIDTH, HEIGHT))
 
     clock = pygame.time.Clock()
     scene = TitleScene(
@@ -60,9 +65,12 @@ def main():
     inventory = InventoryWindow()
     exit_menu = ExitMenu()
     server_status_hud = ServerStatusHUD()
+    connection = ConnectionMonitor()
+    connection_overlay = ConnectionOverlay()
     disconnect_executor = ThreadPoolExecutor(max_workers=1)
     disconnect_future = None
     disconnect_succeeded = False
+    server_unreachable = False  # отключиться от сервера не вышло: клиент можно закрыть без сохранения
 
     try:
         running = True
@@ -71,6 +79,15 @@ def main():
             dt = clock.tick(FPS) / 1000.0
 
             for event in pygame.event.get():
+                if connection.is_blocking:
+                    if event.type == pygame.QUIT:
+                        running = False
+                    elif connection_overlay.handle_event(connection, event) == "reload":
+                        # Сохранение может не пройти, но перезагрузка всё равно нужна
+                        disconnect_scene(scene)
+                        pygame.quit()
+                        os.execv(sys.executable, [sys.executable, *sys.argv])
+                    continue
                 if event.type == pygame.QUIT:
                     if exit_menu.quitting:
                         continue
@@ -86,12 +103,21 @@ def main():
                 elif exit_menu.is_open:
                     action = exit_menu.handle_event(event)
                     if action == "quit":
+                        if server_unreachable:
+                            running = False
+                            continue
                         disconnect_succeeded = False
                         disconnect_future = start_disconnect(scene, disconnect_executor)
                         if disconnect_future is not None:
                             exit_menu.begin_quit()
                         else:
                             exit_menu.open(error="Не удалось отключиться от сервера.")
+                    elif action == "lobby":
+                        lobby_session, error = leave_to_lobby(scene)
+                        if lobby_session is None:
+                            exit_menu.open(error=error)
+                        else:
+                            transition.start(screen, lambda: AccountMenuScene(lobby_session))
                     continue
                 elif (server_status_visible(scene, transition.active, exit_menu)
                       and server_status_hud.handle_event(event) == "restart_client"):
@@ -130,8 +156,9 @@ def main():
                 disconnect_future = None
                 try:
                     completed_disconnect.result()
-                except ServerError as error:
-                    exit_menu.open(error=str(error))
+                except Exception as error:
+                    server_unreachable = True
+                    exit_menu.open(error=f"Сервер недоступен: {error}. Нажмите «Покинуть игру», чтобы закрыть клиент")
                 else:
                     disconnect_succeeded = True
 
@@ -153,7 +180,16 @@ def main():
                     else:
                         close_scene_ui(scene)
                         session = scene.online_session
-                        transition.start(screen, lambda: CharacterScene(session))
+                        transition.start(screen, lambda: AccountMenuScene(session))
+
+                elif args.online and isinstance(scene, AccountMenuScene) and scene.finished:
+                    close_scene_ui(scene)
+                    if scene.world_session is not None:
+                        world_session = scene.world_session
+                        transition.start(screen, lambda: CharacterScene(world_session))
+                    else:
+                        pygame.key.start_text_input()
+                        transition.start(screen, lambda: TitleScene(args.server))
 
                 elif args.online and isinstance(scene, CharacterScene) and scene.finished:
                     pygame.key.stop_text_input()
@@ -178,10 +214,10 @@ def main():
                         session = scene.session
                         transition.start(screen, lambda: CharacterScene(session))
                     else:
-                        # Character created; both professions share the same tavern hub.
+                        # Character created; both professions share the same tavern hub (миры карт — сразу на карте).
                         close_scene_ui(scene)
                         session = scene.session
-                        transition.start(screen, lambda: TavernScene(session))
+                        transition.start(screen, lambda: scene_for_saved_character(session))
 
                 elif args.online and isinstance(scene, TavernScene) and scene.finished:
                     if scene.cancelled:
@@ -226,31 +262,40 @@ def main():
                     session = scene.session
                     transition.start(screen, lambda: TavernScene(session))
 
+            status = connection.update(scene_session(scene), dt)
+            if status is not None:
+                server_status_hud.apply_status(status)
+            if connection.take_reconnected():
+                resync_scene(scene)
+            if connection.expired():
+                running = False
+
             if not transition.active:
-                server_status_hud.update(
-                    scene_session(scene), dt,
-                    visible=server_status_visible(scene, transition.active, exit_menu),
-                )
-                if not exit_menu.is_open and not exit_menu.quitting:
-                    if args.online:
-                        apply_passive_regen(scene, dt)
+                if not exit_menu.is_open and not exit_menu.quitting and not connection.is_blocking:
                     scene.update(dt)
+                else:
+                    stop_run_sound()
                 scene.draw(screen)
                 inventory.draw(screen)
                 exit_menu.draw(screen, pygame.font.SysFont("arial", 30), pygame.font.SysFont("arial", 20))
                 if server_status_visible(scene, transition.active, exit_menu):
                     server_status_hud.draw(screen)
             else:
+                stop_run_sound()
                 new_scene = transition.update(dt)
                 if new_scene is not None:
                     scene = new_scene
                     pygame.key.start_text_input()
                 transition.draw(screen)
 
+            connection_overlay.draw(screen, connection)
             pygame.display.flip()
     finally:
         disconnect_executor.shutdown(wait=True, cancel_futures=False)
-        scene.close()
+        try:
+            scene.close()
+        except ServerError:
+            pass
         pygame.quit()
 
 

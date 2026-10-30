@@ -34,19 +34,38 @@ def ensure_equipment_loaded(scene):
 
 
 def text_input_focused(scene):
-    """Игрок печатает в чате — клавиша I должна остаться буквой"""
-    message_input = getattr(getattr(scene, "chat", None), "message_input", None)
-    return bool(getattr(message_input, "focused", False))
+    """Открытый чат или полный лог боя забирают клавиши (I, ESC) себе, а не меню."""
+    combat_log = getattr(scene, "combat_log", None)
+    if combat_log is not None and combat_log.captures_keyboard():
+        return True
+    chat = getattr(scene, "chat", None)
+    return chat is not None and chat.captures_keyboard()
 
 
 def close_scene_ui(scene):
+    presence = getattr(scene, "presence", None)
+    if presence is not None:
+        presence.close()
     chat = getattr(scene, "chat", None)
     if chat is not None:
-        chat.close()
+        chat.hide()
 
 
 def scene_session(scene):
     return getattr(scene, "session", None) or getattr(scene, "online_session", None)
+
+
+def resync_scene(scene):
+    """После возврата связи перечитывает персонажа и обновляет состояние мира с сервера."""
+    session = scene_session(scene)
+    if session is not None and getattr(session, "character", None):
+        try:
+            session.refresh_character()
+        except ServerError:
+            pass
+    resync = getattr(scene, "resync_with_server", None)
+    if resync is not None:
+        resync()
 
 
 def server_status_visible(scene, transition, exit_menu):
@@ -110,7 +129,14 @@ def checkpoint_for_scene(scene):
     return checkpoint
 
 
+def opens_map_first(session):
+    """Мир создан из карты редактора: в нём нет таверны, персонаж появляется на карте."""
+    return bool(getattr(session, "map_world", False))
+
+
 def scene_for_saved_character(session):
+    if opens_map_first(session):
+        return WorldMapScene(session)
     character = session.character or {}
     position = (character.get("position_x"), character.get("position_y"))
     direction = character.get("position_direction") or "s"
@@ -145,18 +171,20 @@ def start_disconnect(scene, executor):
     return executor.submit(session.disconnect, character=checkpoint)
 
 
-def apply_passive_regen(scene, dt):
-    # На карте мира HP ведёт боевой файтер (сохраняется через WorldMapScene), иначе сессия перезапишет бой.
-    if isinstance(scene, WorldMapScene):
-        return
-    session = getattr(scene, "session", None)
-    if session is not None:
-        session.passive_regenerate(dt, in_tavern=isinstance(scene, TavernScene))
-        amount = getattr(session, "last_regen_amount", 0)
-        if amount > 0 and hasattr(scene, "profile_overlay"):
-            scene.profile_overlay.player_card.sync(
-                session.character,
-                title="ТЕКУЩИЙ ИГРОК",
-                kind="player",
-            )
-            scene.profile_overlay.player_card.show_regen(amount)
+def leave_to_lobby(scene):
+    """Сохраняет персонажа, выходит с сервера мира и заново входит в аккаунт для лобби.
+
+    Возвращает (сессия аккаунта, None) или (None, текст ошибки).
+    """
+    session = scene_session(scene)
+    if session is None:
+        return None, "Нет активной сессии."
+    checkpoint = checkpoint_for_scene(scene)
+    close_scene_ui(scene)
+    try:
+        session.disconnect(character=checkpoint)
+        # disconnect сбрасывает токен, для лобби нужен новый
+        session.user = session.client.login(session.username, session.password)
+    except ServerError as error:
+        return None, str(error)
+    return session, None

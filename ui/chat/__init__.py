@@ -1,3 +1,4 @@
-from ui.chat.panel import ChatPanel
+from ui.chat.dialog import ChatDialog
+from ui.chat.presence import PresenceState
 
-__all__ = ["ChatPanel"]
+__all__ = ["ChatDialog", "PresenceState"]

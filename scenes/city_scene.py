@@ -17,7 +17,7 @@ from ui.city_storage_window import CityStorageWindow
 from ui.castle_window import CastleWindow
 from ui.stable_window import StableWindow
 from ui.character_profile_overlay import CharacterProfileOverlay
-from ui.chat import ChatPanel
+from ui.chat import ChatDialog, PresenceState
 from ui.afk_presence import draw_afk_players
 
 
@@ -126,8 +126,11 @@ class CityScene(CityBuildingsMixin, CityRenderMixin, CityModalsMixin, CityHudMix
         self.badge_font = pygame.font.SysFont(settings.FONT_NAME, 13, bold=True)
         self.large_font = pygame.font.SysFont(settings.FONT_NAME, 24, bold=True)
         self.profile_overlay = CharacterProfileOverlay(self.small_font)
-        self.chat = (ChatPanel(session, "city", profile_overlay=self.profile_overlay)
-                     if hasattr(session, "social_snapshot") else None)
+        self.presence = None
+        self.chat = None
+        if hasattr(session, "social_snapshot"):
+            self.presence = PresenceState(session, "city")
+            self.chat = ChatDialog(session, "city", self.presence)
 
         # Переключатель отображения сетки
         self.show_grid = False
@@ -257,12 +260,7 @@ class CityScene(CityBuildingsMixin, CityRenderMixin, CityModalsMixin, CityHudMix
 
         # Сообщение при входе / возрождении
         if gate in ("crystal", "death", "respawn"):
-            if hasattr(self.session, "character") and self.session.character:
-                self.session.character["hp"] = self.session.character.get("max_hp", 100)
-                try:
-                    self.session.client.save_character(self.session.character)
-                except Exception:
-                    pass
+            self._rest_at_crystal()
             self._add_floating_message("💎 Ваша душа возродилась у Кристалла Жизни!", self.player_x, self.player_y - 36, (100, 240, 255))
         else:
             gate_names = {
@@ -397,6 +395,16 @@ class CityScene(CityBuildingsMixin, CityRenderMixin, CityModalsMixin, CityHudMix
 
         return None
 
+    def _rest_at_crystal(self):
+        """Полное восстановление у Кристалла Жизни: значения считает и сохраняет сервер."""
+        character = getattr(self.session, "character", None)
+        if not character:
+            return
+        try:
+            character.update(self.session.client.rest_character(character["id"]))
+        except (ServerError, OSError):
+            pass
+
     def _is_within_one_tile(self, entity):
         """Проверяет дистанцию не дальше 1 тайла от объекта или его входа."""
         if not entity:
@@ -530,12 +538,7 @@ class CityScene(CityBuildingsMixin, CityRenderMixin, CityModalsMixin, CityHudMix
             if not self._is_within_one_tile(self.active_entity):
                 self._add_floating_message("Подойдите ближе к Кристаллу Жизни", self.player_x, self.player_y - 34, (255, 120, 90))
                 return
-            if hasattr(self.session, "character") and self.session.character:
-                self.session.character["hp"] = self.session.character.get("max_hp", 100)
-                try:
-                    self.session.client.save_character(self.session.character)
-                except Exception:
-                    pass
+            self._rest_at_crystal()
             self._add_floating_message("✨ Кристалл Жизни исцеляет ваши раны!", self.player_x, self.player_y - 36, (100, 240, 255))
             self.action_notice = "Здоровье полностью восстановлено!"
             self.action_notice_timer = 2.5
@@ -912,6 +915,8 @@ class CityScene(CityBuildingsMixin, CityRenderMixin, CityModalsMixin, CityHudMix
             return
 
         if event.type == pygame.KEYDOWN:
+            if self.chat is not None and self.chat.open_from_key(event):
+                return
             if event.key == pygame.K_g:
                 self.show_grid = not self.show_grid
                 return
@@ -980,7 +985,7 @@ class CityScene(CityBuildingsMixin, CityRenderMixin, CityModalsMixin, CityHudMix
         """Клавиши WASD не двигают персонажа, пока открыт ввод в чат или оверлей профиля."""
         if self.profile_overlay.is_open:
             return True
-        return self.chat is not None and self.chat.message_input.focused and not self.chat.collapsed
+        return self.chat is not None and self.chat.captures_keyboard()
 
     def _save_profile_card(self, profile):
         try:
@@ -1023,6 +1028,8 @@ class CityScene(CityBuildingsMixin, CityRenderMixin, CityModalsMixin, CityHudMix
                 ))
             if now - self.workshop_last_refresh >= 5:
                 self._refresh_workshop_state()
+        if self.presence is not None:
+            self.presence.update(dt)
         if self.chat is not None:
             self.chat.update(dt)
         # 1. Движение персонажа по пути (ПКМ, как в Dota 2)
@@ -1304,4 +1311,7 @@ class CityScene(CityBuildingsMixin, CityRenderMixin, CityModalsMixin, CityHudMix
 
     def close(self):
         """Очистка ресурсов при закрытии сцены."""
-        pass
+        if self.presence is not None:
+            self.presence.close()
+        if self.chat is not None:
+            self.chat.hide()

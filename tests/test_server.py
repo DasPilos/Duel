@@ -329,6 +329,22 @@ class ServerPersistenceTests(unittest.TestCase):
         self.assertEqual(loaded["zone"], "tavern")
         self.assertEqual(loaded["name"], "Сетевой воин")
 
+    def test_stale_client_save_keeps_server_xp(self):
+        with running_server(self.database) as client:
+            client.register("stale-xp-user", "password")
+            client.login("stale-xp-user", "password")
+            character = client.create_character("Снимок")
+            user_id = self.database.user_id_by_token(client.token)
+            current = self.database.get_character(user_id, character["id"])
+            self.database.save_world_progression(
+                user_id, character["id"], current["level"], 40, current["stats"],
+                current["stat_points"], current["max_hp"])
+            saved = client.save_character({**character, "xp": 0, "zone": "tavern"})
+            client.disconnect(saved)
+
+        self.assertEqual(saved["xp"], 40)
+        self.assertEqual(saved["zone"], "tavern")
+
     def test_world_announcements_are_visible_in_every_location_and_server_only(self):
         with running_server(self.database) as client:
             client.register("world-announcement-reader", "password")

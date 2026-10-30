@@ -6,13 +6,13 @@ from ui.profession_icons import draw_profession_icon_before
 
 
 def active_player_entities(scene, location):
-    chat = getattr(scene, "chat", None)
-    if chat is None:
+    presence = getattr(scene, "presence", None)
+    if presence is None:
         return []
     character = getattr(getattr(scene, "session", None), "character", {}) or {}
     own_id = str(character.get("id", ""))
     return [
-        occupant for occupant in chat.occupants
+        occupant for occupant in presence.occupants
         if not occupant.get("afk") and occupant.get("location") == location
         and occupant.get("position_x") is not None and occupant.get("position_y") is not None
         and str(occupant.get("character_id")) != own_id
@@ -47,10 +47,10 @@ def draw_active_players(scene, screen, location):
 
 
 def draw_afk_players(scene, screen, location):
-    chat = getattr(scene, "chat", None)
-    if chat is None:
+    presence = getattr(scene, "presence", None)
+    if presence is None:
         return
-    for occupant in chat.occupants:
+    for occupant in presence.occupants:
         if (not occupant.get("afk") or occupant.get("location") != location
                 or occupant.get("position_x") is None or occupant.get("position_y") is None):
             continue

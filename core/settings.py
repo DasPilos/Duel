@@ -1,6 +1,3 @@
-import pygame
-
-
 # Окно
 WIDTH = 1920
 HEIGHT = 1080
@@ -48,8 +45,6 @@ PLAYER_LOG_COLOR = (100, 255, 100)
 BOTH_HIT_LOG_COLOR = (255, 230, 80)
 ENEMY_HIT_LOG_COLOR = (255, 120, 180)
 NO_HIT_LOG_COLOR = (170, 170, 170)
-
-CHAT_ZONE_START = 775
 
 # Старые координаты оставлены временно для совместимости с несвязанными сценами.
 ZONE_Y = {
@@ -105,29 +100,20 @@ LOG_X = 1450
 LOG_Y = 620
 LOG_LINE_HEIGHT = 60
 
-# Настройка общего блока чата и персонажей локации
-CHAT_PANEL_X = PLAYER_CARD_RECT[0] + PLAYER_CARD_RECT[2] + 6
-CHAT_PANEL_Y = 790
-CHAT_PANEL_WIDTH = ENEMY_CARD_RECT[0] - CHAT_PANEL_X - 6
-CHAT_PANEL_HEIGHT = 285
-CHAT_PEOPLE_WIDTH = 150
-CHAT_MIN_CHAT_WIDTH = 300
-CHAT_MIN_PEOPLE_WIDTH = 150
-CHAT_DIVIDER_WIDTH = 8
-CHAT_DIVIDER_GAP = 8
-CHAT_PEOPLE_TEXT_LEFT_PADDING = 10
-CHAT_SCALE_STEP = 0.1
-CHAT_MIN_SCALE = 0.7
-CHAT_MAX_SCALE = 1.3
+# Чат (диалог по Enter) и лог боя. Фон полупрозрачный: значение альфы 0..255 (166 ≈ 65%).
+CHAT_BACKGROUND_ALPHA = 166
+# Старая область чата в фоновых картинках (таверна рисует её сама, диалог открывается поверх)
+CHAT_AREA_RECT = (PLAYER_CARD_RECT[0] + PLAYER_CARD_RECT[2] + 6, 790, ENEMY_CARD_RECT[0] - (PLAYER_CARD_RECT[0] + PLAYER_CARD_RECT[2] + 6) - 6, 285)
+CHAT_DIALOG_RECT = (CHAT_AREA_RECT[0], CHAT_AREA_RECT[1], 760, CHAT_AREA_RECT[3])
+COMBAT_LOG_RECT = (WIDTH - 310, 440, 300, 300)
+# Каждая запись лога видна COMBAT_LOG_VISIBLE_SECONDS, затем плавно гаснет за COMBAT_LOG_FADE_SECONDS
+COMBAT_LOG_VISIBLE_SECONDS = 30.0
+COMBAT_LOG_FADE_SECONDS = 5.0
+# Интервал, с которым новые записи появляются в логе по одной
+COMBAT_LOG_APPEAR_INTERVAL = 0.6
 
 COMMENTS_Y = 640
 COMMENT_LINE_HEIGHT = 35
-
-# Вне боя (и на экране итогов боя) полное восстановление занимает 10 минут.
-# В таверне восстановление вдвое быстрее — 5 минут.
-FULL_REGEN_SECONDS = 600
-TAVERN_FULL_REGEN_SECONDS = 300
-ALTAR_FULL_REGEN_SECONDS = 5
 
 # Базовая скорость повозки на грунтовых дорогах карты мира (например, ферма -> город): 1 тайл за 60 секунд.
 CART_ROAD_SECONDS_PER_TILE = 60

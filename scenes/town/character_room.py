@@ -8,7 +8,7 @@ from pathlib import Path
 from core import settings
 from ui.music import play_tavern_music, stop_tavern_music
 from ui.character_profile_overlay import CharacterProfileOverlay
-from ui.chat import ChatPanel
+from ui.chat import ChatDialog, PresenceState
 from ui.inventory_window import SLOT_LABELS
 
 
@@ -36,8 +36,11 @@ class CharacterRoom:
 
         # Профиль оверлей (для просмотра карточки персонажа)
         self.profile_overlay = CharacterProfileOverlay(self.small_font)
-        self.chat = (ChatPanel(session, "character_room", profile_overlay=self.profile_overlay)
-                     if hasattr(session, "social_snapshot") else None)
+        self.presence = None
+        self.chat = None
+        if hasattr(session, "social_snapshot"):
+            self.presence = PresenceState(session, "character_room")
+            self.chat = ChatDialog(session, "character_room", self.presence)
 
         # Вкладки (рюкзак убран, он теперь в глобальной панели)
         self.current_tab = "equipment"
@@ -82,6 +85,8 @@ class CharacterRoom:
                 return
         
         if event.type == pygame.KEYDOWN:
+            if self.chat is not None and not self.profile_overlay.is_open and self.chat.open_from_key(event):
+                return
             if event.key == pygame.K_ESCAPE:
                 if self.profile_overlay.is_open:
                     self.profile_overlay.close()
@@ -120,6 +125,8 @@ class CharacterRoom:
 
     def update(self, dt):
         """Обновление логики сцены"""
+        if self.presence is not None:
+            self.presence.update(dt)
         if self.chat is not None:
             self.chat.update(dt)
         # Загружаем данные с сервера (при первом входе)

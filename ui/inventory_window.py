@@ -14,7 +14,7 @@ import pygame
 
 from client.network import ServerError
 from combat.weapon_damage import weapon_damage_range
-from core import settings
+from core import item_icons, settings
 from core.currency import Currency
 from ui.equipment_slots import SLOT_LABELS, slot_at, slot_rects
 from ui.hud import draw_button
@@ -80,6 +80,8 @@ class IconCache:
                 curr_path = CURRENCY_DIR / f"{key}.png"
                 if curr_path.is_file():
                     path = curr_path
+                elif item_icons.is_known_icon(key):
+                    path = item_icons.icon_path(key)
             try:
                 img = pygame.image.load(str(path))
                 try:

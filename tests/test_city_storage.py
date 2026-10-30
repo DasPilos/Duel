@@ -1603,13 +1603,13 @@ class CityStorageWindowTests(unittest.TestCase):
 
         scene = CityScene(session)
         try:
-            self.assertEqual(scene.chat.location, "city")
+            self.assertEqual(scene.presence.location, "city")
             scene.active_entity = {"id": "player"}
             scene._trigger_active_action()
             self.assertTrue(scene.profile_overlay.is_open)
             scene.draw(self.screen)
         finally:
-            scene.chat.close()
+            scene.close()
 
     def test_forge_and_workshop_modals_draw_independently(self):
         rendered = []

@@ -5,6 +5,7 @@ import json
 import secrets
 import threading
 import time
+from urllib.parse import urlparse
 from contextlib import contextmanager
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -16,14 +17,15 @@ from psycopg_pool import ConnectionPool
 from combat.character_stats import (
     BASE_STAT_VALUE,
     MIN_STAT_VALUE,
-    STARTING_STAT_POINTS,
     calculate_carry_capacity,
     calculate_max_hp,
     calculate_max_mana,
+    creation_stats,
     minimum_endurance,
 )
 from core.currency import Currency
-from server import config
+from core.game_modes import is_mode
+from server import config, map_editor
 from server.migrations import apply_migrations
 
 SYSTEM_USER_ID = 0
@@ -113,7 +115,30 @@ class Database:
         with self.connection() as connection:
             apply_migrations(connection)
             self._initialize_drinks(connection)
+            self._initialize_map_catalog(connection)
             self._normalize_character_stats(connection)
+
+    @staticmethod
+    def _initialize_map_catalog(connection):
+        """Обновляет каталог тайлов и объектов редактора карт по файлам assets/map."""
+        items = map_editor.catalog_definitions()
+        for item in items:
+            connection.execute(
+                """INSERT INTO map_catalog
+                   (item_key, kind, category, asset, footprint_w, footprint_h, blocks, sort_order)
+                   VALUES (%(item_key)s, %(kind)s, %(category)s, %(asset)s,
+                           %(footprint_w)s, %(footprint_h)s, %(blocks)s, %(sort_order)s)
+                   ON CONFLICT (item_key) DO UPDATE SET
+                       kind = EXCLUDED.kind, category = EXCLUDED.category, asset = EXCLUDED.asset,
+                       footprint_w = EXCLUDED.footprint_w, footprint_h = EXCLUDED.footprint_h,
+                       blocks = EXCLUDED.blocks, sort_order = EXCLUDED.sort_order""",
+                item,
+            )
+        connection.execute(
+            """DELETE FROM map_catalog WHERE NOT (item_key = ANY(%s))
+               AND item_key NOT IN (SELECT item_key FROM map_live_cells)""",
+            ([item["item_key"] for item in items],),
+        )
 
     @staticmethod
     def _normalize_character_stats(connection):
@@ -244,6 +269,47 @@ class Database:
                 (SYSTEM_USER_ID, now - config.ONLINE_PLAYER_TTL_SECONDS),
             ).fetchone()
         return int(row["amount"])
+
+    def list_worlds(self, now=None, viewer_id=None):
+        """Все миры с вычисленным открыт/закрыт. Тестовые миры видят только модераторы и админы."""
+        now = time.time() if now is None else float(now)
+        with self.connection() as connection:
+            rows = connection.execute(
+                "SELECT id, code, name, status, opens_at, closes_at, server_url, test_only FROM worlds ORDER BY id"
+            ).fetchall()
+        if viewer_id is None or not self.is_moderator(viewer_id):
+            rows = [row for row in rows if not row["test_only"]]
+        return [self._world_payload(row, now) for row in rows]
+
+    def _world_payload(self, row, now):
+        is_open = (
+            row["status"] == "open"
+            and (row["opens_at"] is None or row["opens_at"] <= now)
+            and (row["closes_at"] is None or row["closes_at"] > now)
+        )
+        return {
+            "id": row["id"],
+            "code": row["code"],
+            "name": row["name"],
+            "is_open": is_open,
+            "opens_at": row["opens_at"],
+            "closes_at": row["closes_at"],
+            "server_url": row["server_url"],
+        }
+
+    def lobby_members(self, now=None):
+        """Accounts with a recently active session in any world."""
+        now = time.time() if now is None else float(now)
+        with self.connection() as connection:
+            rows = connection.execute(
+                """SELECT u.id AS user_id, u.username
+                   FROM sessions s JOIN users u ON u.id = s.user_id
+                   WHERE s.user_id <> %s AND s.last_seen_at > %s
+                   GROUP BY u.id, u.username
+                   ORDER BY u.username""",
+                (SYSTEM_USER_ID, now - config.ONLINE_PLAYER_TTL_SECONDS),
+            ).fetchall()
+        return [{"user_id": row["user_id"], "username": row["username"]} for row in rows]
     
     def get_user(self, user_id):
         """Get user by ID with password hash"""
@@ -254,7 +320,7 @@ class Database:
             ).fetchone()
         return row
 
-    def create_character(self, user_id, name, profession_type="warrior"):
+    def create_character(self, user_id, name, profession_type="warrior", allocation=None):
         self.validate_character_name(name)
         valid_professions = ["warrior", "archer", "assassin", "mage"]
         if profession_type not in valid_professions:
@@ -263,19 +329,9 @@ class Database:
         now = time.time()
 
         
-        # Единый набор из 7 характеристик для всех персонажей независимо от профессии
-        stats = {
-            "strength": BASE_STAT_VALUE,
-            "agility": BASE_STAT_VALUE,
-            "intuition": BASE_STAT_VALUE,
-            "wisdom": BASE_STAT_VALUE,
-            "intellect": BASE_STAT_VALUE,
-            "endurance": minimum_endurance(1),
-        }
-        
+        stats, stat_points = creation_stats(allocation)
         max_hp = calculate_max_hp(1, stats["endurance"])
         max_mp = calculate_max_mana(stats["intellect"])
-        stat_points = STARTING_STAT_POINTS
         try:
             with self.connection() as connection:
                 character_id = connection.execute(
@@ -535,6 +591,251 @@ class Database:
             row = connection.execute("SELECT role FROM users WHERE id = %s", (user_id,)).fetchone()
         return row is not None and row["role"] in ("moderator", "admin")
 
+    def map_catalog(self):
+        with self.connection() as connection:
+            rows = connection.execute(
+                """                SELECT item_key, kind, category, asset, footprint_w, footprint_h, blocks, sort_order
+                   FROM map_catalog ORDER BY sort_order, item_key"""
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def map_live_mobs(self):
+        """NPC опубликованной карты текущего мира; пустой список, если карта без NPC или не публиковалась."""
+        with self.connection() as connection:
+            rows = connection.execute(
+                """SELECT kind, x, y FROM map_live_mobs WHERE world_id = %s ORDER BY y, x""",
+                (self.world_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def world_mode(self):
+        """Режим текущего мира (worlds.mode): по нему берутся настройки мобов."""
+        with self.connection() as connection:
+            row = connection.execute("SELECT mode FROM worlds WHERE id = %s", (self.world_id,)).fetchone()
+        return row["mode"] if row is not None else "tower"
+
+    def map_live_spawns(self):
+        """Точки спауна опубликованной карты текущего мира: [(x, y)] в клетках."""
+        with self.connection() as connection:
+            rows = connection.execute(
+                "SELECT x, y FROM map_live_spawns WHERE world_id = %s ORDER BY y, x", (self.world_id,)
+            ).fetchall()
+        return [(row["x"], row["y"]) for row in rows]
+
+    def map_live_cells(self):
+        """Опубликованная карта текущего мира, которую читает игра; пустой список, если карта не публиковалась."""
+        with self.connection() as connection:
+            rows = connection.execute(
+                """SELECT layer, x, y, item_key AS key FROM map_live_cells
+                   WHERE world_id = %s ORDER BY layer, y, x""",
+                (self.world_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def save_saved_map(self, saved_id, name, mode, map_w, map_h, cells, mobs, moderator_id, spawns=None):
+        """Сохраняет карту на сервере как заготовку для мира: мир не создаётся и сервер не запускается."""
+        if not self.is_moderator(moderator_id):
+            raise ValueError("Недостаточно прав модератора")
+        name = str(name or "").strip()
+        if not 1 <= len(name) <= 64:
+            raise ValueError("Название карты: от 1 до 64 символов")
+        if not is_mode(mode):
+            raise ValueError("Неизвестный режим игры")
+        map_editor.check_map_size(map_w, map_h)
+        cell_rows = map_editor.validate_cells(cells, self.map_catalog(), map_w, map_h)
+        mob_rows = map_editor.validate_mobs(mobs, map_w, map_h)
+        spawn_rows = map_editor.validate_spawns(spawns, map_w, map_h)
+        cells_json = json.dumps([{"layer": l, "x": x, "y": y, "key": k} for l, x, y, k in cell_rows], ensure_ascii=False)
+        mobs_json = json.dumps([{"kind": k, "x": x, "y": y} for k, x, y in mob_rows], ensure_ascii=False)
+        spawns_json = json.dumps([{"x": x, "y": y} for x, y in spawn_rows], ensure_ascii=False)
+        now = time.time()
+        with self.connection() as connection:
+            if saved_id:
+                row = connection.execute(
+                    """UPDATE map_saved SET name = %s, mode = %s, map_w = %s, map_h = %s,
+                       cells_json = %s, mobs_json = %s, spawns_json = %s, updated_at = %s WHERE id = %s RETURNING id""",
+                    (name, mode, map_w, map_h, cells_json, mobs_json, spawns_json, now, saved_id),
+                ).fetchone()
+                if row is None:
+                    raise ValueError("Карта на сервере не найдена")
+                return row["id"]
+            row = connection.execute(
+                """INSERT INTO map_saved (name, mode, map_w, map_h, cells_json, mobs_json, spawns_json, created_by, created_at, updated_at)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id""",
+                (name, mode, map_w, map_h, cells_json, mobs_json, spawns_json, moderator_id, now, now),
+            ).fetchone()
+        return row["id"]
+
+    def get_saved_map(self, saved_id):
+        with self.connection() as connection:
+            row = connection.execute(
+                "SELECT id, name, mode, map_w, map_h, cells_json, mobs_json, spawns_json FROM map_saved WHERE id = %s", (saved_id,)
+            ).fetchone()
+        if row is None:
+            raise ValueError("Карта на сервере не найдена")
+        data = dict(row)
+        data["cells"] = json.loads(data.pop("cells_json"))
+        data["mobs"] = json.loads(data.pop("mobs_json"))
+        data["spawns"] = json.loads(data.pop("spawns_json"))
+        return data
+
+    def create_map_world(self, name, mode, moderator_id, test_only=False):
+        """Новый мир карты: id по порядку, код map<id>, режим карты. Тестовый мир создаёт только админ."""
+        if not self.is_moderator(moderator_id):
+            raise ValueError("Недостаточно прав модератора")
+        if test_only and not self.is_admin(moderator_id):
+            raise ValueError("Тестовый мир создаёт только админ")
+        with self.connection() as connection:
+            next_id = connection.execute("SELECT COALESCE(MAX(id), 0) + 1 AS next_id FROM worlds").fetchone()["next_id"]
+            connection.execute(
+                """INSERT INTO worlds (id, code, name, status, created_at, mode, test_only)
+                   VALUES (%s, %s, %s, 'open', %s, %s, %s)""",
+                (next_id, f"map{next_id}", name, time.time(), mode, bool(test_only)),
+            )
+        return {"id": next_id, "code": f"map{next_id}", "name": name, "mode": mode}
+
+    def is_admin(self, user_id):
+        with self.connection() as connection:
+            row = connection.execute("SELECT role FROM users WHERE id = %s", (user_id,)).fetchone()
+        return row is not None and row["role"] == "admin"
+
+    def can_enter_current_world(self, user_id):
+        """Тестовый мир текущего сервера открыт только модераторам и админам."""
+        with self.connection() as connection:
+            row = connection.execute("SELECT test_only FROM worlds WHERE id = %s", (self.world_id,)).fetchone()
+        if row is None or not row["test_only"]:
+            return True
+        return self.is_moderator(user_id)
+
+    def user_role(self, user_id):
+        with self.connection() as connection:
+            row = connection.execute("SELECT id, username, role FROM users WHERE id = %s", (user_id,)).fetchone()
+        return None if row is None else dict(row)
+
+    def list_saved_maps(self, mode=None):
+        """Сохранённые карты, новые сверху; mode — только карты этого режима."""
+        with self.connection() as connection:
+            if mode:
+                rows = connection.execute(
+                    "SELECT id, name, mode, map_w, map_h, updated_at FROM map_saved WHERE mode = %s ORDER BY updated_at DESC",
+                    (mode,),
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    "SELECT id, name, mode, map_w, map_h, updated_at FROM map_saved ORDER BY updated_at DESC"
+                ).fetchall()
+        return [dict(row) for row in rows]
+
+    def update_map_world(self, world_id, name, mode, moderator_id):
+        """Обновляет название и режим мира карты; обычные миры этим не меняются."""
+        if not self.is_moderator(moderator_id):
+            raise ValueError("Недостаточно прав модератора")
+        if not self.world_info(world_id)["code"].startswith("map"):
+            raise ValueError("Этот мир создан не из карты редактора")
+        with self.connection() as connection:
+            connection.execute("UPDATE worlds SET name = %s, mode = %s WHERE id = %s", (name, mode, world_id))
+
+    def world_info(self, world_id):
+        with self.connection() as connection:
+            row = connection.execute(
+                "SELECT id, code, name, status, mode, server_url, test_only FROM worlds WHERE id = %s", (world_id,)
+            ).fetchone()
+        if row is None:
+            raise ValueError("Мир не найден")
+        return dict(row)
+
+    def set_world_server(self, world_id, server_url):
+        with self.connection() as connection:
+            connection.execute("UPDATE worlds SET server_url = %s WHERE id = %s", (server_url, world_id))
+
+    def delete_map_world(self, world_id):
+        """Удаляет только миры карт: откат, если карта не прошла проверку."""
+        with self.connection() as connection:
+            connection.execute("DELETE FROM worlds WHERE id = %s AND code LIKE 'map%%'", (world_id,))
+
+    def used_ports(self):
+        """Порты, которые уже заняты мирами по server_url."""
+        with self.connection() as connection:
+            rows = connection.execute("SELECT server_url FROM worlds WHERE server_url IS NOT NULL").fetchall()
+        return {urlparse(row["server_url"]).port for row in rows if urlparse(row["server_url"]).port}
+
+    def published_map(self):
+        """Сведения о карте, опубликованной в текущий мир; None, если мир играет процедурным рельефом."""
+        with self.connection() as connection:
+            row = connection.execute(
+                """SELECT name, map_w, map_h, published_at, mode FROM map_world_publish WHERE world_id = %s""",
+                (self.world_id,),
+            ).fetchone()
+        return None if row is None else dict(row)
+
+    def linked_world_ids(self, saved_id):
+        """Миры, в которых сейчас опубликована заготовка saved_id (их обновляют при сохранении заготовки)."""
+        with self.connection() as connection:
+            rows = connection.execute(
+                "SELECT world_id FROM map_world_publish WHERE saved_id = %s ORDER BY world_id", (saved_id,)
+            ).fetchall()
+        return [row["world_id"] for row in rows]
+
+    def publish_map(self, cells, world_id, name, map_w, map_h, moderator_id, mobs=None, mode="tower", spawns=None, saved_id=None):
+        """Размещает карту редактора в мире world_id: клетки, NPC и режим. Заменяет живую карту этого мира."""
+        if not self.is_moderator(moderator_id):
+            raise ValueError("Недостаточно прав модератора")
+        name = str(name or "").strip()
+        if not 1 <= len(name) <= 64:
+            raise ValueError("Название карты: от 1 до 64 символов")
+        map_editor.check_map_size(map_w, map_h)
+        rows = map_editor.validate_cells(cells, self.map_catalog(), map_w, map_h)
+        if not rows:
+            raise ValueError("Карта пустая, нечего размещать")
+        mob_rows = map_editor.validate_mobs(mobs, map_w, map_h)
+        spawn_rows = map_editor.validate_spawns(spawns, map_w, map_h)
+        if not is_mode(mode):
+            raise ValueError("Неизвестный режим игры")
+        published_at = time.time()
+        with self.connection() as connection:
+            target = connection.execute("SELECT id, name FROM worlds WHERE id = %s", (world_id,)).fetchone()
+            if target is None:
+                raise ValueError("Мир не найден")
+            connection.execute("DELETE FROM map_live_cells WHERE world_id = %s", (target["id"],))
+            for layer, x, y, key in rows:
+                connection.execute(
+                    """INSERT INTO map_live_cells (world_id, layer, x, y, item_key)
+                       VALUES (%s, %s, %s, %s, %s)""",
+                    (target["id"], layer, x, y, key),
+                )
+            connection.execute("DELETE FROM map_live_spawns WHERE world_id = %s", (target["id"],))
+            for x, y in spawn_rows:
+                connection.execute(
+                    """INSERT INTO map_live_spawns (world_id, x, y) VALUES (%s, %s, %s)""",
+                    (target["id"], x, y),
+                )
+            connection.execute("DELETE FROM map_live_mobs WHERE world_id = %s", (target["id"],))
+            for kind, x, y in mob_rows:
+                connection.execute(
+                    """INSERT INTO map_live_mobs (world_id, kind, x, y) VALUES (%s, %s, %s, %s)""",
+                    (target["id"], kind, x, y),
+                )
+            connection.execute(
+                """INSERT INTO map_world_publish (world_id, name, map_w, map_h, published_at, mode, saved_id)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s)
+                   ON CONFLICT (world_id) DO UPDATE SET
+                       name = EXCLUDED.name, map_w = EXCLUDED.map_w,
+                       map_h = EXCLUDED.map_h, published_at = EXCLUDED.published_at,
+                       mode = EXCLUDED.mode, saved_id = EXCLUDED.saved_id""",
+                (target["id"], name, map_w, map_h, published_at, mode, saved_id),
+            )
+        return {
+            "world_id": target["id"],
+            "world_name": target["name"],
+            "name": name,
+            "map_w": map_w,
+            "map_h": map_h,
+            "applied": len(rows),
+            "mobs": len(mob_rows),
+            "mode": mode,
+            "published_at": published_at,
+        }
+
     def delete_chat_message(self, message_id, moderator_id):
         if not self.is_moderator(moderator_id):
             raise ValueError("Недостаточно прав модератора")
@@ -669,20 +970,17 @@ class Database:
 
     @staticmethod
     def _apply_passive_regen(row, now):
-        # Регенерация считается от сохранённой контрольной точки (hp, updated_at)
-        # и записывается в БД только при следующем сохранении персонажа.
-        hp = int(row["hp"])
-        max_hp = int(row["max_hp"])
-        if hp >= max_hp:
+        # Регенерация считается от сохранённой контрольной точки (hp, mp, updated_at).
+        # В БД она попадает при живой регенерации сервера мира или при сохранении персонажа.
+        hp, max_hp = int(row["hp"]), int(row["max_hp"])
+        mp, max_mp = int(row["mp"]), int(row["max_mp"])
+        if hp >= max_hp and mp >= max_mp:
             return row
-        recovered_hp = min(
-            max_hp,
-            hp + int(max(0.0, now - float(row["updated_at"])) * max_hp / config.PASSIVE_REGEN_FULL_SECONDS),
-        )
-        if recovered_hp == hp:
-            return row
+        full_seconds = config.passive_regen_full_seconds(row["zone"])
+        elapsed = max(0.0, now - float(row["updated_at"]))
         updated = dict(row)
-        updated["hp"] = recovered_hp
+        updated["hp"] = min(max_hp, hp + int(elapsed * max_hp / full_seconds))
+        updated["mp"] = min(max_mp, mp + int(elapsed * max_mp / full_seconds))
         return updated
 
     def save_character(self, user_id, character_id, payload):
@@ -753,6 +1051,129 @@ class Database:
                 ),
             )
         return self.get_character(user_id, character_id)
+
+    def save_world_vitals(self, user_id, character_id, hp, mp):
+        """HP/MP живого мира. Пишутся вместе с меткой времени: от неё считается регенерация при чтении."""
+        character = self.get_character(user_id, character_id)
+        if character is None:
+            raise ValueError("Персонаж не найден")
+        hp = max(0, min(int(hp), int(character["max_hp"])))
+        mp = max(0, min(int(mp), int(character["max_mp"])))
+        with self.connection() as connection:
+            connection.execute(
+                """UPDATE characters SET hp = %s, mp = %s, updated_at = %s
+                   WHERE id = %s AND user_id = %s AND world_id = %s""",
+                (hp, mp, time.time(), character_id, user_id, self.world_id),
+            )
+        return {"hp": hp, "mp": mp, "max_hp": character["max_hp"], "max_mp": character["max_mp"]}
+
+    def rest_character(self, user_id, character_id):
+        character = self.get_character(user_id, character_id)
+        if character is None:
+            raise ValueError("Персонаж не найден")
+        return self.save_world_vitals(user_id, character_id, character["max_hp"], character["max_mp"])
+
+    def add_world_currency(self, user_id, character_id, copper):
+        """Начисляет медь (награда за моба). updated_at не трогает: это метка регенерации HP/MP."""
+        with self.connection() as connection:
+            row = connection.execute(
+                """SELECT copper, silver, gold FROM characters
+                   WHERE id = %s AND user_id = %s AND world_id = %s FOR UPDATE""",
+                (character_id, user_id, self.world_id),
+            ).fetchone()
+            if row is None:
+                raise ValueError("Персонаж не найден")
+            currency = Currency(
+                copper=int(row["copper"] or 0),
+                silver=int(row["silver"] or 0),
+                gold=int(row["gold"] or 0),
+            )
+            currency.add_copper_amount(copper)
+            connection.execute(
+                """UPDATE characters SET copper = %s, silver = %s, gold = %s
+                   WHERE id = %s AND user_id = %s AND world_id = %s""",
+                (currency.copper, currency.silver, currency.gold,
+                 character_id, user_id, self.world_id),
+            )
+        return currency.to_dict()
+
+    def save_world_progression(self, user_id, character_id, level, xp, stats, stat_points, max_hp):
+        """Уровень, опыт и характеристики после награды за моба. updated_at не трогает: это метка регенерации."""
+        with self.connection() as connection:
+            connection.execute(
+                """UPDATE characters SET level = %s, xp = %s, stats_json = %s, stat_points = %s, max_hp = %s
+                   WHERE id = %s AND user_id = %s AND world_id = %s""",
+                (level, xp, json.dumps(stats), stat_points, max_hp,
+                 character_id, user_id, self.world_id),
+            )
+
+    def _lock_character_currency(self, connection, user_id, character_id):
+        row = connection.execute(
+            """SELECT copper, silver, gold FROM characters
+               WHERE id = %s AND user_id = %s AND world_id = %s FOR UPDATE""",
+            (character_id, user_id, self.world_id),
+        ).fetchone()
+        if row is None:
+            raise ValueError("Персонаж не найден")
+        return Currency(copper=int(row["copper"] or 0), silver=int(row["silver"] or 0), gold=int(row["gold"] or 0))
+
+    def _store_character_currency(self, connection, user_id, character_id, currency):
+        connection.execute(
+            """UPDATE characters SET copper = %s, silver = %s, gold = %s
+               WHERE id = %s AND user_id = %s AND world_id = %s""",
+            (currency.copper, currency.silver, currency.gold, character_id, user_id, self.world_id),
+        )
+
+    def create_player_corpse(self, user_id, character_id, x, y, coin_percent):
+        """Гибель: coin_percent % монет персонажа уходят в труп на месте гибели. None, если терять нечего."""
+        with self.connection() as connection:
+            currency = self._lock_character_currency(connection, user_id, character_id)
+            lost = currency.total_copper() * coin_percent // 100
+            if lost <= 0:
+                return None
+            currency.subtract_copper_amount(lost)
+            self._store_character_currency(connection, user_id, character_id, currency)
+            corpse = connection.execute(
+                """INSERT INTO world_player_corpses (world_id, character_id, x, y, copper, created_at)
+                   VALUES (%s, %s, %s, %s, %s, %s) RETURNING id, x, y, copper""",
+                (self.world_id, character_id, float(x), float(y), lost, time.time()),
+            ).fetchone()
+        corpse_payload = {
+            "id": int(corpse["id"]),
+            "x": float(corpse["x"]),
+            "y": float(corpse["y"]),
+            "copper": int(corpse["copper"]),
+        }
+        return corpse_payload, currency.to_dict()
+
+    def list_player_corpses(self, character_id):
+        with self.connection() as connection:
+            rows = connection.execute(
+                """SELECT id, x, y, copper FROM world_player_corpses
+                   WHERE world_id = %s AND character_id = %s ORDER BY id""",
+                (self.world_id, character_id),
+            ).fetchall()
+        return [
+            {"id": int(row["id"]), "x": float(row["x"]), "y": float(row["y"]), "copper": int(row["copper"])}
+            for row in rows
+        ]
+
+    def loot_player_corpse(self, user_id, character_id, corpse_id):
+        """Монеты трупа переходят в кошелёк персонажа, труп удаляется. Возвращает кошелёк и сумму добычи."""
+        with self.connection() as connection:
+            currency = self._lock_character_currency(connection, user_id, character_id)
+            corpse = connection.execute(
+                """SELECT copper FROM world_player_corpses
+                   WHERE id = %s AND character_id = %s AND world_id = %s FOR UPDATE""",
+                (corpse_id, character_id, self.world_id),
+            ).fetchone()
+            if corpse is None:
+                raise ValueError("Труп не найден")
+            looted = int(corpse["copper"])
+            currency.add_copper_amount(looted)
+            self._store_character_currency(connection, user_id, character_id, currency)
+            connection.execute("DELETE FROM world_player_corpses WHERE id = %s", (corpse_id,))
+        return currency.to_dict(), looted
 
     def _load_character_for_save(self, connection, user_id, character_id):
         row = connection.execute(

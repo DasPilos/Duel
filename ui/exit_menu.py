@@ -93,6 +93,7 @@ class ExitMenu:
             actions = [
                 ("settings", "НАСТРОЙКИ"),
                 ("quit", "ПОКИНУТЬ ИГРУ"),
+                ("lobby", "ВЫЙТИ В ЛОББИ"),
                 ("resume", "ПРОДОЛЖИТЬ"),
             ]
         height = 42
