@@ -4,6 +4,10 @@ BASE_STAT_VALUE = 3
 STARTING_ENDURANCE_VALUE = 3
 MIN_STAT_VALUE = 3
 STARTING_STAT_POINTS = 5
+# Создание персонажа: 5 характеристик стартуют с базы, выносливость 4, свободные очки распределяются на карточке
+CREATION_ENDURANCE_VALUE = 4
+CREATION_FREE_POINTS = 3
+CREATION_ALLOCATABLE_STATS = ("strength", "agility", "intuition", "wisdom", "intellect")
 # Все 7 характеристик персонажа: единая система для всех 6 классов
 STAT_NAMES = ("strength", "agility", "intuition", "wisdom", "intellect", "endurance")
 
@@ -146,6 +150,26 @@ def total_stat_points(level):
 def minimum_endurance(level):
     """Return endurance permanently granted by the character level."""
     return STARTING_ENDURANCE_VALUE + max(0, int(level) - 1)
+
+
+def creation_stats(allocation=None):
+    """Return (stats, free_points) for a new character from the points spent during creation."""
+    allocation = dict(allocation or {})
+    unknown = set(allocation) - set(CREATION_ALLOCATABLE_STATS)
+    if unknown:
+        raise ValueError("Очки можно распределять только в базовые характеристики")
+    stats = {}
+    spent = 0
+    for name in CREATION_ALLOCATABLE_STATS:
+        value = allocation.get(name, BASE_STAT_VALUE)
+        if not isinstance(value, int) or isinstance(value, bool) or value < BASE_STAT_VALUE:
+            raise ValueError("Характеристика не может быть ниже базовой")
+        spent += value - BASE_STAT_VALUE
+        stats[name] = value
+    if spent > CREATION_FREE_POINTS:
+        raise ValueError(f"Свободных очков при создании только {CREATION_FREE_POINTS}")
+    stats["endurance"] = CREATION_ENDURANCE_VALUE
+    return stats, CREATION_FREE_POINTS - spent
 
 
 def calculate_max_hp(level, endurance):

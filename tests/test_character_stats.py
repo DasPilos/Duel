@@ -7,7 +7,6 @@ from combat.fighter import Fighter
 from core import settings
 from core.carry_weight import GREEN, NEUTRAL, RED, YELLOW, carried_weight_kg, load_color, movement_speed_multiplier
 from scenes.tavern_scene import TavernScene
-from ui.chat.panel import ChatPanel
 from ui.character_card import CharacterCard
 from ui.character_profile import (
     combat_speed_values,
@@ -363,99 +362,6 @@ class CharacterStatTests(unittest.TestCase):
             self.assertEqual(plus.topleft, (195 + settings.STAT_CONTROL_SHIFT_X, 988))
             self.assertEqual(minus.size, (13, 13))
             self.assertEqual(plus.size, (13, 13))
-        finally:
-            pygame.quit()
-
-    def test_chat_right_click_opens_profile_overlay(self):
-        pygame.init()
-        try:
-            class Session:
-                character = {"id": 1, "name": "Игрок"}
-
-                def update_presence(self, location):
-                    return None
-
-                def list_occupants(self, location):
-                    return []
-
-                def list_messages(self, location):
-                    return []
-
-            overlay = CharacterProfileOverlay(pygame.font.Font(None, 18))
-            panel = ChatPanel(Session(), "tavern", profile_overlay=overlay)
-            panel.occupants = [{"character_id": 2, "name": "Соперник"}]
-            occupant_position = (panel.people_rect.x + 10, panel.people_rect.y + 10)
-            event = pygame.event.Event(
-                pygame.MOUSEBUTTONDOWN,
-                {"button": 3, "pos": occupant_position},
-            )
-
-            self.assertTrue(panel.handle_event(event))
-            self.assertTrue(overlay.is_open)
-            self.assertEqual(overlay.profile["name"], "Соперник")
-        finally:
-            pygame.quit()
-
-    def test_chat_divider_resizes_both_content_areas(self):
-        pygame.init()
-        try:
-            class Session:
-                character = {"id": 1, "name": "Игрок"}
-
-                def update_presence(self, location):
-                    return None
-
-                def list_occupants(self, location):
-                    return []
-
-                def list_messages(self, location):
-                    return []
-
-            panel = ChatPanel(Session(), "tavern")
-            message_width = panel.message_list.rect.width
-            people_width = panel.people_rect.width
-            self.assertEqual(panel.panel_rect.left, settings.CHAT_PANEL_X)
-            self.assertEqual(panel.panel_rect.right, settings.CHAT_PANEL_X + settings.CHAT_PANEL_WIDTH)
-
-            panel.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, {"button": 1, "pos": panel.divider_rect.center}))
-            panel.handle_event(pygame.event.Event(pygame.MOUSEMOTION, {"pos": (panel.divider_rect.centerx - 80, panel.divider_rect.centery)}))
-            panel.handle_event(pygame.event.Event(pygame.MOUSEBUTTONUP, {"button": 1, "pos": panel.divider_rect.center}))
-
-            self.assertLess(panel.message_list.rect.width, message_width)
-            self.assertGreater(panel.people_rect.width, people_width)
-            self.assertEqual(panel.message_input.rect.right, panel.divider_rect.left - settings.CHAT_DIVIDER_GAP)
-            self.assertEqual(panel.people_rect.left, panel.divider_rect.right + settings.CHAT_DIVIDER_GAP)
-        finally:
-            pygame.quit()
-
-    def test_chat_rewraps_messages_after_divider_moves(self):
-        pygame.init()
-        try:
-            class Session:
-                character = {"id": 1, "name": "Игрок"}
-
-                def update_presence(self, location):
-                    return None
-
-                def list_occupants(self, location):
-                    return []
-
-                def list_messages(self, location):
-                    return []
-
-            panel = ChatPanel(Session(), "tavern")
-            panel.messages = [{"id": 1, "sender_id": 2, "sender": "Игрок", "text": "длинное сообщение " * 40}]
-            panel.message_list.set_messages(panel.messages)
-            screen = pygame.Surface((1920, 1080))
-            panel.draw(screen)
-            wide_line_count = len(panel.message_list._layout[0][0])
-
-            panel._move_divider(panel.divider_rect.centerx - 120)
-            panel.draw(screen)
-            narrow_line_count = len(panel.message_list._layout[0][0])
-
-            self.assertGreater(narrow_line_count, wide_line_count)
-            self.assertEqual(panel.message_list._layout_width, panel.message_list.rect.width)
         finally:
             pygame.quit()
 

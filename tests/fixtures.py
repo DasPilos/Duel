@@ -13,6 +13,7 @@ from server import config
 from server.database import Database
 from server.items_database import ItemsDatabase
 from server.main import GameRequestHandler
+from server.world_mobs import WorldService
 
 TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL", config.DATABASE_URL)
 
@@ -54,8 +55,10 @@ def running_server(database):
     """
     previous_database = GameRequestHandler.database
     previous_items_database = GameRequestHandler.items_database
+    previous_world = GameRequestHandler.world
     GameRequestHandler.database = database
     GameRequestHandler.items_database = ItemsDatabase(database)
+    GameRequestHandler.world = WorldService(database, GameRequestHandler.items_database)
     http_server = ThreadingHTTPServer(("127.0.0.1", 0), GameRequestHandler)
     thread = threading.Thread(target=http_server.serve_forever, daemon=True)
     thread.start()
@@ -67,3 +70,4 @@ def running_server(database):
         http_server.server_close()
         GameRequestHandler.database = previous_database
         GameRequestHandler.items_database = previous_items_database
+        GameRequestHandler.world = previous_world

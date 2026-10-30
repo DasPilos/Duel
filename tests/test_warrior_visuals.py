@@ -8,12 +8,16 @@ import pygame
 from core import settings
 from core.carry_weight import OVERLOAD_RATIO, character_carry_capacity, is_overloaded
 from scenes.player_sprites import (
+    FEET_MARGIN,
     PLAYER_DIRECTIONS,
     PLAYER_SPRITE_HEIGHT,
     WARRIOR_ANIMATIONS,
+    WARRIOR_ATTACK_ANIMATIONS,
+    _warrior_source_direction,
     load_warrior_directional_frames,
     player_anim_state,
     player_frame,
+    player_label_top,
     player_profession,
 )
 from ui.profession_icons import PROFESSION_ICON_SIZE, profession_icon
@@ -44,16 +48,42 @@ class WarriorVisualsTests(unittest.TestCase):
             for direction in PLAYER_DIRECTIONS:
                 self.assertTrue(frames[anim][direction], f"{anim}/{direction}")
 
-    def test_warrior_frames_share_canvas_and_figure_height(self):
+    def test_frames_share_a_canvas_per_group(self):
         frames = load_warrior_directional_frames()
-        sizes = {frames[anim][d][0].get_size() for anim in WARRIOR_ANIMATIONS for d in PLAYER_DIRECTIONS}
-        self.assertEqual(len(sizes), 1, sizes)
-        # smoothscale размывает края альфы, поэтому фигура на холсте выше цели на 1–3 px.
+        base = {frames[a][d][0].get_size() for a in ("idle", "run", "walking") for d in PLAYER_DIRECTIONS}
+        attack = {frames[a][d][0].get_size() for a in WARRIOR_ATTACK_ANIMATIONS for d in PLAYER_DIRECTIONS}
+        self.assertEqual(len(base), 1, base)
+        self.assertEqual(len(attack), 1, attack)
+        # В атаках меч и тень выходят за фигуру, поэтому их холст больше
+        self.assertGreater(attack.copy().pop()[0], base.copy().pop()[0])
+
+    def test_one_scale_gives_the_figure_target_height(self):
+        frames = load_warrior_directional_frames()
+        for anim in ("idle", "run", "walking"):
+            for d in PLAYER_DIRECTIONS:
+                heights = sorted(f.get_bounding_rect(min_alpha=201).height for f in frames[anim][d])
+                median = heights[len(heights) // 2]
+                self.assertLessEqual(abs(median - PLAYER_SPRITE_HEIGHT), 8, (anim, d, median))
+
+    def test_feet_stand_at_the_bottom_centre_in_every_state(self):
+        frames = load_warrior_directional_frames()
         for anim in WARRIOR_ANIMATIONS:
             for d in PLAYER_DIRECTIONS:
-                heights = sorted(surface.get_bounding_rect().height for surface in frames[anim][d])
-                median = heights[len(heights) // 2]
-                self.assertLessEqual(abs(median - PLAYER_SPRITE_HEIGHT), 4, (anim, d, median))
+                sample = frames[anim][d][0]
+                width, height = sample.get_size()
+                bottoms = sorted(f.get_bounding_rect(min_alpha=201).bottom for f in frames[anim][d])
+                median_bottom = bottoms[len(bottoms) // 2]
+                self.assertLessEqual(height - median_bottom, FEET_MARGIN + 3, (anim, d, median_bottom, height))
+                self.assertLessEqual(median_bottom, height, (anim, d))
+                feet_x = sample.get_bounding_rect(min_alpha=201).centerx
+                self.assertLessEqual(abs(feet_x - width // 2), width // 4, (anim, d, feet_x, width))
+
+    def test_both_attacks_exist_and_differ(self):
+        frames = load_warrior_directional_frames()
+        first, second = (frames[anim]["s"] for anim in WARRIOR_ATTACK_ANIMATIONS)
+        self.assertNotEqual((len(first), len(second)), (0, 0))
+        self.assertNotEqual(len(first), len(second))
+        self.assertEqual(first[0].get_size(), second[0].get_size())
 
     def test_real_directions_are_not_mirrored_copies(self):
         frames = load_warrior_directional_frames()
@@ -63,16 +93,10 @@ class WarriorVisualsTests(unittest.TestCase):
             self.assertIsNot(frames[anim]["w"], frames[anim]["e"], anim)
 
     def test_missing_directions_fall_back_to_partner_or_neighbour(self):
-        frames = load_warrior_directional_frames()
-        # run: ne и nw нет; у nw зеркальной пары ne тоже нет, поэтому берём ближайшее по кругу (w).
-        self.assertIs(frames["run"]["ne"], frames["run"]["n"])
-        self.assertIs(frames["run"]["nw"], frames["run"]["w"])
-        # walking: sw нет, зеркальная пара se есть -> отзеркаленный se.
-        walking_se = frames["walking"]["se"][0]
-        walking_sw = frames["walking"]["sw"][0]
-        self.assertIsNot(frames["walking"]["sw"], frames["walking"]["se"])
-        self.assertEqual(walking_sw.get_size(), walking_se.get_size())
-        self.assertEqual(walking_sw.get_at((0, 0)), walking_se.get_at((walking_se.get_width() - 1, 0)))
+        # Все 8 направлений есть в спрайте, но запасная замена остаётся для будущих неполных наборов
+        self.assertEqual(_warrior_source_direction("w", {"e": 1, "n": 2}), ("e", True))
+        self.assertEqual(_warrior_source_direction("nw", {"n": 1, "w": 2}), ("w", False))
+        self.assertEqual(_warrior_source_direction("sw", {}), (None, False))
 
     def test_overload_threshold_matches_red_zone(self):
         base = _warrior()
@@ -104,17 +128,44 @@ class WarriorVisualsTests(unittest.TestCase):
 
     def test_player_frame_returns_warrior_frames(self):
         scene = _Scene()
+        frames = load_warrior_directional_frames()
         idle = player_frame(scene, _warrior(), "e", 0.0, moving=False)
         self.assertIsNotNone(idle)
-        self.assertEqual(idle.get_size(), load_warrior_directional_frames()["idle"]["e"][0].get_size())
-        attack_start = player_frame(scene, _warrior(), "e", 0.0, moving=True, attacking=True, attack_progress=0.0)
-        self.assertIs(attack_start, load_warrior_directional_frames()["attack"]["e"][0])
+        self.assertEqual(idle.get_size(), frames["idle"]["e"][0].get_size())
+        for variant, anim in enumerate(WARRIOR_ATTACK_ANIMATIONS):
+            start = player_frame(scene, _warrior(), "e", 0.0, moving=True, attacking=True,
+                                 attack_progress=0.0, attack_variant=variant)
+            self.assertIs(start, frames[anim]["e"][0])
+            end = player_frame(scene, _warrior(), "e", 0.0, moving=False, attacking=True,
+                               attack_progress=1.0, attack_variant=variant)
+            self.assertIs(end, frames[anim]["e"][-1])
+
+    def test_attack_variant_wraps_and_defaults_to_the_first_attack(self):
+        scene = _Scene()
+        frames = load_warrior_directional_frames()
+        default = player_frame(scene, _warrior(), "s", 0.0, moving=False, attacking=True, attack_progress=0.0)
+        self.assertIs(default, frames[WARRIOR_ATTACK_ANIMATIONS[0]]["s"][0])
+        wrapped = player_frame(scene, _warrior(), "s", 0.0, moving=False, attacking=True,
+                               attack_progress=0.0, attack_variant=len(WARRIOR_ATTACK_ANIMATIONS))
+        self.assertIs(wrapped, default)
+
+    def test_label_top_does_not_jump_when_attacking(self):
+        scene = _Scene()
+        character = _warrior()
+        tops = set()
+        for attacking in (False, True):
+            frame = player_frame(scene, character, "s", 0.0, moving=False, attacking=attacking, attack_progress=0.3)
+            tops.add(player_label_top(character, frame.get_rect(midbottom=(100, 400))))
+        self.assertEqual(len(tops), 1, tops)
+        citizen = {"type": "citizen"}
+        rect = pygame.Rect(0, 10, 20, 30)
+        self.assertEqual(player_label_top(citizen, rect), 10)
 
     def test_profession_icon_is_32_pixels(self):
         icon = profession_icon("warrior")
         self.assertEqual(icon.get_size(), (PROFESSION_ICON_SIZE, PROFESSION_ICON_SIZE))
         self.assertEqual(PROFESSION_ICON_SIZE, 32)
-        self.assertIsNone(profession_icon("mage"))
+        self.assertEqual(profession_icon("mage").get_size(), (PROFESSION_ICON_SIZE, PROFESSION_ICON_SIZE))
 
     def test_card_sprite_matches_reference_size(self):
         from ui.sprite_loader import FighterSprite, WARRIOR_SPRITE_PATH, FIGHTER_SPRITE_PATH

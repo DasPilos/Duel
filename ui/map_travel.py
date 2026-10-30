@@ -82,11 +82,11 @@ def _route(scene, building):
 
 
 def traveling_entities(scene, location="world_map"):
-    chat = getattr(scene, "chat", None)
-    if chat is None or location != "world_map":
+    presence = getattr(scene, "presence", None)
+    if presence is None or location != "world_map":
         return []
     result = []
-    for citizen in getattr(chat, "travelers", []):
+    for citizen in getattr(presence, "travelers", []):
         if citizen.get("position_x") is None or citizen.get("position_y") is None:
             continue
         result.append({
@@ -95,12 +95,12 @@ def traveling_entities(scene, location="world_map"):
             "eta_seconds": int(citizen.get("eta_seconds", citizen.get("travel_seconds_left", 0))),
         })
 
-    for convoy in getattr(chat, "traveling_convoys", []):
+    for convoy in getattr(presence, "traveling_convoys", []):
         route = _route(scene, convoy.get("destination_building_id", convoy.get("building_id")))
         if not route or not route.get("tiles"):
             continue
         eta = max(0, int(convoy.get("seconds_remaining", 0)
-                         - max(0.0, time.monotonic() - float(getattr(chat, "convoys_received_at", 0)))))
+                         - max(0.0, time.monotonic() - float(getattr(presence, "convoys_received_at", 0)))))
         total = max(1, int(convoy.get("travel_seconds", convoy.get("total_seconds", eta or 1))))
         direction = convoy.get("direction", "outbound")
         progress = _route_progress_percent({**convoy, "seconds_remaining": eta})

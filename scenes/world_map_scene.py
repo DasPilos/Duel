@@ -9,18 +9,15 @@ from core.carry_weight import character_movement_speed_multiplier
 from combat.fighter import Fighter
 from combat.fighter_profile import apply_fighter_profile
 from combat.world_stats import (
-    BASE_MOVE_SPEED,
-    get_attack_backswing,
     get_attack_reach,
-    get_attack_windup,
-    get_hp_regen_per_second,
-    get_mana_regen_per_second,
     get_move_speed,
     get_world_max_hp,
     get_world_max_mana,
-    resolve_world_melee_attack,
 )
+from core.mob_profiles import NPC_KEYS, npc_profiles
+from core.npc_catalog import NPC_FRAME, NPC_FRAMES_PER_ROW, NPC_ROW_DOWN, NPC_ROW_LEFT, NPC_ROW_RIGHT, NPC_ROW_UP, facing_row, npc_catalog, sheet_path
 from core.player_movement import find_tile_path, follow_path
+from core.tile_mask import mask_blocks_rect
 from core.production_buildings import plot_slot_ranges
 from client.network import ServerError
 from client.structures import hydrate_structures
@@ -29,15 +26,31 @@ from ui.character_profile import profile_from_fighter
 from ui.hud import draw_button, draw_city_upgrade_line, upgrade_line_font
 from ui.character_profile_overlay import CharacterProfileOverlay
 from ui.sprite_loader import FighterSprite
-from ui.chat import ChatPanel
+from ui.sfx import play_dash_sound, play_dash_whirl_sound, play_random_sound, set_run_sound, swing_sounds_for_weapon
+from combat.dash import (
+    DASH_COOLDOWN,
+    DASH_HIT_RADIUS,
+    DASH_MIN_LENGTH,
+    DASH_TRAIL_DURATION,
+    dash_end_point,
+)
+from ui.hotbar import HOTBAR_FLASH_DURATION, HOTBAR_KEYS, draw_hotbar, hotbar_index_for_key, hotbar_slot_rects
+from ui.chat import ChatDialog, PresenceState
+from ui.combat_log import CombatLog
 from ui.afk_presence import draw_active_players, draw_afk_players
 from ui.catalog_icons import draw_building_icon
 from ui.map_travel import draw_mobile_hover_card, draw_traveling_entities, mobile_entity_at
 from ui.production_building_window import VIEWS, ProductionBuildingWindow, object_building, point_in_polygon
 from scenes.city.exterior import draw_city_exterior
 from scenes.map_common import draw_map_badge, screen_px_to_world
-from scenes.player_sprites import load_player_directional_sprites, player_frame, player_profession
-from ui.profession_icons import draw_profession_icon_before
+from scenes.player_sprites import (
+    WARRIOR_ATTACK_ANIMATIONS,
+    load_player_directional_sprites,
+    player_frame,
+    player_label_top,
+    player_profession,
+)
+from ui.profession_icons import PROFESSION_ICON_SIZE, draw_profession_icon_before, profession_icon
 
 
 # Фразы при попытке взаимодействия с расстояния больше 1 тайла
@@ -55,32 +68,23 @@ TOO_FAR_PHRASES = [
 ]
 
 
-# Бой с мобами на карте мира: ПКМ по мобу — идти и бить с дистанции до тела моба.
-# Дальность, скорость и HP берутся из характеристик (combat/world_stats.py).
-MOB_LEASH_RADIUS_TILES = 40  # дальше 40 тайлов от точки респауна моб не уходит
-MOB_RESPAWN_DELAY = 30.0
-MOB_CHASE_SPEED = BASE_MOVE_SPEED  # базовая скорость перемещения, как у персонажа
 MOB_LEVEL = 1
-# Базовые характеристики скелета: показываются в карточке и участвуют в формулах боя (combat/world_stats.py).
-MOB_STATS = {"strength": 3, "agility": 3, "intuition": 3, "wisdom": 3, "intellect": 3, "endurance": 4}
-# Монеты моба: при убийстве герой получает MOB_COIN_REWARD_PERCENT % от их суммы (округление вниз).
-MOB_COINS = {"copper": 30, "silver": 0, "gold": 0}
-MOB_COIN_REWARD_PERCENT = 20
-# Регенерация HP/MP уходит на сервер не чаще этого интервала (секунды).
-PLAYER_HP_SAVE_INTERVAL = 2.0
 # Длительность маркера клика ПКМ по земле (секунды).
 CLICK_EFFECT_DURATION = 0.35
-# Дубина скелета: копия предмета id 23 из server/items_database.py (клиент не импортирует серверный каталог).
-MOB_CLUB_ITEM = {
-    "name": "Дубина",
-    "effects": {"requirements": {"strength": 6}, "damage": [3, 10]},
-    "bonuses": {"hp": 20},
-}
+# Синхронизация с сервером мира: чаще во время рывка (секунды).
+WORLD_SYNC_INTERVAL = 0.1
+WORLD_SYNC_DASH_INTERVAL = 0.05
+# Цвета строк лога боя, которые присылает сервер мира.
+WORLD_LOG_COLORS = {"player": settings.PLAYER_LOG_COLOR, "enemy": settings.ENEMY_HIT_LOG_COLOR, "miss": settings.NO_HIT_LOG_COLOR}
+DASH_HOTBAR_SLOT = 0  # слот «1» на панели: первый спец-удар — рывок
+HERO_HIT_SECONDS = 0.45  # сколько играет анимация получения удара
+HERO_DEATH_SECONDS = 1.0  # сколько герой падает; после этого держится последний кадр, пока здоровье на нуле
+DASH_TRAIL_SIZE = 64  # px на земле (умножается на зум) — размер спрайта следа
+DASH_AIM_COLOR = (90, 255, 120)
+# Профили мобов — только виды из редактора карт; их характеристики и экипировка приходят с сервера в снимке мира.
+MOB_PROFILES = dict(npc_profiles())  # бесы карты: название и подписи в логе боя
 PLAYER_REPATH_INTERVAL = 0.3  # как часто пересчитывать путь к движущемуся мобу
 PLAYER_STALL_TIMEOUT = 0.4  # если персонаж не может продвинуться так долго, путь сбрасывается
-# Замах и откат считаются по характеристикам (get_attack_windup / get_attack_backswing).
-# Во время отката персонаж или моб стоит на месте и не начинает новый замах.
-PLAYER_ATTACK_SWING_HALF_ANGLE = 0.9  # полуразмах дуги в радианах (~52 градуса)
 DAMAGE_NUMBER_DURATION = 5.0
 DAMAGE_COLOR_NORMAL = (255, 255, 255)  # обычный урон — белый
 DAMAGE_COLOR_CRIT = (255, 50, 50)  # критический урон — красный, шрифт вдвое крупнее
@@ -92,11 +96,76 @@ EDGE_SCROLL_SPEED = 600.0  # скорость краевой прокрутки,
 DRAG_THRESHOLD = 6  # px: дальше этого ЛКМ — перетаскивание карты, а не клик
 DOUBLE_CLICK_MS = 350
 MOB_SPRITE_SIZE = (90, 53)
-MOB_PATROL_RADIUS_TILES = 3  # квадрат патруля: 7x7 тайлов вокруг точки появления
-MOB_AGGRO_RADIUS_TILES = MOB_PATROL_RADIUS_TILES  # игрок входит в квадрат патруля — моб начинает погоню
-MOB_PATROL_CENTER_TILE = (30, 40)  # центр квадрата патруля в координатах тайлов карты
-MOB_PATROL_SPEED = 40.0  # px/с
-MOB_PATROL_PAUSE = 1.5  # секунд стоит на каждой точке маршрута
+MOB_WALK_FPS = 8
+MOB_WALK_HOLD_MS = 300  # моб считается идущим, пока его позиция менялась за последние 300 мс
+MOB_CORPSE_FALL_MS = 500  # без листа смерти тело валится на бок
+MOB_DEATH_FPS = 7  # лист смерти: 7 кадров в одну строку, после последнего тело держится
+MOB_CORPSE_HOLD_MS = 30_000  # последний кадр остаётся на карте
+MOB_CORPSE_FADE_MS = 15_000
+# Совпадает с CORPSE_LOOT_RANGE сервера мира (2 тайла)
+CORPSE_LOOT_RANGE_TILES = 2
+CORPSE_WINDOW_SIZE = (360, 190)
+
+
+def _tiles_word(count):
+    last_two = count % 100
+    if 11 <= last_two <= 14:
+        return "тайлов"
+    last = count % 10
+    if last == 1:
+        return "тайл"
+    if 2 <= last <= 4:
+        return "тайла"
+    return "тайлов"  # затем труп медленно гаснет
+
+
+def _mob_facing_row(angle):
+    """Строка листа NPC по углу взгляда моба: вниз, вверх, вправо или влево."""
+    dx, dy = math.cos(angle), math.sin(angle)
+    if abs(dx) >= abs(dy):
+        return NPC_ROW_RIGHT if dx >= 0 else NPC_ROW_LEFT
+    return NPC_ROW_DOWN if dy >= 0 else NPC_ROW_UP
+
+
+def mob_frame(mob, now_ms):
+    """Кадр моба: атака по замаху (лист attack), ходьба пока моб двигался, иначе первый кадр. None — кадров нет."""
+    frames = mob.get("frames")
+    if not frames:
+        return None
+    row = _mob_facing_row(mob.get("facing", 0.0))
+    attack_frames = mob.get("attack_frames")
+    if mob.get("windup", 0.0) > 0 and attack_frames:
+        progress = (now_ms - mob["attack_started"]) / max(1.0, mob["attack_ms"])
+        index = min(NPC_FRAMES_PER_ROW - 1, max(0, int(progress * NPC_FRAMES_PER_ROW)))
+        return attack_frames[row][index]
+    moving = now_ms - mob.get("moved_at", -MOB_WALK_HOLD_MS) < MOB_WALK_HOLD_MS
+    index = int(now_ms / 1000 * MOB_WALK_FPS) % NPC_FRAMES_PER_ROW if moving else 0
+    return frames[row][index]
+
+
+def mob_death_frame(mob, now_ms):
+    """Смерть моба: лист смерти до последнего кадра, без листа — тело валится на бок. Держится MOB_CORPSE_HOLD_MS и гаснет за MOB_CORPSE_FADE_MS. None — уже не показываем."""
+    frames = mob.get("frames")
+    death_frames = mob.get("death_frames")
+    died_at = mob.get("died_at")
+    if died_at is None or not (death_frames or frames):
+        return None
+    elapsed = now_ms - died_at
+    if elapsed >= MOB_CORPSE_HOLD_MS + MOB_CORPSE_FADE_MS:
+        return None
+    if death_frames:
+        index = min(len(death_frames) - 1, int(elapsed / 1000 * MOB_DEATH_FPS))
+        body = death_frames[index]
+    else:
+        fall = min(1.0, max(0.0, elapsed / MOB_CORPSE_FALL_MS))
+        body = pygame.transform.rotate(frames[_mob_facing_row(mob.get("facing", 0.0))][0], 90 * fall)
+    if elapsed > MOB_CORPSE_HOLD_MS:
+        fade = (elapsed - MOB_CORPSE_HOLD_MS) / MOB_CORPSE_FADE_MS
+        body = body.copy()  # кадры общие для всех мобов этого вида, гаснуть должен только этот труп
+        body.set_alpha(int(255 * (1 - fade)))
+    return body
+
+
 _DIRECTION_VECTORS = {
     "n": (0.0, -1.0), "ne": (0.7071, -0.7071), "e": (1.0, 0.0), "se": (0.7071, 0.7071),
     "s": (0.0, 1.0), "sw": (-0.7071, 0.7071), "w": (-1.0, 0.0), "nw": (-0.7071, -0.7071),
@@ -149,6 +218,176 @@ def walk_grid_line(gx1, gy1, gx2, gy2):
     return cells
 
 
+# Только тайлы травы одного тона с бесшовными краями: остальные темнее и дают видимые швы между клетками
+MAP_GRASS_TILES = tuple(f"grass_{i}" for i in range(1, 6))
+# Тёмная подстилка под кронами и трава с ягодами: опушка переходит от тёмной земли к светлой поляне через ягодную полосу
+MAP_FLOOR_TILES = tuple(f"floor_dark_{i}" for i in range(1, 5))
+MAP_BERRY_TILES = tuple(f"berry_{i}" for i in range(1, 4))
+MAP_FLOOR_RING = 1
+MAP_BERRY_RING = 5
+MAP_WATER_TILES = ("water_1", "water_2", "water_3")
+# Листы деревьев художника: кадры по 6 в ряд, всего 10 кадров (анимация покачивания)
+MAP_TREE_SHEETS = {"tree1": (160, 256), "tree2": (160, 288), "tree3": (160, 224), "old_tree1": (160, 256), "old_tree2": (160, 288), "old_tree3": (160, 224), "big_tree": (352, 416)}
+MAP_TREE_FRAMES = 10
+MAP_TREE_FRAMES_PER_ROW = 6
+MAP_TREE_COLUMNS = {"big_tree": 5}
+MAP_TREE_FRAME_MS = 140
+MAP_TREE_SCALE = 0.5
+MAP_PROP_SPRITES = {"stump": ("stump_1", "stump_2"), "log": ("log_1", "log_2")}
+MAP_PROP_SCALE = 0.5
+# Сухой край карты — мёртвые деревья того же художника; остальной лес — зелёные
+MAP_DEAD_TREES = ("old_tree1", "old_tree2", "old_tree3", "big_tree")
+MAP_BRIDGE_SPRITE = "bridge_horizontal"
+MAP_SHORE_LEFT = ("shore_left_0", "shore_left_1", "shore_left_2")
+MAP_SHORE_BOTTOM = ("shore_bottom_0", "shore_bottom_1", "shore_bottom_2")
+# Дорога: сплошная земля листа художника внутри и его кромка с травой там, где дорога кончается
+MAP_ROAD_CORE_TILES = tuple(f"road_core_{i}" for i in range(1, 5))
+MAP_ROAD_EDGE_VARIANTS = 3
+MAP_ROAD_NEIGHBOURS = (("n", 0, -1), ("s", 0, 1), ("e", 1, 0), ("w", -1, 0))
+
+
+def _map_hash(gx, gy):
+    """Хэш клетки: одна и та же клетка всегда получает один и тот же вариант спрайта."""
+    h = ((gx * 73856093) ^ (gy * 19349663)) & 0xFFFFFFFF
+    h = ((h ^ (h >> 13)) * 0x5BD1E995) & 0xFFFFFFFF
+    return h ^ (h >> 15)
+
+
+def build_ground_kinds(cover, width, height):
+    """Вид земли у леса: тёмная подстилка под кронами и на краю, ягодная трава в полосе 2–5 тайлов, на полянах ягоды пятнами."""
+    distance = {tile: 0 for tile in cover}
+    frontier = list(cover)
+    for depth in range(1, MAP_BERRY_RING + 1):
+        next_frontier = []
+        for gx, gy in frontier:
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    tile = (gx + dx, gy + dy)
+                    if 0 <= tile[0] < width and 0 <= tile[1] < height and tile not in distance:
+                        distance[tile] = depth
+                        next_frontier.append(tile)
+        frontier = next_frontier
+    kinds = {}
+    for gy in range(height):
+        for gx in range(width):
+            tile = (gx, gy)
+            h = _map_hash(gx, gy)
+            depth = distance.get(tile)
+            if depth == 0:
+                kinds[tile] = "floor"
+            elif depth is not None and depth <= MAP_FLOOR_RING:
+                if h % 5 < 3:
+                    kinds[tile] = "floor"
+            elif depth is not None:
+                if h % 7 != 0:
+                    kinds[tile] = "berry"
+            elif _map_hash(gx // 5, gy // 5) % 4 == 0 and h % 5 < 3:
+                kinds[tile] = "berry"
+    return kinds
+
+
+# Целые клетки художника: сторона либо внутри венца (непрозрачна), либо снаружи (прозрачна)
+MAP_MOUNTAIN_DIR = Path(__file__).resolve().parent.parent / "assets" / "map" / "mountains"
+_MOUNTAIN_SIDE_OFFSETS = {"N": (0, -1), "E": (1, 0), "S": (0, 1), "W": (-1, 0)}
+_mountain_tile_cache = {}
+_rock_info_cache = {}
+_mountain_roles_cache = {}
+
+
+def _edge_gap(p, q):
+    gap = abs(p[0] - q[0]) / 255.0
+    if p[0] and q[0]:
+        gap += (abs(p[1] - q[1]) + abs(p[2] - q[2]) + abs(p[3] - q[3])) / 765.0
+    return gap
+
+
+def _rock_info(name):
+    info = _rock_info_cache.get(name)
+    if info is None:
+        surface = _mountain_tile_image(name)
+        size = surface.get_width()
+        last = size - 1
+
+        def pixel(x, y):
+            r, g, b, a = surface.get_at((x, y))
+            return (a, r, g, b)
+
+        edges = {
+            "N": tuple(pixel(i, 0) for i in range(size)),
+            "S": tuple(pixel(i, last) for i in range(size)),
+            "W": tuple(pixel(0, i) for i in range(size)),
+            "E": tuple(pixel(last, i) for i in range(size)),
+        }
+        opacity = {side: sum(p[0] for p in line) / (255.0 * size) for side, line in edges.items()}
+        info = (edges, opacity)
+        _rock_info_cache[name] = info
+    return info
+
+
+def build_mountain_roles(cells):
+    """Для каждой клетки венца выбирает целую клетку художника: стороны совпадают с соседями, края стыкуются по пикселям."""
+    if not cells:
+        return {}
+    key = frozenset(cells)
+    cached = _mountain_roles_cache.get(key)
+    if cached is not None:
+        return dict(cached)
+    names = sorted(path.stem for path in MAP_MOUNTAIN_DIR.glob("rock_*.png"))
+    infos = {name: _rock_info(name) for name in names}
+    roles = {}
+    for x, y in sorted(cells, key=lambda cell: (cell[1], cell[0])):
+        closed = {side: (x + dx, y + dy) in cells for side, (dx, dy) in _MOUNTAIN_SIDE_OFFSETS.items()}
+        openness = {}
+        for name in names:
+            opacity = infos[name][1]
+            openness[name] = sum(
+                (1.0 - opacity[side]) if is_closed else opacity[side] for side, is_closed in closed.items()
+            )
+        best_open = min(openness.values())
+        candidates = [name for name in names if openness[name] <= best_open + 0.5]
+        left = roles.get((x - 1, y))
+        top = roles.get((x, y - 1))
+
+        def seam(name):
+            edges = infos[name][0]
+            total = 0.0
+            if left is not None:
+                left_edge = infos[left][0]["E"]
+                total += sum(_edge_gap(p, q) for p, q in zip(edges["W"], left_edge)) / len(left_edge)
+            if top is not None:
+                top_edge = infos[top][0]["S"]
+                total += sum(_edge_gap(p, q) for p, q in zip(edges["N"], top_edge)) / len(top_edge)
+            return total
+
+        roles[(x, y)] = min(candidates, key=lambda name: openness[name] + seam(name))
+    _mountain_roles_cache[key] = dict(roles)
+    return roles
+
+
+def _mountain_tile_image(name):
+    image = _mountain_tile_cache.get(name)
+    if image is None:
+        image = pygame.image.load(str(MAP_MOUNTAIN_DIR / f"{name}.png"))
+        _mountain_tile_cache[name] = image
+    return image
+
+
+def _build_road_tile(core, edge_sprites, edge_sides):
+    """Тайл дороги: внутри сплошная земля, у края — кромка с травой. На углу кромки пересекаются по прозрачности."""
+    if not edge_sides:
+        return core
+    surface = edge_sprites[edge_sides[0]].copy()
+    for side in edge_sides[1:]:
+        surface.blit(edge_sprites[side], (0, 0), special_flags=pygame.BLEND_RGBA_MIN)
+    return surface
+
+
+def _tile_set(rows):
+    """Строки [y, x_начало, x_конец] от сервера → множество тайлов (x, y)."""
+    return frozenset((x, y) for y, x_start, x_end in rows for x in range(x_start, x_end + 1))
+
+
+
 class WorldMapScene:
     """
     Сцена глобальной карты.
@@ -158,9 +397,24 @@ class WorldMapScene:
     """
 
     CITY_VISUAL_REFRESH_SECONDS = 10.0
-    MINIMAP_SIZE = (256, 128)
-    MINIMAP_MARGIN = (20, 150)
+    # Высота миникарты; ширина считается по пропорциям сетки (квадрат для башни 125x125)
+    MINIMAP_HEIGHT = 192
+    MINIMAP_GRASS = (92, 116, 62)
+    MINIMAP_COLORS = {
+        "forest": (34, 72, 38),
+        "dry": (118, 98, 62),
+        "water": (40, 112, 150),
+        "mountain": (122, 114, 104),
+        "road": (176, 146, 96),
+        "bridge": (196, 150, 84),
+    }
+    MINIMAP_MARGIN = (5, 5)
     OVERHEAD_BAR_HEIGHT = 10  # высота полосок ХП/МП над персонажем и мобом (было 5, вдвое больше)
+    PLAYER_PANEL_MARGIN = 5
+    PLAYER_PANEL_GAP = 6
+    PLAYER_PANEL_PORTRAIT = 128
+    PLAYER_PANEL_BAR_WIDTH = 240
+    PLAYER_PANEL_BAR_HEIGHT = 14
 
     def __init__(self, session, spawn_gate=None, spawn_pos=None):
         self.session = session
@@ -181,6 +435,21 @@ class WorldMapScene:
         self.tile_size = 32
         self.world_w = self.grid_w * self.tile_size  # 16384 px
         self.world_h = self.grid_h * self.tile_size  # 8192 px
+        # Карта и точка появления приходят с сервера мира (_apply_map_size)
+        self.uniform_grass = False
+        self.default_spawn = (self.world_w // 2, self.world_h // 2)
+        self.forest_tiles = frozenset()
+        self.water_tiles = frozenset()
+        self.dry_tiles = frozenset()
+        self.mountain_tiles = frozenset()
+        self.impassable_tiles = frozenset()
+        self.mountain_roles = {}
+        self.ground_kinds = {}
+        self.bridges = []
+        self.prop_anchors = {}
+        self.blocked_tiles = frozenset()
+        self.partial_masks = {}
+        self._map_sprite_cache = None
 
         # Фиксированный масштаб (1.0x)
         self.zoom = 1.0
@@ -218,6 +487,13 @@ class WorldMapScene:
         self.player_speed = 220.0
         self.player_state = "idle"
         self.player_anim_timer = 0.0
+        self.hotbar_flash_index = None
+        self.hotbar_flash_timer = 0.0
+        self.dash_aiming = False  # режим прицеливания рывка: после «1» ждём ЛКМ
+        self.world_dash_active = False  # рывок ведёт сервер: клиент показывает его позицию из снимка
+        self.dash_cooldown = 0.0
+        self.whirlwinds = []  # точки следа вихря: dict с x, y, timer
+        self.whirlwind_sprite = self._load_whirlwind_sprite()
 
         # Камера центрируется на игроке
         self.camera_x = self.player_x
@@ -239,16 +515,21 @@ class WorldMapScene:
         self.damage_font = pygame.font.SysFont(settings.FONT_NAME, 22, bold=True)
         self.crit_damage_font = pygame.font.SysFont(settings.FONT_NAME, 44, bold=True)
         self.profile_overlay = CharacterProfileOverlay(self.small_font)
-        self.chat = (ChatPanel(session, "world_map", profile_overlay=self.profile_overlay)
-                     if hasattr(session, "social_snapshot") else None)
-        if self.chat is not None:
-            self.chat.presence_provider = lambda: {
-                "position_x": self.player_x,
-                "position_y": self.player_y,
-                "position_direction": self.player_direction,
-            }
-            self.chat.travelers_provider = self._get_traveling_citizens
-            self.chat.convoys_provider = self._get_traveling_convoys
+        self.combat_log = CombatLog()
+        self.presence = None
+        self.chat = None
+        if hasattr(session, "social_snapshot"):
+            self.presence = PresenceState(
+                session, "world_map",
+                presence_provider=lambda: {
+                    "position_x": self.player_x,
+                    "position_y": self.player_y,
+                    "position_direction": self.player_direction,
+                },
+                travelers_provider=self._get_traveling_citizens,
+                convoys_provider=self._get_traveling_convoys,
+            )
+            self.chat = ChatDialog(session, "world_map", self.presence)
 
         # UI элементы
 
@@ -267,12 +548,18 @@ class WorldMapScene:
         self.action_notice = None
         self.action_notice_timer = 0.0
         self.attack_windup = 0.0  # >0 — идёт замах перед ударом
-        self.attack_windup_total = 0.0  # полная длительность текущего замаха (для дуги)
+        self.attack_windup_total = 0.0  # полная длительность текущего замаха (для анимации позы)
+        self.attack_variant = 0  # какую из двух атак героя играть; выбирается случайно в начале каждого замаха
+        self.hit_timer = 0.0  # >0 — идёт анимация получения удара
+        self.death_timer = None  # секунды с начала смерти героя; None — герой жив
+        self._last_world_hp = None  # здоровье из прошлого снимка сервера (первый снимок только задаёт точку отсчёта)
         self.attack_backswing = 0.0  # >0 — откат после удара: стоим на месте
-        self.attack_swing_angle = 0.0
-        # HP игрока на сервере: флаг «есть несохранённое изменение» и таймер троттлинга
-        self._hp_dirty = False
-        self._hp_save_timer = 0.0
+        # Синхронизация с сервером мира: последний полученный seq, таймер и запросы на отправку
+        self.world_seq = 0
+        self.world_sync_timer = 0.0
+        self.world_dash_target = None
+        self.world_swing_id = None
+        self.world_sync_failed = False
         # Управление ПКМ: путь к точке на земле и цель-моб для атаки
         self.move_path = []
         self.move_stall = 0.0
@@ -302,15 +589,24 @@ class WorldMapScene:
         self.layout_city_level = 1
 
         self.minimap_surface = None
+        self.terrain_version = None
         self.obstacles = self._load_terrain()
         self._build_minimap(self.obstacles)
+        if spawn_pos is None and spawn_gate not in gate_spawns:
+            self.player_x = float(self.default_spawn[0])
+            self.player_y = float(self.default_spawn[1])
 
         # Анимация строения лесника 10х10 тайлов (3 кадра анимации дыма из assets/forester's1.png)
         self.forester_frames = []
         self._load_forester_sprite()
 
-        # Мобы карты: клиентская сущность с HP, не входит в серверные строения
-        self.mobs = self._create_world_mobs()
+        # Мобы карты приходят со снимком сервера мира (_apply_world_mobs), экипировка мобов — в том же снимке
+        self.mobs = []
+        self.player_corpses = []
+        self.corpse_window_id = None
+        self.world_mobs_by_id = {}
+        self.mob_sprite = self._load_mob_sprite()
+        self._npc_mob_frames = {}
 
         # Загрузка 8-направленных спрайтов idle (из assets/2Idle/) и бега (из assets/3run/)
         self.player_directional_frames = {}
@@ -395,9 +691,9 @@ class WorldMapScene:
 
     def _set_move_target(self, goal):
         """Строит путь по тайлам до точки на земле. Возвращает False, если точка недостижима."""
-        path = find_tile_path((self.player_x, self.player_y), goal, self._player_blocked, self.tile_size)
+        path = find_tile_path((self.player_x, self.player_y), goal, self._player_blocked, self.tile_size,
+                              partial_tiles=self.partial_masks)
         self.attack_target = None
-        self.attack_windup = 0.0
         if path is None:
             self.move_path = []
             return False
@@ -407,8 +703,6 @@ class WorldMapScene:
 
     def _set_attack_target(self, mob):
         """ПКМ по мобу: запоминаем цель и сразу строим путь до её тела."""
-        if mob is not self.attack_target:
-            self.attack_windup = 0.0
         self.attack_target = mob
         self.repath_timer = 0.0
         self._repath_to_attack_target()
@@ -416,7 +710,8 @@ class WorldMapScene:
     def _repath_to_attack_target(self):
         """Путь к движущемуся мобу: цель — центр моба, ходьба останавливается на дистанции удара."""
         mob = self.attack_target
-        path = find_tile_path((self.player_x, self.player_y), (mob["x"], mob["y"]), self._mob_goal_blocked, self.tile_size)
+        path = find_tile_path((self.player_x, self.player_y), (mob["x"], mob["y"]), self._mob_goal_blocked,
+                              self.tile_size, partial_tiles=self.partial_masks)
         self.move_path = path or []
         self.move_stall = 0.0
 
@@ -433,66 +728,148 @@ class WorldMapScene:
         return False
 
     def _update_attack_target(self, dt):
-        """Двигает персонажа к цели-мобу; в зоне удара — замах, после замаха удар и откат."""
+        """Персонаж идёт к цели-мобу, пока она вне зоны удара. Замах, удар и урон считает сервер."""
         mob = self.attack_target
         if mob is None:
             return
-        # Откат после удара: стоим на месте, новый замах не начинаем
-        if self.attack_backswing > 0:
-            return
         if mob["hp"] <= 0:
             self.attack_target = None
-            self.attack_windup = 0.0
             self.move_path = []
             return
-        reach = get_attack_reach(self.combat_fighter)
-        if self.attack_windup <= 0 and self._distance_to_mob_body(mob) > reach:
-            # Идём к цели, пока она вне зоны удара
+        if self.attack_windup > 0 or self.attack_backswing > 0:
+            self.move_path = []
+            return
+        if self._distance_to_mob_body(mob) > get_attack_reach(self.combat_fighter):
             self.repath_timer -= dt
             if self.repath_timer <= 0 or not self.move_path:
                 self.repath_timer = PLAYER_REPATH_INTERVAL
                 self._repath_to_attack_target()
             return
-        # Замах стоит на месте и не отменяется, даже если цель ушла из зоны: в конце — удар или промах
         self.move_path = []
-        if self.attack_windup <= 0:
-            self._face_towards(mob["x"], mob["y"])
-            self.attack_windup = get_attack_windup(self.combat_fighter)
-            self.attack_windup_total = self.attack_windup
-            self._start_attack_swing()
-        self.attack_windup = max(0.0, self.attack_windup - dt)
-        if self.attack_windup <= 0:
-            if self._distance_to_mob_body(mob) <= reach:
-                self._strike_mob(mob)
-            else:
-                self._spawn_attack_label("miss", mob["x"], mob["y"] - MOB_SPRITE_SIZE[1] / 2 - 10)
-            self.attack_backswing = get_attack_backswing(self.combat_fighter)
+        self._face_towards(mob["x"], mob["y"])
+
+    def _world_sync_request(self, dt, force=False):
+        """Отправляет на сервер намерения игрока (позиция, цель удара, рывок) и применяет снимок мира."""
+        self.world_sync_timer -= dt
+        if not force and self.world_dash_target is None and self.world_sync_timer > 0:
+            return
+        self.world_sync_timer = WORLD_SYNC_DASH_INTERVAL if self.world_dash_active else WORLD_SYNC_INTERVAL
+        attack_id = self.attack_target["id"] if self.attack_target is not None else None
+        dash_target = self.world_dash_target
+        self.world_dash_target = None
+        try:
+            snap = self.session.client.world_sync(
+                self.session.character["id"], self.player_x, self.player_y,
+                attack_id, dash_target, self.world_seq)
+        except (ServerError, OSError) as error:
+            if not self.world_sync_failed:
+                self.action_notice = str(error)
+                self.action_notice_timer = 2.0
+            self.world_sync_failed = True
+            return
+        self.world_sync_failed = False
+        self.world_seq = snap["seq"]
+        self._apply_world_snapshot(snap)
+
+    def resync_with_server(self):
+        """После переподключения запрашивает полный снимок мира, а не дельту."""
+        self.world_seq = 0
+        self._world_sync_request(0, force=True)
+
+    def _track_player_hp(self, hp):
+        """Анимации героя по здоровью из снимка: падение здоровья запускает получение удара, ноль — смерть."""
+        previous, self._last_world_hp = self._last_world_hp, hp
+        if previous is None:
+            return
+        if hp <= 0 < previous:
+            self.death_timer = 0.0
+            self.hit_timer = 0.0
+        elif hp > 0:
+            self.death_timer = None
+            if hp < previous:
+                self.hit_timer = HERO_HIT_SECONDS
+
+    def _hero_reaction_progress(self):
+        """(прогресс удара, прогресс смерти) для player_frame; None — анимация не идёт."""
+        hit = 1.0 - self.hit_timer / HERO_HIT_SECONDS if self.hit_timer > 0 else None
+        death = min(1.0, self.death_timer / HERO_DEATH_SECONDS) if self.death_timer is not None else None
+        return hit, death
+
+    def _apply_world_snapshot(self, snap):
+        """Применяет снимок сервера: позицию (если отвергнута или идёт рывок), бой, мобов, след и события."""
+        self._sync_terrain_version(snap)
+        player = snap["player"]
+        self.world_dash_active = bool(player["dash_active"])
+        if not snap["accepted"] or self.world_dash_active:
+            self.player_x = float(player["x"])
+            self.player_y = float(player["y"])
+            self.move_path = []
+        windup = float(player["windup"])
+        if windup > 0 and self.attack_windup <= 0:
+            self.attack_variant = random.randrange(len(WARRIOR_ATTACK_ANIMATIONS))
+        self.attack_windup = windup
+        self.attack_windup_total = float(player["windup_total"])
+        self.attack_backswing = float(player["backswing"])
+        self.dash_cooldown = float(player["dash_cooldown"])
+        self._track_player_hp(player["hp"])
+        self.combat_fighter.hp = player["hp"]
+        self.combat_fighter.max_hp = player["max_hp"]
+        self.combat_fighter.mp = player["mp"]
+        self.combat_fighter.max_mp = player["max_mp"]
+        swing_id = player["swing_id"]
+        if self.world_swing_id is not None and swing_id != self.world_swing_id:
+            play_random_sound(swing_sounds_for_weapon(self.combat_fighter.equipment.get("weapon")))
+        self.world_swing_id = swing_id
+        self.whirlwinds = [{"x": t["x"], "y": t["y"], "timer": t["ttl"]} for t in snap["trails"]]
+        self._apply_world_mobs(snap["mobs"])
+        self.player_corpses = [dict(corpse) for corpse in snap.get("corpses", [])]
+        if self._corpse_by_id(self.corpse_window_id) is None:
+            self.corpse_window_id = None
+        if self.attack_target is not None and self.attack_target["hp"] <= 0:
+            self.attack_target = None
+            self.move_path = []
+        for event in snap["events"]:
+            self._apply_world_event(event)
+
+    def _sync_terrain_version(self, snap):
+        """Сервер опубликовал новую карту: рельеф перечитывается сразу, без перезахода в мир."""
+        version = snap.get("terrain_version")
+        if version is None or version == self.terrain_version:
+            return
+        obstacles = self._load_terrain()
+        if obstacles:
+            self.obstacles = obstacles
+            self._build_minimap(obstacles)
+
+    def _apply_world_event(self, event):
+        """Событие боя от сервера: цифры урона, подписи, лог, уведомления и монеты (сервер уже сохранил их)."""
+        kind = event["type"]
+        if kind == "number":
+            self._spawn_hit_number(event["value"], event["critical"], event["x"], event["y"])
+        elif kind == "label":
+            self._spawn_attack_label(event["outcome"], event["x"], event["y"])
+        elif kind == "log":
+            self.combat_log.add(event["text"], WORLD_LOG_COLORS.get(event["color"], settings.PLAYER_LOG_COLOR))
+        elif kind == "notice":
+            self.action_notice = event["text"]
+            self.action_notice_timer = 2.0
+        elif kind == "message":
+            self._add_floating_message(event["text"], event["x"], event["y"])
+        elif kind == "currency":
+            self.session.character.update(event["currency"])
+        elif kind == "progress":
+            self.session.character.update(event["character"])
+            if (self.profile_overlay.is_open and self.profile_overlay.profile is not None
+                    and self.profile_overlay.profile.get("id") == self.session.character.get("id")):
+                self.profile_overlay.update_profile(self._own_player_card_profile())
+        elif kind == "whirl":
+            play_dash_whirl_sound()
 
     def _face_towards(self, x, y):
         dx, dy = x - self.player_x, y - self.player_y
         if dx or dy:
             self.player_direction = self._vector_to_direction(dx, dy)
             self.player_facing_right = dx >= 0
-
-    def _strike_mob(self, mob):
-        """Удар игрока по мобу после замаха: уворот/блок/крит/урон через resolve_melee_attack."""
-        result = resolve_world_melee_attack(self.combat_fighter, mob["fighter"], random,
-                                            defender_facing=mob.get("facing"),
-                                            attack_vector=(self.player_x - mob["x"], self.player_y - mob["y"]))
-        wx, wy = mob["x"], mob["y"] - MOB_SPRITE_SIZE[1] / 2 - 10
-        if result["outcome"] != "hit":
-            self._spawn_attack_label(result["outcome"], wx, wy)
-            return
-        hp_before = mob["hp"]
-        mob["hp"] = max(0, mob["hp"] - result["damage"])
-        self._spawn_hit_number(hp_before - mob["hp"], result["critical"], wx, wy)
-        if mob["hp"] <= 0:
-            self._on_mob_defeated(mob)
-            notice = "Скелет повержен"
-            if self.action_notice and self.action_notice.startswith("Добыча"):
-                notice = f"{notice}. {self.action_notice}"
-            self.action_notice = notice
-            self.action_notice_timer = 2.0
 
     def _spawn_attack_label(self, outcome, wx, wy):
         """Подпись без урона: «Промах», «Уворот» или «Блок»."""
@@ -509,25 +886,6 @@ class WorldMapScene:
             self._spawn_damage_number(wx, wy, amount, DAMAGE_COLOR_CRIT, big=True)
         else:
             self._spawn_damage_number(wx, wy, amount, DAMAGE_COLOR_NORMAL)
-
-    def _start_attack_swing(self):
-        """Запускает заглушку анимации удара в сторону взгляда персонажа на время замаха."""
-        dx, dy = _DIRECTION_VECTORS.get(self.player_direction, (0.0, 1.0))
-        self.attack_swing_angle = math.atan2(dy, dx)
-
-    def _draw_attack_swing(self, screen):
-        """Заглушка удара: светлая дуга вокруг персонажа на радиусе зоны удара, видна только пока идёт замах."""
-        if self.attack_windup <= 0:
-            return
-        cx, cy = self.world_to_screen(self.player_x, self.player_y)
-        a0 = self.attack_swing_angle - PLAYER_ATTACK_SWING_HALF_ANGLE
-        a1 = self.attack_swing_angle + PLAYER_ATTACK_SWING_HALF_ANGLE
-        reach = get_attack_reach(self.combat_fighter)
-        points = [
-            (cx + math.cos(a) * reach, cy + math.sin(a) * reach)
-            for a in (a0 + (a1 - a0) * i / 8 for i in range(9))
-        ]
-        pygame.draw.lines(screen, (235, 245, 255), False, points, 4)
 
     def _spawn_damage_number(self, wx, wy, amount, color, text=None, big=False):
         """Всплывающая надпись над точкой мира (урон, «Промах», «Блок», «Уворот»); висит DAMAGE_NUMBER_DURATION секунд и поднимается вверх.
@@ -568,33 +926,17 @@ class WorldMapScene:
             screen.blit(shadow, rect.move(2, 2))
             screen.blit(text_surf, rect)
 
-    def _draw_attack_tile(self, screen):
-        """Зелёная подсветка цели атаки: контур тела моба, по которому идёт удар."""
-        mob = self.attack_target
-        if mob is None or mob["hp"] <= 0:
-            return
-        rect = self._mob_body_rect(mob)
-        left, top = self.world_to_screen(rect.left, rect.top)
-        right, bottom = self.world_to_screen(rect.right, rect.bottom)
-        screen_rect = pygame.Rect(left, top, right - left, bottom - top)
-        pygame.draw.rect(screen, (80, 255, 110), screen_rect.inflate(6, 6), 3, border_radius=4)
-
-    def _pick_mob_patrol_point(self, mob):
-        """Случайный центр тайла внутри квадрата патруля, куда моб может встать."""
-        r = MOB_PATROL_RADIUS_TILES
-        for _ in range(20):
-            px = mob["home_x"] + random.randint(-r, r) * self.tile_size
-            py = mob["home_y"] + random.randint(-r, r) * self.tile_size
-            if not self._check_collision(px, py):
-                return (px, py)
-        return None
-
-    def _build_mob_fighter(self):
-        """Боевой Fighter скелета: уровень и базовые характеристики из MOB_STATS, дубина с кузницы (как у игрока)."""
-        fighter = Fighter("Скелет", level=MOB_LEVEL)
-        fighter.stats.update(MOB_STATS)
-        fighter.equipment = {"weapon": MOB_CLUB_ITEM}
-        fighter.equipment_stat_modifiers = dict(MOB_CLUB_ITEM["bonuses"])
+    def _build_mob_fighter(self, kind, stats=None, level=None, equipment=None):
+        """Боевой Fighter моба по профилю из MOB_PROFILES: уровень, характеристики и экипировка из снимка сервера; бонусы предметов суммируются."""
+        profile = MOB_PROFILES[kind]
+        fighter = Fighter(profile["name"], level=level or MOB_LEVEL)
+        fighter.stats.update(stats if stats else profile["stats"])  # характеристики из снимка сервера, если пришли
+        fighter.equipment = {slot: dict(item) for slot, item in (equipment or {}).items()}
+        modifiers = {}
+        for item in fighter.equipment.values():
+            for stat_key, bonus in item["bonuses"].items():
+                modifiers[stat_key] = modifiers.get(stat_key, 0) + bonus
+        fighter.equipment_stat_modifiers = modifiers
         fighter.recalculate_parameters()
         self._apply_world_resource_formulas(fighter)
         fighter.hp = fighter.max_hp
@@ -616,264 +958,118 @@ class WorldMapScene:
         if character:
             apply_fighter_profile(fighter, character)
         self._apply_world_resource_formulas(fighter)
-        self._hp_regen_accumulator = 0.0
-        self._mp_regen_accumulator = 0.0
         return fighter
-
-    def _regenerate_player_resources(self, dt):
-        """Регенерация HP и маны игрока: в секунду по формулам выносливости и интеллекта."""
-        fighter = self.combat_fighter
-        hp_before, mp_before = fighter.hp, fighter.mp
-        if fighter.hp < fighter.max_hp:
-            self._hp_regen_accumulator += get_hp_regen_per_second(fighter) * dt
-            gained = int(self._hp_regen_accumulator)
-            if gained:
-                fighter.hp = min(fighter.max_hp, fighter.hp + gained)
-                self._hp_regen_accumulator -= gained
-        else:
-            self._hp_regen_accumulator = 0.0
-        if fighter.mp < fighter.max_mp:
-            self._mp_regen_accumulator += get_mana_regen_per_second(fighter) * dt
-            gained = int(self._mp_regen_accumulator)
-            if gained:
-                fighter.mp = min(fighter.max_mp, fighter.mp + gained)
-                self._mp_regen_accumulator -= gained
-        else:
-            self._mp_regen_accumulator = 0.0
-        if fighter.hp != hp_before or fighter.mp != mp_before:
-            self._hp_dirty = True
-
-    def _flush_player_hp(self, dt):
-        """Отправляет регенерацию на сервер не чаще раза в PLAYER_HP_SAVE_INTERVAL секунд; при полном HP сохраняет сразу."""
-        if not self._hp_dirty:
-            return
-        self._hp_save_timer += dt
-        fighter = self.combat_fighter
-        full = fighter.hp >= fighter.max_hp and fighter.mp >= fighter.max_mp
-        if full or self._hp_save_timer >= PLAYER_HP_SAVE_INTERVAL:
-            self._save_player_hp()
-
-
-    def _on_mob_defeated(self, mob):
-        """Смерть моба: сбрасываем цель, выдаём награду монетами, ставим таймер респауна."""
-        mob["respawn_timer"] = MOB_RESPAWN_DELAY
-        mob["state"] = "dead"
-        mob["attack_windup"] = 0.0
-        mob["attack_backswing"] = 0.0
-        self._reward_mob_coins(mob)
-        if self.attack_target is mob:
-            self.attack_target = None
-            self.attack_windup = 0.0
-            self.move_path = []
-
-    def _reward_mob_coins(self, mob):
-        """Герой забирает MOB_COIN_REWARD_PERCENT % монет моба (вниз). Монеты моба обнуляются до респауна."""
-        coins = mob.get("coins")
-        if not coins:
-            return
-        mob_copper = Currency.to_copper(**coins)
-        mob["coins"] = {"copper": 0, "silver": 0, "gold": 0}
-        reward = mob_copper * MOB_COIN_REWARD_PERCENT // 100
-        if reward <= 0:
-            return
-        try:
-            self.session.add_currency(copper=reward)
-        except ServerError as error:
-            self.action_notice = str(error)
-            self.action_notice_timer = 2.0
-            return
-        self.action_notice = f"Добыча: {Currency.format_amount(reward)}"
-        self.action_notice_timer = 2.0
-
-    def _respawn_mob(self, mob):
-        """Респаун в центре квадрата патруля с полным HP и монетами."""
-        mob["x"], mob["y"] = mob["home_x"], mob["home_y"]
-        mob["hp"] = mob["max_hp"]
-        mob["coins"] = dict(MOB_COINS)
-        mob["fighter"].hp = mob["fighter"].max_hp
-        mob["state"] = "idle"
-        mob["respawn_timer"] = 0.0
-        mob["patrol_target"] = None
-        mob["patrol_pause"] = 0.0
-        mob["attack_windup"] = 0.0
-        mob["attack_backswing"] = 0.0
-
-    def _player_in_mob_aggro_area(self, mob):
-        """Игрок вошёл в квадрат патруля моба (радиус MOB_AGGRO_RADIUS_TILES тайлов от точки респауна)."""
-        reach = MOB_AGGRO_RADIUS_TILES * self.tile_size
-        return (abs(self.player_x - mob["home_x"]) <= reach + self.tile_size / 2
-                and abs(self.player_y - mob["home_y"]) <= reach + self.tile_size / 2)
-
-    def _mob_leash_distance(self, mob, x, y):
-        """Расстояние от точки респауна моба до (x, y)."""
-        return math.hypot(x - mob["home_x"], y - mob["home_y"])
-
-    def _update_mobs(self, dt):
-        """Мобы: патруль, агро на игрока, погоня в пределах поводка, удары и респаун."""
-        for mob in self.mobs:
-            if mob["hp"] <= 0:
-                mob["respawn_timer"] = max(0.0, mob["respawn_timer"] - dt)
-                if mob["respawn_timer"] <= 0:
-                    self._respawn_mob(mob)
-                continue
-            if mob["state"] != "chase" and self._player_in_mob_aggro_area(mob):
-                mob["state"] = "chase"
-                mob["patrol_target"] = None
-            if mob["state"] == "chase":
-                self._update_mob_chase(mob, dt)
-            else:
-                self._update_mob_patrol(mob, dt)
-                if mob["attack_backswing"] > 0:
-                    mob["attack_backswing"] = max(0.0, mob["attack_backswing"] - dt)
-
-    def _update_mob_patrol(self, mob, dt):
-        """Патруль: идёт между случайными точками квадрата, на каждой немного стоит."""
-        if mob["patrol_pause"] > 0:
-            mob["patrol_pause"] = max(0.0, mob["patrol_pause"] - dt)
-            return
-        if mob["patrol_target"] is None:
-            mob["patrol_target"] = self._pick_mob_patrol_point(mob)
-            if mob["patrol_target"] is None:
-                return
-        tx, ty = mob["patrol_target"]
-        dx, dy = tx - mob["x"], ty - mob["y"]
-        dist = math.hypot(dx, dy)
-        step = MOB_PATROL_SPEED * dt
-        if dist <= step:
-            mob["x"], mob["y"] = tx, ty
-            mob["patrol_target"] = None
-            mob["patrol_pause"] = MOB_PATROL_PAUSE
-            return
-        nx = mob["x"] + dx / dist * step
-        ny = mob["y"] + dy / dist * step
-        if self._check_collision(nx, ny):
-            mob["patrol_target"] = None  # путь перекрыт, выбираем другую точку
-        else:
-            mob["x"], mob["y"] = nx, ny
-
-    def _update_mob_chase(self, mob, dt):
-        """Погоня за игроком; если игрок ушёл дальше поводка или цель недостижима — моб возвращается к точке респауна."""
-        # Откат — только таймер следующего удара: моб при этом может идти за игроком
-        if mob["attack_backswing"] > 0:
-            mob["attack_backswing"] = max(0.0, mob["attack_backswing"] - dt)
-        leash = MOB_LEASH_RADIUS_TILES * self.tile_size
-        player_outside_leash = self._mob_leash_distance(mob, self.player_x, self.player_y) > leash
-        if player_outside_leash:
-            mob["state"] = "idle"
-            mob["patrol_target"] = None
-            mob["attack_windup"] = 0.0
-            return
-        # Атака игрока: каждый удар предваряет замах, моб стоит на месте, пока замах идёт
-        reach = get_attack_reach(mob["fighter"])
-        if mob["attack_windup"] <= 0:
-            if self._mob_distance_to_player(mob) > reach:
-                self._move_mob_toward_player(mob, dt)
-                return
-            # Новый замах не начинаем, пока идёт откат предыдущего удара
-            if mob["attack_backswing"] > 0:
-                self._move_mob_toward_player(mob, dt)
-                return
-            mob["attack_windup"] = get_attack_windup(mob["fighter"])
-            mob["attack_windup_total"] = mob["attack_windup"]
-            mob["attack_swing_angle"] = math.atan2(self.player_y - mob["y"], self.player_x - mob["x"])
-            mob["facing"] = mob["attack_swing_angle"]
-        mob["attack_windup"] = max(0.0, mob["attack_windup"] - dt)
-        if mob["attack_windup"] <= 0:
-            if self._mob_distance_to_player(mob) <= reach:
-                self._mob_strike_player(mob)
-            else:
-                # Игрок ушёл из зоны до конца замаха: удар проходит мимо
-                self._spawn_attack_label("miss", mob["x"], mob["y"] - MOB_SPRITE_SIZE[1] / 2 - 10)
-            mob["attack_backswing"] = get_attack_backswing(mob["fighter"])
-
-    def _move_mob_toward_player(self, mob, dt):
-        """Погоня: моб идёт прямо к игроку с базовой скоростью, с учётом препятствий."""
-        dx, dy = self.player_x - mob["x"], self.player_y - mob["y"]
-        dist = math.hypot(dx, dy)
-        if dist <= 0:
-            return
-        mob["facing"] = math.atan2(dy, dx)
-        step = MOB_CHASE_SPEED * dt
-        nx = mob["x"] + dx / dist * step
-        ny = mob["y"] + dy / dist * step
-        if not self._check_collision(nx, ny):
-            mob["x"], mob["y"] = nx, ny
 
     def _player_facing_angle(self):
         """Угол взгляда персонажа в радианах (по 8 направлениям), как у мобов в поле facing."""
         dx, dy = _DIRECTION_VECTORS.get(self.player_direction, (0.0, 1.0))
         return math.atan2(dy, dx)
 
-    def _mob_distance_to_player(self, mob):
-        """Расстояние от центра моба до ближайшей точки тела игрока (0 если внутри)."""
-        rect = self._mob_body_rect(mob)
-        nearest_x = min(max(self.player_x, rect.left), rect.right)
-        nearest_y = min(max(self.player_y, rect.top), rect.bottom)
-        return math.hypot(self.player_x - nearest_x, self.player_y - nearest_y)
+    def _mob_sprite_for(self, kind):
+        """Спрайт моба по виду: бесы — первый кадр ходьбы вниз из листа NPC, остальные — прежний спрайт."""
+        frames = self._mob_walk_frames(kind)
+        if frames is None:
+            return self.mob_sprite
+        return frames[NPC_ROW_DOWN][0]
 
-    def _mob_strike_player(self, mob):
-        """Удар скелета по игроку: уворот/блок/урон через resolve_melee_attack, цифра над персонажем на 5 с."""
-        result = resolve_world_melee_attack(mob["fighter"], self.combat_fighter, random,
-                                            defender_facing=self._player_facing_angle(),
-                                            attack_vector=(mob["x"] - self.player_x, mob["y"] - self.player_y))
-        top_y = self.player_y - 40
-        if result["outcome"] != "hit":
-            self._spawn_attack_label(result["outcome"], self.player_x, top_y)
-            return
-        self.combat_fighter.hp = max(0, self.combat_fighter.hp - result["damage"])
-        self._hp_dirty = True
-        self._save_player_hp()
-        self._spawn_hit_number(result["damage"], result["critical"], self.player_x, top_y)
+    def _mob_walk_frames(self, kind):
+        """Кадры ходьбы NPC по строкам листа (направления): {строка: [кадр, ...]}, масштаб 77x77. None — у вида нет листа."""
+        return self._mob_sheet_frames(kind, "walk")
 
-    def _save_player_hp(self):
-        """Сервер хранит HP и ману игрока; бой считается на клиенте, после изменения значения отправляются на сервер."""
-        self._hp_dirty = False
-        self._hp_save_timer = 0.0
-        if self.session is None or getattr(self.session, "character", None) is None:
-            return
-        try:
-            self.session.save_fighter(self.combat_fighter)
-        except ServerError as error:
-            self.action_notice = str(error)
-            self.action_notice_timer = 2.0
-
-    def _create_world_mobs(self):
-        """Мобы на карте мира: скелет 90х53 px, боевые статы 1-го уровня с дубиной (HP по мировым формулам). Спрайт из assets/mobs/skeleton.png."""
-        sprite_path = Path(__file__).resolve().parent.parent / "assets" / "mobs" / "skeleton.png"
-        sprite = None
-        if sprite_path.is_file():
+    def _mob_sheet_frames(self, kind, action):
+        """Кадры листа NPC (walk или attack) по строкам направления. None — у вида нет листа или он не загрузился."""
+        if kind not in NPC_KEYS:
+            return None
+        key = (kind, action)
+        if key not in self._npc_mob_frames:
+            npc = next(item for item in npc_catalog() if item["key"] == kind)
             try:
-                sprite = pygame.image.load(str(sprite_path)).convert_alpha()
-            except pygame.error as e:
-                print(f"Ошибка загрузки спрайта скелета: {e}")
-        home_x = MOB_PATROL_CENTER_TILE[0] * self.tile_size + self.tile_size // 2
-        home_y = MOB_PATROL_CENTER_TILE[1] * self.tile_size + self.tile_size // 2
-        fighter = self._build_mob_fighter()
-        return [{
-            "id": "mob_skeleton",
-            "entity_kind": "mob",
-            "name": "Скелет",
-            "icon": "💀",
-            "desc": "Нежить с карты мира.",
-            "x": home_x,
-            "y": home_y,
-            "home_x": home_x,
-            "home_y": home_y,
-            "patrol_target": None,
-            "patrol_pause": 0.0,
-            "state": "idle",
-            "attack_windup": 0.0,
-            "attack_windup_total": 0.0,
-            "attack_backswing": 0.0,
-            "attack_swing_angle": 0.0,
-            "facing": 0.0,
-            "radius": 30,
-            "hp": fighter.max_hp,
-            "max_hp": fighter.max_hp,
-            "coins": dict(MOB_COINS),
-            "fighter": fighter,
-            "sprite": sprite,
-        }]
+                sheet = pygame.image.load(str(sheet_path(npc, action))).convert_alpha()
+                self._npc_mob_frames[key] = {
+                    row: [
+                        pygame.transform.smoothscale(
+                            sheet.subsurface(pygame.Rect(col * 64, row * 64, 64, 64)).copy(), (77, 77))
+                        for col in range(NPC_FRAMES_PER_ROW)
+                    ]
+                    for row in range(4)
+                }
+            except (pygame.error, OSError):
+                self._npc_mob_frames[key] = None
+        return self._npc_mob_frames[key]
+
+    def _mob_death_frames(self, kind):
+        """Кадры листа смерти вида (одна строка, 7 кадров 64 px) или None, если листа нет."""
+        if kind not in NPC_KEYS:
+            return None
+        key = (kind, "death")
+        if key not in self._npc_mob_frames:
+            npc = next(item for item in npc_catalog() if item["key"] == kind)
+            try:
+                sheet = pygame.image.load(str(sheet_path(npc, "death"))).convert_alpha()
+                self._npc_mob_frames[key] = [
+                    pygame.transform.smoothscale(
+                        sheet.subsurface(pygame.Rect(col * 64, 0, 64, 64)).copy(), (77, 77))
+                    for col in range(sheet.get_width() // 64)
+                ]
+            except (pygame.error, OSError):
+                self._npc_mob_frames[key] = None
+        return self._npc_mob_frames[key]
+
+    def _load_mob_sprite(self):
+        """Спрайт разбойника из assets/mobs/woodland_bandit.png. Мобы клиента только отображаются, их состояние приходит с сервера."""
+        sprite_path = Path(__file__).resolve().parent.parent / "assets" / "mobs" / "woodland_bandit.png"
+        if not sprite_path.is_file():
+            return None
+        try:
+            return pygame.image.load(str(sprite_path)).convert_alpha()
+        except pygame.error as e:
+            print(f"Ошибка загрузки спрайта разбойника: {e}")
+            return None
+
+    def _apply_world_mobs(self, payloads):
+        """Обновляет мобов по снимку сервера. Объекты сохраняются, чтобы закреплённая карточка и цель оставались валидными."""
+        for payload in payloads:
+            mob = self.world_mobs_by_id.get(payload["id"])
+            if mob is None:
+                mob = {
+                    "id": payload["id"],
+                    "entity_kind": "mob",
+                    "kind": payload["kind"],
+                    "name": payload["name"],
+                    "icon": "💀",
+                    "desc": payload["desc"],
+                    "fighter": self._build_mob_fighter(payload["kind"], payload.get("stats"), payload.get("level"), payload.get("equipment")),
+                    "sprite": self._mob_sprite_for(payload["kind"]),
+                    "frames": self._mob_walk_frames(payload["kind"]),
+                    "attack_frames": self._mob_sheet_frames(payload["kind"], "attack"),
+                    "death_frames": self._mob_death_frames(payload["kind"]),
+                    "radius": 30,
+                }
+                self.world_mobs_by_id[mob["id"]] = mob
+                self.mobs.append(mob)
+            now = pygame.time.get_ticks()
+            if (mob.get("x"), mob.get("y")) != (payload["x"], payload["y"]):
+                mob["moved_at"] = now
+            if payload["state"] == "dead" and mob.get("state") not in (None, "dead"):
+                mob["died_at"] = now
+            if payload["windup"] > 0 and mob.get("windup", 0.0) <= 0:
+                mob["attack_started"] = now
+                mob["attack_ms"] = payload["windup_total"] * 1000
+            if mob.get("x") is not None and (mob["x"], mob["y"]) != (payload["x"], payload["y"]):
+                mob["moving_until"] = pygame.time.get_ticks() + 300  # шёл — проигрываем ходьбу
+            mob.update({
+                "level": payload.get("level", 1),
+                "x": payload["x"],
+                "y": payload["y"],
+                "windup": payload["windup"],
+                "home_x": payload["home_x"],
+                "home_y": payload["home_y"],
+                "hp": payload["hp"],
+                "max_hp": payload["max_hp"],
+                "state": payload["state"],
+                "facing": payload["facing"],
+                "coins": payload["coins"],
+            })
 
     def _load_forester_sprite(self):
         """
@@ -955,7 +1151,8 @@ class WorldMapScene:
         psx, psy = self.world_to_screen(self.player_x, self.player_y)
         player_rect = pygame.Rect(psx - 22, psy - 58, 44, 62)
         if player_rect.collidepoint(screen_pos):
-            char_name = getattr(self.session, "character", {}).get("name", "Герой") if hasattr(self.session, "character") else "Герой"
+            char_name = getattr(self.session, "character", None) or {}
+            char_name = char_name.get("name", "Герой")
             status_str = "Бежит" if self.player_state == "walk" else "В покое"
             return {
                 "id": "player",
@@ -968,11 +1165,11 @@ class WorldMapScene:
                 "icon": "👤",
             }
 
-        # 2. Мобы карты: попадание по спрайту 90х53 px
+        # 2. Мобы карты: попадание по самому спрайту моба
         for mob in self.mobs:
             msx, msy = self.world_to_screen(mob["x"], mob["y"])
-            mob_rect = pygame.Rect(0, 0, 90, 53)
-            mob_rect.center = (msx, msy)
+            mob_sprite = mob.get("sprite")
+            mob_rect = mob_sprite.get_rect(center=(msx, msy)) if mob_sprite is not None else pygame.Rect(0, 0, 90, 53)
             if mob_rect.collidepoint(screen_pos):
                 return mob
 
@@ -1180,7 +1377,7 @@ class WorldMapScene:
             if (obstacle["bounds"].collidepoint(px, py) and point_in_polygon((px, py), obstacle["points"])
                     and not any(passage.collidepoint(px, py) for passage in obstacle["passages"])):
                 return True
-        return False
+        return self._rect_touches_blocked_tile(feet_rect)
 
     def _load_terrain(self):
         """Рельеф, строения и проложенные сервером дороги приходят готовыми для отрисовки."""
@@ -1192,6 +1389,9 @@ class WorldMapScene:
             self.city_visual_state = {"city_level": 1, "active": False}
             return []
         self._apply_city_layout(terrain)
+        self._apply_map_size(terrain.get("map", {}))
+        self.terrain_version = terrain.get("map", {}).get("version")
+        self._apply_tile_terrain(terrain.get("tiles", {}), terrain.get("props", []), terrain.get("bridges", []))
         self.city_visual_state = dict(terrain.get(
             "city_visual_state", {"city_level": 1, "active": False}
         ))
@@ -1208,6 +1408,10 @@ class WorldMapScene:
             elif obstacle.get("type") == "lake":
                 water_points = [tuple(point) for point in obstacle["water_points"]]
                 surface, origin = self._render_lake(points, water_points, obstacle.get("sandy_shore_sections", []))
+            elif obstacle.get("type") == "tower":
+                surface, origin = self._render_tower(points)
+            elif obstacle.get("type") == "mountains" and self.uniform_grass:
+                surface, origin = self._render_mountain_tiles(bounds)
             else:
                 surface, origin = self._render_mountains(points, obstacle.get("peaks", []), passages)
             obstacles.append({
@@ -1215,34 +1419,283 @@ class WorldMapScene:
             })
         return obstacles
 
+    def _apply_map_size(self, map_info):
+        """Размер карты и точка появления приходят с сервера мира; без них остаётся 512x256."""
+        self.grid_w = int(map_info.get("tiles_w", self.grid_w))
+        self.grid_h = int(map_info.get("tiles_h", self.grid_h))
+        self.world_w = self.grid_w * self.tile_size
+        self.world_h = self.grid_h * self.tile_size
+        self.max_world_x = self.world_w
+        self.max_world_y = self.world_h
+        self.uniform_grass = bool(map_info.get("uniform_grass", False))
+        spawn = map_info.get("spawn")
+        self.default_spawn = tuple(spawn) if spawn else (self.world_w // 2, self.world_h // 2)
+
+    def _apply_tile_terrain(self, tiles, props, bridges):
+        """Лес, сухой край, вода, горы, пни, брёвна и мосты приходят клетками карты: лес и пни рисуются спрайтами из assets/map/."""
+        self.forest_tiles = _tile_set(tiles.get("forest", []))
+        self.water_tiles = _tile_set(tiles.get("water", []))
+        self.dry_tiles = _tile_set(tiles.get("dry", []))
+        self.mountain_tiles = _tile_set(tiles.get("mountain", []))
+        self.impassable_tiles = _tile_set(tiles.get("impassable", []))
+        self.partial_masks = {(int(x), int(y)): str(mask) for x, y, mask in tiles.get("partial", [])}
+        self.mountain_roles = build_mountain_roles(self.mountain_tiles) if self.uniform_grass else {}
+        self.ground_kinds = (
+            build_ground_kinds(self.forest_tiles | self.dry_tiles, self.grid_w, self.grid_h) if self.uniform_grass else {}
+        )
+        self.bridges = [[tuple(tile) for tile in bridge["tiles"]] for bridge in bridges]
+        self.prop_anchors = {}
+        prop_tiles = set()
+        for prop in props:
+            footprint = [tuple(tile) for tile in prop["tiles"]]
+            prop_tiles.update(footprint)
+            self.prop_anchors[min(footprint)] = {"type": prop["type"], "width": len(footprint)}
+        self.blocked_tiles = (
+            self.forest_tiles | self.dry_tiles | self.water_tiles | self.mountain_tiles | self.impassable_tiles | prop_tiles
+        ) - frozenset(self.partial_masks)
+
+    def _rect_touches_blocked_tile(self, rect):
+        if not self.blocked_tiles and not self.partial_masks:
+            return False
+        size = self.tile_size
+        for tile_y in range(rect.top // size, (rect.bottom - 1) // size + 1):
+            for tile_x in range(rect.left // size, (rect.right - 1) // size + 1):
+                mask = self.partial_masks.get((tile_x, tile_y))
+                if mask is not None:
+                    if mask_blocks_rect(mask, tile_x, tile_y, size, rect.left, rect.top, rect.right, rect.bottom):
+                        return True
+                elif (tile_x, tile_y) in self.blocked_tiles:
+                    return True
+        return False
+
+    def _map_sprites(self):
+        """Спрайты земли, воды, кромки и деревьев из assets/map; грузятся при первом показе карты."""
+        if self._map_sprite_cache is None:
+            map_dir = Path(__file__).resolve().parent.parent / "assets" / "map"
+            def flipped_variants(names):
+                # Отражения дают разнообразие без швов: края тайлов бесшовные, поэтому стык остаётся ровным
+                variants = []
+                for name in names:
+                    base = pygame.image.load(str(map_dir / "tiles" / f"{name}.png")).convert()
+                    variants.extend([base, pygame.transform.flip(base, True, False),
+                                     pygame.transform.flip(base, False, True), pygame.transform.flip(base, True, True)])
+                return variants
+
+            grass = flipped_variants(MAP_GRASS_TILES)
+            floor = flipped_variants(MAP_FLOOR_TILES)
+            berry = flipped_variants(MAP_BERRY_TILES)
+            water = [pygame.image.load(str(map_dir / "tiles" / f"{name}.png")).convert() for name in MAP_WATER_TILES]
+            road_core = [pygame.image.load(str(map_dir / "tiles" / f"{name}.png")).convert_alpha() for name in MAP_ROAD_CORE_TILES]
+            road_edge = {
+                side: [
+                    pygame.image.load(str(map_dir / "tiles" / f"road_edge_{side}_{i}.png")).convert_alpha()
+                    for i in range(1, MAP_ROAD_EDGE_VARIANTS + 1)
+                ]
+                for side, _, _ in MAP_ROAD_NEIGHBOURS
+            }
+            trees = {"green": [], "dead": []}
+            for name, (frame_w, frame_h) in MAP_TREE_SHEETS.items():
+                sheet = pygame.image.load(str(map_dir / "trees" / f"{name}.png")).convert_alpha()
+                size = (round(frame_w * MAP_TREE_SCALE), round(frame_h * MAP_TREE_SCALE))
+                frames = []
+                for index in range(MAP_TREE_FRAMES):
+                    cols = MAP_TREE_COLUMNS.get(name, MAP_TREE_FRAMES_PER_ROW)
+                    col, row = index % cols, index // cols
+                    frame = sheet.subsurface(pygame.Rect(col * frame_w, row * frame_h, frame_w, frame_h))
+                    frames.append(pygame.transform.smoothscale(frame, size))
+                trees["dead" if name in MAP_DEAD_TREES else "green"].append(frames)
+            props = {}
+            for kind, names in MAP_PROP_SPRITES.items():
+                images = []
+                for name in names:
+                    image = pygame.image.load(str(map_dir / "props" / f"{name}.png")).convert_alpha()
+                    size = (round(image.get_width() * MAP_PROP_SCALE), round(image.get_height() * MAP_PROP_SCALE))
+                    images.append(pygame.transform.smoothscale(image, size))
+                props[kind] = images
+            bridge = pygame.image.load(str(map_dir / "props" / f"{MAP_BRIDGE_SPRITE}.png")).convert_alpha()
+            rims = map_dir / "rims"
+            left = [pygame.image.load(str(rims / f"{name}.png")).convert() for name in MAP_SHORE_LEFT]
+            bottom = [pygame.image.load(str(rims / f"{name}.png")).convert() for name in MAP_SHORE_BOTTOM]
+            shores = {
+                "left": left,
+                "right": [pygame.transform.flip(image, True, False) for image in left],
+                "bottom": bottom,
+                "top": [pygame.transform.flip(image, False, True) for image in bottom],
+            }
+            self._map_sprite_cache = {
+                "grass": grass, "floor": floor, "berry": berry, "water": water, "road_core": road_core, "road_edge": road_edge, "trees": trees, "props": props, "bridge": bridge,
+                "shores": shores, "roads": {},
+            }
+        return self._map_sprite_cache
+
+    def _road_surface(self, sprites, gx, gy):
+        """Поверхность тайла дороги: кэшируется по сторонам, где дорога кончается, и вариантам земли и кромки."""
+        edge_sides = tuple(side for side, dx, dy in MAP_ROAD_NEIGHBOURS if (gx + dx, gy + dy) not in self.road_tiles)
+        h = _map_hash(gx, gy)
+        core_index = h % len(sprites["road_core"])
+        variant = (h >> 8) % MAP_ROAD_EDGE_VARIANTS
+        key = (edge_sides, core_index, variant)
+        cache = sprites["roads"]
+        if key not in cache:
+            edge_sprites = {side: sprites["road_edge"][side][variant] for side in edge_sides}
+            cache[key] = _build_road_tile(sprites["road_core"][core_index], edge_sprites, edge_sides)
+        return cache[key]
+
+    def _draw_forest_trees(self, screen, trees, props):
+        """Деревья леса и пни у его края. Деревья стоят не по сетке: в клетке одно или два со сдвигом, часть клеток пустая.
+        Сухой лес продолжается за края карты: клетки за краем повторяют ближайший тайл края."""
+        size = self.tile_size
+        top_left_wx, top_left_wy = self.screen_to_world(0, 0)
+        bot_right_wx, bot_right_wy = self.screen_to_world(settings.WIDTH, settings.HEIGHT)
+        map_gx0, map_gy0 = self.min_world_x // size, self.min_world_y // size
+        map_gx1, map_gy1 = self.max_world_x // size, self.max_world_y // size
+        # Высокие деревья уходят вверх от своего тайла, поэтому строки над экраном тоже проверяются
+        start_gx = max(map_gx0, int(top_left_wx // size) - 2)
+        end_gx = min(map_gx1, int(bot_right_wx // size) + 3)
+        start_gy = max(map_gy0, int(top_left_wy // size) - 6)
+        end_gy = min(map_gy1, int(bot_right_wy // size) + 2)
+        slots = []
+        for gy in range(start_gy, end_gy):
+            for gx in range(start_gx, end_gx):
+                prop = self.prop_anchors.get((gx, gy))
+                if prop:
+                    self._draw_prop(screen, props[prop["type"]], prop["width"], gx, gy)
+                if (gx, gy) in self.dry_tiles:
+                    pool = trees["dead"]
+                elif (gx, gy) in self.forest_tiles:
+                    pool = trees["green"]
+                else:
+                    continue
+                self._add_tree_slots(slots, gx, gy, pool)
+        # Ряд клеток за краем карты: сухой лес уходит за горизонт, а не обрывается прямой линией
+        outer_gx0 = max(map_gx0 - 1, int(top_left_wx // size) - 2)
+        outer_gx1 = min(map_gx1 + 1, int(bot_right_wx // size) + 3)
+        outer_gy0 = max(map_gy0 - 1, int(top_left_wy // size) - 6)
+        outer_gy1 = min(map_gy1 + 1, int(bot_right_wy // size) + 2)
+        for gy in range(outer_gy0, outer_gy1):
+            for gx in range(outer_gx0, outer_gx1):
+                if map_gx0 <= gx < map_gx1 and map_gy0 <= gy < map_gy1:
+                    continue
+                edge_gx = min(max(gx, map_gx0), map_gx1 - 1)
+                edge_gy = min(max(gy, map_gy0), map_gy1 - 1)
+                if (edge_gx, edge_gy) in self.dry_tiles:
+                    self._add_tree_slots(slots, gx, gy, trees["dead"])
+        slots.sort(key=lambda slot: slot[0])
+        for base_y, base_x, tree in slots:
+            sx, sy = self.world_to_screen(base_x, base_y)
+            screen.blit(tree, (sx - tree.get_width() // 2, sy - tree.get_height()))
+
+    def _add_tree_slots(self, slots, gx, gy, pool):
+        """Место и кадр деревьев клетки: хэш задаёт сдвиг, вариант и пустоту, поэтому каждая клетка выглядит по-своему."""
+        size = self.tile_size
+        h = _map_hash(gx, gy)
+        if h % 5 == 0:
+            return
+        layers = 2 if (h >> 3) % 3 == 0 else 1
+        ticks = pygame.time.get_ticks()
+        for layer in range(layers):
+            lh = _map_hash(gx * 3 + layer * 101, gy * 7 + layer * 53)
+            frames = pool[lh % len(pool)]
+            frame = (ticks // MAP_TREE_FRAME_MS + (lh >> 8)) % MAP_TREE_FRAMES
+            dx = ((lh >> 4) % 13 - 6) * size // 12
+            dy = ((lh >> 12) % 7 - 3) * size // 12
+            slots.append(((gy + 1) * size + dy, gx * size + size // 2 + dx, frames[frame]))
+
+    def _draw_bridges(self, screen, sprites):
+        """Мост художника в натуральном размере лежит по центру своего пролёта на дороге, без растяжки."""
+        size = self.tile_size
+        image = sprites["bridge"]
+        for run in self.bridges:
+            xs = [tile_x for tile_x, _ in run]
+            ys = [tile_y for _, tile_y in run]
+            centre_x = (min(xs) + max(xs) + 1) * size // 2
+            centre_y = (min(ys) + max(ys) + 1) * size // 2
+            sx, sy = self.world_to_screen(centre_x, centre_y)
+            screen.blit(image, (sx - image.get_width() // 2, sy - image.get_height() // 2))
+
+    def _draw_prop(self, screen, images, width, gx, gy):
+        """Пень или бревно стоит на нижней границе своего тайла; бревно занимает width тайлов и центрируется на них."""
+        size = self.tile_size
+        image = images[_map_hash(gx, gy) % len(images)]
+        sx, sy = self.world_to_screen(gx * size + width * size // 2, (gy + 1) * size)
+        screen.blit(image, (sx - image.get_width() // 2, sy - image.get_height()))
+
+    def _draw_shore_rims(self, screen, shores, start_gx, end_gx, start_gy, end_gy, edge_x, edge_y):
+        """Каменная кромка берега художника: кусочки кладутся на сухие тайлы рядом с водой."""
+        for gy in range(start_gy, end_gy):
+            for gx in range(start_gx, end_gx):
+                if (gx, gy) not in self.water_tiles:
+                    continue
+                left, right = edge_x[gx], edge_x[gx + 1]
+                top, bottom = edge_y[gy], edge_y[gy + 1]
+                variant = (gx * 3 + gy * 5) % len(shores["left"])
+                if (gx - 1, gy) not in self.water_tiles:
+                    rim = shores["left"][variant]
+                    screen.blit(rim, (left - rim.get_width(), top))
+                if (gx + 1, gy) not in self.water_tiles:
+                    screen.blit(shores["right"][variant], (right, top))
+                if (gx, gy - 1) not in self.water_tiles:
+                    rim = shores["top"][variant]
+                    screen.blit(rim, (left, top - rim.get_height()))
+                if (gx, gy + 1) not in self.water_tiles:
+                    screen.blit(shores["bottom"][variant], (left, bottom))
+
     def _apply_city_layout(self, terrain):
         """Строения и дороги зависят от уровня города, поэтому их можно перечитать при апгрейде."""
         self.objects = hydrate_structures(terrain.get("objects", []))
         roads = terrain.get("roads", {})
         self.road_tiles = {tuple(tile) for tile in roads.get("tiles", [])}
+        # Тропинки от полянок выглядят как дорога, но не входят в маршруты между строениями
+        self.road_tiles |= _tile_set(terrain.get("tiles", {}).get("paths", []))
         self.road_routes = roads.get("routes", [])
         self.road_travel_seconds = roads.get("travel_seconds", 0)
 
+    def _minimap_size(self):
+        height = self.MINIMAP_HEIGHT
+        return (max(1, round(height * self.grid_w / self.grid_h)), height)
+
+    @staticmethod
+    def _minimap_tile_rect(tile_x, tile_y, scale_x, scale_y):
+        left = int(tile_x * scale_x)
+        top = int(tile_y * scale_y)
+        right = max(left + 1, int((tile_x + 1) * scale_x))
+        bottom = max(top + 1, int((tile_y + 1) * scale_y))
+        return (left, top, right - left, bottom - top)
+
     def _build_minimap(self, obstacles):
-        """Полная карта мира в уменьшении: фон сторон, рельеф, дороги и строения."""
-        width, height = self.MINIMAP_SIZE
+        """Полная карта мира в уменьшении: трава, лес, сухой край, вода, горы, мосты, дороги и строения."""
+        width, height = self._minimap_size()
         scale_x = width / self.grid_w
         scale_y = height / self.grid_h
         surface = pygame.Surface((width, height))
-        surface.fill((28, 42, 32))
-        pygame.draw.rect(surface, (36, 32, 34), (0, height // 2, width, height - height // 2))
+        surface.fill(self.MINIMAP_GRASS)
 
         for obstacle in obstacles:
             color = {
-                "forest": (16, 44, 22),
-                "lake": (28, 100, 132),
-            }.get(obstacle.get("type"), (74, 72, 62))
+                "forest": self.MINIMAP_COLORS["forest"],
+                "lake": self.MINIMAP_COLORS["water"],
+                "tower": (120, 112, 100),
+                "mountains": self.MINIMAP_COLORS["mountain"],
+            }.get(obstacle.get("type"), self.MINIMAP_COLORS["mountain"])
             points = [(x / self.tile_size * scale_x, y / self.tile_size * scale_y) for x, y in obstacle["points"]]
             if len(points) >= 3:
                 pygame.draw.polygon(surface, color, points)
 
-        for gx, gy in self.road_tiles:
-            surface.set_at((int(gx * scale_x), int(gy * scale_y)), (150, 120, 75))
+        tile_layers = (
+            (self.mountain_tiles, self.MINIMAP_COLORS["mountain"]),
+            (self.forest_tiles, self.MINIMAP_COLORS["forest"]),
+            (self.dry_tiles, self.MINIMAP_COLORS["dry"]),
+            (self.water_tiles, self.MINIMAP_COLORS["water"]),
+            (self.road_tiles, self.MINIMAP_COLORS["road"]),
+        )
+        for tiles, color in tile_layers:
+            for tile_x, tile_y in tiles:
+                pygame.draw.rect(surface, color, self._minimap_tile_rect(tile_x, tile_y, scale_x, scale_y))
+
+        for bridge in self.bridges:
+            for tile_x, tile_y in bridge:
+                pygame.draw.rect(surface, self.MINIMAP_COLORS["bridge"],
+                                 self._minimap_tile_rect(tile_x, tile_y, scale_x, scale_y))
 
         for obj in self.objects:
             x = obj.get("tile_x", 0) * scale_x
@@ -1258,7 +1711,7 @@ class WorldMapScene:
     def _draw_minimap(self, screen):
         if self.minimap_surface is None:
             return
-        width, height = self.MINIMAP_SIZE
+        width, height = self._minimap_size()
         left = self.MINIMAP_MARGIN[0]
         top = settings.HEIGHT - self.MINIMAP_MARGIN[1] - height
         screen.blit(self.minimap_surface, (left, top))
@@ -1268,6 +1721,13 @@ class WorldMapScene:
         marker = (left + self.player_x * scale_x, top + self.player_y * scale_y)
         pygame.draw.circle(screen, (255, 255, 255), (int(marker[0]), int(marker[1])), 3)
         pygame.draw.circle(screen, (220, 60, 60), (int(marker[0]), int(marker[1])), 2)
+        for corpse in self.player_corpses:
+            cx = left + corpse["x"] * scale_x
+            cy = top + corpse["y"] * scale_y
+            pygame.draw.rect(screen, (210, 210, 220), (int(cx) - 2, int(cy) - 2, 5, 5))
+            tiles = round(self._corpse_distance_tiles(corpse))
+            label = self.badge_font.render(f"{tiles} {_tiles_word(tiles)}", True, (235, 235, 245))
+            screen.blit(label, (int(cx) + 5, int(cy) - 7))
 
     def _refresh_city_visual_state(self):
         now = time.monotonic()
@@ -1345,6 +1805,18 @@ class WorldMapScene:
                         pygame.draw.line(surface, (30, 27, 25), (x, edge_y), (x + 8, edge_y), 5)
         return surface, (left, top)
 
+    def _render_mountain_tiles(self, bounds):
+        """Горный венец тайлами художника: склон и основание смотрят наружу, плато травой, без стыков разных тайлов."""
+        size = self.tile_size
+        left, top = bounds.left // size, bounds.top // size
+        surface = pygame.Surface((bounds.width, bounds.height), pygame.SRCALPHA)
+        for tile_y in range(top, (bounds.bottom - 1) // size + 1):
+            for tile_x in range(left, (bounds.right - 1) // size + 1):
+                name = self.mountain_roles.get((tile_x, tile_y))
+                if name is not None:
+                    surface.blit(_mountain_tile_image(name), ((tile_x - left) * size, (tile_y - top) * size))
+        return surface, (bounds.left, bounds.top)
+
     @staticmethod
     def _render_forest(points, trees):
         """Густой лес: тёмная подложка по контуру и кроны деревьев с тенью и бликом."""
@@ -1398,12 +1870,36 @@ class WorldMapScene:
 
         return surface, (left, top)
 
+    @staticmethod
+    def _render_tower(points):
+        """Заглушка башни: каменный блок с зубцами и донжоном, пока нет спрайта."""
+        xs = [x for x, _ in points]
+        ys = [y for _, y in points]
+        origin = (min(xs), min(ys))
+        surface = pygame.Surface((max(xs) - min(xs) + 1, max(ys) - min(ys) + 1), pygame.SRCALPHA)
+        rect = surface.get_rect()
+        stone, dark = (92, 88, 84), (58, 55, 52)
+        pygame.draw.rect(surface, stone, rect)
+        pygame.draw.rect(surface, dark, rect, 4)
+        for x in range(0, rect.width, 16):
+            pygame.draw.rect(surface, dark, (x, 0, 8, 6))
+            pygame.draw.rect(surface, dark, (x, rect.height - 6, 8, 6))
+        keep = rect.inflate(-rect.width // 2, -rect.height // 2)
+        pygame.draw.rect(surface, (70, 66, 62), keep)
+        pygame.draw.rect(surface, dark, keep, 2)
+        return surface, origin
+
     def _draw_terrain(self, screen):
         for obstacle in self.obstacles:
             sx, sy = self.world_to_screen(*obstacle["origin"])
             surface = obstacle["surface"]
             if sx < settings.WIDTH and sy < settings.HEIGHT and sx + surface.get_width() > 0 and sy + surface.get_height() > 0:
                 screen.blit(surface, (sx, sy))
+                if "max_hp" in obstacle:
+                    hp_label = self.small_font.render(
+                        f"ХП {obstacle['hp']}/{obstacle['max_hp']}", True, (240, 230, 200))
+                    screen.blit(hp_label, (sx + (surface.get_width() - hp_label.get_width()) // 2,
+                                           sy - hp_label.get_height() - 2))
 
     def handle_event(self, event):
         if self.profile_overlay.is_open:
@@ -1419,6 +1915,8 @@ class WorldMapScene:
 
         if self.chat is not None and self.chat.handle_event(event):
             return
+        if self.combat_log.handle_event(event):
+            return
 
         # Окно здания поглощает остальные взаимодействия с картой
         if self.building_window is not None:
@@ -1427,8 +1925,21 @@ class WorldMapScene:
                 self.building_window = None
             return
 
+        if self.chat is not None and self.chat.open_from_key(event):
+            return
+
         if event.type == pygame.KEYDOWN:
+            slot = hotbar_index_for_key(event.key)
+            if slot is not None:
+                self._press_hotbar_slot(slot)
+                return
             if event.key == pygame.K_ESCAPE:
+                if self.corpse_window_id is not None:
+                    self.corpse_window_id = None
+                    return
+                if self.dash_aiming:
+                    self.dash_aiming = False
+                    return
                 if self.pinned_mob is not None:
                     self.pinned_mob = None
                     return
@@ -1446,6 +1957,15 @@ class WorldMapScene:
                 self._clamp_camera()
                 return
 
+        # Прицел рывка: ЛКМ по миру запускает рывок, ПКМ отменяет прицел (клики по интерфейсу идут обычным путём)
+        if self.dash_aiming and event.type == pygame.MOUSEBUTTONDOWN:
+            if event.button == 1 and not self._is_ui_point(event.pos):
+                self._fire_dash(self.screen_to_world(*event.pos))
+                return
+            if event.button == 3:
+                self.dash_aiming = False
+                return
+
         # Закреплённая карточка моба поверх карты: клики по ней не уходят в мир
         if event.type == pygame.MOUSEBUTTONDOWN and self.pinned_mob is not None:
             if self._mob_card_rect().collidepoint(event.pos):
@@ -1456,6 +1976,14 @@ class WorldMapScene:
         # ЛКМ: нажатие на кнопки активного окна срабатывает сразу; остальное решается при отпускании
         # (протяжка ЛКМ — перетаскивание карты, короткий клик — выбор, двойной — действие).
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            if self.corpse_window_id is not None:
+                window_rect, close_rect, loot_rect = self._corpse_window_layout()
+                if window_rect.collidepoint(event.pos):
+                    if close_rect.collidepoint(event.pos):
+                        self.corpse_window_id = None
+                    elif loot_rect.collidepoint(event.pos):
+                        self._loot_corpse()
+                    return
             if self.active_entity is not None and self.active_window_rect.collidepoint(event.pos):
                 if self.active_close_button.collidepoint(event.pos):
                     self.active_entity = None
@@ -1497,6 +2025,9 @@ class WorldMapScene:
             if self._keyboard_movement_blocked():
                 return
             wx, wy = self.screen_to_world(*event.pos)
+            # Замах нельзя отменить: ПКМ во время замаха игнорируется; во время рывка персонаж занят
+            if self.attack_windup > 0 or self.world_dash_active:
+                return
             mob = self._mob_at_world_point(wx, wy)
             if mob is not None:
                 self._set_attack_target(mob)
@@ -1517,12 +2048,18 @@ class WorldMapScene:
         self._last_click_time = None if is_double else now
         self._last_click_pos = None if is_double else pos
 
+        corpse = self._player_corpse_at(pos)
+        if corpse is not None:
+            self.active_entity = None
+            self._open_corpse_window(corpse)
+            return
+
         entity = self._find_entity_at(pos)
         if is_double:
             self._handle_double_click(entity)
             return
-        if entity is not None and entity.get("id") == "player":
-            # Одиночный клик по персонажу ничего не открывает: информация — по двойному клику
+        if entity is not None and (entity.get("id") == "player" or entity.get("entity_kind") == "mob"):
+            # Одиночный клик по персонажу и мобу ничего не открывает: информация — по двойному клику
             self.active_entity = None
             self.action_notice = None
             return
@@ -1582,11 +2119,111 @@ class WorldMapScene:
             self.player_state = "idle"
         return moved
 
+    def _press_hotbar_slot(self, slot):
+        """Нажатие 1–0: слот подсвечивается; «1» включает или выключает прицел рывка."""
+        self.hotbar_flash_index = slot
+        self.hotbar_flash_timer = HOTBAR_FLASH_DURATION
+        if slot != DASH_HOTBAR_SLOT:
+            return
+        if self.dash_aiming:
+            self.dash_aiming = False
+            return
+        if self.dash_cooldown > 0:
+            self._add_floating_message(f"Рывок: {math.ceil(self.dash_cooldown)} с", self.player_x, self.player_y - 30)
+            return
+        if self.attack_windup > 0 or self.world_dash_active:
+            return
+        self.dash_aiming = True
+
+    def _is_ui_point(self, pos):
+        """Клик по интерфейсу (верхняя полоса, окно объекта, карточка моба, панель 1–0, чат), а не по миру."""
+        if pos[1] <= 75:
+            return True
+        if self.active_entity is not None and self.active_window_rect.collidepoint(pos):
+            return True
+        if self.pinned_mob is not None and self._mob_card_rect().collidepoint(pos):
+            return True
+        if any(rect.collidepoint(pos) for rect in hotbar_slot_rects(settings.WIDTH, settings.HEIGHT)):
+            return True
+        return self.chat is not None and self.chat.contains(pos)
+
+    def _fire_dash(self, target):
+        """Рывок: клиент отправляет направление на сервер, дальность, урон и кулдаун считает сервер."""
+        self.dash_aiming = False
+        if self.attack_windup > 0 or self.world_dash_active or self.dash_cooldown > 0:
+            return
+        if math.hypot(target[0] - self.player_x, target[1] - self.player_y) < DASH_MIN_LENGTH:
+            self._add_floating_message("Слишком близко", self.player_x, self.player_y - 30)
+            return
+        self.attack_target = None
+        self.move_path = []
+        self._face_towards(target[0], target[1])
+        self.world_dash_target = {"x": target[0], "y": target[1]}
+        play_dash_sound()
+        self._world_sync_request(0.0, force=True)
+
+    def _load_whirlwind_sprite(self):
+        """PNG следа вихря (заглушка); без файла след рисуется кругом."""
+        sprite_path = Path(__file__).resolve().parent.parent / "assets" / "effects" / "whirlwind_trail.png"
+        if not sprite_path.is_file():
+            return None
+        try:
+            return pygame.image.load(str(sprite_path)).convert_alpha()
+        except pygame.error as e:
+            print(f"Ошибка загрузки следа вихря: {e}")
+            return None
+
+    def _draw_whirlwinds(self, screen):
+        """След вихря: каждая точка пути рывка гаснет за DASH_TRAIL_DURATION секунд."""
+        size = max(2, int(DASH_TRAIL_SIZE * self.zoom))
+        for point in self.whirlwinds:
+            sx, sy = self.world_to_screen(point["x"], point["y"])
+            fade = point["timer"] / DASH_TRAIL_DURATION
+            if self.whirlwind_sprite is not None:
+                sprite = pygame.transform.smoothscale(self.whirlwind_sprite, (size, size))
+                sprite.set_alpha(int(255 * fade))
+                screen.blit(sprite, sprite.get_rect(center=(sx, sy)))
+            else:
+                pygame.draw.circle(screen, (120, 220, 255), (sx, sy), size // 2, 2)
+
+    def _draw_dash_aim(self, screen):
+        """Прицел рывка: зелёная полоса шириной 2 × DASH_HIT_RADIUS от персонажа до точки курсора (не дальше дальности)."""
+        mx, my = pygame.mouse.get_pos()
+        start = (self.player_x, self.player_y)
+        end = dash_end_point(start, self.screen_to_world(mx, my))
+        sx, sy = self.world_to_screen(*start)
+        ex, ey = self.world_to_screen(*end)
+        radius = max(1, int(DASH_HIT_RADIUS * self.zoom))
+        left = int(min(sx, ex)) - radius - 2
+        top = int(min(sy, ey)) - radius - 2
+        width = int(abs(ex - sx)) + 2 * radius + 4
+        height = int(abs(ey - sy)) + 2 * radius + 4
+        surf = pygame.Surface((width, height), pygame.SRCALPHA)
+        local_start = (sx - left, sy - top)
+        local_end = (ex - left, ey - top)
+        pygame.draw.line(surf, (*DASH_AIM_COLOR, 60), local_start, local_end, radius * 2)
+        pygame.draw.circle(surf, (*DASH_AIM_COLOR, 60), local_end, radius)
+        pygame.draw.circle(surf, (*DASH_AIM_COLOR, 200), local_end, radius, 2)
+        screen.blit(surf, (left, top))
+
+    def _hotbar_slot_states(self):
+        """Состояние слотов панели 1–0: у рывка подпись, кулдаун и активный прицел; остальные слоты пустые."""
+        states = [None] * len(HOTBAR_KEYS)
+        states[DASH_HOTBAR_SLOT] = {
+            "name": "Рывок",
+            "cooldown": self.dash_cooldown,
+            "cooldown_total": DASH_COOLDOWN,
+            "active": self.dash_aiming,
+        }
+        return states
+
     def _keyboard_movement_blocked(self):
         """Перемещение ПКМ не работает, пока открыт ввод в чат или окно/оверлей."""
         if self.building_window is not None and self.building_window.is_open:
             return True
-        return self.chat is not None and self.chat.message_input.focused and not self.chat.collapsed
+        if self.combat_log.captures_keyboard():
+            return True
+        return self.chat is not None and self.chat.captures_keyboard()
 
     def _save_profile_card(self, profile):
         try:
@@ -1603,7 +2240,7 @@ class WorldMapScene:
         if not pygame.mouse.get_focused():
             return
         mx, my = pygame.mouse.get_pos()
-        if my <= 75 or (self.chat is not None and self.chat.panel_rect.collidepoint(mx, my)):
+        if my <= 75 or (self.chat is not None and self.chat.contains((mx, my))):
             return
         if self.active_entity is not None and self.active_window_rect.collidepoint(mx, my):
             return
@@ -1626,8 +2263,11 @@ class WorldMapScene:
 
     def update(self, dt):
         self._refresh_city_visual_state()
+        if self.presence is not None:
+            self.presence.update(dt)
         if self.chat is not None:
             self.chat.update(dt)
+        self.combat_log.update(dt)
         if self.pinned_mob is not None and (self.pinned_mob["hp"] <= 0
                                             or not any(m is self.pinned_mob for m in self.mobs)):
             self.pinned_mob = None
@@ -1641,21 +2281,27 @@ class WorldMapScene:
             self.click_effect["timer"] -= dt
             if self.click_effect["timer"] <= 0:
                 self.click_effect = None
-        self._regenerate_player_resources(dt)
-        self._flush_player_hp(dt)
-        # 1. Движение персонажа: путь по ПКМ (Dota 2) или преследование моба для удара
-        if self.attack_target is not None:
-            self._update_attack_target(attack_dt)
+        if self.hotbar_flash_timer > 0:
+            self.hotbar_flash_timer = max(0.0, self.hotbar_flash_timer - dt)
+        self.dash_cooldown = max(0.0, self.dash_cooldown - dt)
+        # Замах тикает локально между снимками; сервер присылает точное значение при каждой синхронизации
+        self.attack_windup = max(0.0, self.attack_windup - dt)
+        # 1. Движение: путь по ПКМ или преследование моба для удара. Рывок двигает сервер, клиент его не считает
+        if self.world_dash_active:
+            self.player_state = "walk"
         else:
-            # Без цели замах не идёт: сбрасываем, чтобы дуга не висела без удара
-            self.attack_windup = 0.0
-        # Во время замаха персонаж стоит на месте (анимация замаха и удар); в откате уже может идти
-        if self.attack_windup > 0:
-            self.player_state = "idle"
-        elif self.move_path:
-            self._follow_move_path(dt)
-        if self.attack_target is None and not self.move_path:
-            self.player_state = "idle"
+            if self.attack_target is not None:
+                self._update_attack_target(attack_dt)
+            # Во время замаха персонаж стоит на месте (анимация замаха и удар); в откате уже может идти
+            if self.attack_windup > 0:
+                self.player_state = "idle"
+            elif self.move_path:
+                self._follow_move_path(dt)
+            if self.attack_target is None and not self.move_path:
+                self.player_state = "idle"
+        # Намерения (позиция, цель, рывок) уходят на сервер, снимок мира применяется сразу
+        self._world_sync_request(dt)
+        set_run_sound(self.player_state == "walk" and not self.world_dash_active)
 
         # Камера следует за персонажем, пока игрок не начал её двигать сам (SPACE возвращает слежение)
         if self.camera_follow_player:
@@ -1679,6 +2325,9 @@ class WorldMapScene:
 
         # 2. Анимационный таймер персонажа
         self.player_anim_timer += dt
+        self.hit_timer = max(0.0, self.hit_timer - dt)
+        if self.death_timer is not None:
+            self.death_timer += dt
 
         # 3. Обновление плавающих сообщений
         for msg in self.floating_messages[:]:
@@ -1687,7 +2336,6 @@ class WorldMapScene:
             if msg["timer"] <= 0:
                 self.floating_messages.remove(msg)
         self._update_damage_numbers(dt)
-        self._update_mobs(dt)
 
         # 5. Определение сущности под курсором мыши (hover)
         m_pos = pygame.mouse.get_pos()
@@ -1732,6 +2380,7 @@ class WorldMapScene:
         mouse_pos = pygame.mouse.get_pos()
         hover_wx, hover_wy = self.screen_to_world(mouse_pos[0], mouse_pos[1])
 
+        sprites = self._map_sprites() if self.uniform_grass else None
         # 1. Базовая земля (чистая плоская заливка top-down, без искажений)
         half_gy = self.grid_h // 2
         # Экранная X зависит только от wx, Y только от wy: считаем границы тайлов один раз.
@@ -1746,7 +2395,7 @@ class WorldMapScene:
 
                 rect = pygame.Rect(sx, sy, sx2 - sx + 1, sy2 - sy + 1)
 
-                if gy < half_gy:
+                if self.uniform_grass or gy < half_gy:
                     # Северная половина карты (Свет) - приглушенная зеленая трава
                     cell_color = (28, 42, 32) if (gx + gy) % 2 == 0 else (31, 46, 35)
                 else:
@@ -1754,12 +2403,21 @@ class WorldMapScene:
                     cell_color = (36, 32, 34) if (gx + gy) % 2 == 0 else (40, 35, 38)
 
                 if (gx, gy) in self.road_tiles:
-                    # Узкая грунтовая дорога (1 тайл): протоптанная земляная колея
+                    # Запасной цвет дороги, если спрайты не загружены
                     cell_color = (120, 96, 60) if (gx + gy) % 2 == 0 else (128, 103, 65)
 
-                pygame.draw.rect(screen, cell_color, rect)
+                if sprites and (gx, gy) in self.water_tiles:
+                    screen.blit(sprites["water"][_map_hash(gx, gy) % len(sprites["water"])], rect.topleft)
+                elif sprites:
+                    kind = self.ground_kinds.get((gx, gy))
+                    variants = sprites[kind] if kind else sprites["grass"]
+                    screen.blit(variants[_map_hash(gx, gy) % len(variants)], rect.topleft)
+                    if (gx, gy) in self.road_tiles:
+                        screen.blit(self._road_surface(sprites, gx, gy), rect.topleft)
+                else:
+                    pygame.draw.rect(screen, cell_color, rect)
 
-                if (gx, gy) in self.road_tiles:
+                if (gx, gy) in self.road_tiles and not sprites:
                     pygame.draw.line(screen, (95, 74, 44), rect.topleft, rect.topright, 1)
                     pygame.draw.line(screen, (95, 74, 44), rect.bottomleft, rect.bottomright, 1)
 
@@ -1767,16 +2425,22 @@ class WorldMapScene:
                     pygame.draw.rect(screen, (45, 52, 60), rect, 1)
 
         # 2. Рельеф с сервера и интерактивные объекты карты
+        if sprites:
+            self._draw_shore_rims(screen, sprites["shores"], start_gx, end_gx, start_gy, end_gy, edge_x, edge_y)
+            self._draw_bridges(screen, sprites)
+            self._draw_forest_trees(screen, sprites["trees"], sprites["props"])
         self._draw_terrain(screen)
         self._draw_objects(screen)
-        self._draw_attack_tile(screen)
         self._draw_click_effect(screen)
+        self._draw_whirlwinds(screen)
+        if self.dash_aiming:
+            self._draw_dash_aim(screen)
         self._draw_mobs(screen)
+        self._draw_player_corpses(screen)
         self._draw_damage_numbers(screen)
 
         # 3. Игровой персонаж
         self._draw_player_character(screen)
-        self._draw_attack_swing(screen)
         draw_active_players(self, screen, "world_map")
         draw_traveling_entities(self, screen, "world_map")
         draw_afk_players(self, screen, "world_map")
@@ -1787,12 +2451,17 @@ class WorldMapScene:
         # 5. Миникарта и HUD рисуются до всех карточек и окон, чтобы карточки перекрывали их
         self._draw_minimap(screen)
         self._draw_hud(screen)
+        self._draw_player_panel(screen)
+        draw_hotbar(screen, hotbar_slot_rects(settings.WIDTH, settings.HEIGHT), self.small_font,
+                    self.hotbar_flash_index if self.hotbar_flash_timer > 0 else None,
+                    slots=self._hotbar_slot_states())
 
         # 6. Координаты рисуются до всплывающих окон, чтобы карточки всегда были поверх них
         self._draw_coords_box(screen, hover_wx, hover_wy)
 
         # 7. Всплывающее окно активного объекта (ЛКМ)
         self._draw_active_window(screen)
+        self._draw_corpse_window(screen)
 
         # 8. Всплывающее окно при наведении курсора (hover tooltip)
         self._draw_hover_popup(screen, mouse_pos)
@@ -1802,6 +2471,7 @@ class WorldMapScene:
             self.building_window.draw(screen)
         if self.chat is not None:
             self.chat.draw(screen)
+        self.combat_log.draw(screen)
         if self.pinned_mob is not None:
             self._draw_mob_hover_card(screen, self.pinned_mob, closable=True)
         if self.profile_overlay.is_open:
@@ -1811,38 +2481,23 @@ class WorldMapScene:
                 and self.hovered_mobile_entity.get("entity_kind") == "player"):
             draw_mobile_hover_card(self, screen, self.hovered_mobile_entity)
 
-    def _draw_mob_windup(self, screen, mob, sx, sy):
-        """Телеграф замаха моба: тусклая дуга зоны удара в сторону игрока, яркая часть заполняется по мере замаха."""
-        if mob["attack_windup"] <= 0:
-            return
-        total = mob["attack_windup_total"] or mob["attack_windup"]
-        progress = 1.0 - mob["attack_windup"] / total
-        radius = MOB_SPRITE_SIZE[0] // 2 + get_attack_reach(mob["fighter"])
-        a0 = mob["attack_swing_angle"] - PLAYER_ATTACK_SWING_HALF_ANGLE
-        a1 = mob["attack_swing_angle"] + PLAYER_ATTACK_SWING_HALF_ANGLE
-
-        def arc_points(end_angle):
-            return [
-                (sx + math.cos(a) * radius, sy + math.sin(a) * radius)
-                for a in (a0 + (end_angle - a0) * i / 8 for i in range(9))
-            ]
-
-        pygame.draw.lines(screen, (90, 40, 40), False, arc_points(a1), 2)
-        if progress > 0:
-            pygame.draw.lines(screen, (255, 110, 80), False, arc_points(a0 + (a1 - a0) * progress), 4)
-
     def _draw_mobs(self, screen):
         """Рисует мобов карты 90х53 px по центру их точки, с полоской HP над спрайтом."""
+        now = pygame.time.get_ticks()
         for mob in self.mobs:
-            sprite = mob.get("sprite")
-            if sprite is None or mob["hp"] <= 0:
+            if mob["hp"] <= 0:
+                body = mob_death_frame(mob, now)
+                if body is not None:
+                    screen.blit(body, body.get_rect(center=self.world_to_screen(mob["x"], mob["y"])))
+                continue
+            sprite = mob_frame(mob, now) or mob.get("sprite")
+            if sprite is None:
                 continue
             sx, sy = self.world_to_screen(mob["x"], mob["y"])
             rect = sprite.get_rect(center=(sx, sy))
             if not rect.colliderect(pygame.Rect(0, 0, settings.WIDTH, settings.HEIGHT)):
                 continue
             screen.blit(sprite, rect)
-            self._draw_mob_windup(screen, mob, sx, sy)
 
             is_active = self.active_entity is not None and self.active_entity.get("id") == mob["id"]
             is_hovered = self.hovered_entity is not None and self.hovered_entity.get("id") == mob["id"]
@@ -1857,6 +2512,110 @@ class WorldMapScene:
             pygame.draw.rect(screen, (40, 10, 10), bar)
             pygame.draw.rect(screen, (200, 40, 40), (bar.left, bar.top, int(bar.width * hp_ratio), bar.height))
             self._draw_overhead_label(screen, f"ХП {int(mob['hp'])}/{int(mob['max_hp'])}", (255, 110, 110), (bar.centerx, bar.top - 1))
+
+    def _corpse_by_id(self, corpse_id):
+        if corpse_id is None:
+            return None
+        return next((corpse for corpse in self.player_corpses if corpse["id"] == corpse_id), None)
+
+    def _corpse_distance_tiles(self, corpse):
+        return math.hypot(corpse["x"] - self.player_x, corpse["y"] - self.player_y) / self.tile_size
+
+    @staticmethod
+    def _corpse_marker_rect(screen_x, screen_y):
+        rect = pygame.Rect(0, 0, 28, 20)
+        rect.midbottom = (screen_x, screen_y)
+        return rect
+
+    def _player_corpse_at(self, pos):
+        for corpse in self.player_corpses:
+            sx, sy = self.world_to_screen(corpse["x"], corpse["y"])
+            if self._corpse_marker_rect(sx, sy).collidepoint(pos):
+                return corpse
+        return None
+
+    def _draw_player_corpses(self, screen):
+        """Труп игрока: серый холмик с крестом; жёлтая рамка — труп, чьё окно открыто."""
+        for corpse in self.player_corpses:
+            sx, sy = self.world_to_screen(corpse["x"], corpse["y"])
+            rect = self._corpse_marker_rect(sx, sy)
+            if not rect.colliderect(pygame.Rect(0, 0, settings.WIDTH, settings.HEIGHT)):
+                continue
+            is_open = corpse["id"] == self.corpse_window_id
+            color = (255, 215, 60) if is_open else (190, 190, 200)
+            pygame.draw.ellipse(screen, (70, 70, 78), rect)
+            pygame.draw.ellipse(screen, color, rect, 2)
+            pygame.draw.line(screen, color, (rect.centerx, rect.top + 4), (rect.centerx, rect.bottom - 4), 2)
+            pygame.draw.line(screen, color, (rect.left + 6, rect.centery - 2), (rect.right - 6, rect.centery - 2), 2)
+            self._draw_overhead_label(screen, "Труп", color, (rect.centerx, rect.top - 2))
+
+    def _corpse_window_layout(self):
+        """(окно, кнопка закрытия, кнопка «Забрать все») по центру экрана."""
+        window = pygame.Rect(0, 0, *CORPSE_WINDOW_SIZE)
+        window.center = (settings.WIDTH // 2, settings.HEIGHT // 2)
+        close = pygame.Rect(window.right - 36, window.top + 10, 26, 26)
+        loot = pygame.Rect(0, 0, 200, 40)
+        loot.midbottom = (window.centerx, window.bottom - 16)
+        return window, close, loot
+
+    def _open_corpse_window(self, corpse):
+        if self._corpse_distance_tiles(corpse) > CORPSE_LOOT_RANGE_TILES:
+            self.action_notice = "Подойдите ближе к трупу"
+            self.action_notice_timer = 2.0
+            return
+        self.corpse_window_id = corpse["id"]
+
+    def _loot_corpse(self):
+        corpse = self._corpse_by_id(self.corpse_window_id)
+        if corpse is None:
+            return
+        try:
+            result = self.session.client.world_loot_corpse(self.session.character["id"], corpse["id"])
+        except (ServerError, OSError) as error:
+            self.action_notice = str(error)
+            self.action_notice_timer = 2.0
+            return
+        self.session.character.update(result["currency"])
+        self.player_corpses = [dict(item) for item in result["corpses"]]
+        self.corpse_window_id = None
+        self.action_notice = f"Забрано из трупа: {Currency.format_amount(corpse['copper'])}"
+        self.action_notice_timer = 2.0
+
+    def _draw_corpse_window(self, screen):
+        """Окно трупа: монеты в трупе, кошелёк игрока и кнопка «Забрать все»."""
+        corpse = self._corpse_by_id(self.corpse_window_id)
+        if corpse is None:
+            return
+        window, close_rect, loot_rect = self._corpse_window_layout()
+        surface = pygame.Surface(window.size, pygame.SRCALPHA)
+        pygame.draw.rect(surface, (15, 20, 28, 245), (0, 0, window.width, window.height), border_radius=8)
+        pygame.draw.rect(surface, (220, 185, 60, 255), (0, 0, window.width, window.height), width=2, border_radius=8)
+        screen.blit(surface, window.topleft)
+        screen.blit(self.font.render("Труп игрока", True, (255, 225, 120)), (window.left + 14, window.top + 12))
+
+        m_pos = pygame.mouse.get_pos()
+        close_bg = (180, 50, 50) if close_rect.collidepoint(m_pos) else (45, 30, 35)
+        pygame.draw.rect(screen, close_bg, close_rect, border_radius=4)
+        pygame.draw.rect(screen, (220, 100, 100), close_rect, width=1, border_radius=4)
+        close_label = self.small_font.render("✕", True, (255, 255, 255))
+        screen.blit(close_label, close_label.get_rect(center=close_rect.center))
+
+        pygame.draw.line(screen, (50, 65, 80), (window.left + 14, window.top + 44), (window.right - 14, window.top + 44), 1)
+        character = self.session.character
+        wallet = Currency(copper=int(character.get("copper") or 0),
+                          silver=int(character.get("silver") or 0),
+                          gold=int(character.get("gold") or 0))
+        lines = [
+            (f"В трупе монет: {Currency.format_amount(corpse['copper'])}", (255, 225, 120)),
+            (f"Ваш кошелёк: {Currency.format_amount(wallet.total_copper())}", (200, 220, 240)),
+            (f"Расстояние: {round(self._corpse_distance_tiles(corpse))} {_tiles_word(round(self._corpse_distance_tiles(corpse)))}",
+             (160, 175, 190)),
+        ]
+        for index, (text, color) in enumerate(lines):
+            screen.blit(self.small_font.render(text, True, color), (window.left + 14, window.top + 56 + index * 26))
+
+        btn_col = (60, 120, 70) if loot_rect.collidepoint(m_pos) else (40, 90, 50)
+        draw_button(screen, loot_rect, "Забрать все", self.small_font, color=btn_col, text_color=(255, 255, 255))
 
     def _draw_badge(self, screen, cx, bottom_y, text, border_color):
         """Вспомогательный метод для аккуратной плашки с текстом над объектом."""
@@ -2375,7 +3134,7 @@ class WorldMapScene:
     def _mob_card_sprite(self):
         """Спрайт скелета для карточки, масштабированный до размера спрайта игрока."""
         if getattr(self, "_mob_card_sprite_instance", None) is None:
-            sprite_path = Path(__file__).resolve().parent.parent / "assets" / "mobs" / "skeleton.png"
+            sprite_path = Path(__file__).resolve().parent.parent / "assets" / "mobs" / "woodland_bandit.png"
             sprite = FighterSprite(path=sprite_path)
             if sprite.image is not None:
                 target_height = int(sprite.image.get_height() * settings.FIGHTER_SPRITE_SCALE)
@@ -2609,16 +3368,18 @@ class WorldMapScene:
         windup_total = self.attack_windup_total or self.attack_windup
         attacking = self.attack_windup > 0
         attack_progress = 1.0 - self.attack_windup / max(windup_total, 1e-6) if attacking else 0.0
+        hit_progress, death_progress = self._hero_reaction_progress()
         frame_surf = player_frame(
             self, character, self.player_direction, self.player_anim_timer,
             moving=self.player_state == "walk", attacking=attacking, attack_progress=attack_progress,
+            attack_variant=self.attack_variant, hit_progress=hit_progress, death_progress=death_progress,
         )
 
         if frame_surf is not None:
             # Ноги персонажа касаются земли в точке (sx, sy)
             frame_rect = frame_surf.get_rect(midbottom=(sx, sy))
             screen.blit(frame_surf, frame_rect)
-            name_y = frame_rect.top - 4
+            name_y = player_label_top(character, frame_rect) - 4
         else:
             # Процедурный чиби-воин (фолбэк)
             bob_y = int(math.sin(self.player_anim_timer * 14.0) * 2.5) if self.player_state == "walk" else int(math.sin(self.player_anim_timer * 4.0))
@@ -2653,7 +3414,7 @@ class WorldMapScene:
         self._draw_overhead_bar(screen, hp_rect, fighter.hp / max(1, fighter.max_hp), (190, 55, 55))
         self._draw_overhead_bar(screen, mp_rect, fighter.mp / max(1, fighter.max_mp), (60, 120, 220))
 
-        char_name = getattr(self.session, "character", {}).get("name", "Герой") if hasattr(self.session, "character") else "Герой"
+        char_name = (getattr(self.session, "character", None) or {}).get("name", "Герой")
         name_surf = self.grid_font.render(char_name, True, (255, 235, 150))
         n_rect = name_surf.get_rect(midbottom=(sx, hp_label.top - gap))
         bg = n_rect.inflate(8, 2)
@@ -2678,30 +3439,84 @@ class WorldMapScene:
         return rect
 
     def _draw_coords_box(self, screen, hover_wx, hover_wy):
-        """Координаты героя и курсора в правом нижнем углу (рисуется под всплывающими окнами)."""
-        hover_gx = int(hover_wx // self.tile_size)
-        hover_gy = int(hover_wy // self.tile_size)
-
-        info_str = f"Карта: 512x256 (32px) | Персонаж: X={int(self.player_x)}, Y={int(self.player_y)} | Тайл: [{hover_gx}, {hover_gy}]"
-        info_surf = self.font.render(info_str, True, (240, 240, 240))
-        box = info_surf.get_rect(bottomright=(settings.WIDTH - 20, settings.HEIGHT - 20)).inflate(32, 18)
+        """Координаты курсора и героя над миникартой в левом нижнем углу (рисуется под всплывающими окнами)."""
+        ts = self.tile_size
+        cursor_str = f"Курсор: X={int(hover_wx)}, Y={int(hover_wy)} (тайл: {int(hover_wx // ts)}, {int(hover_wy // ts)})"
+        hero_str = f"Персонаж: X={int(self.player_x)}, Y={int(self.player_y)} (тайл: {int(self.player_x // ts)}, {int(self.player_y // ts)})"
+        lines = [self.font.render(text, True, (240, 240, 240)) for text in (cursor_str, hero_str)]
+        line_h = max(surf.get_height() for surf in lines)
+        text_w = max(surf.get_width() for surf in lines)
+        minimap_top = settings.HEIGHT - self.MINIMAP_MARGIN[1] - self.MINIMAP_HEIGHT
+        box = pygame.Rect(0, 0, text_w + 32, len(lines) * line_h + 18)
+        box.bottomleft = (self.MINIMAP_MARGIN[0], minimap_top - self.MINIMAP_MARGIN[1])
         box_surf = pygame.Surface(box.size, pygame.SRCALPHA)
         pygame.draw.rect(box_surf, (15, 18, 24, 235), box_surf.get_rect(), border_radius=6)
         pygame.draw.rect(box_surf, (220, 180, 70), box_surf.get_rect(), 1, border_radius=6)
         screen.blit(box_surf, box.topleft)
-        screen.blit(info_surf, info_surf.get_rect(center=box.center))
+        for i, surf in enumerate(lines):
+            screen.blit(surf, (box.x + 16, box.y + 9 + i * line_h))
 
     def _draw_hud(self, screen):
-        """Строка подсказок внизу и строка улучшений города."""
-        hint_str = "ЛКМ - активировать объект | 2×ЛКМ - инфо о персонаже / моб | ПКМ - идти / атаковать моба | Наведение - всплывающее окно | G - Сетка"
-        hint_surf = self.small_font.render(hint_str, True, (160, 170, 180))
-        screen.blit(hint_surf, (20, settings.HEIGHT - 25))
-
+        """Строка улучшений города."""
         draw_city_upgrade_line(
             screen, upgrade_line_font(), self.city_visual_state,
             getattr(self, "castle_upgrades_active", None),
         )
 
+    def _draw_player_panel(self, screen):
+        """Панель персонажа в левом верхнем углу: иконка и ник сверху, портрет слева, полоски ХП и МП справа от портрета."""
+        margin = self.PLAYER_PANEL_MARGIN
+        gap = self.PLAYER_PANEL_GAP
+        portrait_size = self.PLAYER_PANEL_PORTRAIT
+        character = getattr(self.session, "character", None) or {}
+        name = character.get("name") or "Герой"
+        fighter = self.combat_fighter
+
+        icon = profession_icon(player_profession(character))
+        name_x = margin
+        if icon is not None:
+            screen.blit(icon, (margin, margin))
+            name_x += PROFESSION_ICON_SIZE + gap
+        name_surf = self.font.render(name, True, (255, 235, 150))
+        screen.blit(name_surf, name_surf.get_rect(midleft=(name_x, margin + PROFESSION_ICON_SIZE // 2)))
+
+        portrait = pygame.Rect(margin, margin + PROFESSION_ICON_SIZE + gap, portrait_size, portrait_size)
+        pygame.draw.rect(screen, (15, 18, 24), portrait, border_radius=4)
+        frame = player_frame(self, character, self.player_direction, self.player_anim_timer, moving=False)
+        if frame is not None:
+            fit = portrait_size - 8
+            scale = min(fit / frame.get_width(), fit / frame.get_height())
+            scaled = pygame.transform.smoothscale(frame, (max(1, round(frame.get_width() * scale)), max(1, round(frame.get_height() * scale))))
+            screen.blit(scaled, scaled.get_rect(center=portrait.center))
+        pygame.draw.rect(screen, (180, 150, 60), portrait, 1, border_radius=4)
+
+        bar_h = self.PLAYER_PANEL_BAR_HEIGHT
+        text_h = self.font.get_height()
+        rows = (
+            (f"{int(fighter.hp)}/{int(fighter.max_hp)} ХП", (255, 110, 110), (210, 80, 80), fighter.hp, fighter.max_hp),
+            (f"{int(fighter.mp)}/{int(fighter.max_mp)} МП", (120, 170, 255), (60, 140, 220), fighter.mp, fighter.max_mp),
+        )
+        x = portrait.right + gap + 4
+        y = portrait.top
+        for label, text_color, bar_color, value, maximum in rows:
+            screen.blit(self.font.render(label, True, text_color), (x, y))
+            y += text_h + 2
+            bar = pygame.Rect(x, y, self.PLAYER_PANEL_BAR_WIDTH, bar_h)
+            ratio = max(0.0, min(1.0, value / max(1, maximum)))
+            pygame.draw.rect(screen, (20, 22, 28), bar)
+            pygame.draw.rect(screen, bar_color, (bar.x, bar.y, int(bar.width * ratio), bar.height))
+            pygame.draw.rect(screen, (60, 66, 76), bar, 1)
+            y += bar_h + gap * 3
+
     def close(self):
-        pass
+        if self.presence is not None:
+            self.presence.close()
+        if self.chat is not None:
+            self.chat.hide()
+        character = getattr(self.session, "character", None)
+        if character:
+            try:
+                self.session.client.world_leave(character["id"])
+            except (ServerError, OSError):
+                pass
 
