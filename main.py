@@ -22,6 +22,7 @@ from client.app_flow import (
 from client.connection import ConnectionMonitor
 from client.network import ServerError
 from core.settings import FPS, HEIGHT, WIDTH
+from kaloda.entry import open_world
 from scenes.account_menu_scene import AccountMenuScene
 from scenes.character_scene import CharacterScene
 from scenes.city_scene import CityScene
@@ -186,7 +187,7 @@ def main():
                     close_scene_ui(scene)
                     if scene.world_session is not None:
                         world_session = scene.world_session
-                        transition.start(screen, lambda: CharacterScene(world_session))
+                        transition.start(screen, lambda: open_world(world_session))
                     else:
                         pygame.key.start_text_input()
                         transition.start(screen, lambda: TitleScene(args.server))

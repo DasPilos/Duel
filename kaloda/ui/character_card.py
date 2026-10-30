@@ -1,0 +1,459 @@
+import pygame
+
+from kaloda import settings
+from kaloda.combat.character_stats import is_debug_unlimited
+from kaloda.combat.progression import xp_to_next
+from kaloda.ui.character_profile import (
+    adjust_profile_level,
+    adjust_profile_stat,
+    DERIVED_COLORS,
+    STAT_ROWS,
+    derived_values,
+    displayed_hp_values,
+    effective_stats,
+    normalize_character_profile,
+    profile_from_fighter,
+)
+from kaloda.ui.hud import draw_bar, draw_button, draw_text, FloatingText, update_and_draw_floating_texts
+from kaloda.ui import equipment_slots
+from kaloda.ui.inventory_window import IconCache
+from kaloda.ui.class_identity import class_icon, class_palette
+from kaloda.ui.money_icon import money_icon
+from kaloda.ui.sprite_loader import FighterSprite
+
+
+class CharacterCard:
+    """The authoritative state container and renderer for a character card."""
+
+    MONEY_ICON_SIZE = 30
+
+    # Один экземпляр карточки на персонажа (по id), чтобы разные сцены не плодили
+    # несвязанные копии одной и той же карточки.
+    _REGISTRY = {}
+
+    @classmethod
+    def get_or_create(cls, character_id, sprite=None):
+        """Return the single persistent card for this character id, creating it if needed."""
+        if character_id is None:
+            return cls(sprite=sprite)
+        key = str(character_id)
+        card = cls._REGISTRY.get(key)
+        if not isinstance(card, cls):
+            card = cls(sprite=sprite)
+            cls._REGISTRY[key] = card
+        return card
+
+    def __init__(self, sprite=None):
+        self.title_font = pygame.font.SysFont(settings.FONT_NAME, settings.CHARACTER_CARD_NAME_FONT_SIZE)
+        self.body_font = pygame.font.SysFont(settings.FONT_NAME, settings.CHARACTER_CARD_BODY_FONT_SIZE)
+        self.small_font = pygame.font.SysFont(settings.FONT_NAME, settings.CHARACTER_CARD_SMALL_FONT_SIZE)
+        self.sprite = sprite or FighterSprite()
+        self.icons = IconCache()
+        self.money_icon_surface = money_icon(self.MONEY_ICON_SIZE)
+        self.state = normalize_character_profile({}, title=None, kind="player")
+        self.regen_floating_texts = []
+        
+        # Закладки для инвентаря
+        self.current_tab = "character"  # character, inventory, equipment, battle
+        self.inventory_data = []
+        self.selected_inventory_item = None
+
+    def show_regen(self, amount):
+        self.regen_floating_texts.append(
+            FloatingText(
+                0,
+                0,
+                f"+{int(amount)} HP",
+                self.small_font,
+                color=(110, 235, 120),
+                duration=settings.FLOATING_TEXT_DURATION,
+            )
+        )
+
+    def sync(self, profile, *, title=None, kind="player"):
+        self.state = normalize_character_profile(profile, title=title, kind=kind)
+        # Инвентарь больше не отображается (напитки применяются сразу)
+        self.inventory_data = []
+        character_id = self.state.get("character_id", self.state.get("id"))
+        if character_id is not None:
+            self._REGISTRY.setdefault(str(character_id), self)
+        return self.state
+
+    @property
+    def data(self):
+        return self.state
+
+    @staticmethod
+    def stat_control_at(frame, position):
+        """Return the requested stat change for a click inside this card."""
+        for index, (stat_name, _, _) in enumerate(STAT_ROWS):
+            row_y = CharacterCard._stat_row_y(frame, index)
+            minus, plus = CharacterCard._stat_control_rects(frame, row_y)
+            if plus.collidepoint(position):
+                return stat_name, 1
+            if minus.collidepoint(position):
+                return stat_name, -1
+        return None
+
+    def level_control_at(self, frame, position):
+        """Return the requested level change for a click on the debug level buttons."""
+        character_id = self.state.get("character_id", self.state.get("id"))
+        if not is_debug_unlimited(character_id):
+            return None
+        minus, plus = CharacterCard._level_control_rects(frame)
+        if plus.collidepoint(position):
+            return 1
+        if minus.collidepoint(position):
+            return -1
+        return None
+
+    def adjust_stat(self, stat_name, delta):
+        """Apply a stat change to the canonical card state."""
+        return adjust_profile_stat(self.state, stat_name, delta)
+
+    def adjust_level(self, delta):
+        """Apply a level change to the canonical card state (test characters only)."""
+        return adjust_profile_level(self.state, delta)
+
+    def update_from_fighter(self, fighter, *, title=None, kind="player"):
+        self.sync(profile_from_fighter(fighter), title=title, kind=kind)
+        return self.state
+
+    def draw(
+        self,
+        screen,
+        frame,
+        profile=None,
+        border_color=(80, 180, 120),
+        title=None,
+        editable=False,
+        card_preview=None,
+        show_tabs=False,  # Новый параметр для показа закладок
+        slot_highlight=None,  # слот, подсвечиваемый при перетаскивании предмета
+        dragged_slot=None,  # слот, предмет из которого сейчас перетаскивают
+        opponent=None,
+    ):
+        if profile is not None:
+            self.sync(profile, title=title, kind="player")
+        normalized = self.state
+        palette = class_palette(normalized.get("type", "warrior"))
+        overlay = pygame.Surface(frame.size, pygame.SRCALPHA)
+        overlay.fill((*palette["background"], 225))
+        screen.blit(overlay, frame.topleft)
+        border_color = palette["accent"]
+        pygame.draw.rect(screen, border_color, frame, width=2, border_radius=8)
+        
+        # Рисуем закладки если нужно
+        if show_tabs:
+            self._draw_tabs(screen, frame, border_color)
+
+        x = frame.x + 20
+        name_y = frame.y + 20
+        name = normalized["name"]
+        name_surface = self.title_font.render(name, True, (240, 240, 245))
+        icon = class_icon(normalized.get("type", "warrior"))
+        screen.blit(icon, (x, name_y + max(0, (name_surface.get_height() - icon.get_height()) // 2)))
+        name_rect = name_surface.get_rect(topleft=(x + icon.get_width() + 7, name_y))
+        screen.blit(name_surface, name_rect)
+        character_id = normalized.get("character_id", normalized.get("id", "-"))
+        draw_text(screen, self.small_font, f"ID: {character_id}", name_rect.right + 20, name_y, (170, 175, 185))
+
+        level_y = frame.y + 48
+        level = int(normalized["level"])
+        level_surface = self.small_font.render(f"Уровень {level}", True, (210, 215, 225))
+        level_rect = level_surface.get_rect(topleft=(x, level_y))
+        screen.blit(level_surface, level_rect)
+        xp_x = level_rect.right + 15
+        if editable and is_debug_unlimited(character_id):
+            minus, plus = self._level_control_rects(frame)
+            draw_button(screen, minus, "-", self.small_font, color=(235, 235, 235), hover_color=(210, 80, 80), text_color=(30, 32, 45))
+            draw_button(screen, plus, "+", self.small_font, color=(235, 235, 235), hover_color=(80, 200, 120), text_color=(30, 32, 45))
+            xp_x = plus.right + 20
+        next_xp = xp_to_next(level)
+        xp_text = "XP: максимум" if next_xp == 0 else f"XP: {normalized.get('xp', 0)}/{next_xp}"
+        draw_text(screen, self.small_font, xp_text, xp_x, level_y, (255, 220, 120))
+
+        hp_y = frame.y + 100
+        mp_y = frame.y + 140
+        bar_width = 280
+        bar_height = 11
+        current_hp, max_hp = displayed_hp_values(normalized)
+        self._draw_resource(screen, x, hp_y, bar_width, bar_height, "HP", current_hp, max_hp, (210, 80, 80))
+        self._draw_resource(screen, x, mp_y, bar_width, bar_height, "MP", normalized["mp"], normalized["max_mp"], (60, 140, 220))
+        
+        # Баланс монет под MP шкалой
+        currency_y = mp_y + 25
+        self._draw_currency(screen, x, currency_y, int(normalized.get("coins", 0)))
+
+        stats_header_y = self._stats_header_y(frame)
+        sprite_top = equipment_slots.draw_paperdoll(
+            screen, frame, self.sprite, self.icons, self.small_font,
+            normalized.get("equipment", {}), slot_highlight, dragged_slot,
+        )
+        for floating_text in self.regen_floating_texts:
+            floating_text.x = frame.centerx
+            floating_text.y = sprite_top - 12
+        update_and_draw_floating_texts(screen, self.regen_floating_texts)
+
+        draw_text(screen, self.small_font, "ХАРАКТЕРИСТИКИ", x, stats_header_y, border_color)
+        stats = effective_stats(normalized)
+        draw_text(screen, self.small_font, f"Свободные очки: {normalized['stat_points']}", x, stats_header_y - 22, (255, 220, 120))
+        derived = derived_values(normalized, opponent)
+        preview = self._card_preview(card_preview or [])
+        derived_x = self._stat_text_right(frame) + settings.STAT_DERIVED_GAP + 50
+        for index, (key, label, derived_key) in enumerate(STAT_ROWS):
+            row_y = self._stat_row_y(frame, index)
+            draw_text(screen, self.small_font, f"{label}: {stats.get(key, 0)}", x, row_y, (255, 255, 255))
+            if derived_key and derived_key in derived:
+                unit = " кг" if derived_key == "Грузоподъёмность" else ""
+                draw_text(
+                    screen,
+                    self.small_font,
+                    f"{derived_key}: {derived[derived_key]}{unit}{preview.get(derived_key, '')}",
+                    derived_x,
+                    row_y,
+                    DERIVED_COLORS.get(derived_key, (255, 255, 255)),
+                )
+            if editable:
+                minus, plus = self._stat_control_rects(frame, row_y)
+                draw_button(
+                    screen,
+                    minus,
+                    "-",
+                    self.small_font,
+                    color=(235, 235, 235),
+                    hover_color=(210, 80, 80),
+                    text_color=(30, 32, 45),
+                )
+                draw_button(
+                    screen,
+                    plus,
+                    "+",
+                    self.small_font,
+                    color=(235, 235, 235),
+                    hover_color=(80, 200, 120),
+                    text_color=(30, 32, 45),
+                )
+        self._draw_equipment_tooltip(screen, frame, normalized.get("equipment", {}))
+
+    def _draw_equipment_tooltip(self, screen, frame, equipment):
+        slot = equipment_slots.slot_at(frame, pygame.mouse.get_pos())
+        item = (equipment or {}).get(slot)
+        if not item:
+            return False
+
+        lines = self.equipment_tooltip_lines(item)
+        max_text_width = min(360, screen.get_width() - 28)
+        wrapped = []
+        for text, color in lines:
+            words = str(text).split()
+            current = ""
+            for word in words:
+                candidate = f"{current} {word}".strip()
+                if current and self.small_font.size(candidate)[0] > max_text_width:
+                    wrapped.append((current, color))
+                    current = word
+                else:
+                    current = candidate
+            if current:
+                wrapped.append((current, color))
+
+        padding = 10
+        line_height = self.small_font.get_linesize() + 3
+        width = min(max_text_width + padding * 2,
+                    max((self.small_font.size(text)[0] for text, _ in wrapped), default=0) + padding * 2)
+        height = line_height * len(wrapped) + padding * 2
+        mouse_x, mouse_y = pygame.mouse.get_pos()
+        left = min(mouse_x + 16, screen.get_width() - width - 8)
+        top = min(mouse_y + 16, screen.get_height() - height - 8)
+        tooltip = pygame.Rect(max(8, left), max(8, top), width, height)
+        pygame.draw.rect(screen, (22, 25, 31), tooltip, border_radius=5)
+        pygame.draw.rect(screen, (145, 133, 112), tooltip, 1, border_radius=5)
+        text_y = tooltip.top + padding
+        for text, color in wrapped:
+            screen.blit(self.small_font.render(text, True, color), (tooltip.left + padding, text_y))
+            text_y += line_height
+        return True
+
+    @staticmethod
+    def equipment_tooltip_lines(item):
+        lines = [(item.get("name", "Предмет"), (255, 224, 150))]
+        description = item.get("description")
+        if description:
+            lines.append((description, (225, 220, 207)))
+        labels = {
+            "strength": "Сила", "agility": "Ловкость", "intuition": "Интуиция",
+            "endurance": "Выносливость", "wisdom": "Мудрость", "intellect": "Интеллект",
+            "harmony": "Гармония", "hp": "HP", "mp": "MP", "dodge": "% Уворот",
+            "block": "% Блок",
+        }
+        for stat, value in (item.get("bonuses") or {}).items():
+            sign = "+" if int(value) > 0 else ""
+            lines.append((f"Бонус: {sign}{value} {labels.get(stat, stat)}", (140, 230, 150)))
+        damage = (item.get("effects") or {}).get("damage")
+        if damage and damage != [0, 0]:
+            lines.append((f"Урон: {damage[-1]}", (255, 220, 120)))
+        lines.append((f"Вес: {float(item.get('weight', 0) or 0):g} кг", (175, 180, 185)))
+        return lines
+
+    STAT_ROW_HEIGHT = 20
+
+    @classmethod
+    def _stat_row_y(cls, frame, index):
+        count = len(STAT_ROWS)
+        return frame.bottom - 32 - (count - 1 - index) * cls.STAT_ROW_HEIGHT
+
+    @classmethod
+    def _stats_header_y(cls, frame):
+        return cls._stat_row_y(frame, 0) - 28
+
+    @staticmethod
+    def _stat_text_right(frame):
+        return frame.x + 20 + pygame.font.SysFont(
+            settings.FONT_NAME,
+            settings.CHARACTER_CARD_SMALL_FONT_SIZE,
+        ).size("Выносливость: 30")[0]
+
+    @staticmethod
+    def _card_preview(cards):
+        damage_dice = []
+        dodge_bonus = 0
+        critical_bonus = 0
+        heal_dice = []
+        for card in cards:
+            data = card.effect_data
+            if card.effect_type in ("damage", "damage_reduce", "damage_recoil", "multi_damage"):
+                dice = data.get("dice")
+                if dice:
+                    damage_dice.append((dice, data.get("hits", 1)))
+            if card.effect_type == "dodge":
+                dodge_bonus += int(data.get("bonus", 0))
+            if card.effect_type == "critical":
+                critical_bonus += int(data.get("bonus", 0))
+            if card.effect_type == "heal":
+                dice = data.get("dice")
+                if dice:
+                    heal_dice.append(dice)
+
+        preview = {}
+        damage_range = CharacterCard._dice_range(damage_dice, fixed=True)
+        heal_range = CharacterCard._dice_range([(dice, 1) for dice in heal_dice])
+        if damage_range:
+            preview["Урон"] = f" + {damage_range}"
+        if dodge_bonus:
+            preview["Уворот"] = f" + {dodge_bonus}%"
+        if critical_bonus:
+            preview["Крит"] = f" + {critical_bonus}%"
+        if heal_range:
+            preview["HP"] = f" + {heal_range}"
+        return preview
+
+    @staticmethod
+    def _dice_range(dice_parts, fixed=False):
+        minimum = maximum = 0
+        for expression, multiplier in dice_parts:
+            try:
+                count, sides = expression.lower().split("d")
+                minimum += int(multiplier)
+                maximum += int(count) * int(sides) * int(multiplier)
+            except (AttributeError, TypeError, ValueError):
+                continue
+        if not maximum:
+            return ""
+        if fixed or minimum == maximum:
+            return str(maximum)
+        return f"{minimum}-{maximum}"
+
+    @staticmethod
+    def _stat_control_rects(frame, row_y):
+        text_right = CharacterCard._stat_text_right(frame) + settings.STAT_DERIVED_GAP + 7
+        control_top = row_y + 5
+        minus = pygame.Rect(
+            text_right + settings.STAT_CONTROL_GAP,
+            control_top,
+            settings.STAT_BTN_W,
+            settings.STAT_BTN_H,
+        )
+        plus = pygame.Rect(
+            minus.right + settings.STAT_BUTTON_GAP,
+            control_top,
+            settings.STAT_BTN_W,
+            settings.STAT_BTN_H,
+        )
+        return minus, plus
+
+    @staticmethod
+    def _level_control_rects(frame):
+        level_y = frame.y + 58
+        control_top = level_y - 3
+        text_right = frame.x + 20 + pygame.font.SysFont(
+            settings.FONT_NAME,
+            settings.CHARACTER_CARD_SMALL_FONT_SIZE,
+        ).size("Уровень 1000")[0]
+        minus = pygame.Rect(
+            text_right + settings.STAT_CONTROL_GAP,
+            control_top,
+            settings.STAT_BTN_W,
+            settings.STAT_BTN_H,
+        )
+        plus = pygame.Rect(
+            minus.right + settings.STAT_BUTTON_GAP,
+            control_top,
+            settings.STAT_BTN_W,
+            settings.STAT_BTN_H,
+        )
+        return minus, plus
+
+    def _draw_currency(self, screen, x, y, coins):
+        screen.blit(self.money_icon_surface, (x, y))
+        amount = self.small_font.render(str(coins), True, (235, 235, 240))
+        amount_rect = amount.get_rect(
+            midleft=(x + self.MONEY_ICON_SIZE + 4, y + self.MONEY_ICON_SIZE // 2),
+        )
+        screen.blit(amount, amount_rect)
+
+    def _draw_resource(self, screen, x, y, width, height, name, value, maximum, color):
+        draw_text(screen, self.small_font, f"{name}: {value}/{maximum}", x, y - 24, (220, 225, 235))
+        draw_bar(screen, x, y, width, height, value, maximum, fg=color)
+    
+    def _draw_tabs(self, screen, frame, border_color):
+        """Рисует закладки (вкладки) для инвентаря"""
+        tabs = {
+            "character": "👤 ПЕРСОНАЖ",
+            "inventory": "🎒 РЮКЗАК",
+            "personal": "✨ ЛИЧНЫЕ",
+            "battle": "⚔️ БОЕВЫЕ",
+        }
+        
+        tab_width = 110
+        tab_height = 35
+        start_y = frame.y + frame.height + 10
+        
+        for idx, (tab_key, tab_label) in enumerate(tabs.items()):
+            tab_x = frame.x + 20 + idx * (tab_width + 5)
+            tab_rect = pygame.Rect(tab_x, start_y, tab_width, tab_height)
+            
+            is_active = tab_key == self.current_tab
+            
+            # Цвет в зависимости от активности
+            tab_color = border_color if is_active else (50, 60, 80)
+            text_color = (255, 255, 255) if is_active else (150, 160, 170)
+            
+            pygame.draw.rect(screen, tab_color, tab_rect, border_radius=4)
+            pygame.draw.rect(screen, (100, 100, 120), tab_rect, 2, border_radius=4)
+            
+            tab_surface = self.small_font.render(tab_label, True, text_color)
+            tab_text_rect = tab_surface.get_rect(center=tab_rect.center)
+            screen.blit(tab_surface, tab_text_rect)
+    
+    def set_tab(self, tab_name):
+        """Устанавливает активную закладку"""
+        self.current_tab = tab_name
+    
+    def get_tab_rect(self, frame, tab_index):
+        """Возвращает rect закладки по индексу для обработки кликов"""
+        tab_width = 110
+        tab_height = 35
+        start_y = frame.y + frame.height + 10
+        tab_x = frame.x + 20 + tab_index * (tab_width + 5)
+        return pygame.Rect(tab_x, start_y, tab_width, tab_height)

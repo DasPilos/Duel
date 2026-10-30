@@ -2,6 +2,8 @@
 
 Multiplayer RPG: a Pygame client and a Python HTTP server. PostgreSQL is the source of truth. All character professions share one world (`WORLD_ID`).
 
+> **Ветка `kaloda` (Колода):** отдельная карточная игра на том же лобби и сервере базы. Запуск, проверка и состав ветки — в [docs/KALODA.md](docs/KALODA.md).
+
 ## Quick Start (Windows)
 
 Requirements: Python 3.13, PostgreSQL, and `requirements.txt`.
