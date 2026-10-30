@@ -9,6 +9,10 @@ class ServerError(RuntimeError):
     pass
 
 
+class ServerUnavailableError(ServerError):
+    pass
+
+
 class GameClient:
     def __init__(self, base_url="http://127.0.0.1:8765", timeout=3):
         self.base_url = base_url.rstrip("/")
@@ -27,16 +31,17 @@ class GameClient:
             with urlopen(request, timeout=self.timeout if timeout is None else timeout) as response:
                 result = json.loads(response.read().decode("utf-8"))
                 return result
-        except (HTTPError, URLError, TimeoutError, json.JSONDecodeError, RemoteDisconnected, ConnectionResetError, OSError) as error:
-            if isinstance(error, HTTPError):
-                try:
-                    details = json.loads(error.read().decode("utf-8"))
-                    message = details.get("error", str(error))
-                except (json.JSONDecodeError, UnicodeDecodeError):
-                    message = str(error)
-            else:
+        except HTTPError as error:
+            try:
+                details = json.loads(error.read().decode("utf-8"))
+                message = details.get("error", str(error))
+            except (json.JSONDecodeError, UnicodeDecodeError):
                 message = str(error)
             raise ServerError(message) from error
+        except json.JSONDecodeError as error:
+            raise ServerError(str(error)) from error
+        except (URLError, TimeoutError, RemoteDisconnected, ConnectionError, OSError) as error:
+            raise ServerUnavailableError(str(error)) from error
 
     def health(self):
         return self._request("GET", "/health")
@@ -115,8 +120,8 @@ class GameClient:
         self.token = result["token"]
         return result["user"]
 
-    def create_character(self, name, profession_type="warrior"):
-        return self._request("POST", "/api/characters", {"name": name, "profession_type": profession_type}, authenticated=True)["character"]
+    def create_character(self, name, profession_type="warrior", stats=None):
+        return self._request("POST", "/api/characters", {"name": name, "profession_type": profession_type, "stats": stats}, authenticated=True)["character"]
     
     def delete_character(self, character_id):
         return self._request("POST", f"/api/characters/{character_id}/delete", authenticated=True)
@@ -129,6 +134,12 @@ class GameClient:
 
     def list_characters(self):
         return self._request("GET", "/api/characters", authenticated=True)["characters"]
+
+    def list_worlds(self):
+        return self._request("GET", "/api/worlds", authenticated=True)["worlds"]
+
+    def list_lobby(self):
+        return self._request("GET", "/api/lobby", authenticated=True)["players"]
 
 
     def update_presence(self, character_id, location):
@@ -199,8 +210,78 @@ class GameClient:
         """Получить хранилище персонажа"""
         return self._request("GET", f"/api/storage/{character_id}/{storage_type}", authenticated=True)["storage"]
 
+    def get_item_catalog(self, item_ids):
+        """Предметы каталога сервера по id: {"23": предмет, ...}"""
+        ids = ",".join(str(int(item_id)) for item_id in item_ids)
+        return self._request("GET", f"/api/items/catalog?ids={ids}", authenticated=True)["items"]
+
+    def create_item(self, form):
+        """Создаёт предмет экипировки в базе предметов по форме редактора карт (только модератор)."""
+        return self._request("POST", "/api/items/catalog", {"form": form}, authenticated=True)["item"]
+
+    def get_equipment_items(self, slots):
+        """Экипировка каталога по слотам для выбора в редакторе карт: [предмет, ...]"""
+        slot_list = ",".join(slots)
+        return self._request("GET", f"/api/items/equipment?slots={slot_list}", authenticated=True)["items"]
+
+    def world_sync(self, character_id, x, y, attack_target=None, dash_target=None, since=0):
+        """Отправить намерения игрока на сервер мира и получить снимок боя."""
+        payload = {
+            "character_id": character_id,
+            "x": x,
+            "y": y,
+            "attack_target": attack_target,
+            "dash_target": dash_target,
+            "since": since,
+        }
+        return self._request("POST", "/api/world/sync", payload, authenticated=True)
+
+    def world_leave(self, character_id):
+        return self._request("POST", "/api/world/leave", {"character_id": character_id}, authenticated=True)
+
+    def world_loot_corpse(self, character_id, corpse_id):
+        """Забрать монеты своего трупа на сервере мира; ответ: кошелёк и оставшиеся трупы."""
+        payload = {"character_id": character_id, "corpse_id": corpse_id}
+        return self._request("POST", "/api/world/corpse/loot", payload, authenticated=True)
+
+    def rest_character(self, character_id):
+        """Полное восстановление HP и MP на сервере (кристалл, возрождение)."""
+        return self._request("POST", f"/api/characters/{character_id}/rest", {}, authenticated=True)["vitals"]
+
     def get_map_terrain(self):
         return self._request("GET", "/api/map/terrain", authenticated=True, timeout=max(self.timeout, 15))["terrain"]
+
+    def get_me(self):
+        """Текущий пользователь: id, username, role (user, moderator или admin)."""
+        return self._request("GET", "/api/me", authenticated=True)["user"]
+
+    def list_saved_maps(self, mode=None):
+        path = "/api/map/saved" + (f"?mode={quote(mode)}" if mode else "")
+        return self._request("GET", path, authenticated=True)["saved_maps"]
+
+    def create_world(self, saved_id, name, test=True):
+        """Создаёт мир из сохранённой карты. test=True — тестовый, его видят только админ и модераторы."""
+        payload = {"saved_id": saved_id, "name": name, "test": bool(test)}
+        return self._request("POST", "/api/worlds/create", payload, authenticated=True)
+
+    def start_world(self, world_id):
+        return self._request("POST", "/api/worlds/start", {"world_id": world_id}, authenticated=True)
+
+    def save_saved_map(self, cells, map_w, map_h, name, mode, mobs=(), saved_id=None, spawns=()):
+        """Сохраняет карту на сервере как заготовку (мир не создаётся). saved_id обновляет уже сохранённую карту."""
+        payload = {
+            "cells": cells, "name": name, "map_w": map_w, "map_h": map_h,
+            "mobs": list(mobs), "spawns": list(spawns), "mode": mode, "saved_id": saved_id or 0,
+        }
+        return self._request("POST", "/api/map/editor/saved", payload, authenticated=True, timeout=max(self.timeout, 30))
+
+    def publish_map(self, cells, map_w, map_h, name, world_id, mobs=(), mode=None, spawns=(), saved_id=None):
+        """Публикует карту, расстановку NPC, точки спауна и режим на выбранном мире; игроки этого мира увидят карту после обновления."""
+        payload = {
+            "cells": cells, "name": name, "map_w": map_w, "map_h": map_h, "world_id": world_id,
+            "mobs": list(mobs), "mode": mode or "tower", "spawns": list(spawns), "saved_id": saved_id,
+        }
+        return self._request("POST", "/api/map/editor/publish", payload, authenticated=True, timeout=max(self.timeout, 30))
 
     def get_city_structures(self):
         return self._request("GET", "/api/city/structures", authenticated=True)["city"]

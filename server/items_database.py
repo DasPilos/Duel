@@ -7,6 +7,7 @@ import math
 import time
 from typing import List, Dict, Optional
 
+from core import item_form
 from core.carry_weight import carried_weight_kg, character_carry_capacity
 from server.database import lock_character
 
@@ -214,6 +215,53 @@ class ItemsDatabase:
     @staticmethod
     def _catalog_item(connection, item_id):
         return connection.execute("SELECT * FROM items_catalog WHERE id = %s", (item_id,)).fetchone()
+
+    def get_catalog_items(self, item_ids) -> Dict[str, Dict]:
+        """Предметы каталога по id: {"23": предмет}. Так клиент получает экипировку мобов, не создавая копий."""
+        ids = sorted({int(item_id) for item_id in item_ids})
+        if not ids:
+            return {}
+        with self.db.connection() as connection:
+            rows = connection.execute(
+                f"SELECT c.id, {_ITEM_COLUMNS} FROM items_catalog c WHERE c.id = ANY(%s)",
+                (ids,),
+            ).fetchall()
+        return {str(row["id"]): _item_payload(row) for row in rows}
+
+    def create_item(self, moderator_id, form) -> Dict:
+        """Новый предмет экипировки из формы редактора карт. Только модератор; id от CUSTOM_ITEM_FIRST_ID."""
+        if not self.db.is_moderator(moderator_id):
+            raise ValueError("Недостаточно прав модератора")
+        with self.db.connection() as connection:
+            row = connection.execute("SELECT COALESCE(MAX(id), 0) AS top FROM items_catalog").fetchone()
+            item_id = max(int(row["top"]), item_form.CUSTOM_ITEM_FIRST_ID - 1) + 1
+            record = item_form.build_item(form, item_id)
+            connection.execute(
+                """INSERT INTO items_catalog
+                   (id, name, item_type, rarity, weight, price, description, can_use,
+                    effects_json, bonuses_json, icon, equip_slot, created_at)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                (
+                    record["id"], record["name"], record["item_type"], record["rarity"], record["weight"],
+                    record["price"], record["description"], record["can_use"],
+                    json.dumps(record["effects"], ensure_ascii=False) if record["effects"] else None,
+                    json.dumps(record["bonuses"], ensure_ascii=False) if record["bonuses"] else None,
+                    record["icon"], record["equip_slot"], time.time(),
+                ),
+            )
+        return record
+
+    def get_equipment_items(self, slots) -> list:
+        """Экипировка каталога по слотам (например weapon, shield) для выбора в редакторе карт, по id."""
+        slots = sorted({str(slot) for slot in slots if slot in EQUIPMENT_SLOTS})
+        if not slots:
+            return []
+        with self.db.connection() as connection:
+            rows = connection.execute(
+                f"SELECT c.id, {_ITEM_COLUMNS} FROM items_catalog c WHERE c.item_type = 'equipment' AND c.equip_slot = ANY(%s) ORDER BY c.id",
+                (slots,),
+            ).fetchall()
+        return [_item_payload(row) for row in rows]
 
     @staticmethod
     def _stack_limit(item):
