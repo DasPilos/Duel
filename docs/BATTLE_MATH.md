@@ -1,4 +1,4 @@
-﻿# Battle Math: Source of Truth
+# Battle Math: Source of Truth
 
 This document maps the current world-map battle rules to their implementation and tests. The code and tests are authoritative.
 
@@ -63,11 +63,12 @@ Relevant tests: `tests/test_player_movement.py`, `tests/test_world_terrain.py`.
 
 Constants in `scenes/world_map_scene.py`.
 
-- Mob stats use the same world formulas as a level-1 character with endurance `MOB_ENDURANCE`. It carries a club from the forge catalog (`MOB_CLUB_ITEM`).
-- Patrol: 7×7 tile square centered on `MOB_PATROL_CENTER_TILE`, speed `MOB_PATROL_SPEED` (40 px/s), 1.5 s pause at each waypoint.
-- Aggro: a player entering the patrol square starts the chase. Chase speed is `MOB_CHASE_SPEED = BASE_MOVE_SPEED` (160 px/s).
-- Leash: the mob does not move more than `MOB_LEASH_RADIUS_TILES` (40 tiles) from its respawn point.
-- Respawn: `MOB_RESPAWN_DELAY` (30 s) after death, at the center of its square.
+- Mob stats use the same world formulas as a level-1 character with endurance `MOB_ENDURANCE`. Mobs are the imps from the map editor NPC catalog (`core/mob_profiles.py`). Equipment is chosen per mob in the map editor card (weapon and shield from the item database, matched by `equip_slot`). With nothing chosen, the mob has no gear. Parameters come only from the map editor card.
+- Mobs exist only on a published map (`map_live_mobs`). A world without a published map has no mobs.
+- Patrol: each mob patrols around its spawn point within `MOB_PATROL_RADIUS_TILES` (3 tiles, a 7×7 square). Speed `MOB_PATROL_SPEED` (40 px/s), `MOB_PATROL_PAUSE` (1.5 s) at each waypoint.
+- Aggro: a player within `MOB_AGGRO_RADIUS` starts the chase. Chase speed comes from the mob's mode settings.
+- Leash: the mob does not move more than `MOB_LEASH_DISTANCE` (40 tiles) from its respawn point.
+- Respawn: `MOB_RESPAWN_DELAY` (30 s) after death, at its spawn point.
 
 Mob combat uses `resolve_world_melee_attack` with the same rules as the player.
 
