@@ -1,0 +1,1 @@
+ALTER TABLE worlds ADD COLUMN mode TEXT NOT NULL DEFAULT 'tower';

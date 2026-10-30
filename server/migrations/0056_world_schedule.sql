@@ -1,0 +1,4 @@
+ALTER TABLE worlds
+    ADD COLUMN opens_at DOUBLE PRECISION,
+    ADD COLUMN closes_at DOUBLE PRECISION,
+    ADD COLUMN server_url TEXT;
