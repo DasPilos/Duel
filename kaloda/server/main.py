@@ -14,6 +14,7 @@ from collections import Counter
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
+from core.map_catalog import DEFAULT_MAP_SIZE
 from kaloda.combat.card_database import (
     card_allowed_for,
     card_to_dict,
@@ -23,15 +24,19 @@ from kaloda.combat.card_database import (
     load_cards,
 )
 from kaloda.combat.character_stats import STAT_DEPENDENTS, stat_supports_met
-from kaloda.server import bots, config, maintenance, social
+from kaloda.game_modes import DEFAULT_MODE
+from kaloda.server import bots, config, maintenance, map_worlds, social
 from kaloda.server.database import Database
 from kaloda.server.items_database import ItemsDatabase
+from kaloda.server.map_editor import load_published_map, published_terrain_payload
 from kaloda.world_map import terrain_payload
 
 API = "/api/kaloda"
 CHAT_LOCATIONS = ("tavern", "world_map", "backyard", "character_room")
 DIRECTIONS = {"n", "ne", "e", "se", "s", "sw", "w", "nw"}
 PROFESSIONS = ("warrior", "archer", "assassin", "mage", "necromancer")
+# Карты редактора весят сотни килобайт, поэтому маршруты карт получают больший лимит запроса
+MAP_BODY_LIMIT = 16 * 1024 * 1024
 
 # (метод, путь, обработчик). Группы в пути передаются обработчику аргументами после тела запроса.
 ROUTES = (
@@ -70,6 +75,12 @@ ROUTES = (
     # игра Колоды
     ("GET", f"{API}/info", "_info"),
     ("GET", f"{API}/map/terrain", "_map_terrain"),
+    # редактор карт и миры
+    ("GET", f"{API}/worlds", "_worlds"),
+    ("GET", f"{API}/map/saved", "_saved_maps"),
+    ("POST", f"{API}/map/editor/saved", "_save_map"),
+    ("POST", f"{API}/map/editor/publish", "_publish_map"),
+    ("POST", f"{API}/map/editor/test-world", "_create_test_world"),
     ("GET", f"{API}/items", "_item_catalog"),
     ("GET", f"{API}/supplies-shop", "_supplies_shop"),
     ("POST", f"{API}/supplies-shop/buy", "_buy_supplies"),
@@ -121,7 +132,8 @@ class GameRequestHandler(BaseHTTPRequestHandler):
 
     def _body(self):
         length = int(self.headers.get("Content-Length", 0))
-        if length > 64 * 1024:
+        limit = MAP_BODY_LIMIT if urlparse(self.path).path.startswith(f"{API}/map/") else 64 * 1024
+        if length > limit:
             raise ValueError("Слишком большой запрос")
         raw = self.rfile.read(length)
         body = json.loads(raw.decode("utf-8")) if raw else {}
@@ -238,7 +250,11 @@ class GameRequestHandler(BaseHTTPRequestHandler):
         self._send(201, {"user": self.database.register(username, password)})
 
     def _login(self, body):
-        self._send(200, self.database.login(str(body.get("username", "")), str(body.get("password", ""))))
+        session = self.database.login(str(body.get("username", "")), str(body.get("password", "")))
+        if not self.database.can_enter_current_world(session["user"]["id"]):
+            self.database.disconnect(session["token"])
+            raise ValueError("Этот мир пока тестовый: вход открыт модераторам и админам")
+        self._send(200, session)
 
     def _disconnect(self, body):
         token = self._token()
@@ -422,7 +438,37 @@ class GameRequestHandler(BaseHTTPRequestHandler):
 
     def _map_terrain(self, body):
         self._user_id()
-        self._send(200, {"terrain": terrain_payload()})
+        terrain, published = load_published_map(self.database)
+        # Пока карта не опубликована в этот мир, рельеф строится по коду, как раньше
+        payload = terrain_payload() if terrain is None else published_terrain_payload(terrain, published)
+        self._send(200, {"terrain": payload})
+
+    # ------------------------------------------------------------------ миры и редактор карт
+
+    def _worlds(self, body):
+        viewer_id = self._user_id()
+        self._send(200, {"worlds": self.database.list_worlds(viewer_id=viewer_id)})
+
+    def _saved_maps(self, body):
+        if not self.database.is_moderator(self._user_id()):
+            raise ValueError("Недостаточно прав модератора")
+        self._send(200, {"saved_maps": self.database.list_saved_maps(self._query_value("mode"))})
+
+    def _save_map(self, body):
+        self._send(200, map_worlds.save_map(self.database, self._user_id(), body))
+
+    def _publish_map(self, body):
+        user_id = self._user_id()
+        published = self.database.publish_map(
+            body.get("cells", []), int(body.get("world_id") or 0), body.get("name", ""),
+            body.get("map_w", DEFAULT_MAP_SIZE), body.get("map_h", DEFAULT_MAP_SIZE), user_id,
+            body.get("mobs", []), str(body.get("mode", DEFAULT_MODE)), spawns=body.get("spawns", []),
+            saved_id=int(body.get("saved_id") or 0) or None,
+        )
+        self._send(200, published)
+
+    def _create_test_world(self, body):
+        self._send(200, map_worlds.create_test_world(self.database, self._user_id(), body))
 
     # ------------------------------------------------------------------ таверна и магазины
 

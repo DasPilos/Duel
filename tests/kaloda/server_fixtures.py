@@ -31,7 +31,7 @@ def create_test_database():
     shared = SharedDatabase(TEST_DATABASE_URL, schema=shared_schema)
     with shared.connection() as connection:
         connection.execute(
-            "INSERT INTO worlds (id, code, name, status, created_at) VALUES (%s, %s, %s, 'open', %s)",
+            "INSERT INTO worlds (id, code, name, status, created_at, mode) VALUES (%s, %s, %s, 'open', %s, 'kaloda')",
             (TEST_WORLD_ID, TEST_WORLD_CODE, "Колода (тест)", time.time()),
         )
     database = Database(
@@ -53,7 +53,7 @@ def create_second_world(database, world_id=TEST_WORLD_ID + 1):
     """Второй мир Колоды в тех же схемах: для проверки, что миры не смешивают данные."""
     with database.shared_database.connection() as connection:
         connection.execute(
-            "INSERT INTO worlds (id, code, name, status, created_at) VALUES (%s, %s, %s, 'open', %s)",
+            "INSERT INTO worlds (id, code, name, status, created_at, mode) VALUES (%s, %s, %s, 'open', %s, 'kaloda')",
             (world_id, f"{TEST_WORLD_CODE}_{world_id}", "Колода 2 (тест)", time.time()),
         )
     return Database(

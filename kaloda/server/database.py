@@ -14,6 +14,7 @@ from psycopg import errors as pg_errors
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 
+from core.map_catalog import catalog_definitions
 from kaloda.combat.character_stats import (
     BASE_STAT_VALUE,
     MIN_STAT_VALUE,
@@ -28,12 +29,17 @@ from kaloda.combat.fighter import Fighter
 from kaloda.combat.progression import apply_xp, battle_xp
 from kaloda.combat.talents import derived_talent_values, talent_option
 from kaloda.currency import spend_coins
+from kaloda.game_modes import DEFAULT_MODE, GAME_MODES, is_mode
 from kaloda.quests import QUESTS_BY_ID
 from kaloda.rewards import npc_kill_xp
-from kaloda.server import config
+from kaloda.server import config, map_editor
 from kaloda.server.migrations import apply_migrations
 
 SYSTEM_USER_ID = 0
+# Колонки общей таблицы worlds, без которых Колода не работает; их добавляют миграции Оператора 1
+SHARED_WORLD_COLUMNS = ("mode", "test_only", "server_url", "opens_at", "closes_at")
+# Код мира, созданного редактором карт: начинается с кода Колоды, чтобы сервер его принял
+MAP_WORLD_CODE_PREFIX = "kaloda_map"
 # Стартовый кошелёк нового героя в монетах (в старой Колоде это были 100 монет)
 STARTING_COINS = 100
 # One pool per (dsn, search_path) for the whole process: bot chat, bot battles and HTTP handlers share it.
@@ -135,9 +141,46 @@ class Database:
                     f"В схеме «{self.shared_schema}» нет общих таблиц (users, sessions, worlds): "
                     "их создаёт сервер Оператора 1, запустите его хотя бы один раз"
                 )
+            self._check_shared_world_columns(connection)
             apply_migrations(connection, self.schema)
             self._initialize_drinks(connection)
+            self._initialize_map_catalog(connection)
             self._normalize_character_stats(connection)
+
+    def _check_shared_world_columns(self, connection):
+        rows = connection.execute(
+            "SELECT column_name FROM information_schema.columns WHERE table_schema = %s AND table_name = 'worlds'",
+            (self.shared_schema,),
+        ).fetchall()
+        present = {row["column_name"] for row in rows}
+        missing = [column for column in SHARED_WORLD_COLUMNS if column not in present]
+        if missing:
+            raise RuntimeError(
+                f"В таблице worlds схемы «{self.shared_schema}» нет колонок: {', '.join(missing)}. "
+                "Запустите сервер Оператора 1, чтобы применились его миграции"
+            )
+
+    @staticmethod
+    def _initialize_map_catalog(connection):
+        """Обновляет каталог тайлов и объектов редактора карт по файлам assets/map."""
+        items = catalog_definitions()
+        for item in items:
+            connection.execute(
+                """INSERT INTO map_catalog
+                   (item_key, kind, category, asset, footprint_w, footprint_h, blocks, sort_order)
+                   VALUES (%(item_key)s, %(kind)s, %(category)s, %(asset)s,
+                           %(footprint_w)s, %(footprint_h)s, %(blocks)s, %(sort_order)s)
+                   ON CONFLICT (item_key) DO UPDATE SET
+                       kind = EXCLUDED.kind, category = EXCLUDED.category, asset = EXCLUDED.asset,
+                       footprint_w = EXCLUDED.footprint_w, footprint_h = EXCLUDED.footprint_h,
+                       blocks = EXCLUDED.blocks, sort_order = EXCLUDED.sort_order""",
+                item,
+            )
+        connection.execute(
+            """DELETE FROM map_catalog WHERE NOT (item_key = ANY(%s))
+               AND item_key NOT IN (SELECT item_key FROM map_live_cells)""",
+            ([item["item_key"] for item in items],),
+        )
 
     @staticmethod
     def _rescale_hp(current_hp, old_max_hp, new_max_hp):
@@ -298,6 +341,247 @@ class Database:
         """Публикует адрес мира в общей таблице: лобби предлагает мир, только пока адрес есть."""
         with self.connection() as connection:
             connection.execute("UPDATE worlds SET server_url = %s WHERE id = %s", (server_url, self.world_id))
+
+    # ------------------------------------------------------------------ миры Колоды и карты редактора
+
+    def list_worlds(self, now=None, viewer_id=None):
+        """Миры Колоды с вычисленным открыт/закрыт. Тестовые миры видят только модераторы и админы."""
+        now = time.time() if now is None else float(now)
+        with self.connection() as connection:
+            rows = connection.execute(
+                """SELECT id, code, name, status, opens_at, closes_at, server_url, test_only FROM worlds
+                   WHERE mode = ANY(%s) ORDER BY id""",
+                ([mode["key"] for mode in GAME_MODES],),
+            ).fetchall()
+        if viewer_id is None or not self.is_moderator(viewer_id):
+            rows = [row for row in rows if not row["test_only"]]
+        return [self._world_payload(row, now) for row in rows]
+
+    @staticmethod
+    def _world_payload(row, now):
+        is_open = (
+            row["status"] == "open"
+            and (row["opens_at"] is None or row["opens_at"] <= now)
+            and (row["closes_at"] is None or row["closes_at"] > now)
+        )
+        return {
+            "id": row["id"],
+            "code": row["code"],
+            "name": row["name"],
+            "is_open": is_open,
+            "opens_at": row["opens_at"],
+            "closes_at": row["closes_at"],
+            "server_url": row["server_url"],
+        }
+
+    def is_admin(self, user_id):
+        with self.connection() as connection:
+            row = connection.execute("SELECT role FROM users WHERE id = %s", (user_id,)).fetchone()
+        return row is not None and row["role"] == "admin"
+
+    def can_enter_current_world(self, user_id):
+        """Тестовый мир этого сервера открыт только модераторам и админам."""
+        with self.connection() as connection:
+            row = connection.execute("SELECT test_only FROM worlds WHERE id = %s", (self.world_id,)).fetchone()
+        if row is None or not row["test_only"]:
+            return True
+        return self.is_moderator(user_id)
+
+    def world_info(self, world_id):
+        with self.connection() as connection:
+            row = connection.execute(
+                "SELECT id, code, name, status, mode, server_url, test_only FROM worlds WHERE id = %s", (world_id,)
+            ).fetchone()
+        if row is None:
+            raise ValueError("Мир не найден")
+        return dict(row)
+
+    def map_catalog(self):
+        with self.connection() as connection:
+            rows = connection.execute(
+                """SELECT item_key, kind, category, asset, footprint_w, footprint_h, blocks, sort_order
+                   FROM map_catalog ORDER BY sort_order, item_key"""
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def map_live_cells(self):
+        """Опубликованная карта текущего мира; пустой список, если карта не публиковалась."""
+        with self.connection() as connection:
+            rows = connection.execute(
+                """SELECT layer, x, y, item_key AS key FROM map_live_cells
+                   WHERE world_id = %s ORDER BY layer, y, x""",
+                (self.world_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def published_map(self):
+        """Сведения о карте, опубликованной в текущий мир; None, если мир играет процедурным рельефом."""
+        with self.connection() as connection:
+            row = connection.execute(
+                "SELECT name, map_w, map_h, published_at, mode FROM map_world_publish WHERE world_id = %s",
+                (self.world_id,),
+            ).fetchone()
+        return None if row is None else dict(row)
+
+    def linked_world_ids(self, saved_id):
+        """Миры, в которых сейчас опубликована заготовка saved_id (их обновляют при сохранении заготовки)."""
+        with self.connection() as connection:
+            rows = connection.execute(
+                "SELECT world_id FROM map_world_publish WHERE saved_id = %s ORDER BY world_id", (saved_id,)
+            ).fetchall()
+        return [row["world_id"] for row in rows]
+
+    def save_saved_map(self, saved_id, name, mode, map_w, map_h, cells, mobs, moderator_id, spawns=None):
+        """Сохраняет карту на сервере как заготовку для мира: мир не создаётся."""
+        if not self.is_moderator(moderator_id):
+            raise ValueError("Недостаточно прав модератора")
+        name = str(name or "").strip()
+        if not 1 <= len(name) <= 64:
+            raise ValueError("Название карты: от 1 до 64 символов")
+        if not is_mode(mode):
+            raise ValueError("Неизвестный режим игры")
+        map_editor.check_map_size(map_w, map_h)
+        cell_rows = map_editor.validate_cells(cells, self.map_catalog(), map_w, map_h)
+        mob_rows = map_editor.validate_mobs(mobs, map_w, map_h)
+        spawn_rows = map_editor.validate_spawns(spawns, map_w, map_h)
+        cells_json = json.dumps([{"layer": l, "x": x, "y": y, "key": k} for l, x, y, k in cell_rows], ensure_ascii=False)
+        mobs_json = json.dumps([{"kind": k, "x": x, "y": y} for k, x, y in mob_rows], ensure_ascii=False)
+        spawns_json = json.dumps([{"x": x, "y": y} for x, y in spawn_rows], ensure_ascii=False)
+        now = time.time()
+        with self.connection() as connection:
+            if saved_id:
+                row = connection.execute(
+                    """UPDATE map_saved SET name = %s, mode = %s, map_w = %s, map_h = %s,
+                       cells_json = %s, mobs_json = %s, spawns_json = %s, updated_at = %s WHERE id = %s RETURNING id""",
+                    (name, mode, map_w, map_h, cells_json, mobs_json, spawns_json, now, saved_id),
+                ).fetchone()
+                if row is None:
+                    raise ValueError("Карта на сервере не найдена")
+                return row["id"]
+            row = connection.execute(
+                """INSERT INTO map_saved (name, mode, map_w, map_h, cells_json, mobs_json, spawns_json, created_by, created_at, updated_at)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id""",
+                (name, mode, map_w, map_h, cells_json, mobs_json, spawns_json, moderator_id, now, now),
+            ).fetchone()
+        return row["id"]
+
+    def get_saved_map(self, saved_id):
+        with self.connection() as connection:
+            row = connection.execute(
+                "SELECT id, name, mode, map_w, map_h, cells_json, mobs_json, spawns_json FROM map_saved WHERE id = %s",
+                (saved_id,),
+            ).fetchone()
+        if row is None:
+            raise ValueError("Карта на сервере не найдена")
+        data = dict(row)
+        data["cells"] = json.loads(data.pop("cells_json"))
+        data["mobs"] = json.loads(data.pop("mobs_json"))
+        data["spawns"] = json.loads(data.pop("spawns_json"))
+        return data
+
+    def list_saved_maps(self, mode=None):
+        """Сохранённые карты, новые сверху; mode — только карты этого режима."""
+        with self.connection() as connection:
+            if mode:
+                rows = connection.execute(
+                    "SELECT id, name, mode, map_w, map_h, updated_at FROM map_saved WHERE mode = %s ORDER BY updated_at DESC",
+                    (mode,),
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    "SELECT id, name, mode, map_w, map_h, updated_at FROM map_saved ORDER BY updated_at DESC"
+                ).fetchall()
+        return [dict(row) for row in rows]
+
+    def create_map_world(self, name, mode, moderator_id, test_only=False):
+        """Новый мир Колоды из карты: id по порядку, код kaloda_map<id>, режим карты. Тестовый мир создаёт только админ."""
+        if not self.is_moderator(moderator_id):
+            raise ValueError("Недостаточно прав модератора")
+        if test_only and not self.is_admin(moderator_id):
+            raise ValueError("Тестовый мир создаёт только админ")
+        with self.connection() as connection:
+            next_id = connection.execute("SELECT COALESCE(MAX(id), 0) + 1 AS next_id FROM worlds").fetchone()["next_id"]
+            code = f"{MAP_WORLD_CODE_PREFIX}{next_id}"
+            connection.execute(
+                """INSERT INTO worlds (id, code, name, status, created_at, mode, test_only)
+                   VALUES (%s, %s, %s, 'open', %s, %s, %s)""",
+                (next_id, code, name, time.time(), mode, bool(test_only)),
+            )
+        return {"id": next_id, "code": code, "name": name, "mode": mode}
+
+    def delete_map_world(self, world_id):
+        """Удаляет только миры карт: откат, если карта не прошла проверку."""
+        with self.connection() as connection:
+            connection.execute(
+                "DELETE FROM worlds WHERE id = %s AND starts_with(code, %s)", (world_id, MAP_WORLD_CODE_PREFIX)
+            )
+
+    def publish_map(self, cells, world_id, name, map_w, map_h, moderator_id, mobs=None, mode=DEFAULT_MODE,
+                    spawns=None, saved_id=None):
+        """Размещает карту редактора в мире Колоды world_id: клетки, NPC и режим. Заменяет живую карту этого мира."""
+        if not self.is_moderator(moderator_id):
+            raise ValueError("Недостаточно прав модератора")
+        name = str(name or "").strip()
+        if not 1 <= len(name) <= 64:
+            raise ValueError("Название карты: от 1 до 64 символов")
+        map_editor.check_map_size(map_w, map_h)
+        rows = map_editor.validate_cells(cells, self.map_catalog(), map_w, map_h)
+        if not rows:
+            raise ValueError("Карта пустая, нечего размещать")
+        mob_rows = map_editor.validate_mobs(mobs, map_w, map_h)
+        spawn_rows = map_editor.validate_spawns(spawns, map_w, map_h)
+        if not is_mode(mode):
+            raise ValueError("Неизвестный режим игры")
+        published_at = time.time()
+        with self.connection() as connection:
+            target = connection.execute("SELECT id, name, code, mode FROM worlds WHERE id = %s", (world_id,)).fetchone()
+            if target is None:
+                raise ValueError("Мир не найден")
+            if not self._is_kaloda_world(target):
+                raise ValueError("Мир не принадлежит Колоде: карту можно опубликовать только в мир Колоды")
+            connection.execute("DELETE FROM map_live_cells WHERE world_id = %s", (target["id"],))
+            for layer, x, y, key in rows:
+                connection.execute(
+                    """INSERT INTO map_live_cells (world_id, layer, x, y, item_key)
+                       VALUES (%s, %s, %s, %s, %s)""",
+                    (target["id"], layer, x, y, key),
+                )
+            connection.execute("DELETE FROM map_live_spawns WHERE world_id = %s", (target["id"],))
+            for x, y in spawn_rows:
+                connection.execute(
+                    "INSERT INTO map_live_spawns (world_id, x, y) VALUES (%s, %s, %s)",
+                    (target["id"], x, y),
+                )
+            connection.execute("DELETE FROM map_live_mobs WHERE world_id = %s", (target["id"],))
+            for kind, x, y in mob_rows:
+                connection.execute(
+                    "INSERT INTO map_live_mobs (world_id, kind, x, y) VALUES (%s, %s, %s, %s)",
+                    (target["id"], kind, x, y),
+                )
+            connection.execute(
+                """INSERT INTO map_world_publish (world_id, name, map_w, map_h, published_at, mode, saved_id)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s)
+                   ON CONFLICT (world_id) DO UPDATE SET
+                       name = EXCLUDED.name, map_w = EXCLUDED.map_w,
+                       map_h = EXCLUDED.map_h, published_at = EXCLUDED.published_at,
+                       mode = EXCLUDED.mode, saved_id = EXCLUDED.saved_id""",
+                (target["id"], name, map_w, map_h, published_at, mode, saved_id),
+            )
+        return {
+            "world_id": target["id"],
+            "world_name": target["name"],
+            "name": name,
+            "map_w": map_w,
+            "map_h": map_h,
+            "applied": len(rows),
+            "mobs": len(mob_rows),
+            "mode": mode,
+            "published_at": published_at,
+        }
+
+    @staticmethod
+    def _is_kaloda_world(row):
+        return str(row["code"]).startswith(config.WORLD_CODE_PREFIX) and is_mode(row["mode"])
 
     def create_character(self, user_id, name, profession_type="warrior"):
         self.validate_character_name(name)
