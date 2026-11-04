@@ -1,0 +1,2 @@
+ALTER TABLE characters
+    ADD COLUMN IF NOT EXISTS talents_json TEXT NOT NULL DEFAULT '{}';

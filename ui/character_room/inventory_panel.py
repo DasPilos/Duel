@@ -123,12 +123,9 @@ class InventoryPanel:
             rarity_text = self.small_font.render(f"★ {item.get('rarity', 'unknown')}", True, rarity_color)
             screen.blit(rarity_text, (rect.x + 50, rect.y + 35))
 
-            # Количество и вес
+            # Количество
             qty_text = self.small_font.render(f"×{item.get('quantity', 1)}", True, (200, 200, 200))
             screen.blit(qty_text, (rect.x + 10, rect.y + 60))
-
-            weight_text = self.small_font.render(f"{item.get('weight', 0)}кг", True, (150, 150, 150))
-            screen.blit(weight_text, (rect.x + 50, rect.y + 60))
 
         # Восстанавливаем клипирование
         screen.set_clip(screen_rect)

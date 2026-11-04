@@ -10,7 +10,7 @@ This document maps current battle rules to their implementation and tests. The c
 - Maximum HP is `ENDURANCE_HP_BONUS * endurance`.
 - Maximum mana is `MANA_PER_INTELLECT * intellect`.
 - Physical unique-resource capacity is profession base plus level bonus; mana capacity comes from intellect.
-- Carry capacity is calculated in `calculate_carry_capacity`.
+- Character movement and item carrying are not limited by item weight.
 - Profession base HP, mana, dodge, critical values, and unique resource are data in `PROFESSIONS`; do not assume a single formula applies to every profession.
 
 Relevant tests: `tests/test_character_stats.py`, `tests/test_combat.py`.

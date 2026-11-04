@@ -1,6 +1,5 @@
 from combat.character_stats import (
     BASE_STAT_VALUE,
-    STARTING_ENDURANCE_VALUE,
     STARTING_STAT_POINTS,
     PROFESSIONS,
     UNIQUE_RESOURCE_RECOVERY,
@@ -12,8 +11,11 @@ from combat.character_stats import (
     calculate_max_unique_resource,
     get_profession_data,
     is_valid_profession,
+    minimum_endurance,
+    normalize_profession_type,
 )
-from combat.mechanics import weapon_damage_range
+from combat.talents import talent_effects
+from combat.mechanics import weapon_damage_range, weapon_fixed_damage
 from combat.progression import apply_xp
 
 
@@ -32,8 +34,10 @@ class Fighter:
         self.name = name
         self.level = level
         self.character_id = None
+        self.talents = {}
 
-        # Профессия персонажа (6 классов)
+        # Профессия персонажа
+        profession_type = normalize_profession_type(profession_type)
         if not is_valid_profession(profession_type):
             profession_type = "warrior"  # Default to warrior
         self.profession_type = profession_type
@@ -47,8 +51,11 @@ class Fighter:
             "wisdom": BASE_STAT_VALUE,
             "intellect": BASE_STAT_VALUE,
             "harmony": BASE_STAT_VALUE,
-            "endurance": STARTING_ENDURANCE_VALUE + max(0, int(level) - 1),
+            "endurance": minimum_endurance(level),
         }
+        self._talent_effects = talent_effects(
+            self.profession_type, self.talents, self.level
+        )
         self.temporary_stat_modifiers = {
             stat_name: 0 for stat_name in self.STAT_NAMES
         }
@@ -58,6 +65,12 @@ class Fighter:
         self.equipment = {}
         self.temporary_critical_chance_modifier = 0
         self.temporary_dodge_chance_modifier = 0
+        self.next_damage_taken_bonus_percent = 0
+        self.next_damage_reduction_percent = 0
+        self.incoming_damage_reduction_percent = 0
+        self.incoming_damage_bonus_percent = 0
+        self.outgoing_damage_bonus_percent = 0
+        self.arena_move_range_bonus = 0
 
         # Базовые бонусы класса
         if profession_type == "archer":
@@ -71,14 +84,13 @@ class Fighter:
 
         # Уникальный ресурс (ярость, меткость, концентрация или мана)
         self.unique_resource_type = profession_data["unique_resource"]
-        self.unique_resource_max = calculate_max_unique_resource(profession_type, level, self.intellect)
-        self.unique_resource_current = self.unique_resource_max
 
         # Мана для всех классов (но для магов это main ресурс, для остального минимальная)
-        self.max_mp = calculate_max_mana(self.intellect)
+        self.max_mp = calculate_max_mana(self.intellect, profession_type)
         self.mp = self.max_mp
+        self._unique_resource_max = calculate_max_unique_resource(profession_type, level, self.intellect)
+        self._unique_resource_current = self._unique_resource_max
 
-        # Опыт
         self.xp = 0
 
         # Расчёт параметров и полное здоровье
@@ -118,7 +130,8 @@ class Fighter:
             0,
             self.stats[stat_name]
             + self.temporary_stat_modifiers[stat_name]
-            + self.equipment_stat_modifiers.get(stat_name, 0),
+            + self.equipment_stat_modifiers.get(stat_name, 0)
+            + self._talent_effects["all_stats"],
         )
 
     @property
@@ -126,10 +139,9 @@ class Fighter:
         """(мин, макс) урона надетого оружия или None"""
         return weapon_damage_range(self.equipment)
 
-    def roll_weapon_damage(self, rng):
-        """Случайный урон оружия для одного удара (0 без оружия)"""
-        damage = self.weapon_damage
-        return rng.randint(*damage) if damage else 0
+    def roll_weapon_damage(self, rng=None):
+        """Фиксированный урон оружия для одного удара (максимум, 0 без оружия)"""
+        return weapon_fixed_damage(self.equipment)
 
     def adjust_temporary_stat(self, stat_name, amount):
         if stat_name not in self.temporary_stat_modifiers:
@@ -138,24 +150,38 @@ class Fighter:
 
     def recalculate_parameters(self):
         """Пересчитывает производные параметры бойца."""
+        self._talent_effects = talent_effects(
+            self.profession_type, self.talents, self.level
+        )
+        bonuses = self._talent_effects
         hp_bonus = int(getattr(self, "equipment_stat_modifiers", {}).get("hp", 0))
         mp_bonus = int(getattr(self, "equipment_stat_modifiers", {}).get("mp", 0))
-        self.max_hp = calculate_max_hp(self.level, self.endurance) + hp_bonus
+        hp_bonus += bonuses["max_hp"] + bonuses["strength_max_hp"] * self.strength
+        self.max_hp = calculate_max_hp(self.level, self.endurance, self.profession_type) + hp_bonus
         if hasattr(self, "hp"):
             self.hp = min(int(self.hp), self.max_hp)
-        self.max_mp = calculate_max_mana(self.intellect) + mp_bonus
+        mp_bonus += bonuses["max_mana"] + bonuses["wisdom_max_mana"] * self.wisdom
+        if self.unique_resource_type == "mana":
+            mp_bonus += bonuses["max_resource"]
+        self.max_mp = calculate_max_mana(self.intellect, self.profession_type) + mp_bonus
         if hasattr(self, "mp"):
             self.mp = min(int(self.mp), self.max_mp)
         # Пересчитать максимум уникального ресурса
-        if hasattr(self, "profession_type"):
-            self.unique_resource_max = calculate_max_unique_resource(self.profession_type, self.level, self.intellect)
-            if hasattr(self, "unique_resource_current"):
-                self.unique_resource_current = min(int(self.unique_resource_current), self.unique_resource_max)
+        if self.unique_resource_type != "mana":
+            self._unique_resource_max = (
+                calculate_max_unique_resource(
+                    self.profession_type, self.level, self.intellect
+                )
+                + bonuses["max_resource"]
+            )
+        if hasattr(self, "unique_resource_current"):
+            self.unique_resource_current = min(
+                int(self.unique_resource_current), self.unique_resource_max
+            )
 
     def set_profession(self, profession_type):
         """Сменить класс бойца по профилю персонажа (ресурс класса, бонус лучника)."""
-        if profession_type == "mage":  # старый тип персонажа
-            profession_type = "battle_mage"
+        profession_type = normalize_profession_type(profession_type)
         if not is_valid_profession(profession_type) or profession_type == self.profession_type:
             return
         if self.profession_type == "archer":
@@ -164,8 +190,37 @@ class Fighter:
             self.temporary_dodge_chance_modifier += 10
         self.profession_type = profession_type
         self.unique_resource_type = get_profession_data(profession_type)["unique_resource"]
-        self.unique_resource_max = calculate_max_unique_resource(profession_type, self.level, self.intellect)
-        self.unique_resource_current = self.unique_resource_max
+        self._unique_resource_max = calculate_max_unique_resource(profession_type, self.level, self.intellect)
+        self._unique_resource_current = self._unique_resource_max
+        self.recalculate_parameters()
+
+    def set_talents(self, talents):
+        self.talents = dict(talents or {})
+        self.recalculate_parameters()
+
+    @property
+    def unique_resource_max(self):
+        # У мага уникальный ресурс — это мана, отдельного пула нет
+        if self.unique_resource_type == "mana":
+            return self.max_mp
+        return self._unique_resource_max
+
+    @unique_resource_max.setter
+    def unique_resource_max(self, value):
+        self._unique_resource_max = value
+
+    @property
+    def unique_resource_current(self):
+        if self.unique_resource_type == "mana":
+            return self.mp
+        return self._unique_resource_current
+
+    @unique_resource_current.setter
+    def unique_resource_current(self, value):
+        if self.unique_resource_type == "mana":
+            self.mp = value
+        else:
+            self._unique_resource_current = value
 
     def spend_unique_resource(self, amount):
         """Потратить уникальный ресурс (ярость, меткость, концентрация, мана)."""
@@ -181,10 +236,14 @@ class Fighter:
         self.unique_resource_current = min(self.unique_resource_current + amount, self.unique_resource_max)
 
     def recover_unique_resource(self, level):
-        """Восстановить уникальный ресурс в конце хода (для ярости, меткости, концентрации)."""
+        """Восстановить уникальный ресурс в конце хода."""
+        bonus = self._talent_effects["resource_regen"]
+        if self.unique_resource_type == "necrotism":
+            self.gain_unique_resource(8 + int(level) + bonus)
+            return
         if self.unique_resource_type in UNIQUE_RESOURCE_RECOVERY:
             recovery = UNIQUE_RESOURCE_RECOVERY[self.unique_resource_type]
-            self.gain_unique_resource(recovery)
+            self.gain_unique_resource(recovery + bonus)
 
     def add_stat(self, stat_name):
         """Добавляет одно очко характеристики."""
@@ -197,6 +256,7 @@ class Fighter:
             stat_name,
             1,
             character_id=self.character_id,
+            profession_type=self.profession_type,
         )
         if updated_state is None:
             return False
@@ -219,6 +279,7 @@ class Fighter:
             stat_name,
             -1,
             character_id=self.character_id,
+            profession_type=self.profession_type,
         )
         if updated_state is None:
             return False

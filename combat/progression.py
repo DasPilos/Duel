@@ -1,12 +1,21 @@
-import math
-
 from combat.character_stats import level_stat_points
 
 
-LEVEL_CAP = 30
+LEVEL_CAP = 10
 WIN_XP_BASE = 20
 DRAW_XP_BASE = 8
 LOSS_XP_BASE = 5
+XP_TO_LEVEL = {
+    1: 20,
+    2: 40,
+    3: 120,
+    4: 200,
+    5: 350,
+    6: 500,
+    7: 750,
+    8: 900,
+    9: 1100,
+}
 
 
 def xp_to_next(level):
@@ -14,9 +23,7 @@ def xp_to_next(level):
     level = int(level)
     if level >= LEVEL_CAP:
         return 0
-    if level <= 20:
-        return math.floor(140 + 45 * level + 5 * level * (level - 1))
-    return xp_to_next(20) + 90 * (level - 20)
+    return XP_TO_LEVEL.get(level, 0)
 
 
 def _tier_multiplier(level_difference):
@@ -67,7 +74,7 @@ def apply_xp(fighter, amount, restore_hp=False):
         current_hp = fighter.hp
         fighter.xp -= threshold
         fighter.level += 1
-        fighter.stats["endurance"] += 1
+        fighter.stats["endurance"] = int(fighter.stats.get("endurance", 0)) + 1
         fighter.stat_points += level_stat_points(fighter.level)
         fighter.recalculate_parameters()
         fighter.hp = fighter.max_hp if restore_hp else min(current_hp, fighter.max_hp)

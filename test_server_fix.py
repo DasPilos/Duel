@@ -21,7 +21,7 @@ else:
     exit(1)
 
 # Test all 6 professions
-professions = ["warrior", "archer", "assassin", "battle_mage", "support_mage", "harmonist"]
+professions = ["warrior", "archer", "assassin", "mage"]
 
 print("\n2️⃣ Тестирование всех 6 классов...")
 for prof in professions:

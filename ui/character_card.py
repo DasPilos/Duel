@@ -5,7 +5,6 @@ import pygame
 from combat.character_stats import is_debug_unlimited
 from combat.progression import xp_to_next
 from core import settings
-from core.carry_weight import character_carry_capacity, load_color
 from ui.character_profile import (
     adjust_profile_level,
     adjust_profile_stat,
@@ -20,6 +19,7 @@ from ui.character_profile import (
 from ui.hud import draw_bar, draw_button, draw_text, FloatingText, update_and_draw_floating_texts
 from ui import equipment_slots
 from ui.inventory_window import IconCache
+from ui.class_identity import class_icon, class_palette
 from ui.sprite_loader import FighterSprite
 
 
@@ -148,13 +148,16 @@ class CharacterCard:
         show_tabs=False,  # Новый параметр для показа закладок
         slot_highlight=None,  # слот, подсвечиваемый при перетаскивании предмета
         dragged_slot=None,  # слот, предмет из которого сейчас перетаскивают
+        opponent=None,
     ):
         if profile is not None:
             self.sync(profile, title=title, kind="player")
         normalized = self.state
+        palette = class_palette(normalized.get("type", "warrior"))
         overlay = pygame.Surface(frame.size, pygame.SRCALPHA)
-        overlay.fill((30, 32, 45, 225))
+        overlay.fill((*palette["background"], 225))
         screen.blit(overlay, frame.topleft)
+        border_color = palette["accent"]
         pygame.draw.rect(screen, border_color, frame, width=2, border_radius=8)
         
         # Рисуем закладки если нужно
@@ -165,7 +168,9 @@ class CharacterCard:
         name_y = frame.y + 20
         name = normalized["name"]
         name_surface = self.title_font.render(name, True, (240, 240, 245))
-        name_rect = name_surface.get_rect(topleft=(x, name_y))
+        icon = class_icon(normalized.get("type", "warrior"))
+        screen.blit(icon, (x, name_y + max(0, (name_surface.get_height() - icon.get_height()) // 2)))
+        name_rect = name_surface.get_rect(topleft=(x + icon.get_width() + 7, name_y))
         screen.blit(name_surface, name_rect)
         character_id = normalized.get("character_id", normalized.get("id", "-"))
         draw_text(screen, self.small_font, f"ID: {character_id}", name_rect.right + 20, name_y, (170, 175, 185))
@@ -194,19 +199,12 @@ class CharacterCard:
         self._draw_resource(screen, x, mp_y, bar_width, bar_height, "MP", normalized["mp"], normalized["max_mp"], (60, 140, 220))
         
         # Отображение валюты под MP шкалой
-        copper = int(normalized.get("copper", 0))
-        silver = int(normalized.get("silver", 0))
-        gold = int(normalized.get("gold", 0))
         currency_y = mp_y + 25
         self._draw_currency(
             screen,
             x,
             currency_y,
-            {
-                "copper": copper,
-                "silver": silver,
-                "gold": gold,
-            },
+            int(normalized.get("coins", 0)),
         )
 
         stats_header_y = self._stats_header_y(frame)
@@ -214,19 +212,6 @@ class CharacterCard:
             screen, frame, self.sprite, self.icons, self.small_font,
             normalized.get("equipment", {}), slot_highlight, dragged_slot,
         )
-        shoe_slot = equipment_slots.slot_rects(frame)["feet"]
-        capacity_kg = character_carry_capacity(normalized)
-        carried_kg = float(normalized.get("carried_weight_kg", 0))
-        carry_text = self.small_font.render(
-            f"Грузоподъёмность: {carried_kg:g}/{capacity_kg} кг",
-            True,
-            load_color(carried_kg, capacity_kg),
-        )
-        carry_rect = carry_text.get_rect(midtop=(frame.centerx, shoe_slot.bottom + 10))
-        carry_back = carry_rect.inflate(12, 6)
-        pygame.draw.rect(screen, (24, 29, 30), carry_back, border_radius=4)
-        pygame.draw.rect(screen, (82, 88, 76), carry_back, 1, border_radius=4)
-        screen.blit(carry_text, carry_rect)
         for floating_text in self.regen_floating_texts:
             floating_text.x = frame.centerx
             floating_text.y = sprite_top - 12
@@ -235,7 +220,7 @@ class CharacterCard:
         draw_text(screen, self.small_font, "ХАРАКТЕРИСТИКИ", x, stats_header_y, border_color)
         stats = effective_stats(normalized)
         draw_text(screen, self.small_font, f"Свободные очки: {normalized['stat_points']}", x, stats_header_y - 22, (255, 220, 120))
-        derived = derived_values(normalized)
+        derived = derived_values(normalized, opponent)
         preview = self._card_preview(card_preview or [])
         derived_x = self._stat_text_right(frame) + settings.STAT_DERIVED_GAP + 50
         for index, (key, label, derived_key) in enumerate(STAT_ROWS):
@@ -329,7 +314,7 @@ class CharacterCard:
             lines.append((f"Бонус: {sign}{value} {labels.get(stat, stat)}", (140, 230, 150)))
         damage = (item.get("effects") or {}).get("damage")
         if damage and damage != [0, 0]:
-            lines.append((f"Урон: {damage[0]}–{damage[-1]}", (255, 220, 120)))
+            lines.append((f"Урон: {damage[-1]}", (255, 220, 120)))
         lines.append((f"Вес: {float(item.get('weight', 0) or 0):g} кг", (175, 180, 185)))
         return lines
 
@@ -373,7 +358,7 @@ class CharacterCard:
                     heal_dice.append(dice)
 
         preview = {}
-        damage_range = CharacterCard._dice_range(damage_dice)
+        damage_range = CharacterCard._dice_range(damage_dice, fixed=True)
         heal_range = CharacterCard._dice_range([(dice, 1) for dice in heal_dice])
         if damage_range:
             preview["Урон"] = f" + {damage_range}"
@@ -386,7 +371,7 @@ class CharacterCard:
         return preview
 
     @staticmethod
-    def _dice_range(dice_parts):
+    def _dice_range(dice_parts, fixed=False):
         minimum = maximum = 0
         for expression, multiplier in dice_parts:
             try:
@@ -397,7 +382,9 @@ class CharacterCard:
                 continue
         if not maximum:
             return ""
-        return str(minimum) if minimum == maximum else f"{minimum}-{maximum}"
+        if fixed or minimum == maximum:
+            return str(maximum)
+        return f"{minimum}-{maximum}"
 
     @staticmethod
     def _stat_control_rects(frame, row_y):
@@ -439,24 +426,22 @@ class CharacterCard:
         )
         return minus, plus
 
-    def _draw_currency(self, screen, x, y, amounts):
-        cursor_x = x
-        for currency in ("copper", "silver", "gold"):
-            icon = self.currency_icons[currency]
-            screen.blit(icon, (cursor_x, y))
-            amount = self.small_font.render(
-                str(amounts[currency]),
-                True,
-                (235, 235, 240),
-            )
-            amount_rect = amount.get_rect(
+    def _draw_currency(self, screen, x, y, coins):
+        screen.blit(self.currency_icons["gold"], (x, y))
+        amount = self.small_font.render(
+            f"{int(coins)} монет",
+            True,
+            (235, 235, 240),
+        )
+        screen.blit(
+            amount,
+            amount.get_rect(
                 midleft=(
-                    cursor_x + self.CURRENCY_ICON_SIZE + 4,
+                    x + self.CURRENCY_ICON_SIZE + 4,
                     y + self.CURRENCY_ICON_SIZE // 2,
                 )
-            )
-            screen.blit(amount, amount_rect)
-            cursor_x = amount_rect.right + 18
+            ),
+        )
 
     def _draw_resource(self, screen, x, y, width, height, name, value, maximum, color):
         draw_text(screen, self.small_font, f"{name}: {value}/{maximum}", x, y - 24, (220, 225, 235))

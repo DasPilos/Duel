@@ -47,6 +47,6 @@ class MageCard(CharacterCard):
         self.state["stats"][stat_name] = updated
         self.state["stat_points"] -= delta
         if stat_name == "intellect":
-            self.state["max_mp"] = calculate_max_mana(updated)
+            self.state["max_mp"] = calculate_max_mana(updated, "mage")
             self.state["mp"] = min(int(self.state["mp"]), self.state["max_mp"])
         return True

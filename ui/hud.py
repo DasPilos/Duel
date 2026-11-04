@@ -120,6 +120,7 @@ class FloatingText:
         color=(255, 60, 60),
         duration=60,
         velocity=-1.5,
+        fade_out=True,
     ):
         # x и y — начальная позиция всплывающего текста.
         self.x = x
@@ -129,6 +130,7 @@ class FloatingText:
         self.color = color
         self.duration = duration
         self.max_duration = duration
+        self.fade_out = fade_out
 
         # Скорость движения текста вверх.
         # Сделайте число более отрицательным — текст будет двигаться быстрее.
@@ -144,7 +146,7 @@ class FloatingText:
 
         surface = self.font.render(self.text, True, self.color)
 
-        if self.duration < self.max_duration // 2:
+        if self.fade_out and self.duration < self.max_duration // 2:
             alpha = int(
                 255 * self.duration / (self.max_duration // 2)
             )
@@ -157,7 +159,7 @@ class FloatingText:
 
 
 class FloatingImage:
-    def __init__(self, x, y, image, label, font, color, duration=360, velocity=-1.5):
+    def __init__(self, x, y, image, label, font, color, duration=360, velocity=-1.5, fade_out=True):
         self.x = x
         self.y = y
         self.image = image
@@ -167,6 +169,7 @@ class FloatingImage:
         self.duration = duration
         self.max_duration = duration
         self.vy = velocity
+        self.fade_out = fade_out
 
     def update(self):
         self.y += self.vy
@@ -176,7 +179,7 @@ class FloatingImage:
         if self.duration <= 0:
             return
         image = self.image.copy()
-        if self.duration < self.max_duration // 2:
+        if self.fade_out and self.duration < self.max_duration // 2:
             image.set_alpha(int(255 * self.duration / (self.max_duration // 2)))
         rect = image.get_rect(center=(int(self.x), int(self.y)))
         screen.blit(image, rect)

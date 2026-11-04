@@ -3,18 +3,17 @@ import pygame
 from client.network import ServerError
 from combat.character_stats import PROFESSIONS
 from core import settings
+from ui.class_identity import class_icon, class_palette
 from ui.hud import draw_button, draw_text
 
 
 class CreateCharacterScene:
-    # Emojis and basic info for each class
     CLASS_INFO = {
-        "warrior": {"emoji": "⚔️", "name": "БОЕЦ"},
-        "archer": {"emoji": "🏹", "name": "ЛУЧНИК"},
-        "assassin": {"emoji": "🗡️", "name": "АСАСИН"},
-        "battle_mage": {"emoji": "🔥", "name": "БОЙ. МАГ"},
-        "support_mage": {"emoji": "💚", "name": "МАГ ПОДД."},
-        "harmonist": {"emoji": "🎶", "name": "ГАРМОНИСТ"},
+        "warrior": {"name": "БОЕЦ"},
+        "archer": {"name": "ЛУЧНИК"},
+        "assassin": {"name": "АСАСИН"},
+        "mage": {"name": "МАГ"},
+        "necromancer": {"name": "НЕКРОМАНТ"},
     }
 
     def __init__(self, session):
@@ -32,27 +31,24 @@ class CreateCharacterScene:
         self.name = ""
         self.name_rect = pygame.Rect(640, 80, 600, 46)
 
-        # Profession selection - 6 classes in 2 rows of 3
+        # Six square class tiles arranged in a 3x2 grid, centered on screen.
         self.profession = "warrior"  # Default profession
         self.profession_buttons = {}
-        button_width = 280
-        button_height = 120
-        start_x = 180
-        start_y = 170
-        spacing_x = 320
-        spacing_y = 160
+        button_size = 190
+        gap = 28
+        grid_left = settings.WIDTH // 2 - (button_size * 3 + gap * 2) // 2
+        grid_top = 170
 
-        professions = ["warrior", "archer", "assassin", "battle_mage", "support_mage", "harmonist"]
+        professions = ["warrior", "archer", "assassin", "mage", "necromancer"]
         for i, prof in enumerate(professions):
-            row = i // 3
-            col = i % 3
-            x = start_x + col * spacing_x
-            y = start_y + row * spacing_y
-            self.profession_buttons[prof] = pygame.Rect(x, y, button_width, button_height)
+            row, col = divmod(i, 3)
+            x = grid_left + col * (button_size + gap)
+            y = grid_top + row * (button_size + gap)
+            self.profession_buttons[prof] = pygame.Rect(x, y, button_size, button_size)
 
         # Action buttons
-        self.create_button = pygame.Rect(600, 550, 300, 50)
-        self.back_button = pygame.Rect(950, 550, 300, 50)
+        self.create_button = pygame.Rect(600, 650, 300, 50)
+        self.back_button = pygame.Rect(950, 650, 300, 50)
 
     def handle_event(self, event):
         if event.type == pygame.KEYDOWN:
@@ -123,37 +119,35 @@ class CreateCharacterScene:
         # Profession selection label
         draw_text(screen, self.small_font, "Выберите класс:", 450, 150, (200, 200, 200))
 
-        # Draw all 6 class buttons
+        # Draw all class tiles in their class colors
         for profession, rect in self.profession_buttons.items():
             is_selected = self.profession == profession
-            border_color = (100, 200, 100) if is_selected else (70, 140, 220)
+            palette = class_palette(profession)
 
-            # Button background
-            pygame.draw.rect(screen, (30, 34, 48), rect, border_radius=6)
-            pygame.draw.rect(screen, border_color, rect, width=3 if is_selected else 2, border_radius=6)
+            pygame.draw.rect(screen, palette["background"], rect)
+            pygame.draw.rect(screen, palette["accent"], rect, width=5 if is_selected else 2)
 
-            # Get profession data
+            # Class icon (same as in game) followed by the class name
             prof_data = PROFESSIONS.get(profession, {})
-            class_info = self.CLASS_INFO.get(profession, {})
-
-            # Class name with emoji
-            emoji = class_info.get("emoji", "")
-            name = class_info.get("name", profession)
-            class_text = self.font.render(f"{emoji} {name}", True, (240, 240, 245))
-            screen.blit(class_text, class_text.get_rect(center=(rect.centerx, rect.y + 20)))
+            name = self.CLASS_INFO.get(profession, {}).get("name", profession)
+            icon = class_icon(profession)
+            name_surf = self.font.render(name, True, palette["accent"])
+            name_width = icon.get_width() + 8 + name_surf.get_width()
+            name_left = rect.centerx - name_width // 2
+            name_y = rect.y + 34
+            screen.blit(icon, icon.get_rect(midleft=(name_left, name_y)))
+            screen.blit(name_surf, name_surf.get_rect(midleft=(name_left + icon.get_width() + 8, name_y)))
 
             # Class stats
             hp = prof_data.get("hp", 0)
             mana = prof_data.get("mana", 0)
             resource_name = prof_data.get("unique_resource_name", "")
 
-            stats_text = f"HP: {hp} | Мана: {mana}"
-            stats_surf = self.tiny_font.render(stats_text, True, (180, 180, 200))
-            screen.blit(stats_surf, (rect.x + 10, rect.y + 48))
+            stats_surf = self.tiny_font.render(f"HP: {hp} | Мана: {mana}", True, (225, 225, 235))
+            screen.blit(stats_surf, stats_surf.get_rect(center=(rect.centerx, rect.y + 86)))
 
-            resource_text = f"Ресурс: {resource_name}"
-            resource_surf = self.tiny_font.render(resource_text, True, (150, 180, 220))
-            screen.blit(resource_surf, (rect.x + 10, rect.y + 68))
+            resource_surf = self.tiny_font.render(f"Ресурс: {resource_name}", True, palette["accent"])
+            screen.blit(resource_surf, resource_surf.get_rect(center=(rect.centerx, rect.y + 112)))
 
         # Create button
         draw_button(screen, self.create_button, "СОЗДАТЬ", self.font, color=(70, 140, 220))
@@ -163,7 +157,7 @@ class CreateCharacterScene:
 
         # Error message
         if self.error:
-            draw_text(screen, self.small_font, self.error, 640, 620, (255, 100, 100))
+            draw_text(screen, self.small_font, self.error, 640, 720, (255, 100, 100))
 
     def close(self):
         pass

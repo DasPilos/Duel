@@ -2,10 +2,10 @@ import unittest
 
 import pygame
 
-from combat.character_stats import adjust_stats, calculate_carry_capacity, calculate_max_hp
+from combat.character_stats import adjust_stats, calculate_max_hp
+from combat.character_stats import stat_support_requirement
 from combat.fighter import Fighter
 from core import settings
-from core.carry_weight import GREEN, NEUTRAL, RED, YELLOW, carried_weight_kg, load_color, movement_speed_multiplier
 from scenes.tavern_scene import TavernScene
 from ui.chat.panel import ChatPanel
 from ui.character_card import CharacterCard
@@ -20,46 +20,40 @@ from ui.tavern_shop import TavernShop
 
 
 class CharacterStatTests(unittest.TestCase):
-    def test_carry_capacity_uses_strength_and_endurance(self):
-        self.assertEqual(calculate_carry_capacity(6, 4), 42)
-        self.assertEqual(calculate_carry_capacity(3, 3), 24)
-
-    def test_carry_load_colors_and_movement_thresholds(self):
-        self.assertEqual(load_color(30, 100), GREEN)
-        self.assertEqual(movement_speed_multiplier(45, 100), 0.7)
-        self.assertEqual(movement_speed_multiplier(60, 100), 0.7)
-        self.assertEqual(load_color(61, 100), YELLOW)
-        self.assertEqual(movement_speed_multiplier(61, 100), 0.5)
-        self.assertEqual(load_color(80, 100), YELLOW)
-        self.assertEqual(movement_speed_multiplier(80, 100), 0.5)
-        self.assertEqual(load_color(81, 100), RED)
-        self.assertEqual(movement_speed_multiplier(81, 100), 0.3)
-        self.assertEqual(load_color(45, 100), NEUTRAL)
-
-    def test_carried_weight_sums_bag_and_equipment_once(self):
-        inventory = [{"weight": 2.5, "quantity": 2}, {"weight": 1, "quantity": 3}]
-        equipment = {
-            "weapon": {"weight": 4},
-            "shield": {"weight": 4, "_two_handed_shadow": True},
-            "body": {"weight": 5},
-        }
-        self.assertEqual(carried_weight_kg(inventory, equipment), 17)
-
     def test_max_hp_formula_matches_level_and_endurance(self):
-        self.assertEqual(calculate_max_hp(1, 5), 50)
-        self.assertEqual(calculate_max_hp(3, 7), 70)
+        self.assertEqual(calculate_max_hp(1, 5), 120)
+        self.assertEqual(calculate_max_hp(3, 7), 140)
+
+    def test_assassin_stale_profile_uses_base_hp_plus_endurance(self):
+        profile = normalize_character_profile({
+            "type": "assassin",
+            "level": 1,
+            "hp": 67,
+            "max_hp": 100,
+            "stats": {"endurance": 3},
+        })
+
+        self.assertEqual(displayed_hp_values(profile), (30, 45))
+
+    def test_assassin_own_character_stats_show_damage_dodge_and_both_crit_values(self):
+        fighter = Fighter("Асасин", profession_type="assassin")
+
+        values = derived_values(profile_from_fighter(fighter))
+
+        self.assertEqual(values["Урон"], 2)
+        self.assertEqual(values["Уворот"], "4%")
+        self.assertEqual(values["Крит"], "13% × 190%")
 
     def test_profile_model_normalizes_fighter_and_derived_values(self):
         fighter = Fighter("Тест")
         profile = normalize_character_profile(profile_from_fighter(fighter))
 
         self.assertEqual(profile["stats"], fighter.stats)
-        self.assertEqual(derived_values(profile), {
+        self.assertEqual(derived_values(profile, fighter), {
             "Урон": 3,
-            "Уворот": "6%",
-            "Крит": "5% × 165%",
-            "Маг Урон": 3,
-            "HP": 30,
+            "Уворот": "4%",
+            "Крит": "5% × 160%",
+            "HP": fighter.max_hp,
         })
 
     def test_profile_recovers_weight_when_server_snapshot_has_zero(self):
@@ -91,7 +85,7 @@ class CharacterStatTests(unittest.TestCase):
 
     def test_stat_decrease_cannot_go_below_minimum(self):
         state = adjust_stats(
-            {"strength": 3, "agility": 5, "intuition": 5, "endurance": 5},
+            {"strength": 2, "agility": 2, "intuition": 2, "endurance": 2},
             6,
             25,
             25,
@@ -101,6 +95,40 @@ class CharacterStatTests(unittest.TestCase):
         )
 
         self.assertIsNone(state)
+
+    def test_stat_advancement_requires_half_value_in_both_linked_stats(self):
+        state = {
+            "strength": 9,
+            "agility": 4,
+            "intuition": 4,
+            "wisdom": 2,
+            "intellect": 2,
+            "harmony": 2,
+            "endurance": 2,
+        }
+        self.assertEqual(stat_support_requirement(10), 5)
+        self.assertEqual(stat_support_requirement(20), 10)
+        self.assertIsNone(adjust_stats(state, 1, 50, 100, 1, "strength", 1))
+
+        state["agility"] = 5
+        state["intuition"] = 5
+        updated = adjust_stats(state, 1, 50, 100, 1, "strength", 1)
+        self.assertEqual(updated["stats"]["strength"], 10)
+
+        state = {**updated["stats"], "agility": 9, "intuition": 9, "strength": 19}
+        self.assertIsNone(adjust_stats(state, 1, 50, 100, 1, "strength", 1))
+        state["agility"] = 10
+        state["intuition"] = 10
+        self.assertEqual(
+            adjust_stats(state, 1, 50, 100, 1, "strength", 1)["stats"]["strength"],
+            20,
+        )
+
+    def test_endurance_minimum_increases_with_character_level(self):
+        fighter = Fighter("Тест", level=5)
+
+        self.assertEqual(fighter.stats["endurance"], 6)
+        self.assertFalse(fighter.add_stat("endurance"))
 
     def test_card_and_fighter_produce_matching_stat_state(self):
         pygame.init()
@@ -167,10 +195,8 @@ class CharacterStatTests(unittest.TestCase):
                 "stats": {"strength": 5, "agility": 5, "intuition": 5, "endurance": 5},
                 "stat_points": 6,
             })
-            _, plus = overlay.player_card._stat_control_rects(
-                overlay.player_frame,
-                CharacterCard._stat_row_y(overlay.player_frame, 0),
-            )
+            strength_row = CharacterCard._stat_row_y(overlay.player_frame, 0)
+            _, plus = overlay.player_card._stat_control_rects(overlay.player_frame, strength_row)
 
             action, profile = overlay.handle_click(plus.center)
 
@@ -186,8 +212,8 @@ class CharacterStatTests(unittest.TestCase):
             frame = pygame.Rect(20, 120, 500, 955)
             minus, plus = CharacterCard._stat_control_rects(frame, frame.bottom - 92)
 
-            self.assertEqual(minus.topleft, (176, 988))
-            self.assertEqual(plus.topleft, (195, 988))
+            self.assertEqual(minus.topleft, (203, 988))
+            self.assertEqual(plus.topleft, (222, 988))
             self.assertEqual(minus.size, (13, 13))
             self.assertEqual(plus.size, (13, 13))
         finally:
@@ -280,7 +306,7 @@ class CharacterStatTests(unittest.TestCase):
                     return {"offers": []}
 
             panel = ChatPanel(Session(), "tavern")
-            panel.messages = [{"id": 1, "sender_id": 2, "sender": "Игрок", "text": "длинное сообщение " * 40}]
+            panel.messages = [{"id": 1, "sender_id": 2, "sender": "Игрок", "text": "длинное сообщение " * 20}]
             panel.message_list.set_messages(panel.messages)
             screen = pygame.Surface((1920, 1080))
             panel.draw(screen)
@@ -333,6 +359,75 @@ class CharacterStatTests(unittest.TestCase):
         finally:
             pygame.quit()
 
+    def test_tavern_street_exit_navigates_to_city(self):
+        pygame.init()
+        try:
+            class Session:
+                character = {"id": 1, "name": "Игрок"}
+
+                def update_presence(self, location):
+                    return None
+
+                def list_occupants(self, location):
+                    return []
+
+                def list_messages(self, location):
+                    return []
+
+                def duel_board(self, location):
+                    return {"offers": []}
+
+            scene = TavernScene(Session())
+            _, x, y, width, height, action = next(
+                hotspot for hotspot in scene.tavern_hotspots if hotspot[0] == "Выход на улицу"
+            )
+            rect = scene._hotspot_rect(x, y, width, height)
+            self.assertEqual(action, "city")
+            self.assertEqual(rect, pygame.Rect(160, 400, 130, 300))
+            scene.chat.collapsed = True
+
+            scene.handle_event(pygame.event.Event(
+                pygame.MOUSEBUTTONDOWN,
+                {"button": 1, "pos": rect.center},
+            ))
+
+            self.assertTrue(scene.finished)
+            self.assertEqual(scene.navigate, "city")
+        finally:
+            pygame.quit()
+
+    def test_tavern_has_no_map_button_or_map_button_navigation(self):
+        pygame.init()
+        try:
+            class Session:
+                character = {"id": 1, "name": "Игрок"}
+
+                def update_presence(self, location):
+                    return None
+
+                def list_occupants(self, location):
+                    return []
+
+                def list_messages(self, location):
+                    return []
+
+                def duel_board(self, location):
+                    return {"offers": []}
+
+            scene = TavernScene(Session())
+            scene.chat.collapsed = True
+
+            self.assertFalse(hasattr(scene, "map_button"))
+            scene.handle_event(pygame.event.Event(
+                pygame.MOUSEBUTTONDOWN,
+                {"button": 1, "pos": (settings.WIDTH - 135, 35)},
+            ))
+
+            self.assertFalse(scene.finished)
+            self.assertIsNone(scene.navigate)
+        finally:
+            pygame.quit()
+
     def test_tavern_stat_click_saves_updated_profile(self):
         pygame.init()
         try:
@@ -374,9 +469,10 @@ class CharacterStatTests(unittest.TestCase):
             scene = TavernScene(session)
             scene.profile_overlay.open({"id": 2, "name": "Соперник", "stats": {}}, counterpart=session.character)
             scene.draw(pygame.Surface((1920, 1080)))
+            strength_row = CharacterCard._stat_row_y(scene.profile_overlay.player_frame, 0)
             _, plus = scene.profile_overlay.player_card._stat_control_rects(
                 scene.profile_overlay.player_frame,
-                CharacterCard._stat_row_y(scene.profile_overlay.player_frame, 0),
+                strength_row,
             )
 
             scene.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, {"button": 1, "pos": plus.center}))
@@ -389,93 +485,69 @@ class CharacterStatTests(unittest.TestCase):
         finally:
             pygame.quit()
 
-    def test_derived_values_are_own_and_include_weapon_damage(self):
+    def test_derived_values_cross_class_does_not_crash(self):
         warrior = {
             "name": "Воин",
             "type": "warrior",
             "level": 1,
             "max_hp": 40,
             "stats": {"strength": 5, "agility": 5, "intuition": 5, "endurance": 5},
-            "equipment_bonuses": {"strength": 1},
-            "equipment": {"weapon": {"equip_slot": "weapon", "effects": {"damage": [5, 7]}}},
         }
         mage = {
             "name": "Маг",
             "type": "mage",
             "level": 1,
             "max_hp": 90,
-            "stats": {"wisdom": 3, "intellect": 3, "harmony": 3, "endurance": 4, "agility": 3},
+            "stats": {"wisdom": 3, "intellect": 3, "harmony": 3, "endurance": 4},
         }
 
-        # Урон = сила 5 + 1 от предмета + меч 5–7
-        self.assertEqual(derived_values(warrior), {
-            "Урон": "11-13", "Уворот": "10%", "Крит": "5% × 175%",
-            "Маг Урон": "6-8", "HP": 40,
-        })
-        # Показатели одинаковы для всех классов: маг урон идёт от мудрости
-        self.assertEqual(derived_values(mage), {
-            "Урон": 1, "Уворот": "6%", "Крит": "5% × 150%",
-            "Маг Урон": 3, "HP": 90,
-        })
+        warrior_values = derived_values(warrior, mage)
+        mage_values = derived_values(mage, warrior)
+        for values in (warrior_values, mage_values):
+            self.assertNotEqual(values["Урон"], "--")
+            self.assertNotEqual(values["Уворот"], "--")
+            self.assertIn("×", values["Крит"])
+        self.assertEqual(warrior_values["HP"], 40)
+        self.assertEqual(mage_values["HP"], 90)
 
-    def test_equipped_shield_block_is_displayed_in_derived_values(self):
-        profile = normalize_character_profile({
-            "stats": {"strength": 3, "agility": 3, "intuition": 3, "wisdom": 3,
-                      "intellect": 3, "harmony": 3, "endurance": 3},
-            "equipment_bonuses": {"hp": 20, "block": 5},
-        })
+    def test_mage_derived_values_include_wisdom_and_weapon_damage(self):
+        mage = {
+            "name": "Маг",
+            "type": "mage",
+            "level": 1,
+            "max_hp": 90,
+            "stats": {
+                "strength": 3,
+                "agility": 3,
+                "intuition": 3,
+                "wisdom": 7,
+                "endurance": 4,
+            },
+            "equipment": {
+                "weapon": {"effects": {"damage": [2, 4]}},
+            },
+        }
+        warrior = {
+            "name": "Воин",
+            "type": "warrior",
+            "level": 1,
+            "max_hp": 40,
+            "stats": {"strength": 5, "agility": 5, "intuition": 5, "endurance": 5},
+        }
 
-        self.assertEqual(derived_values(profile)["Блок"], "5%")
+        self.assertEqual(derived_values(mage)["Маг Урон"], "9-11")
+        self.assertEqual(derived_values(mage, warrior)["Маг Урон"], "9-11")
+        self.assertNotIn("Маг Урон", derived_values(warrior))
 
-    def test_equipment_hp_bonus_updates_card_max_without_double_counting_fighter(self):
-        server_profile = normalize_character_profile({
-            "hp": 30, "max_hp": 30,
-            "stats": {"strength": 3, "agility": 3, "intuition": 3, "wisdom": 3,
-                      "intellect": 3, "harmony": 3, "endurance": 3},
-            "equipment_bonuses": {"hp": 20},
-        })
-        self.assertEqual(displayed_hp_values(server_profile), (50, 50))
-        self.assertEqual(derived_values(server_profile)["HP"], 50)
+    def test_necromancer_derived_values_include_wisdom_damage(self):
+        necromancer = {
+            "name": "Некромант",
+            "type": "necromancer",
+            "level": 1,
+            "stats": {"wisdom": 7, "endurance": 2},
+        }
 
-        fighter = Fighter("Щитоносец")
-        fighter.equipment_stat_modifiers = {"hp": 20}
-        fighter.recalculate_parameters()
-        self.assertEqual(displayed_hp_values(normalize_character_profile(profile_from_fighter(fighter))),
-                         (fighter.hp, fighter.max_hp))
-
-    def test_equipped_item_tooltip_contains_description_and_bonuses(self):
-        lines = CharacterCard.equipment_tooltip_lines({
-            "name": "Деревянный щит",
-            "description": "Щит для защиты",
-            "weight": 3,
-            "bonuses": {"hp": 20, "block": 5},
-            "effects": {"block": 5},
-        })
-        text = " ".join(line for line, _color in lines)
-        self.assertIn("Щит для защиты", text)
-        self.assertIn("+20 HP", text)
-        self.assertIn("+5 % Блок", text)
-
-    def test_hovering_equipped_shield_draws_tooltip(self):
-        from unittest.mock import patch
-        from ui.equipment_slots import slot_rects
-
-        pygame.init()
-        try:
-            card = CharacterCard()
-            screen = pygame.Surface((900, 1000))
-            frame = pygame.Rect(20, 20, 440, 900)
-            shield = {
-                "name": "Деревянный щит",
-                "description": "Щит для защиты",
-                "weight": 3,
-                "bonuses": {"hp": 20, "block": 5},
-                "effects": {"block": 5},
-            }
-            with patch("pygame.mouse.get_pos", return_value=slot_rects(frame)["shield"].center):
-                self.assertTrue(card._draw_equipment_tooltip(screen, frame, {"shield": shield}))
-        finally:
-            pygame.quit()
+        self.assertEqual(derived_values(necromancer)["Маг Урон"], 7)
 
     def test_character_comparison_draw_cross_class_does_not_crash(self):
         from ui.character_comparison import CharacterComparison

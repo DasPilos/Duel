@@ -1,39 +1,20 @@
 import pygame
-import math
 
 from ui.hud import draw_button
 
 
 class ExitMenu:
-    QUIT_DURATION = 5.0
-
     def __init__(self):
         self.is_open = False
         self.page = "main"
         self.error = ""
         self.rect = pygame.Rect(0, 0, 500, 390)
         self.buttons = {}
-        self.quit_remaining = None
 
     def open(self, error=None):
         self.is_open = True
         self.page = "main"
         self.error = error or ""
-        self.quit_remaining = None
-
-    @property
-    def quitting(self):
-        return self.quit_remaining is not None
-
-    def begin_quit(self):
-        self.is_open = False
-        self.quit_remaining = self.QUIT_DURATION
-
-    def update_quit(self, dt):
-        if not self.quitting:
-            return False
-        self.quit_remaining = max(0.0, self.quit_remaining - max(0.0, dt))
-        return self.quit_remaining <= 0.0
 
     def handle_event(self, event):
         if not self.is_open:
@@ -61,15 +42,6 @@ class ExitMenu:
         return None
 
     def draw(self, screen, font, small_font):
-        if self.quitting:
-            progress = 1.0 - self.quit_remaining / self.QUIT_DURATION
-            shade = pygame.Surface(screen.get_size(), pygame.SRCALPHA)
-            shade.fill((0, 0, 0, min(240, int(progress * 240))))
-            screen.blit(shade, (0, 0))
-            countdown = max(1, math.ceil(self.quit_remaining))
-            label = small_font.render(f"Выход через {countdown}...", True, (235, 225, 205))
-            screen.blit(label, label.get_rect(center=screen.get_rect().center))
-            return
         if not self.is_open:
             return
         self.rect.center = screen.get_rect().center

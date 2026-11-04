@@ -40,9 +40,71 @@ class InventoryTests(unittest.TestCase):
             )
 
     def test_base_equipment_grant_is_idempotent(self):
-        self.assertTrue(self.items.grant_base_equipment(self.character_id))
         self.assertFalse(self.items.grant_base_equipment(self.character_id))
-        self.assertEqual({item["item_id"] for item in self.items.get_inventory(self.character_id)}, {90, 91, 92, 93})
+        self.assertFalse(self.items.grant_base_equipment(self.character_id))
+        self.assertEqual(self.items.get_inventory(self.character_id), [])
+
+    def test_supplies_shop_purchase_debits_currency_and_adds_item(self):
+        with self.database.connection() as connection:
+            connection.execute(
+                "UPDATE characters SET coins = 300 WHERE id = %s",
+                (self.character_id,),
+            )
+
+        catalog = self.items.get_supplies_shop_catalog()
+        self.assertEqual({item["item_id"] for item in catalog}, {4, 5, 6, 7, 52})
+        result = self.items.buy_supplies_item(self.user_id, self.character_id, 4)
+        self.assertEqual(result["character"]["coins"], 285)
+        self.assertEqual(
+            next(item["quantity"] for item in result["inventory"]["inventory"] if item["item_id"] == 4),
+            1,
+        )
+
+        result = self.items.buy_supplies_item(self.user_id, self.character_id, 6)
+        self.assertEqual(result["character"]["coins"], 280)
+        result = self.items.buy_supplies_item(self.user_id, self.character_id, 7)
+        self.assertEqual(result["character"]["coins"], 235)
+        self.assertEqual(
+            next(item["quantity"] for item in result["inventory"]["inventory"] if item["item_id"] == 7),
+            1,
+        )
+
+    def test_regeneration_potion_is_available_for_45_coins(self):
+        with self.database.connection() as connection:
+            connection.execute(
+                "UPDATE characters SET coins = 45 WHERE id = %s",
+                (self.character_id,),
+            )
+
+        result = self.items.buy_supplies_item(self.user_id, self.character_id, 7)
+
+        self.assertEqual(result["character"]["coins"], 0)
+        potion = next(
+            item for item in result["inventory"]["inventory"]
+            if item["item_id"] == 7
+        )
+        self.assertEqual(potion["quantity"], 1)
+        self.assertEqual(potion["effects"]["heal_per_turn"], 6)
+        self.assertEqual(potion["effects"]["duration"], 5)
+
+    def test_supplies_shop_client_api_round_trip(self):
+        character = self.database.get_character(self.user_id, self.character_id)
+        self.database.save_character(self.user_id, self.character_id, {
+            **character, "copper": 0, "silver": 2, "gold": 0,
+        })
+        with patch.object(GameRequestHandler, "items_database", self.items):
+            with running_server(self.database) as client:
+                client.login("tester", "password")
+                catalog = client.get_supplies_shop_catalog()
+                self.assertEqual({item["item_id"] for item in catalog}, {4, 5, 6, 7, 52})
+                result = client.buy_supplies_item(self.character_id, 52)
+
+        self.assertEqual(result["character"]["silver"], 0)
+        self.assertEqual(result["character"]["copper"], 0)
+        self.assertIn(
+            52,
+            {item["item_id"] for item in result["inventory"]["inventory"]},
+        )
 
     def test_equipment_migration_replaces_old_gear_and_keeps_materials(self):
         self.items.add_to_inventory(self.character_id, 20, 1)
@@ -59,25 +121,51 @@ class InventoryTests(unittest.TestCase):
         self.assertEqual({item["item_id"] for item in items}, {60, 90, 91, 92, 93})
         self.assertEqual(next(item["quantity"] for item in items if item["item_id"] == 60), 3)
 
+    def test_simplified_equipment_migration_keeps_hands_and_returns_removed_slots(self):
+        self.items.add_to_inventory(self.character_id, 20, 1)
+        self.items.add_to_inventory(self.character_id, 40, 1)
+        self.items.add_to_inventory(self.character_id, 90, 1)
+        with self.database.connection() as connection:
+            connection.execute(
+                "DELETE FROM character_items WHERE character_id = %s",
+                (self.character_id,),
+            )
+            connection.execute(
+                """INSERT INTO character_equipment (character_id, slot, item_id, equipped_at)
+                   VALUES (%s, 'weapon', 20, 1), (%s, 'ring', 40, 2), (%s, 'shield', 90, 3)""",
+                (self.character_id, self.character_id, self.character_id),
+            )
+
+        migration = (
+            Path(__file__).resolve().parents[1]
+            / "server"
+            / "migrations"
+            / "0055_simplify_equipment_slots.sql"
+        )
+        with self.database.connection() as connection:
+            connection.execute(migration.read_text(encoding="utf-8"))
+
+        equipment = self.items.get_equipment(self.character_id)
+        inventory = self.items.get_inventory(self.character_id)
+        self.assertEqual(equipment["hands"]["item_id"], 20)
+        self.assertEqual([item["item_id"] for item in inventory], [40])
+
     def test_paperdoll_matches_reference_positions_and_labels(self):
         rects = slot_rects((5, 10, 440, 1065))
         self.assertEqual(rects["head"].topleft, (192, 348))
-        self.assertEqual(rects["ears"].topleft, (20, 348))
-        self.assertEqual(rects["neck"].topleft, (361, 348))
-        self.assertEqual(rects["weapon"].topleft, (280, 520))
-        self.assertEqual(rects["shield"].topleft, (115, 520))
-        self.assertEqual(rects["ring_2"].topleft, (361, 520))
-        self.assertEqual(rects["legs"].y - rects["belt"].y, 86)
+        self.assertEqual(rects["body"].topleft, (192, 434))
+        self.assertEqual(rects["hands"].topleft, (20, 520))
+        self.assertEqual(rects["legs"].y - rects["body"].y, 172)
         self.assertEqual(rects["feet"].y - rects["legs"].y, 86)
-        self.assertEqual(SLOT_LABELS["weapon"], "Л рука")
-        self.assertEqual(SLOT_LABELS["shield"], "П рука")
+        self.assertEqual(rects["artifact"].topleft, (25, 807))
+        self.assertEqual(set(rects), {"hands", "head", "body", "legs", "feet", "artifact"})
+        self.assertEqual(SLOT_LABELS["hands"], "Руки")
+        self.assertEqual(SLOT_LABELS["artifact"], "Артефакт")
         self.assertEqual(SLOT_OPACITY, 65)
 
         wide_rects = slot_rects((550, 100, 700, 800))
-        self.assertLess(wide_rects["shield"].centerx, wide_rects["belt"].centerx)
-        self.assertGreater(wide_rects["weapon"].centerx, wide_rects["belt"].centerx)
-        self.assertFalse(wide_rects["shield"].colliderect(wide_rects["belt"]))
-        self.assertFalse(wide_rects["weapon"].colliderect(wide_rects["belt"]))
+        self.assertFalse(wide_rects["hands"].colliderect(wide_rects["body"]))
+        self.assertFalse(wide_rects["artifact"].colliderect(wide_rects["feet"]))
 
     def test_every_catalog_icon_has_a_valid_png_placeholder(self):
         placeholders = Path(__file__).resolve().parents[1] / "assets" / "fighters" / "equipment" / "placeholders"
@@ -154,10 +242,10 @@ class InventoryTests(unittest.TestCase):
         self.assertFalse(self.items.add_to_inventory(self.character_id, 2, 1))
         self.assertEqual(len(self.bag()), BACKPACK_SIZE)
 
-    def test_inventory_rejects_items_over_carry_capacity(self):
-        self.assertTrue(self.items.add_to_inventory(self.character_id, 60, 6))
-        self.assertFalse(self.items.add_to_inventory(self.character_id, 60, 1))
-        self.assertEqual(self.items.get_inventory_state(self.character_id)["carried_weight_kg"], 24)
+    def test_inventory_allows_items_beyond_old_carry_capacity(self):
+        self.assertTrue(self.items.add_to_inventory(self.character_id, 60, 50))
+        inventory = self.items.get_inventory(self.character_id)
+        self.assertEqual(sum(row["quantity"] for row in inventory if row["item_id"] == 60), 50)
 
     def test_inventory_snapshot_refreshes_card_profile_with_full_item_weights(self):
         from types import SimpleNamespace
@@ -180,30 +268,26 @@ class InventoryTests(unittest.TestCase):
         })
 
         self.assertEqual(window.session.character["inventory"]["0"]["weight"], 4.0)
-        self.assertEqual(window.session.character["carried_weight_kg"], 9.0)
+        self.assertNotIn("carried_weight_kg", window.session.character)
 
-    def test_carried_weight_includes_backpack_and_equipment_once(self):
+    def test_inventory_state_keeps_equipment_and_inventory_separate(self):
         self.set_strength(100)
-        self.assertTrue(self.items.grant_base_equipment(self.character_id))
-        inventory = self.items.get_inventory(self.character_id)
-        self.assertEqual(len(inventory), 4)
-        self.assertEqual(self.items.get_inventory_state(self.character_id)["carried_weight_kg"], 4.0)
-
-        self.items.equip_item(self.character_id, inventory[0]["slot_index"])
+        self.items.add_to_inventory(self.character_id, 20, 1)
+        self.items.add_to_inventory(self.character_id, 31, 1)
+        self.items.equip_item(self.character_id, 0)
         state = self.items.get_inventory_state(self.character_id)
 
-        self.assertEqual(len(state["inventory"]), 3)
-        self.assertEqual(set(state["equipment"]), {"weapon", "shield"})
-        self.assertTrue(state["equipment"]["shield"].get("_two_handed_shadow"))
-        self.assertEqual(state["carried_weight_kg"], 4.0)
+        self.assertEqual(len(state["inventory"]), 1)
+        self.assertEqual(set(state["equipment"]), {"hands"})
 
-    def test_battle_reward_stays_unclaimed_when_it_exceeds_carry_capacity(self):
-        self.assertTrue(self.items.add_to_inventory(self.character_id, 60, 6))
+    def test_battle_reward_can_be_claimed_beyond_old_carry_capacity(self):
+        self.assertTrue(self.items.add_to_inventory(self.character_id, 60, 50))
         reward_id = self.items.add_reward(self.character_id, 60, 1)
 
-        self.assertFalse(self.items.claim_reward(reward_id, self.character_id))
-        self.assertEqual(len(self.items.get_rewards(self.character_id)), 1)
-        self.assertEqual(self.items.get_inventory_state(self.character_id)["carried_weight_kg"], 24)
+        self.assertTrue(self.items.claim_reward(reward_id, self.character_id))
+        self.assertEqual(len(self.items.get_rewards(self.character_id)), 0)
+        inventory = self.items.get_inventory(self.character_id)
+        self.assertEqual(sum(row["quantity"] for row in inventory if row["item_id"] == 60), 51)
 
     def test_remove_inventory_item_endpoint_decrements_requested_quantity(self):
         self.set_strength(100)
@@ -265,35 +349,23 @@ class InventoryTests(unittest.TestCase):
         self.items.add_to_inventory(self.character_id, 20, 1)  # железный меч, ячейка 0
         self.items.add_to_inventory(self.character_id, 21, 1)  # стальной меч, ячейка 1
         self.items.equip_item(self.character_id, 0)
-        self.items.equip_item(self.character_id, 1, "weapon")
-        self.assertEqual(self.items.get_equipment(self.character_id)["weapon"]["item_id"], 21)
+        self.items.equip_item(self.character_id, 1, "hands")
+        self.assertEqual(self.items.get_equipment(self.character_id)["hands"]["item_id"], 21)
         self.assertEqual(self.bag()[1]["item_id"], 20)
         self.assertEqual(self.items.get_stat_bonuses(self.character_id), {"strength": 2, "intuition": 1})
 
-    def test_two_handed_item_fills_and_locks_both_hands(self):
-        self.items.add_to_inventory(self.character_id, 90, 1)
-        self.items.add_to_inventory(self.character_id, 38, 1)
-
-        self.items.equip_item(self.character_id, 0, "shield")
-        equipment = self.items.get_equipment(self.character_id)
-        self.assertEqual(equipment["weapon"]["item_id"], 90)
-        self.assertEqual(equipment["shield"]["item_id"], 90)
-        self.assertTrue(equipment["shield"]["_two_handed_shadow"])
-        with self.assertRaisesRegex(ValueError, "двуручным предметом"):
-            self.items.equip_item(self.character_id, 1, "shield")
-        self.assertEqual(self.bag()[1]["item_id"], 38)
-
+    def test_old_weapon_and_shield_slot_names_map_to_hands(self):
+        self.items.add_to_inventory(self.character_id, 20, 1)
+        self.items.equip_item(self.character_id, 0, "weapon")
+        self.assertEqual(set(self.items.get_equipment(self.character_id)), {"hands"})
         self.items.unequip_item(self.character_id, "shield")
         self.assertEqual(self.items.get_equipment(self.character_id), {})
-        self.assertEqual(sorted(item["item_id"] for item in self.bag().values()), [38, 90])
 
-    def test_ring_can_be_equipped_in_both_ring_slots(self):
+    def test_ring_cannot_be_equipped_in_removed_slots(self):
         self.items.add_to_inventory(self.character_id, 40, 1)
-        self.items.add_to_inventory(self.character_id, 40, 1)
-        slots = sorted(self.bag())
-        self.items.equip_item(self.character_id, slots[0], "ring")
-        self.items.equip_item(self.character_id, slots[1], "ring_2")
-        self.assertEqual(set(self.items.get_equipment(self.character_id)), {"ring", "ring_2"})
+        with self.assertRaises(ValueError):
+            self.items.equip_item(self.character_id, 0, "ring")
+        self.assertEqual(self.bag()[0]["item_id"], 40)
 
     def test_equip_rejects_wrong_slot_and_non_equipment(self):
         self.items.add_to_inventory(self.character_id, 20, 1)
@@ -336,13 +408,10 @@ class InventoryTests(unittest.TestCase):
         self.items.equip_item(self.character_id, 0)
         character = self.database.get_character(self.user_id, self.character_id)
         self.assertEqual(character["equipment_bonuses"], {"endurance": 2})
-        self.assertEqual(
-            character["carry_capacity_kg"],
-            character["stats"]["strength"] * 5 + (character["stats"]["endurance"] + 2) * 3,
-        )
+        self.assertNotIn("carry_capacity_kg", character)
         battle = self.database.get_character_for_battle(self.character_id)["character"]
         self.assertEqual(battle["equipment_bonuses"], {"endurance": 2})
-        self.assertEqual(battle["carry_capacity_kg"], character["carry_capacity_kg"])
+        self.assertNotIn("carry_capacity_kg", battle)
 
     def test_shield_bonuses_reach_battle_fighter(self):
         from scenes.duel_scene import DuelScene
@@ -356,7 +425,13 @@ class InventoryTests(unittest.TestCase):
 
         self.assertEqual(fighter.equipment_stat_modifiers["hp"], 20)
         self.assertEqual(fighter.equipment_stat_modifiers["block"], 5)
-        self.assertEqual(fighter.max_hp, 50)
+        character_without_equipment_bonuses = {
+            **character,
+            "equipment_bonuses": {},
+        }
+        base_fighter = Fighter("Щитоносец")
+        DuelScene._apply_fighter_profile(base_fighter, character_without_equipment_bonuses)
+        self.assertEqual(fighter.max_hp, base_fighter.max_hp + 20)
 
     def test_fighter_uses_equipment_bonus_without_changing_base_stats(self):
         fighter = Fighter("Воин")
@@ -386,12 +461,8 @@ class InventoryApiTests(unittest.TestCase):
             client.login("bagowner", "password")
             character = client.create_character("Носильщик")
             state = client.get_inventory(character["id"])
-            self.assertEqual(
-                {item["item_id"] for item in state["inventory"]},
-                {90, 91, 92, 93},
-            )
-            self.assertEqual(len(state["inventory"]), 4)
-            self.assertEqual(len(client.get_inventory(character["id"])["inventory"]), 4)
+            self.assertEqual(state["inventory"], [])
+            self.assertEqual(client.get_inventory(character["id"])["inventory"], [])
             self.assertEqual(state["capacity"], BACKPACK_SIZE)
 
             with self.assertRaises(ServerError):

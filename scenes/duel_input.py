@@ -29,22 +29,47 @@ class DuelInputHandler:
             return
         if event.type == pygame.KEYDOWN:
             if event.key == pygame.K_ESCAPE:
+                if self.scene.burn_mode:
+                    self.scene.burn_mode = False
+                    self.scene.burn_card_key = None
+                    return
                 self.scene.return_to_tavern = True
                 return
             if event.key == pygame.K_b and self.scene.phase == "planning":
-                selected = self.scene.battle.selected["player"]
-                if selected:
-                    self.scene.battle.burn_card("player", selected[0].key)
+                battle = self.scene.battle
+                if battle.burned_this_turn["player"]:
+                    return
+                if self.scene.burn_mode and self.scene.burn_card_key is not None:
+                    if battle.burn_card("player", self.scene.burn_card_key):
+                        self.scene.burn_mode = False
+                        self.scene.burn_card_key = None
+                    return
+                if self.scene.burn_mode:
+                    self.scene.burn_mode = False
+                    self.scene.burn_card_key = None
+                else:
+                    self.scene.burn_mode = True
+                    self.scene.burn_card_key = None
                 return
 
         if event.type == pygame.MOUSEWHEEL:
-            self._handle_log_scroll(event.y)
+            card_renderer = self.scene.renderer.card_renderer
+            if card_renderer.details_card is not None:
+                card_renderer.scroll_details(event.y)
+            else:
+                self._handle_log_scroll(event.y)
             return
 
         if (
             event.type != pygame.MOUSEBUTTONDOWN
             or event.button not in (1, 3)
         ):
+            return
+
+        card_renderer = self.scene.renderer.card_renderer
+        if card_renderer.details_card is not None:
+            if event.button == 1:
+                card_renderer.close_details()
             return
 
         from ui.character_card import CharacterCard
@@ -63,7 +88,7 @@ class DuelInputHandler:
         if self.scene.phase == "resolve":
             return
 
-        if event.button == 3 and self.scene.renderer.card_renderer.handle_details_click(event.pos):
+        if event.button == 3 and card_renderer.handle_details_click(event.pos):
             return
 
         if self.scene.layout.hide_player_card_button.collidepoint(event.pos):
@@ -78,6 +103,24 @@ class DuelInputHandler:
         if self.scene.phase in ("draft", "planning"):
             self._handle_card_phase(event.pos, event.button)
             return
+        if self.scene.phase == "card_draw_choice":
+            self._handle_draw_choice(event.pos, event.button)
+            return
+
+    def _handle_draw_choice(self, pos, button):
+        if button != 1:
+            return
+        choices = self.scene.battle.draw_choices["player"]
+        choice_area = self.scene.renderer.card_renderer.draw_choice_area("player")
+        for index, card in enumerate(choices):
+            rect = self.scene.renderer.card_renderer.card_rect(
+                choice_area,
+                len(choices),
+                index,
+            )
+            if rect.collidepoint(pos):
+                self.scene.choose_draw_choice(card.key)
+                return
 
     def _handle_log_scroll(self, direction):
         current_offset = getattr(
@@ -117,9 +160,38 @@ class DuelInputHandler:
             return
 
         if button == 1 and layout.play_cards_button.collidepoint(pos):
-            battle.confirm_selection("player")
-            self.scene.enemy_wait_started = time.monotonic()
-            self.scene.phase = "waiting_enemy"
+            if self.scene.burn_mode:
+                card_key = self.scene.burn_card_key
+                if card_key is not None and battle.burn_card("player", card_key):
+                    self.scene.burn_mode = False
+                    self.scene.burn_card_key = None
+                return
+            self.scene.submit_player_turn()
+            return
+
+        if self.scene.burn_mode:
+            if button == 1:
+                burn_card = next(
+                    (card for card in battle.hands["player"] if card.key == self.scene.burn_card_key),
+                    None,
+                )
+                if burn_card is not None:
+                    burn_rect = self.scene.renderer.card_renderer.card_rect(
+                        layout.player_selected, 1, 0
+                    )
+                    if burn_rect.collidepoint(pos):
+                        self.scene.burn_card_key = None
+                        return
+                visible_hand = [card for card in battle.hands["player"] if card not in battle.selected["player"]]
+                for index, card in enumerate(visible_hand):
+                    hand_rect = self.scene.renderer.card_renderer.card_rect(
+                        layout.player_hand, len(visible_hand), index
+                    )
+                    if hand_rect.collidepoint(pos):
+                        self.scene.burn_card_key = (
+                            None if self.scene.burn_card_key == card.key else card.key
+                        )
+                        return
             return
 
         if button == 1:
@@ -141,6 +213,4 @@ class DuelInputHandler:
             if hand_rect.collidepoint(pos):
                 if button == 1:
                     battle.select_card("player", card.key)
-                elif button == 3:
-                    battle.deselect_card("player", card.key)
                 return

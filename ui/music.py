@@ -23,7 +23,7 @@ def _reset_music_volume():
     global _duck_state
     _duck_state = "idle"
     try:
-        pygame.mixer.music.set_volume(1.0)
+        pygame.mixer.music.set_volume(_music_base_volume)
     except pygame.error:
         pass
 
@@ -34,13 +34,14 @@ def fade_out_all_music(duration_ms=2000):
     _tavern_music_active = False
     _duck_state = "idle"
     try:
-        pygame.mixer.music.set_volume(1.0)
+        pygame.mixer.music.set_volume(_music_base_volume)
         pygame.mixer.music.fadeout(int(duration_ms))
     except pygame.error:
         pass
 
 
 _music_base_volume = 1.0
+_sfx_volume = 1.0
 _duck_state = "idle"  # "idle" | "down" | "held" | "up"
 _duck_phase_elapsed = 0.0
 _duck_start_volume = 1.0
@@ -48,6 +49,29 @@ _duck_target_volume = 0.5
 _duck_release_at = 0.0
 DUCK_FADE_DOWN_SECONDS = 0.020
 DUCK_FADE_UP_SECONDS = 0.030
+
+
+def set_music_volume(volume):
+    global _music_base_volume
+    _music_base_volume = max(0.0, min(1.0, float(volume)))
+    if pygame.mixer.get_init():
+        pygame.mixer.music.set_volume(_music_base_volume)
+
+
+def set_sfx_volume(volume):
+    global _sfx_volume
+    _sfx_volume = max(0.0, min(1.0, float(volume)))
+    if not pygame.mixer.get_init():
+        return
+    sounds = (
+        _draft_cards_deal_sound,
+        _critical_hit_sound,
+        _card_move_sound,
+        *(_dodge_sounds or ()),
+        *(_damage_sounds or ()),
+    )
+    for sound in sounds:
+        sound.set_volume(_sfx_volume)
 
 
 def duck_battle_music(duration=1.2, volume=0.5):
@@ -73,7 +97,7 @@ def duck_battle_music(duration=1.2, volume=0.5):
     else:
         # Уже приглушено (fade down/held) — просто продлеваем время удержания.
         _duck_release_at = max(_duck_release_at, now + duration)
-    _duck_target_volume = volume
+    _duck_target_volume = max(0.0, min(1.0, volume)) * _music_base_volume
 
 
 def update_music_ducking(dt):
@@ -115,7 +139,7 @@ def play_draft_music():
     _reset_music_volume()
     try:
         pygame.mixer.music.stop()
-        pygame.mixer.music.set_volume(1.0)
+        pygame.mixer.music.set_volume(_music_base_volume)
         pygame.mixer.music.load(str(DRAFT_MUSIC_PATH))
         pygame.mixer.music.play(loops=-1)
     except (pygame.error, OSError):
@@ -134,7 +158,7 @@ def play_battle_music():
     _reset_music_volume()
     try:
         pygame.mixer.music.stop()
-        pygame.mixer.music.set_volume(1.0)
+        pygame.mixer.music.set_volume(_music_base_volume)
         pygame.mixer.music.load(str(random.choice(BATTLE_MUSIC_PATHS)))
         pygame.mixer.music.play(loops=-1)
     except (pygame.error, OSError):
@@ -151,6 +175,7 @@ def stop_battle_music():
 def _play_random_tavern_track():
     try:
         pygame.mixer.music.load(str(random.choice(TAVERN_MUSIC_PATHS)))
+        pygame.mixer.music.set_volume(_music_base_volume)
         pygame.mixer.music.play()
     except (pygame.error, OSError):
         pass
@@ -197,6 +222,7 @@ def play_draft_cards_deal_sound():
         _draft_cards_deal_sound_loaded = True
         try:
             _draft_cards_deal_sound = pygame.mixer.Sound(str(DRAFT_CARDS_DEAL_SOUND_PATH))
+            _draft_cards_deal_sound.set_volume(_sfx_volume)
         except (pygame.error, OSError):
             _draft_cards_deal_sound = None
     if _draft_cards_deal_sound is not None:
@@ -218,6 +244,7 @@ def play_critical_hit_sound():
         _critical_hit_sound_loaded = True
         try:
             _critical_hit_sound = pygame.mixer.Sound(str(CRITICAL_HIT_SOUND_PATH))
+            _critical_hit_sound.set_volume(_sfx_volume)
         except (pygame.error, OSError):
             _critical_hit_sound = None
     if _critical_hit_sound is not None:
@@ -243,6 +270,8 @@ def play_dodge_sound():
         _dodge_sounds_loaded = True
         try:
             _dodge_sounds = [pygame.mixer.Sound(str(path)) for path in DODGE_SOUND_PATHS]
+            for sound in _dodge_sounds:
+                sound.set_volume(_sfx_volume)
         except (pygame.error, OSError):
             _dodge_sounds = []
     for sound in _dodge_sounds or []:
@@ -265,6 +294,7 @@ def play_card_move_sound():
         _card_move_sound_loaded = True
         try:
             _card_move_sound = pygame.mixer.Sound(str(CARD_MOVE_SOUND_PATH))
+            _card_move_sound.set_volume(_sfx_volume)
         except (pygame.error, OSError):
             _card_move_sound = None
     if _card_move_sound is not None:
@@ -289,6 +319,8 @@ def play_damage_sound():
         _damage_sounds_loaded = True
         try:
             _damage_sounds = [pygame.mixer.Sound(str(path)) for path in DAMAGE_SOUND_PATHS]
+            for sound in _damage_sounds:
+                sound.set_volume(_sfx_volume)
         except (pygame.error, OSError):
             _damage_sounds = []
     if _damage_sounds:

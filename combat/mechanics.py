@@ -46,16 +46,23 @@ def get_block_chance(defender):
 
 
 def get_critical_chance(attacker, defender):
-    """Return the base critical chance — no longer affected by either fighter's stats."""
-    return clamp_chance(BASE_CRITICAL_CHANCE)
+    """Return class base critical chance; stats do not modify it."""
+    if attacker is None:
+        return clamp_chance(BASE_CRITICAL_CHANCE)
+    from combat.character_stats import get_profession_data
+
+    profession = get_profession_data(getattr(attacker, "profession_type", None))
+    base_chance = profession.get("base_crit", BASE_CRITICAL_CHANCE) if profession else BASE_CRITICAL_CHANCE
+    return clamp_chance(base_chance)
 
 
 def weapon_damage_range(equipment):
     """(мин, макс) урона надетого оружия или None. Урон хранится в effects["damage"] = [мин, макс]."""
-    weapon = (equipment or {}).get("weapon") or {}
+    equipment = equipment or {}
+    weapon = equipment.get("weapon") or equipment.get("hands") or {}
     damage = (weapon.get("effects") or {}).get("damage")
     if not damage or damage == [0, 0] or damage == (0, 0):
-        shield = (equipment or {}).get("shield") or {}
+        shield = equipment.get("shield") or {}
         shield_damage = (shield.get("effects") or {}).get("damage")
         if shield_damage and shield_damage != [0, 0] and shield_damage != (0, 0):
             damage = shield_damage
@@ -67,6 +74,20 @@ def weapon_damage_range(equipment):
     return min(low, high), max(low, high)
 
 
+def weapon_fixed_damage(equipment):
+    """Фиксированный урон оружия за удар: максимум диапазона, 0 без оружия"""
+    damage = weapon_damage_range(equipment)
+    return damage[1] if damage else 0
+
+
 def get_critical_damage_multiplier(attacker):
     """Return the critical damage multiplier boosted by the attacker's own intuition."""
-    return BASE_CRITICAL_MULTIPLIER + attacker.intuition * CRITICAL_DAMAGE_PER_INTUITION
+    from combat.character_stats import get_profession_data
+
+    profession = get_profession_data(getattr(attacker, "profession_type", None))
+    class_bonus = profession.get("base_crit_damage_bonus", 0) if profession else 0
+    return (
+        BASE_CRITICAL_MULTIPLIER
+        + class_bonus / 100
+        + attacker.intuition * CRITICAL_DAMAGE_PER_INTUITION
+    )

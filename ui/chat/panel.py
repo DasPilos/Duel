@@ -29,6 +29,7 @@ class ChatPanel:
         self.messages = []
         self.offers = []
         self.group_offers = []
+        self.coop = {"party": None, "incoming": []}
         self.my_application = None
         self.private_target = None
         self.duel_accepted = None
@@ -36,6 +37,10 @@ class ChatPanel:
         self.last_character_position = None
         self.people_scroll = 0
         self.afk_challenge_buttons = {}
+        self.coop_invite_buttons = {}
+        self.coop_accept_buttons = {}
+        self.coop_decline_buttons = {}
+        self.coop_leave_button = None
         self.error = ""
         self.elapsed = 0.0
         self.background_poller = None
@@ -165,6 +170,7 @@ class ChatPanel:
         self.message_list.set_messages(self._visible_messages())
         self.offers = state["offers"]
         self.group_offers = state.get("group_offers", [])
+        self.coop = state.get("coop") or {"party": None, "incoming": []}
         server_application = state["my_application"]
         if server_application is not None and server_application.get("status") == "accepted" and self.duel_accepted is None:
             self._resolve_application_opponent(server_application)
@@ -250,11 +256,31 @@ class ChatPanel:
         if event.button == 1 and self.divider_rect.inflate(6, 0).collidepoint(event.pos):
             self.dragging_divider = True
             return True
+        if (
+            event.button == 1 and self.coop_leave_button is not None
+            and self.coop_leave_button.collidepoint(event.pos)
+        ):
+            self._leave_coop_party()
+            return True
         row_height = 28
         visible_rows = max(1, self.people_rect.height // row_height)
         for visible_index, occupant in enumerate(self.occupants[self.people_scroll:self.people_scroll + visible_rows]):
             rect = pygame.Rect(self.people_rect.x, self.people_rect.y + visible_index * row_height, self.people_rect.width, 25)
             if rect.collidepoint(event.pos):
+                character_id = str(occupant.get("character_id"))
+                if event.button == 1:
+                    accept = self.coop_accept_buttons.get(character_id)
+                    if accept is not None and accept.collidepoint(event.pos):
+                        self._respond_coop_invite(occupant, True)
+                        return True
+                    decline = self.coop_decline_buttons.get(character_id)
+                    if decline is not None and decline.collidepoint(event.pos):
+                        self._respond_coop_invite(occupant, False)
+                        return True
+                    invite = self.coop_invite_buttons.get(character_id)
+                    if invite is not None and invite.collidepoint(event.pos):
+                        self._invite_coop_member(occupant)
+                        return True
                 challenge_button = self.afk_challenge_buttons.get(str(occupant.get("character_id")))
                 if (event.button == 1 and challenge_button is not None
                         and challenge_button.collidepoint(event.pos)):
@@ -298,6 +324,48 @@ class ChatPanel:
             else:
                 self.error = result.get("message", "Не удалось начать поединок")
         except ServerError as error:
+            self.error = str(error)
+
+    def _invite_coop_member(self, occupant):
+        try:
+            result = self.session.create_coop_invite(
+                occupant.get("character_id")
+            )
+            if result.get("party"):
+                self.coop["party"] = result["party"]
+            self.error = "Приглашение в отряд отправлено"
+        except (ServerError, AttributeError) as error:
+            self.error = str(error)
+
+    def _respond_coop_invite(self, occupant, accepted):
+        character_id = str(occupant.get("character_id"))
+        invite = next(
+            (
+                item for item in self.coop.get("incoming", [])
+                if str(item.get("sender_id")) == character_id
+            ),
+            None,
+        )
+        if invite is None:
+            return
+        try:
+            result = self.session.respond_coop_invite(
+                invite["id"], accepted
+            )
+            if accepted:
+                self.coop["party"] = result.get("party")
+            self.coop["incoming"] = [
+                item for item in self.coop.get("incoming", [])
+                if item.get("id") != invite["id"]
+            ]
+        except (ServerError, AttributeError) as error:
+            self.error = str(error)
+
+    def _leave_coop_party(self):
+        try:
+            self.session.leave_coop_party()
+            self.coop["party"] = None
+        except (ServerError, AttributeError) as error:
             self.error = str(error)
 
     def _challenge_bot(self, bot):
@@ -392,7 +460,27 @@ class ChatPanel:
         self.message_list.draw(screen, own_id)
         self.message_input.draw(screen)
         people_x = self.people_rect.x
-        draw_text(screen, pygame.font.SysFont("arial", 17), self.room_name, people_x, self.panel_rect.y + 14, (255, 220, 120))
+        party = self.coop.get("party") if self.location == "world_map" else None
+        if party:
+            party_text = (
+                f"ОТРЯД {len(party.get('members', []))}/"
+                f"{party.get('max_members', 3)}"
+            )
+            draw_text(
+                screen, pygame.font.SysFont("arial", 15), party_text,
+                people_x, self.panel_rect.y + 14, (155, 220, 255),
+            )
+            self.coop_leave_button = pygame.Rect(
+                self.people_rect.right - 64, self.panel_rect.y + 10, 58, 23
+            )
+            draw_button(
+                screen, self.coop_leave_button, "ВЫЙТИ",
+                pygame.font.SysFont("arial", 11), color=(80, 60, 65),
+                text_color=(240, 205, 205),
+            )
+        else:
+            self.coop_leave_button = None
+            draw_text(screen, pygame.font.SysFont("arial", 17), self.room_name, people_x, self.panel_rect.y + 14, (255, 220, 120))
         previous_clip = screen.get_clip()
         track_rect = pygame.Rect(self.people_rect.right - 8, self.people_rect.y + 4, 4, self.people_rect.height - 8)
         pygame.draw.rect(screen, (50, 55, 66), track_rect, border_radius=3)
@@ -401,6 +489,9 @@ class ChatPanel:
         max_scroll = max(0, len(self.occupants) - visible_rows)
         self.people_scroll = max(0, min(max_scroll, self.people_scroll))
         self.afk_challenge_buttons = {}
+        self.coop_invite_buttons = {}
+        self.coop_accept_buttons = {}
+        self.coop_decline_buttons = {}
         if max_scroll:
             thumb_height = max(18, int((visible_rows / max(1, len(self.occupants))) * (self.people_rect.height - 14)))
             thumb_y = self.people_rect.y + 7 + int(self.people_scroll / max_scroll * (self.people_rect.height - 14 - thumb_height))
@@ -424,6 +515,49 @@ class ChatPanel:
                 self.afk_challenge_buttons[str(occupant.get("character_id"))] = challenge_button
                 draw_button(screen, challenge_button, "ДУЭЛЬ", pygame.font.SysFont("arial", 12),
                             color=(91, 63, 50), text_color=(228, 207, 174))
+            if (
+                self.location == "world_map"
+                and occupant.get("kind") != "bot"
+                and not is_afk
+                and str(occupant.get("character_id")) != str(own_id)
+            ):
+                character_id = str(occupant.get("character_id"))
+                incoming = next(
+                    (
+                        item for item in self.coop.get("incoming", [])
+                        if str(item.get("sender_id")) == character_id
+                    ),
+                    None,
+                )
+                row_top = self.people_rect.y + visible_index * row_height + 1
+                if incoming is not None:
+                    accept = pygame.Rect(
+                        self.people_rect.right - 122, row_top, 58, 23
+                    )
+                    decline = pygame.Rect(
+                        self.people_rect.right - 62, row_top, 58, 23
+                    )
+                    self.coop_accept_buttons[character_id] = accept
+                    self.coop_decline_buttons[character_id] = decline
+                    draw_button(
+                        screen, accept, "ПРИНЯТЬ", pygame.font.SysFont("arial", 10),
+                        color=(48, 104, 67), text_color=(225, 245, 225),
+                    )
+                    draw_button(
+                        screen, decline, "ОТКЛОН.", pygame.font.SysFont("arial", 10),
+                        color=(105, 57, 57), text_color=(245, 220, 220),
+                    )
+                elif not party or len(party.get("members", [])) < party.get(
+                    "max_members", 3
+                ):
+                    invite = pygame.Rect(
+                        self.people_rect.right - 66, row_top, 62, 23
+                    )
+                    self.coop_invite_buttons[character_id] = invite
+                    draw_button(
+                        screen, invite, "В ОТРЯД", pygame.font.SysFont("arial", 10),
+                        color=(45, 80, 110), text_color=(220, 235, 250),
+                    )
         screen.set_clip(previous_clip)
         if self.error:
             draw_text(screen, pygame.font.SysFont("arial", 14), self.error, self.panel_rect.x + 12, self.panel_rect.bottom - 20, (255, 120, 100))

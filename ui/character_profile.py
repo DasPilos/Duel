@@ -5,20 +5,45 @@ from combat.character_stats import (
     calculate_max_hp,
     is_debug_unlimited,
     minimum_endurance,
+    normalize_profession_type,
 )
-from combat.mechanics import get_critical_chance, get_dodge_chance, get_critical_damage_multiplier, weapon_damage_range
-from core.carry_weight import carried_weight_kg
+from combat.talents import talent_effects
+from combat.mechanics import (
+    get_critical_chance,
+    get_critical_damage_multiplier,
+    get_dodge_chance,
+    weapon_damage_range,
+)
 
 
 DEFAULT_STATS = {
-    "strength": 5,
-    "agility": 5,
-    "intuition": 5,
-    "wisdom": 5,
-    "intellect": 5,
-    "harmony": 5,
-    "endurance": 5,
+    "strength": 2,
+    "agility": 2,
+    "intuition": 2,
+    "wisdom": 2,
+    "intellect": 2,
+    "harmony": 2,
+    "endurance": 2,
 }
+
+DERIVED_COLORS = {
+    "Урон": (255, 255, 255),
+    "Маг Урон": (190, 150, 255),
+    "Уворот": (150, 220, 255),
+    "Крит": (255, 90, 90),
+    "HP": (110, 235, 120),
+    "Блок": (150, 210, 255),
+}
+
+STAT_ROWS = (
+    ("strength", "Сила", "Урон"),
+    ("agility", "Ловкость", "Уворот"),
+    ("intuition", "Интуиция", "Крит"),
+    ("wisdom", "Мудрость", "Маг Урон"),
+    ("intellect", "Интеллект", None),
+    ("harmony", "Гармония", None),
+    ("endurance", "Выносливость", "Блок"),
+)
 
 
 def normalize_character_profile(profile, *, title=None, kind="player"):
@@ -29,6 +54,7 @@ def normalize_character_profile(profile, *, title=None, kind="player"):
             "id": getattr(data, "id", getattr(data, "character_id", None)),
             "character_id": getattr(data, "character_id", getattr(data, "id", None)),
             "type": getattr(data, "type", "warrior"),
+            "profession_type": getattr(data, "profession_type", getattr(data, "type", "warrior")),
             "name": getattr(data, "name", "Персонаж"),
             "level": getattr(data, "level", 1),
             "xp": getattr(data, "xp", 0),
@@ -37,15 +63,16 @@ def normalize_character_profile(profile, *, title=None, kind="player"):
             "mp": getattr(data, "mp", 0),
             "max_mp": getattr(data, "max_mp", 0),
             "stats": dict(getattr(data, "stats", {})),
+            "talents": dict(getattr(data, "talents", {})),
             "stat_points": getattr(data, "stat_points", 0),
             "copper": getattr(data, "copper", 0),
             "silver": getattr(data, "silver", 0),
             "gold": getattr(data, "gold", 0),
+            "coins": getattr(data, "coins", 0),
             "inventory": dict(getattr(data, "inventory", {})),
             "equipment": dict(getattr(data, "equipment", {})),
             "equipment_bonuses": dict(getattr(data, "equipment_stat_modifiers", {})),
             "max_hp_includes_equipment": True,
-            "carried_weight_kg": getattr(data, "carried_weight_kg", 0),
             "kind": kind,
         }
     elif isinstance(data, dict):
@@ -53,6 +80,7 @@ def normalize_character_profile(profile, *, title=None, kind="player"):
             "id": data.get("id", data.get("character_id", None)),
             "character_id": data.get("character_id", data.get("id", None)),
             "type": data.get("type", "warrior"),
+            "profession_type": data.get("profession_type", data.get("type", "warrior")),
             "name": data.get("name", "Персонаж"),
             "level": int(data.get("level", 1)),
             "xp": data.get("xp", 0),
@@ -61,15 +89,16 @@ def normalize_character_profile(profile, *, title=None, kind="player"):
             "mp": data.get("mp", data.get("current_mp", 0)),
             "max_mp": data.get("max_mp", data.get("mp_max", 0)),
             "stats": dict(data.get("stats", {})),
+            "talents": dict(data.get("talents", {})),
             "stat_points": data.get("stat_points", 0),
             "copper": int(data.get("copper", 0)),
             "silver": int(data.get("silver", 0)),
             "gold": int(data.get("gold", 0)),
+            "coins": int(data.get("coins", 0)),
             "inventory": dict(data.get("inventory", {})),
             "equipment": dict(data.get("equipment", {})),
             "equipment_bonuses": dict(data.get("equipment_bonuses", {})),
             "max_hp_includes_equipment": bool(data.get("max_hp_includes_equipment", False)),
-            "carried_weight_kg": float(data.get("carried_weight_kg", 0)),
             "kind": kind,
         }
     else:
@@ -77,6 +106,7 @@ def normalize_character_profile(profile, *, title=None, kind="player"):
             "id": None,
             "character_id": None,
             "type": "warrior",
+            "profession_type": "warrior",
             "name": "Персонаж",
             "level": 1,
             "xp": 0,
@@ -85,40 +115,80 @@ def normalize_character_profile(profile, *, title=None, kind="player"):
             "mp": 0,
             "max_mp": 0,
             "stats": {},
+            "talents": {},
             "stat_points": 0,
             "copper": 0,
             "silver": 0,
             "gold": 0,
+            "coins": 0,
             "inventory": {},
             "equipment": {},
             "equipment_bonuses": {},
             "max_hp_includes_equipment": False,
-            "carried_weight_kg": 0,
             "kind": kind,
         }
 
     profile_dict["max_hp"] = max(int(profile_dict["max_hp"]), 1)
+    profile_dict["type"] = normalize_profession_type(profile_dict["type"])
+    profile_dict["profession_type"] = normalize_profession_type(profile_dict["profession_type"])
     profile_dict["max_mp"] = max(int(profile_dict["max_mp"]), 1)
     profile_dict["hp"] = min(int(profile_dict["hp"]), profile_dict["max_hp"])
     profile_dict["mp"] = min(int(profile_dict["mp"]), profile_dict["max_mp"])
     profile_dict["title"] = title
     if not profile_dict["stats"]:
         profile_dict["stats"] = dict(DEFAULT_STATS)
-
-    inventory = profile_dict.get("inventory", {})
-    inventory_items = list(inventory.values()) if isinstance(inventory, dict) else list(inventory or [])
-    equipment = profile_dict.get("equipment", {})
-    reported_weight = float(profile_dict.get("carried_weight_kg", 0) or 0)
-    calculated_weight = carried_weight_kg(inventory_items, equipment)
-    if reported_weight <= 0 < calculated_weight:
-        profile_dict["carried_weight_kg"] = calculated_weight
+    if profile_dict["type"] == "assassin":
+        old_max_hp = int(profile_dict["max_hp"])
+        old_hp = int(profile_dict["hp"])
+        assassin_max_hp = calculate_max_hp(
+            profile_dict["level"],
+            profile_dict["stats"].get("endurance", minimum_endurance(profile_dict["level"])),
+            "assassin",
+        )
+        if profile_dict["max_hp_includes_equipment"]:
+            assassin_max_hp += int(profile_dict["equipment_bonuses"].get("hp", 0))
+        profile_dict["max_hp"] = max(1, assassin_max_hp)
+        if old_max_hp > 0 and old_hp < old_max_hp:
+            profile_dict["hp"] = int(old_hp * profile_dict["max_hp"] / old_max_hp)
+        else:
+            profile_dict["hp"] = profile_dict["max_hp"]
+        profile_dict["hp"] = min(max(0, profile_dict["hp"]), profile_dict["max_hp"])
 
     return profile_dict
 
 
+def profile_from_fighter(fighter):
+    """Создаёт профиль карточки из действующего бойца без привязки к рендеру."""
+    return {
+        "id": getattr(fighter, "id", None),
+        "character_id": getattr(fighter, "character_id", getattr(fighter, "id", None)),
+        "name": getattr(fighter, "name", "Персонаж"),
+        "type": getattr(fighter, "profession_type", "warrior"),
+        "profession_type": getattr(fighter, "profession_type", "warrior"),
+        "level": getattr(fighter, "level", 1),
+        "xp": getattr(fighter, "xp", 0),
+        "hp": getattr(fighter, "hp", 0),
+        "max_hp": getattr(fighter, "max_hp", 0),
+        "mp": getattr(fighter, "mp", 0),
+        "max_mp": getattr(fighter, "max_mp", 0),
+        "stats": getattr(fighter, "stats", {}),
+        "talents": getattr(fighter, "talents", {}),
+        "stat_points": getattr(fighter, "stat_points", 0),
+        "equipment": dict(getattr(fighter, "equipment", {})),
+        "equipment_bonuses": dict(getattr(fighter, "equipment_stat_modifiers", {})),
+        "max_hp_includes_equipment": True,
+    }
+
+
 def effective_stats(profile):
-    """Характеристики с учётом бонусов надетых предметов — то, что показывает карточка."""
     stats = dict(profile.get("stats", {}))
+    talent_bonus = talent_effects(
+        profile.get("type", "warrior"),
+        profile.get("talents", {}),
+        profile.get("level", 1),
+    )["all_stats"]
+    for stat_name in stats:
+        stats[stat_name] = int(stats[stat_name]) + talent_bonus
     for stat_name, value in (profile.get("equipment_bonuses") or {}).items():
         if stat_name in stats:
             stats[stat_name] = int(stats[stat_name]) + int(value)
@@ -126,7 +196,6 @@ def effective_stats(profile):
 
 
 def displayed_hp_values(profile):
-    """Return current/max HP including equipped bonuses without double-counting fighters."""
     base_max_hp = int(profile.get("max_hp", 1))
     hp_bonus = 0 if profile.get("max_hp_includes_equipment") else int(
         (profile.get("equipment_bonuses") or {}).get("hp", 0)
@@ -136,27 +205,6 @@ def displayed_hp_values(profile):
     if hp_bonus > 0 and current >= base_max_hp:
         current += hp_bonus
     return min(current, maximum), maximum
-
-
-def profile_from_fighter(fighter):
-    """Создаёт профиль карточки из действующего бойца без привязки к рендеру."""
-    return {
-        "id": getattr(fighter, "id", None),
-        "character_id": getattr(fighter, "character_id", getattr(fighter, "id", None)),
-        "name": getattr(fighter, "name", "Персонаж"),
-        "level": getattr(fighter, "level", 1),
-        "xp": getattr(fighter, "xp", 0),
-        "hp": getattr(fighter, "hp", 0),
-        "max_hp": getattr(fighter, "max_hp", 0),
-        "mp": getattr(fighter, "mp", 0),
-        "max_mp": getattr(fighter, "max_mp", 0),
-        "stats": getattr(fighter, "stats", {}),
-        "stat_points": getattr(fighter, "stat_points", 0),
-        "equipment": dict(getattr(fighter, "equipment", {})),
-        "equipment_bonuses": dict(getattr(fighter, "equipment_stat_modifiers", {})),
-        "max_hp_includes_equipment": True,
-        "carried_weight_kg": float(getattr(fighter, "carried_weight_kg", 0)),
-    }
 
 
 def adjust_profile_stat(profile, stat_name, delta):
@@ -187,72 +235,71 @@ def adjust_profile_level(profile, delta):
     if new_level == profile["level"]:
         return False
     profile["level"] = new_level
-    profile["stats"]["endurance"] = max(profile["stats"].get("endurance", 0), minimum_endurance(new_level))
     profile["max_hp"] = calculate_max_hp(new_level, profile["stats"]["endurance"])
     profile["hp"] = profile["max_hp"]
     return True
 
 
-# Блок характеристик — один для ВСЕХ классов: (стат, подпись, показатель напротив или None).
-# Меняется здесь — меняется на карточках всех персонажей.
-STAT_ROWS = (
-    ("strength", "Сила", "Урон"),
-    ("agility", "Ловкость", "Уворот"),
-    ("intuition", "Интуиция", "Крит"),
-    ("wisdom", "Мудрость", "Маг Урон"),
-    ("intellect", "Интеллект", None),
-    ("harmony", "Гармония", None),
-    ("endurance", "Выносливость", "Блок"),
-)
-
-# Цвета показателей напротив характеристик
-DERIVED_COLORS = {
-    "Урон": (255, 255, 255),
-    "Уворот": (150, 220, 255),
-    "Крит": (255, 90, 90),
-    "Маг Урон": (180, 100, 240),
-    "HP": (110, 235, 120),
-    "Блок": (150, 210, 255),
-}
-
-
-def _damage_text(base, weapon):
-    """Урон от стата + урон оружия (от–до): одно число или «мин-макс»"""
-    base = max(1, int(base))
-    if weapon is None:
-        return base
-    if weapon[0] == weapon[1]:
-        return base + weapon[0]
-    return f"{base + weapon[0]}-{base + weapon[1]}"
-
-
-def derived_values(profile):
-    """Собственные боевые показатели персонажа — без сравнения с соперником.
-
-    Урон = сила + урон оружия, Маг Урон = мудрость + урон оружия (от–до).
-    Уворот — от своей ловкости, крит — базовый шанс. Одинаково для всех классов."""
-    stats = effective_stats(profile)
-    weapon = weapon_damage_range(profile.get("equipment"))
-    equipment_bonuses = dict(profile.get("equipment_bonuses") or {})
-    own = SimpleNamespace(
-        agility=int(stats.get("agility", 0)),
-        intuition=int(stats.get("intuition", 0)),
-        equipment_stat_modifiers=equipment_bonuses,
+def derived_values(profile, opponent=None):
+    """Возвращает значения боя для отображения в карточке персонажа."""
+    fighter_stats = effective_stats(profile)
+    for stat_name, default in DEFAULT_STATS.items():
+        fighter_stats.setdefault(stat_name, default)
+    fighter = SimpleNamespace(
+        **fighter_stats,
+        profession_type=profile.get("profession_type", profile.get("type", "warrior")),
+        equipment_stat_modifiers=profile.get("equipment_bonuses", {}),
     )
+    weapon_damage = weapon_damage_range(profile.get("equipment"))
 
-    # Рассчитать крит урон
-    crit_chance = int(get_critical_chance(None, None))
-    crit_multiplier = get_critical_damage_multiplier(own)
-    crit_damage = int(crit_multiplier * 100)
+    def damage_with_weapon(base_damage):
+        base_damage = max(1, int(base_damage))
+        if weapon_damage is None:
+            return base_damage
+        minimum, maximum = weapon_damage
+        minimum += base_damage
+        maximum += base_damage
+        return minimum if minimum == maximum else f"{minimum}-{maximum}"
 
+    magic_damage = None
+    if normalize_profession_type(fighter.profession_type) in {"mage", "necromancer"}:
+        fighter_stats.setdefault("wisdom", 2)
+        fighter.wisdom = fighter_stats["wisdom"]
+        magic_damage = damage_with_weapon(fighter.wisdom)
+
+    if opponent is None:
+        base_damage = max(1, int(fighter.strength))
+        values = {
+            "Урон": damage_with_weapon(base_damage),
+            "Уворот": f"{int(get_dodge_chance(None, fighter))}%",
+            "Крит": (
+                f"{int(get_critical_chance(fighter, None))}% × "
+                f"{int(get_critical_damage_multiplier(fighter) * 100)}%"
+            ),
+            "HP": displayed_hp_values(profile)[1],
+        }
+        if magic_damage is not None:
+            values["Маг Урон"] = magic_damage
+        return values
+
+    opponent = normalize_character_profile(opponent)
+    enemy_stats = effective_stats(opponent)
+    for stat_name, default in DEFAULT_STATS.items():
+        enemy_stats.setdefault(stat_name, default)
+    enemy = SimpleNamespace(
+        **enemy_stats,
+        profession_type=opponent.get("profession_type", opponent.get("type", "warrior")),
+        equipment_stat_modifiers=opponent.get("equipment_bonuses", {}),
+    )
     values = {
-        "Урон": _damage_text(stats.get("strength", 0), weapon),
-        "Уворот": f"{int(get_dodge_chance(None, own))}%",
-        "Крит": f"{crit_chance}% × {crit_damage}%",
-        "Маг Урон": _damage_text(stats.get("wisdom", 0), weapon),
+        "Урон": max(1, int(fighter.strength * 2 - enemy.endurance * 0.5)),
+        "Уворот": f"{int(get_dodge_chance(enemy, fighter))}%",
+        "Крит": (
+            f"{int(get_critical_chance(fighter, enemy))}% × "
+            f"{int(get_critical_damage_multiplier(fighter) * 100)}%"
+        ),
         "HP": displayed_hp_values(profile)[1],
     }
-    block = int(equipment_bonuses.get("block", 0))
-    if block:
-        values["Блок"] = f"{block}%"
+    if magic_damage is not None:
+        values["Маг Урон"] = magic_damage
     return values

@@ -1,3 +1,5 @@
+import uuid
+
 from client.network import GameClient, ServerError
 from core import settings
 
@@ -118,6 +120,19 @@ class OnlineSession:
     def social_snapshot(self, location, position=None):
         return self.client.social_snapshot(location, self.character["id"], position=position)
 
+    def create_coop_invite(self, target_id):
+        return self.client.create_coop_invite(
+            self.character["id"], target_id
+        )
+
+    def respond_coop_invite(self, invite_id, accepted):
+        return self.client.respond_coop_invite(
+            self.character["id"], invite_id, accepted
+        )
+
+    def leave_coop_party(self):
+        return self.client.leave_coop_party(self.character["id"])
+
     def mark_chat_read(self, location, message_id):
         return self.client.mark_chat_read(self.character["id"], location, message_id)
 
@@ -137,9 +152,11 @@ class OnlineSession:
         return self.client.send_message(self.character["id"], location, text, recipient_id)
 
     def offer_duel(self, location, target_id):
+        self.refresh_character()
         return self.client.offer_duel(self.character["id"], location, target_id)
 
     def create_duel_application(self, location, ttl=120):
+        self.refresh_character()
         return self.client.create_duel_application(self.character["id"], location, ttl)
 
     def cancel_duel_application(self, location):
@@ -152,15 +169,19 @@ class OnlineSession:
         return self.client.list_duel_offers(location)
 
     def respond_duel_offer(self, offer_id, accepted):
+        if accepted:
+            self.refresh_character()
         return self.client.respond_duel_offer(self.character["id"], offer_id, accepted)
 
     def list_group_battles(self):
         return self.client.list_group_battles()
 
     def create_group_battle(self, location="backyard", ttl=120, max_participants=10):
+        self.refresh_character()
         return self.client.create_group_battle(self.character["id"], location, ttl, max_participants)
 
     def join_group_battle(self, offer_id, location="backyard"):
+        self.refresh_character()
         return self.client.join_group_battle(offer_id, self.character["id"], location)
 
     def leave_group_battle(self, offer_id):
@@ -192,6 +213,7 @@ class OnlineSession:
             opponent_hp=(opponent or {}).get("hp"),
             opponent_mp=(opponent or {}).get("mp"),
             battle_record=battle_record,
+            battle_id=uuid.uuid4().hex,
         )
         self.character = result["character"]
         for field in ("level", "xp", "stat_points", "hp", "mp"):
@@ -299,18 +321,17 @@ class OnlineSession:
         
         return self.client.get(f"character/{self.character['id']}/inventory")
 
-    def refresh_carrying_state(self):
-        """Refresh carried weight and equipment from the authoritative inventory API."""
+    def refresh_equipment_state(self):
+        """Refresh equipment bonuses from the authoritative inventory API."""
         if self.character is None:
             return None
         try:
             state = self.client.get_inventory(self.character["id"])
         except ServerError:
             return None
-        self.character["carried_weight_kg"] = float(state.get("carried_weight_kg", 0))
         self.character["equipment"] = dict(state.get("equipment", {}))
         self.character["equipment_bonuses"] = dict(state.get("bonuses", {}))
-        return self.character["carried_weight_kg"]
+        return state
 
     def get_card_collection(self):
         if self.character is None:

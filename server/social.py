@@ -1,6 +1,6 @@
 """Compatibility facade for the focused server social modules."""
 
-from server import bot_chat, chat_cache, duel_offers, group_offers, presence
+from server import bot_chat, chat_cache, coop, duel_offers, group_offers, presence
 
 
 PRESENCE_TTL = presence.PRESENCE_TTL
@@ -9,6 +9,8 @@ MESSAGES = chat_cache.MESSAGES
 DUEL_OFFER_TTL = duel_offers.DUEL_OFFER_TTL
 DUEL_OFFERS = duel_offers.DUEL_OFFERS
 GROUP_BATTLE_OFFERS = group_offers.GROUP_BATTLE_OFFERS
+COOP_PARTIES = coop.PARTIES
+COOP_INVITES = coop.INVITES
 BOT_TAVERN_REPLIES = bot_chat.BOT_TAVERN_REPLIES
 
 
@@ -48,5 +50,9 @@ join_group_battle_offer = group_offers.join_group_battle_offer
 group_battle_offers = group_offers.group_battle_offers
 group_battle_offer = group_offers.group_battle_offer
 leave_group_battle_offer = group_offers.leave_group_battle_offer
+coop_state = coop.state_for
+create_coop_invite = coop.create_invite
+respond_coop_invite = coop.respond_invite
+leave_coop_party = coop.leave_party
 
 record_bot_tavern_reply = bot_chat.record_bot_tavern_reply

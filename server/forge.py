@@ -2,7 +2,7 @@
 
 import time
 
-from core.currency import Currency
+
 from core.forge_recipes import FORGE_QUEUE_LIMIT, RECIPE_BY_ITEM
 from server.database import lock_character
 from server.production_buildings import DEFAULT_FACTION
@@ -158,15 +158,9 @@ class Forge:
 
             cost_copper = int(recipe.get("cost_copper", 0))
             if cost_copper > 0:
-                char_row = connection.execute(
-                    "SELECT copper, silver, gold FROM characters WHERE id = %s",
-                    (int(character_id),),
-                ).fetchone()
-                if char_row is None:
-                    raise ValueError("Персонаж не найден")
-                curr = Currency(char_row["copper"], char_row["silver"], char_row["gold"])
-                if not curr.has_enough_copper(cost_copper):
-                    raise ValueError(f"Недостаточно денег: требуется {Currency.format_amount(cost_copper)}")
+                raise ValueError(
+                    "Заказы кузницы с прежней денежной ценой временно отключены"
+                )
 
             for material_id, amount in recipe["materials"].items():
                 rows = connection.execute(
@@ -179,13 +173,6 @@ class Forge:
                     material = self.items._catalog_item(connection, int(material_id))
                     material_name = material["name"] if material else "материал"
                     raise ValueError(f"Недостаточно материала: {material_name} ×{amount}")
-
-            if cost_copper > 0:
-                curr.subtract_copper_amount(cost_copper)
-                connection.execute(
-                    "UPDATE characters SET copper = %s, silver = %s, gold = %s WHERE id = %s",
-                    (curr.copper, curr.silver, curr.gold, int(character_id)),
-                )
 
             for material_id, amount in recipe["materials"].items():
                 remaining = int(amount)

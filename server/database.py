@@ -5,6 +5,7 @@ import json
 import secrets
 import threading
 import time
+import uuid
 from contextlib import contextmanager
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -17,12 +18,18 @@ from combat.character_stats import (
     BASE_STAT_VALUE,
     MIN_STAT_VALUE,
     STARTING_STAT_POINTS,
-    calculate_carry_capacity,
     calculate_max_hp,
     calculate_max_mana,
+    is_valid_profession,
     minimum_endurance,
+    normalize_profession_type,
 )
+from combat.fighter import Fighter
+from combat.progression import apply_xp, battle_xp
+from combat.talents import derived_talent_values, talent_option
 from core.currency import Currency
+from core.quests import QUESTS_BY_ID
+from core.world_rewards import npc_kill_xp
 from server import config
 from server.migrations import apply_migrations
 
@@ -116,13 +123,23 @@ class Database:
             self._normalize_character_stats(connection)
 
     @staticmethod
+    def _rescale_hp(current_hp, old_max_hp, new_max_hp):
+        current_hp = max(0, int(current_hp))
+        old_max_hp = int(old_max_hp)
+        new_max_hp = max(1, int(new_max_hp))
+        if old_max_hp <= 0 or current_hp >= old_max_hp:
+            return new_max_hp if current_hp >= old_max_hp else min(current_hp, new_max_hp)
+        return min(new_max_hp, current_hp * new_max_hp // old_max_hp)
+
+    @staticmethod
     def _normalize_character_stats(connection):
         """Fill in any missing stats so every character (warrior or mage) has all 7."""
         rows = connection.execute(
-            "SELECT id, level, hp, mp, stats_json FROM characters"
+            "SELECT id, type, level, hp, max_hp, mp, stats_json FROM characters"
         ).fetchall()
         for row in rows:
-            stored = json.loads(row["stats_json"] or "{}")
+            character_type = normalize_profession_type(row["type"])
+            stored = json.loads(row["stats_json"] or "{}") if row["stats_json"] else {}
             level = row["level"]
             stats = {
                 "strength": max(MIN_STAT_VALUE, int(stored.get("strength", BASE_STAT_VALUE))),
@@ -133,16 +150,16 @@ class Database:
                 "harmony": max(MIN_STAT_VALUE, int(stored.get("harmony", BASE_STAT_VALUE))),
                 "endurance": max(minimum_endurance(level), int(stored.get("endurance", minimum_endurance(level)))),
             }
-            if stats == stored:
+            max_hp = calculate_max_hp(level, stats["endurance"], character_type)
+            if stats == stored and row["type"] == character_type and int(row["max_hp"]) == max_hp:
                 continue
-            max_hp = calculate_max_hp(level, stats["endurance"])
-            max_mp = calculate_max_mana(stats["intellect"])
+            max_mp = calculate_max_mana(stats["intellect"], character_type)
             connection.execute(
                 """UPDATE characters
-                   SET stats_json = %s, max_hp = %s, hp = LEAST(hp, %s),
+                         SET type = %s, stats_json = %s, max_hp = %s, hp = LEAST(hp, %s),
                       mp = LEAST(mp, %s), max_mp = %s
                    WHERE id = %s""",
-                (json.dumps(stats), max_hp, max_hp, row["mp"], max_mp, row["id"]),
+                (character_type, json.dumps(stats), max_hp, max_hp, row["mp"], max_mp, row["id"]),
             )
 
     @staticmethod
@@ -250,6 +267,56 @@ class Database:
                 (SYSTEM_USER_ID, now - config.ONLINE_PLAYER_TTL_SECONDS),
             ).fetchone()
         return int(row["amount"])
+
+    def list_worlds(self, now=None, viewer_id=None):
+        now = time.time() if now is None else float(now)
+        with self.connection() as connection:
+            rows = connection.execute(
+                "SELECT id, code, name, status, opens_at, closes_at, server_url, test_only "
+                "FROM worlds ORDER BY id"
+            ).fetchall()
+        if viewer_id is None or not self.is_moderator(viewer_id):
+            rows = [row for row in rows if not row["test_only"]]
+        return [self._world_payload(row, now) for row in rows]
+
+    @staticmethod
+    def _world_payload(row, now):
+        is_open = (
+            row["status"] == "open"
+            and (row["opens_at"] is None or row["opens_at"] <= now)
+            and (row["closes_at"] is None or row["closes_at"] > now)
+        )
+        return {
+            "id": row["id"],
+            "code": row["code"],
+            "name": row["name"],
+            "is_open": is_open,
+            "opens_at": row["opens_at"],
+            "closes_at": row["closes_at"],
+            "server_url": row["server_url"],
+        }
+
+    def lobby_members(self, now=None):
+        now = time.time() if now is None else float(now)
+        with self.connection() as connection:
+            rows = connection.execute(
+                """SELECT u.id AS user_id, u.username
+                   FROM sessions s JOIN users u ON u.id = s.user_id
+                   WHERE s.user_id <> %s AND s.last_seen_at > %s
+                   GROUP BY u.id, u.username
+                   ORDER BY u.username""",
+                (SYSTEM_USER_ID, now - config.ONLINE_PLAYER_TTL_SECONDS),
+            ).fetchall()
+        return [{"user_id": row["user_id"], "username": row["username"]} for row in rows]
+
+    def set_world_server(self, world_id, server_url):
+        with self.connection() as connection:
+            result = connection.execute(
+                "UPDATE worlds SET server_url = %s WHERE id = %s",
+                (server_url, int(world_id)),
+            )
+        if result.rowcount == 0:
+            raise ValueError("Мир не найден")
     
     def get_user(self, user_id):
         """Get user by ID with password hash"""
@@ -262,9 +329,9 @@ class Database:
 
     def create_character(self, user_id, name, profession_type="warrior"):
         self.validate_character_name(name)
-        valid_professions = ["warrior", "archer", "assassin", "battle_mage", "support_mage", "harmonist"]
-        if profession_type not in valid_professions:
-            raise ValueError(f"Профессия должна быть одной из: {', '.join(valid_professions)}")
+        profession_type = normalize_profession_type(profession_type)
+        if not is_valid_profession(profession_type):
+            raise ValueError("Профессия должна быть одной из: warrior, archer, assassin, mage")
         
         now = time.time()
         
@@ -279,20 +346,20 @@ class Database:
             "endurance": minimum_endurance(1),
         }
         
-        max_hp = calculate_max_hp(1, stats["endurance"])
-        max_mp = calculate_max_mana(stats["intellect"])
+        max_hp = calculate_max_hp(1, stats["endurance"], profession_type)
+        max_mp = calculate_max_mana(stats["intellect"], profession_type)
         stat_points = STARTING_STAT_POINTS
         try:
             with self.connection() as connection:
                 character_id = connection.execute(
                     """
                     INSERT INTO characters
-                    (user_id, world_id, name, type, hp, max_hp, mp, max_mp, stats_json, stat_points, copper, updated_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    (user_id, world_id, name, type, hp, max_hp, mp, max_mp, stats_json, stat_points, copper, coins, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     RETURNING id
                     """,
                     (user_id, self.world_id, name, profession_type, max_hp, max_hp, max_mp, max_mp,
-                     json.dumps(stats), stat_points, 1000, now),
+                     json.dumps(stats), stat_points, 0, 100, now),
                 ).fetchone()["id"]
         except pg_errors.UniqueViolation as error:
             if error.diag.constraint_name == "uq_characters_user_world":
@@ -336,21 +403,26 @@ class Database:
 
     def update_character_profession(self, user_id, character_id, profession_type):
         """Update the profession marker without changing character stats."""
-        valid_professions = ["warrior", "archer", "assassin", "battle_mage", "support_mage", "harmonist"]
-        if profession_type not in valid_professions:
-            raise ValueError(f"Профессия должна быть одной из: {', '.join(valid_professions)}")
+        profession_type = normalize_profession_type(profession_type)
+        if not is_valid_profession(profession_type):
+            raise ValueError("Профессия должна быть одной из: warrior, archer, assassin, mage")
         
         with self.connection() as connection:
             row = connection.execute(
-                "SELECT user_id FROM characters WHERE id = %s AND world_id = %s",
+                "SELECT user_id, level, hp, stats_json FROM characters WHERE id = %s AND world_id = %s",
                 (character_id, self.world_id),
             ).fetchone()
             if row is None or row["user_id"] != user_id:
                 raise ValueError("Персонаж не найден")
-            # Preserve stats; new characters receive them in create_character.
+            stats = json.loads(row["stats_json"] or "{}")
+            max_hp = calculate_max_hp(
+                row["level"],
+                stats.get("endurance", minimum_endurance(row["level"])),
+                profession_type,
+            )
             connection.execute(
-                "UPDATE characters SET type = %s WHERE id = %s",
-                (profession_type, character_id),
+                "UPDATE characters SET type = %s, max_hp = %s, hp = LEAST(hp, %s) WHERE id = %s",
+                (profession_type, max_hp, max_hp, character_id),
             )
         
         return self.get_character(user_id, character_id)
@@ -403,7 +475,6 @@ class Database:
                 character["inventory"] = inventory
                 character["equipment_bonuses"] = self.equipment_bonuses(connection, row["id"])
                 character["equipment"] = self.equipped_items(connection, row["id"])
-                self._update_carry_capacity(character)
                 characters.append(character)
 
             return characters
@@ -549,6 +620,16 @@ class Database:
             row = connection.execute("SELECT role FROM users WHERE id = %s", (user_id,)).fetchone()
         return row is not None and row["role"] in ("moderator", "admin")
 
+    def user_role(self, user_id):
+        with self.connection() as connection:
+            row = connection.execute(
+                "SELECT id, username, role FROM users WHERE id = %s",
+                (user_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {"id": row["id"], "username": row["username"], "role": row["role"]}
+
     def delete_chat_message(self, message_id, moderator_id):
         if not self.is_moderator(moderator_id):
             raise ValueError("Недостаточно прав модератора")
@@ -654,8 +735,6 @@ class Database:
             character["inventory"] = inventory
             character["equipment_bonuses"] = self.equipment_bonuses(connection, row["id"])
             character["equipment"] = self.equipped_items(connection, row["id"])
-            self._update_carry_capacity(character)
-
             return character
 
     def get_character_for_battle(self, character_id):
@@ -669,17 +748,7 @@ class Database:
             character = self._character_payload(row)
             character["equipment_bonuses"] = self.equipment_bonuses(connection, row["id"])
             character["equipment"] = self.equipped_items(connection, row["id"])
-            self._update_carry_capacity(character)
         return {"user_id": row["user_id"], "character": character}
-
-    @staticmethod
-    def _update_carry_capacity(character):
-        stats = character.get("stats", {})
-        bonuses = character.get("equipment_bonuses", {})
-        strength = int(stats.get("strength", BASE_STAT_VALUE)) + int(bonuses.get("strength", 0))
-        endurance = int(stats.get("endurance", minimum_endurance(character.get("level", 1))))
-        endurance += int(bonuses.get("endurance", 0))
-        character["carry_capacity_kg"] = calculate_carry_capacity(strength, endurance)
 
     @staticmethod
     def equipped_items(connection, character_id):
@@ -745,16 +814,9 @@ class Database:
         if current is None:
             raise ValueError("Персонаж не найден")
         
-        # Нормализуем валюту перед сохранением
-        currency = Currency(
-            copper=int(payload.get("copper", current["copper"])),
-            silver=int(payload.get("silver", current["silver"])),
-            gold=int(payload.get("gold", current["gold"])),
-        )
-        currency.normalize()
-        
         updated = {
             "name": str(payload.get("name", current["name"])),
+            "type": normalize_profession_type(str(payload.get("type", current.get("type", "warrior")))),
             "level": int(payload.get("level", current["level"])),
             "xp": int(payload.get("xp", current["xp"])),
             "hp": int(payload.get("hp", current["hp"])),
@@ -769,9 +831,8 @@ class Database:
             "position_y": (None if payload.get("position_y", current.get("position_y")) is None
                            else float(payload.get("position_y", current.get("position_y")))),
             "position_direction": payload.get("position_direction", current.get("position_direction")),
-            "copper": currency.copper,
-            "silver": currency.silver,
-            "gold": currency.gold,
+            "coins": int(current.get("coins", 0)),
+            "talents": dict(current.get("talents", {})),
         }
         # Единая проверка характеристик для всех типов персонажей (5 стартовых + 3 за уровень)
         level = updated["level"]
@@ -785,9 +846,12 @@ class Database:
             "harmony": max(MIN_STAT_VALUE, int(raw_stats.get("harmony", BASE_STAT_VALUE))),
             "endurance": max(minimum_endurance(level), int(raw_stats.get("endurance", minimum_endurance(level)))),
         }
-        updated["max_hp"] = calculate_max_hp(level, updated["stats"]["endurance"])
+        derived = derived_talent_values(
+            updated["type"], level, updated["stats"], updated["talents"]
+        )
+        updated["max_hp"] = derived["max_hp"]
         updated["hp"] = min(updated["hp"], updated["max_hp"])
-        updated["max_mp"] = calculate_max_mana(updated["stats"]["intellect"])
+        updated["max_mp"] = derived["max_mp"]
         updated["mp"] = min(updated["mp"], updated["max_mp"])
         self.validate_character_name(updated["name"])
         self._validate_character(updated)
@@ -797,7 +861,7 @@ class Database:
                 UPDATE characters SET name = %s, level = %s, xp = %s, hp = %s,
                 max_hp = %s, mp = %s, max_mp = %s, stats_json = %s, stat_points = %s,
                 zone = %s, position_x = %s, position_y = %s, position_direction = %s,
-                copper = %s, silver = %s, gold = %s, updated_at = %s
+                coins = %s, updated_at = %s
                 WHERE id = %s AND user_id = %s AND world_id = %s
                 """,
                 (
@@ -805,11 +869,257 @@ class Database:
                     updated["max_hp"], updated["mp"], updated["max_mp"],
                     json.dumps(updated["stats"]), updated["stat_points"],
                     updated["zone"], updated["position_x"], updated["position_y"],
-                    updated["position_direction"], updated["copper"], updated["silver"], updated["gold"],
-                    time.time(), character_id, user_id, self.world_id,
+                    updated["position_direction"], updated["coins"], time.time(),
+                    character_id, user_id, self.world_id,
                 ),
             )
         return self.get_character(user_id, character_id)
+
+    def choose_character_talent(self, user_id, character_id, level, choice_id):
+        level = int(level)
+        if not 1 <= level <= 10:
+            raise ValueError("Уровень таланта должен быть от 1 до 10")
+        with self.connection() as connection:
+            lock_character(connection, character_id)
+            row = connection.execute(
+                """SELECT type, level, talents_json FROM characters
+                   WHERE id = %s AND user_id = %s AND world_id = %s
+                   FOR UPDATE""",
+                (character_id, user_id, self.world_id),
+            ).fetchone()
+            if row is None:
+                raise ValueError("Персонаж не найден")
+            if int(row["level"]) < level:
+                raise ValueError("Для этого таланта уровень персонажа недостаточен")
+            option = talent_option(row["type"], level, choice_id)
+            if option is None:
+                raise ValueError("Такого выбора на этом уровне нет")
+            talents = json.loads(row["talents_json"] or "{}")
+            if not isinstance(talents, dict):
+                raise ValueError("Данные талантов персонажа повреждены")
+            if str(level) in talents:
+                raise ValueError("На этом уровне улучшение уже выбрано")
+            talents[str(level)] = option["id"]
+            connection.execute(
+                """UPDATE characters SET talents_json = %s, updated_at = %s
+                   WHERE id = %s AND user_id = %s AND world_id = %s""",
+                (
+                    json.dumps(talents, ensure_ascii=False),
+                    time.time(),
+                    character_id,
+                    user_id,
+                    self.world_id,
+                ),
+            )
+        return self.get_character(user_id, character_id)
+
+    def report_battle_result(self, user_id, character_id, outcome, opponent_level, hp, mp, request_id):
+        """Apply combat progress and victory currency once per battle request."""
+        outcome = str(outcome)
+        if outcome not in {"win", "draw", "loss"}:
+            raise ValueError("Некорректный результат боя")
+        request_id = str(request_id or "").strip()
+        if not request_id or len(request_id) > 128:
+            raise ValueError("Некорректный идентификатор боя")
+
+        with self.connection() as connection:
+            lock_character(connection, character_id)
+            row = connection.execute(
+                """SELECT * FROM characters
+                   WHERE id = %s AND user_id = %s AND world_id = %s
+                   FOR UPDATE""",
+                (character_id, user_id, self.world_id),
+            ).fetchone()
+            if row is None:
+                raise ValueError("Персонаж не найден")
+            if connection.execute(
+                """SELECT 1 FROM battle_result_receipts
+                   WHERE character_id = %s AND request_id = %s""",
+                (character_id, request_id),
+            ).fetchone():
+                raise ValueError("Результат боя уже засчитан")
+
+            current_level = int(row["level"])
+            character_type = normalize_profession_type(row["type"])
+            stats = json.loads(row["stats_json"] or "{}")
+            fighter = Fighter(row["name"], current_level, profession_type=character_type)
+            fighter.stats = {
+                "strength": max(MIN_STAT_VALUE, int(stats.get("strength", BASE_STAT_VALUE))),
+                "agility": max(MIN_STAT_VALUE, int(stats.get("agility", BASE_STAT_VALUE))),
+                "intuition": max(MIN_STAT_VALUE, int(stats.get("intuition", BASE_STAT_VALUE))),
+                "wisdom": max(MIN_STAT_VALUE, int(stats.get("wisdom", BASE_STAT_VALUE))),
+                "intellect": max(MIN_STAT_VALUE, int(stats.get("intellect", BASE_STAT_VALUE))),
+                "harmony": max(MIN_STAT_VALUE, int(stats.get("harmony", BASE_STAT_VALUE))),
+                "endurance": max(
+                    minimum_endurance(current_level),
+                    int(stats.get("endurance", minimum_endurance(current_level))),
+                ),
+            }
+            fighter.talents = json.loads(row["talents_json"] or "{}")
+            fighter.xp = int(row["xp"])
+            fighter.stat_points = int(row["stat_points"])
+            fighter.recalculate_parameters()
+            fighter.hp = min(max(0, int(hp)), fighter.max_hp)
+            fighter.mp = min(max(0, int(mp)), fighter.max_mp)
+
+            xp_awarded = battle_xp(current_level, int(opponent_level), outcome)
+            levels_gained = apply_xp(fighter, xp_awarded)
+            currency_reward = {"coins": 0}
+            now = time.time()
+
+            connection.execute(
+                """INSERT INTO battle_result_receipts
+                   (character_id, request_id, created_at) VALUES (%s, %s, %s)""",
+                (character_id, request_id, now),
+            )
+            connection.execute(
+                """UPDATE characters
+                   SET level = %s, xp = %s, hp = %s, max_hp = %s, mp = %s,
+                       max_mp = %s, stats_json = %s, stat_points = %s, updated_at = %s
+                   WHERE id = %s AND user_id = %s AND world_id = %s""",
+                (
+                    fighter.level, fighter.xp, fighter.hp, fighter.max_hp,
+                    fighter.mp, fighter.max_mp, json.dumps(fighter.stats),
+                    fighter.stat_points, now, character_id, user_id, self.world_id,
+                ),
+            )
+
+        return {
+            "character": self.get_character(user_id, character_id),
+            "xp": xp_awarded,
+            "levels_gained": levels_gained,
+            "currency": currency_reward,
+        }
+
+    def report_npc_kill_xp(self, user_id, character_id, encounter_id, defeated_types, request_id):
+        """Award fixed XP for defeated encounter enemies once per battle."""
+        encounter_id = str(encounter_id)
+        defeated_types = tuple(str(npc_type) for npc_type in defeated_types)
+        xp_awarded = npc_kill_xp(encounter_id, defeated_types)
+        request_id = str(request_id or "").strip()
+        if not request_id or len(request_id) > 128:
+            raise ValueError("Некорректный идентификатор боя")
+        try:
+            uuid.UUID(request_id)
+        except ValueError as error:
+            raise ValueError("Некорректный идентификатор боя") from error
+
+        with self.connection() as connection:
+            lock_character(connection, character_id)
+            row = connection.execute(
+                """SELECT * FROM characters
+                   WHERE id = %s AND user_id = %s AND world_id = %s
+                   FOR UPDATE""",
+                (character_id, user_id, self.world_id),
+            ).fetchone()
+            if row is None:
+                raise ValueError("Персонаж не найден")
+            receipt = connection.execute(
+                """INSERT INTO npc_kill_xp_receipts
+                   (character_id, request_id, encounter_id, xp_awarded, created_at)
+                   VALUES (%s, %s, %s, %s, %s)
+                   ON CONFLICT (character_id, request_id) DO NOTHING
+                   RETURNING request_id""",
+                (character_id, request_id, encounter_id, xp_awarded, time.time()),
+            ).fetchone()
+            if receipt is None:
+                raise ValueError("Опыт за это убийство уже начислен")
+
+            level = int(row["level"])
+            character_type = normalize_profession_type(row["type"])
+            stored_stats = json.loads(row["stats_json"] or "{}")
+            fighter = Fighter(row["name"], level, profession_type=character_type)
+            fighter.stats = {
+                stat: max(MIN_STAT_VALUE, int(stored_stats.get(stat, BASE_STAT_VALUE)))
+                for stat in (
+                    "strength", "agility", "intuition", "wisdom",
+                    "intellect", "harmony", "endurance",
+                )
+            }
+            fighter.talents = json.loads(row["talents_json"] or "{}")
+            fighter.xp = int(row["xp"])
+            fighter.stat_points = int(row["stat_points"])
+            fighter.recalculate_parameters()
+            fighter.hp = min(int(row["hp"]), fighter.max_hp)
+            fighter.mp = min(int(row["mp"]), fighter.max_mp)
+            levels_gained = apply_xp(fighter, xp_awarded)
+            connection.execute(
+                """UPDATE characters
+                   SET level = %s, xp = %s, hp = %s, max_hp = %s, mp = %s,
+                       max_mp = %s, stats_json = %s, stat_points = %s, updated_at = %s
+                   WHERE id = %s AND user_id = %s AND world_id = %s""",
+                (
+                    fighter.level, fighter.xp, fighter.hp, fighter.max_hp,
+                    fighter.mp, fighter.max_mp, json.dumps(fighter.stats),
+                    fighter.stat_points, time.time(), character_id, user_id,
+                    self.world_id,
+                ),
+            )
+
+        return {
+            "character": self.get_character(user_id, character_id),
+            "xp": xp_awarded,
+            "levels_gained": levels_gained,
+        }
+
+    def claim_guild_quest_reward(self, user_id, character_id, quest_id, request_id):
+        quest = QUESTS_BY_ID.get(str(quest_id))
+        if quest is None:
+            raise ValueError("Неизвестное задание гильдии")
+        request_id = str(request_id or "").strip()
+        if not request_id or len(request_id) > 128:
+            raise ValueError("Некорректный идентификатор сдачи задания")
+
+        with self.connection() as connection:
+            lock_character(connection, character_id)
+            character = connection.execute(
+                """SELECT coins FROM characters
+                   WHERE id = %s AND user_id = %s AND world_id = %s
+                   FOR UPDATE""",
+                (character_id, user_id, self.world_id),
+            ).fetchone()
+            if character is None:
+                raise ValueError("Персонаж не найден")
+
+            receipt = connection.execute(
+                """SELECT quest_id FROM guild_quest_reward_receipts
+                   WHERE character_id = %s AND request_id = %s""",
+                (character_id, request_id),
+            ).fetchone()
+            already_claimed = False
+            if receipt is not None:
+                if receipt["quest_id"] != quest.id:
+                    raise ValueError("Идентификатор уже использован для другого задания")
+            else:
+                claimed = connection.execute(
+                    """SELECT 1 FROM guild_quest_reward_receipts
+                       WHERE character_id = %s AND quest_id = %s""",
+                    (character_id, quest.id),
+                ).fetchone()
+                if claimed is not None:
+                    already_claimed = True
+                else:
+                    now = time.time()
+                    connection.execute(
+                        """UPDATE characters SET coins = coins + %s, updated_at = %s
+                           WHERE id = %s AND user_id = %s AND world_id = %s""",
+                        (
+                            quest.reward_coins, now, character_id, user_id,
+                            self.world_id,
+                        ),
+                    )
+                    connection.execute(
+                        """INSERT INTO guild_quest_reward_receipts
+                           (character_id, request_id, quest_id, created_at)
+                           VALUES (%s, %s, %s, %s)""",
+                        (character_id, request_id, quest.id, now),
+                    )
+
+        return (
+            self.get_character(user_id, character_id),
+            0 if already_claimed else quest.reward_coins,
+            already_claimed,
+        )
 
     def save_active_battle(self, player_id, opponent_id, battle_data):
         """Сохраняет состояние активного боя"""
@@ -1003,16 +1313,33 @@ class Database:
         if not isinstance(character["stats"], dict):
             raise ValueError("Характеристики должны быть объектом")
         # Валюта неотрицательна
-        if character.get("copper", 0) < 0 or character.get("silver", 0) < 0 or character.get("gold", 0) < 0:
+        if (
+            character.get("copper", 0) < 0
+            or character.get("silver", 0) < 0
+            or character.get("gold", 0) < 0
+            or character.get("coins", 0) < 0
+        ):
             raise ValueError("Валюта не может быть отрицательной")
 
     @staticmethod
     def _character_payload(row):
         row_dict = dict(row)
         stats = json.loads(row["stats_json"])
-        character_type = row["type"] if "type" in row.keys() else "warrior"
-        max_hp = calculate_max_hp(row["level"], stats.get("endurance", minimum_endurance(row["level"])))
-        max_mp = calculate_max_mana(stats.get("intellect", BASE_STAT_VALUE))
+        character_type = normalize_profession_type(row["type"] if "type" in row.keys() else "warrior")
+        talents = json.loads(row_dict.get("talents_json") or "{}")
+        derived = derived_talent_values(
+            character_type,
+            row["level"],
+            {
+                **stats,
+                "endurance": stats.get(
+                    "endurance", minimum_endurance(row["level"])
+                ),
+            },
+            talents,
+        )
+        max_hp = derived["max_hp"]
+        max_mp = derived["max_mp"]
 
         # Нормализуем валюту
         currency = Currency(
@@ -1028,15 +1355,13 @@ class Database:
             "type": character_type,
             "level": row["level"],
             "xp": row["xp"],
-            "hp": min(row["hp"], max_hp),
+            "hp": Database._rescale_hp(row["hp"], row["max_hp"], max_hp),
             "max_hp": max_hp,
             "mp": min(row["mp"], max_mp),
             "max_mp": max_mp,
             "stats": stats,
-            "carry_capacity_kg": calculate_carry_capacity(
-                stats.get("strength", BASE_STAT_VALUE),
-                stats.get("endurance", minimum_endurance(row["level"])),
-            ),
+            "talents": talents,
+            "unique_resource_max": derived["max_resource"],
             "stat_points": row["stat_points"],
             "zone": row["zone"],
             "position_x": row_dict.get("position_x"),
@@ -1045,6 +1370,7 @@ class Database:
             "copper": currency.copper,
             "silver": currency.silver,
             "gold": currency.gold,
+            "coins": int(row_dict.get("coins", 0) or 0),
             "updated_at": row["updated_at"],
         }
 
@@ -1066,58 +1392,9 @@ class Database:
     
     def buy_drink(self, user_id, character_id, drink_id):
         """Купить напиток - вычесть цену и применить эффект сразу (НЕ добавлять в инвентарь)"""
-        from core.currency import Currency
-        
-        with self.connection() as connection:
-            # Получаем информацию о напитке
-            drink = connection.execute(
-                "SELECT price_copper, effect, effect_value FROM drinks WHERE id = %s",
-                (drink_id,)
-            ).fetchone()
-            
-            if drink is None:
-                raise ValueError("Напиток не найден")
-            
-            # Получаем персонажа
-            character = self.get_character(user_id, character_id)
-            if character is None:
-                raise ValueError("Персонаж не найден")
-            
-            # ПРОВЕРЯЕМ: полное ли здоровье?
-            current_hp = character.get("hp", 0)
-            max_hp = character.get("max_hp", 100)
-            if current_hp >= max_hp:
-                # Отправляем сообщение бармена в чат таверны
-                bartender_id = "tavern_bartender"
-                self.ensure_bot_character(bartender_id, "Хозяин трактира")
-                bartender_character_id = -abs(int(hashlib.md5(str(bartender_id).encode("utf-8")).hexdigest()[:8], 16))
-                self.add_chat_message(
-                    bartender_character_id,
-                    "tavern",
-                    "Тебе уже хватит, прогуляйся на задний двор прийди в чуство!! ХА-ХА-ХА"
-                )
-                raise ValueError("БАРМАН_ПОЛНОЕ_ЗДОРОВЬЕ")
-            
-            # Проверяем деньги
-            current = Currency.from_dict(character)
-            if not current.has_enough_copper(drink["price_copper"]):
-                raise ValueError("Недостаточно денег")
-            
-            # Вычитаем деньги
-            current.subtract_copper_amount(drink["price_copper"])
-            character.update(current.to_dict())
-            
-            # Применяем эффект напитка (восстанавливаем HP, но не больше max_hp)
-            if drink["effect"] == "heal":
-                healing = drink["effect_value"]
-                new_hp = min(current_hp + healing, max_hp)
-                character["hp"] = new_hp
-            
-            # Сохраняем персонажа с эффектом и без денег
-            self.save_character(user_id, character_id, character)
-            
-            # Возвращаем обновленного персонажа
-            return self.get_character(user_id, character_id)
+        raise ValueError(
+            "Покупки в старой валюте временно отключены до назначения новых цен"
+        )
     
     def get_character_inventory(self, character_id):
         """Получить инвентарь персонажа"""
@@ -1181,39 +1458,100 @@ class Database:
             ).fetchall()
             return [dict(row) for row in rows]
 
-    def ensure_starter_cards(self, character_id, card_keys):
-        """Один раз кладёт в коллекцию карты класса, чтобы из них можно было собрать колоду."""
+    def ensure_starter_cards(self, character_id, card_quantities, legacy_card_keys=()):
+        """Grant or upgrade a character's starter collection exactly once."""
+        quantities = (
+            {str(key): int(quantity) for key, quantity in card_quantities.items()}
+            if isinstance(card_quantities, dict)
+            else {str(key): 1 for key in card_quantities}
+        )
+        legacy_keys = set(legacy_card_keys)
         with self.connection() as connection:
             lock_character(connection, character_id)
             granted = connection.execute(
-                "SELECT 1 FROM character_card_grants WHERE character_id = %s",
+                """SELECT starter_cards_version FROM character_card_grants
+                   WHERE character_id = %s""",
                 (character_id,),
             ).fetchone()
-            if granted:
+            if granted and int(granted["starter_cards_version"]) >= 2:
                 return False
-            rows = connection.execute(
-                "SELECT card_key, slot_index FROM character_card_collection WHERE character_id = %s",
+            if legacy_keys:
+                connection.execute(
+                    """DELETE FROM character_card_collection
+                       WHERE character_id = %s AND card_key = ANY(%s)""",
+                    (character_id, list(legacy_keys)),
+                )
+                decks = connection.execute(
+                    """SELECT id, cards_json FROM character_decks
+                       WHERE character_id = %s""",
+                    (character_id,),
+                ).fetchall()
+                for deck in decks:
+                    try:
+                        saved_cards = json.loads(deck["cards_json"])
+                    except (TypeError, ValueError):
+                        connection.execute(
+                            "UPDATE character_decks SET is_active = 0 WHERE id = %s",
+                            (deck["id"],),
+                        )
+                        continue
+                    saved_keys = (
+                        {str(key) for key in saved_cards}
+                        if isinstance(saved_cards, (dict, list))
+                        else set()
+                    )
+                    if saved_keys & legacy_keys:
+                        connection.execute(
+                            "UPDATE character_decks SET is_active = 0 WHERE id = %s",
+                            (deck["id"],),
+                        )
+
+            remaining_rows = connection.execute(
+                """SELECT card_key, quantity, slot_index
+                   FROM character_card_collection WHERE character_id = %s""",
                 (character_id,),
             ).fetchall()
-            owned = {row["card_key"] for row in rows}
-            free_slots = iter(sorted(set(range(60)) - {row["slot_index"] for row in rows}))
+            owned = {row["card_key"]: row for row in remaining_rows}
+            free_slots = iter(
+                sorted(set(range(60)) - {row["slot_index"] for row in remaining_rows})
+            )
             now = time.time()
-            for card_key in card_keys:
+            for card_key, quantity in quantities.items():
+                if quantity < 1:
+                    raise ValueError("Количество стартовых карт должно быть не меньше 1")
                 if card_key in owned:
+                    if int(owned[card_key]["quantity"]) < quantity:
+                        connection.execute(
+                            """UPDATE character_card_collection SET quantity = %s
+                               WHERE character_id = %s AND card_key = %s""",
+                            (quantity, character_id, card_key),
+                        )
                     continue
                 slot_index = next(free_slots, None)
                 if slot_index is None:
-                    break
+                    raise ValueError(
+                        "В коллекции нет свободного места для стартовых карт"
+                    )
                 connection.execute(
                     """INSERT INTO character_card_collection
                        (character_id, card_key, quantity, slot_index, acquired_at)
-                       VALUES (%s, %s, 1, %s, %s)""",
-                    (character_id, card_key, slot_index, now),
+                       VALUES (%s, %s, %s, %s, %s)""",
+                    (character_id, card_key, quantity, slot_index, now),
                 )
-            connection.execute(
-                "INSERT INTO character_card_grants (character_id, starter_cards_at) VALUES (%s, %s)",
-                (character_id, now),
-            )
+            if granted:
+                connection.execute(
+                    """UPDATE character_card_grants
+                       SET starter_cards_at = %s, starter_cards_version = 2
+                       WHERE character_id = %s""",
+                    (now, character_id),
+                )
+            else:
+                connection.execute(
+                    """INSERT INTO character_card_grants
+                       (character_id, starter_cards_at, starter_cards_version)
+                       VALUES (%s, %s, 2)""",
+                    (character_id, now),
+                )
             return True
 
     def add_card_to_collection(self, character_id, card_key):

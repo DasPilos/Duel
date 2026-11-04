@@ -1,7 +1,9 @@
 import unittest
+from types import SimpleNamespace
 
 import pygame
 
+from scenes.tavern_scene import TavernScene
 from ui.character_profile_overlay import CharacterProfileOverlay
 from ui.collection_panel import CollectionPanel
 
@@ -52,6 +54,25 @@ class CollectionPanelTests(unittest.TestCase):
         self.assertEqual(action, "handled")
         self.assertTrue(overlay.collection_panel.is_open)
         self.assertEqual(overlay.collection_panel.cards, cards)
+
+    def test_tavern_routes_collection_close_click_and_escape(self):
+        overlay = CharacterProfileOverlay(pygame.font.Font(None, 18))
+        overlay.open({"id": 1, "name": "Игрок"})
+        overlay.collection_panel.open([])
+        scene = SimpleNamespace(profile_overlay=overlay)
+
+        click = pygame.event.Event(
+            pygame.MOUSEBUTTONDOWN,
+            button=1,
+            pos=overlay.collection_panel.close_button.center,
+        )
+        TavernScene.handle_event(scene, click)
+        self.assertFalse(overlay.collection_panel.is_open)
+
+        overlay.collection_panel.open([])
+        escape = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_ESCAPE)
+        TavernScene.handle_event(scene, escape)
+        self.assertFalse(overlay.collection_panel.is_open)
 
 
 if __name__ == "__main__":

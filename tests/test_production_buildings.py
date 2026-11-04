@@ -32,6 +32,7 @@ class _Sequence(random.Random):
         return value
 
 
+@unittest.skip("City production buildings were removed.")
 class ProductionBuildingsTests(unittest.TestCase):
     def setUp(self):
         self.database = create_test_database()
@@ -227,16 +228,11 @@ class ProductionBuildingsTests(unittest.TestCase):
                       if row["item_id"] == 67)
         self.assertEqual(carried, 4)
 
-    def test_storage_payload_caps_withdraw_quantity_by_remaining_carry_weight(self):
-        user = self.database.register("carry-limit", "password")
-        character_id = self.database.create_character(user["id"], "CarryLimit")["id"]
+    def test_storage_withdraw_quantity_is_not_limited_by_item_weight(self):
+        user = self.database.register("no-weight-limit", "password")
+        character_id = self.database.create_character(user["id"], "NoWeightLimit")["id"]
         items = ItemsDatabase(self.database)
-        initial = items.carry_weight_state
-        with self.database.connection() as connection:
-            initial_weight = items.carry_weight_state(connection, character_id)
-        fill_quantity = max(0, int((initial_weight["carry_capacity_kg"] - 1) // 2))
-        if fill_quantity:
-            self.assertTrue(items.add_to_inventory(character_id, 63, fill_quantity))
+        self.assertTrue(items.add_to_inventory(character_id, 63, 100))
 
         self.buildings.get_state(character_id, "farm", 10000)
         with self.database.connection() as connection:
@@ -245,15 +241,8 @@ class ProductionBuildingsTests(unittest.TestCase):
                 (self.database.world_id,),
             )
         state = self.buildings.get_state(character_id, "farm", 10000)
-        carry = items.carry_weight_state
-        with self.database.connection() as connection:
-            actual_weight = carry(connection, character_id)
-
-        expected = min(500, max(0, int((actual_weight["carry_capacity_kg"]
-                                        - actual_weight["carried_weight_kg"] + 1e-9) // 2)))
         self.assertEqual(state["storage_withdrawable"]["wheat"]["available"], 500)
-        self.assertEqual(state["storage_withdrawable"]["wheat"]["max_withdraw"], expected)
-        self.assertLess(expected, 500)
+        self.assertEqual(state["storage_withdrawable"]["wheat"]["max_withdraw"], 500)
 
     def _set_level(self, character_id, building, level):
         self.buildings.get_state(character_id, building, 10000)
@@ -494,8 +483,8 @@ class ProductionBuildingsTests(unittest.TestCase):
         stopped = self.buildings.toggle_player_worker(character_id, "farm", 0, 17202)
         self.assertFalse(stopped["worker_slots"][0]["occupied"])
 
-    def test_shared_harvest_is_unlimited_by_player_carry_until_withdrawal(self):
-        character_id = self._character("weight-farmer")
+    def test_shared_harvest_and_withdrawal_are_unlimited_by_player_weight(self):
+        character_id = self._character("no-weight-farmer")
         self._set_strength(character_id, 3)
         items = ItemsDatabase(self.database)
         self.buildings.toggle_player_worker(character_id, "farm", 0, 10140)
@@ -511,8 +500,9 @@ class ProductionBuildingsTests(unittest.TestCase):
 
         self.assertEqual(state["storage"]["wheat"], 38)
         self.assertEqual(
-            sum(item["weight"] * item["quantity"] for item in items.get_inventory(character_id)),
-            24,
+            sum(item["quantity"] for item in items.get_inventory(character_id)
+                if item["item_id"] == 63),
+            50,
         )
 
     def test_player_cannot_start_work_when_storage_is_full(self):

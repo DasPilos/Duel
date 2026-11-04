@@ -3,7 +3,6 @@ import math
 import time
 import pygame
 from core import settings
-from core.carry_weight import character_movement_speed_multiplier
 from core.currency import Currency
 from core.cart_progress import CART_GRADES
 from client.network import ServerError
@@ -58,10 +57,10 @@ class CityScene(CityBuildingsMixin, CityRenderMixin, CityModalsMixin, CityHudMix
 
     def __init__(self, session, gate="east", spawn_pos=None):
         self.session = session
-        refresh_carrying_state = getattr(session, "refresh_carrying_state", None)
-        if refresh_carrying_state is not None:
+        refresh_equipment_state = getattr(session, "refresh_equipment_state", None)
+        if refresh_equipment_state is not None:
             try:
-                refresh_carrying_state()
+                refresh_equipment_state()
             except Exception:
                 pass
         self.finished = False
@@ -519,7 +518,7 @@ class CityScene(CityBuildingsMixin, CityRenderMixin, CityModalsMixin, CityHudMix
 
         eid = self.active_entity.get("id")
         if eid == "player":
-            self.profile_overlay.open(self.session.character, None)
+            self.active_entity = None
             return
 
         if eid == "main_castle":
@@ -721,9 +720,6 @@ class CityScene(CityBuildingsMixin, CityRenderMixin, CityModalsMixin, CityHudMix
                 self.forge_player_copper = Currency.to_copper(char.get("copper", 0), char.get("silver", 0), char.get("gold", 0))
             if hasattr(self.session, "client") and hasattr(self.session, "character") and self.session.character:
                 inv_payload = self.session.client.get_inventory(self.session.character["id"])
-                self.session.character["carried_weight_kg"] = float(
-                    inv_payload.get("carried_weight_kg", 0)
-                )
                 items = inv_payload.get("inventory", [])
                 for it in items:
                     m_id = it.get("item_id")
@@ -1134,9 +1130,7 @@ class CityScene(CityBuildingsMixin, CityRenderMixin, CityModalsMixin, CityHudMix
             dx = tx - self.player_x
             dy = ty - self.player_y
             dist = math.hypot(dx, dy)
-            step = self.player_speed * character_movement_speed_multiplier(
-                getattr(self.session, "character", None)
-            ) * dt
+            step = self.player_speed * dt
 
             if dist <= step or dist < 2.0:
                 self.player_x = tx

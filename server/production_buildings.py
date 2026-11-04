@@ -166,7 +166,13 @@ class ProductionBuildings:
 
     @staticmethod
     def _state(connection, key):
-        return connection.execute(f"SELECT * FROM building_states WHERE {_WHERE}", key).fetchone()
+        return connection.execute(
+            f"""SELECT world_id, faction, building, level, cycle_start_time,
+                       upgrade_finish_at, farm_upgrades_json, farm_upgrade_id,
+                       farm_upgrade_plot_index, farm_upgrade_finish_at
+                FROM building_states WHERE {_WHERE}""",
+            key,
+        ).fetchone()
 
     @staticmethod
     def _resources(connection, key):

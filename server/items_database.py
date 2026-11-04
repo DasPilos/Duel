@@ -3,17 +3,28 @@
 """
 
 import json
-import math
 import time
+import uuid
 from typing import List, Dict, Optional
 
-from core.carry_weight import carried_weight_kg, character_carry_capacity
+from core.dungeon_rewards import roll_dungeon_treasure
 from server.database import lock_character
+from combat.card_database import (
+    BASE_CARDS,
+    DUNGEON_CARD_KEYS,
+    SHOP_CARD_KEYS,
+    UNIVERSAL_CARDS,
+    card_allowed_for,
+    card_to_dict,
+    load_cards,
+)
 
 
 BACKPACK_SIZE = 50
 MAX_STACK = 99
 ITEM_STACK_LIMITS = {60: 10}
+SUPPLIES_SHOP_ITEM_IDS = (4, 5, 6, 7, 52)
+SUPPLIES_SHOP_PRICES = {4: 15, 5: 15, 6: 5, 7: 45, 52: 60}
 
 # Ограничение предметов по классам: архер может брать только эти предметы
 ARCHER_ALLOWED_ITEMS = {
@@ -28,8 +39,7 @@ ARCHER_ALLOWED_ITEMS = {
 
 # Слоты куклы персонажа. Ключи совпадают с equip_slot в каталоге.
 EQUIPMENT_SLOTS = (
-    "head", "ears", "neck", "back", "body", "hands",
-    "belt", "legs", "feet", "weapon", "shield", "ring", "ring_2",
+    "hands", "head", "body", "legs", "feet", "artifact",
 )
 
 # (id, name, item_type, rarity, weight, price, description, can_use, effects, bonuses, icon, equip_slot)
@@ -40,6 +50,10 @@ CATALOG = (
     (1, "Зелье маны", "potion", "common", 0.1, 500000, "Восстанавливает 50 маны", 1, {"type": "mp", "value": 50}, None, "potion_blue", None),
     (2, "Зелье здоровья", "potion", "common", 0.1, 750000, "Восстанавливает 50 здоровья", 1, {"type": "hp", "value": 50}, None, "potion_red", None),
     (3, "Зелье силы", "potion", "rare", 0.15, 2000000, "Сила +3 на 5 ходов. Действует только в бою", 0, {"type": "buff", "stat": "strength", "value": 3, "duration": 5}, None, "potion_orange", None),
+    (4, "Зелье восстановления здоровья", "potion", "common", 0.1, 100, "Восстанавливает 20 HP в бою", 0, {"type": "battle_hp", "value": 20}, None, "potion_red", None),
+    (5, "Зелье восстановления маны", "potion", "common", 0.1, 100, "Восстанавливает 12 маны в бою", 0, {"type": "battle_mp", "value": 12}, None, "potion_blue", None),
+    (6, "Метательный кинжал", "potion", "common", 0.1, 25, "Наносит выбранному врагу 9 урона в бою", 0, {"type": "battle_damage", "value": 9}, None, "right_hand_steel_sword", None),
+    (7, "Зелье регенерации", "potion", "rare", 0.1, 100, "В бою восстанавливает 6 HP в ход в течение 5 ходов", 0, {"type": "battle_regeneration", "heal_per_turn": 6, "duration": 5}, None, "potion_blue", None),
 
     # Материалы
     (10, "Железная руда", "material", "common", 5.0, 50, "Добывается в карьере и горной местности", 0, None, None, "material_iron_ore", None),
@@ -68,6 +82,12 @@ CATALOG = (
     (85, "Рубин", "material", "rare", 1.0, 0, "Редкая находка в угольной шахте", 0, None, None, "material_ruby", None),
     (86, "Сапфир", "material", "rare", 1.0, 0, "Редкая находка в угольной шахте", 0, None, None, "material_sapphire", None),
     (87, "Алмаз", "material", "epic", 1.0, 0, "Редкая находка в угольной шахте", 0, None, None, "material_diamond", None),
+    (901, "Карта скелета-стража", "material", "rare", 0.0, 0, "Коллекционная карта подземелья", 0, None, None, "card", None),
+    (902, "Статуя короля скелетов", "material", "epic", 0.0, 0, "Реликвия. В будущем её можно будет продать или обменять", 0, None, None, "bone", None),
+    (903, "Копьё скелета-стража", "material", "rare", 0.0, 0, "Оружие без характеристик; свойства будут добавлены позже", 0, None, None, "right_hand_steel_sword", None),
+    (904, "Карта короля скелетов", "material", "epic", 0.0, 0, "Коллекционная карта подземелья", 0, None, None, "card", None),
+    (905, "Корона короля скелетов", "material", "epic", 0.0, 0, "Реликвия без характеристик; свойства будут добавлены позже", 0, None, None, "head_iron_helmet", None),
+    (906, "Наследие павшего короля", "material", "legendary", 0.0, 0, "Реликвия без характеристик; свойства будут добавлены позже", 0, None, None, "bone", None),
 
     # Крафтовые материалы
     (73, "Железо", "material", "common", 6.0, 100, "Получается при переплавке железной руды в кузнице", 0, None, None, "material_iron", None),
@@ -105,6 +125,7 @@ CATALOG = (
     # Свитки
     (50, "Свиток огня", "scroll", "rare", 0.2, 2000000, "Наносит урон огнём. Действует только в бою", 0, {"type": "damage", "value": 30}, None, "scroll", None),
     (51, "Свиток защиты", "scroll", "common", 0.15, 1000000, "Даёт щит. Действует только в бою", 0, None, None, "scroll", None),
+    (52, "Свиток разрушения магии", "scroll", "rare", 0.2, 200, "Требует 20 маны. Снимает один отрицательный эффект в бою", 0, {"type": "battle_cleanse", "mana_cost": 20}, None, "scroll", None),
 
     # Базовые инструменты для добычи
     (90, "Старый серп", "equipment", "common", 1.0, 100, "Требование: Сила: 4. Сокращает время добычи пшеницы на 20%", 0, {"requirements": {"strength": 4}, "damage": [1, 1], "harvest_bonus": {"wheat": 20}, "two_handed": True}, None, "tool_sickle", "weapon"),
@@ -113,7 +134,7 @@ CATALOG = (
     (93, "Разделочный нож", "equipment", "common", 1.0, 100, "Требование: Сила: 4. Сокращает время добычи кожи и мяса на 20%", 0, {"requirements": {"strength": 4}, "damage": [1, 1], "harvest_bonus": {"leather": 20, "meat": 20}, "two_handed": True}, None, "tool_butcher_knife", "weapon"),
 )
 
-BASE_STARTER_EQUIPMENT = (90, 91, 92, 93)
+BASE_STARTER_EQUIPMENT = ()
 
 _ITEM_COLUMNS = """c.name, c.item_type, c.rarity, c.weight, c.price, c.description,
                    c.can_use, c.effects_json, c.bonuses_json, c.icon, c.equip_slot"""
@@ -131,13 +152,12 @@ def is_two_handed(item):
 
 
 def display_equipment_hands(equipment):
-    """Add a display-only entry in the other hand for a single stored two-handed item."""
-    result = dict(equipment)
-    for slot, item in list(equipment.items()):
-        if slot not in ("weapon", "shield") or not is_two_handed(item):
-            continue
-        other_slot = "shield" if slot == "weapon" else "weapon"
-        result[other_slot] = {**item, "_two_handed_shadow": True, "_two_handed_source_slot": slot}
+    """Normalize legacy hand keys for the single visible hands slot."""
+    result = {}
+    for slot, item in equipment.items():
+        slot = "hands" if slot in ("weapon", "shield") else slot
+        if slot in EQUIPMENT_SLOTS and slot not in result:
+            result[slot] = item
     return result
 
 
@@ -182,7 +202,9 @@ class ItemsDatabase:
             )
 
     def grant_base_equipment(self, character_id: int) -> bool:
-        """Give a character the four basic gathering tools once."""
+        """No gathering tools are included in the character starter inventory."""
+        if not BASE_STARTER_EQUIPMENT:
+            return False
         with self.db.connection() as connection:
             lock_character(connection, character_id)
             granted = connection.execute(
@@ -240,59 +262,7 @@ class ItemsDatabase:
         return [index for index in range(BACKPACK_SIZE) if index not in used]
 
     @classmethod
-    def carry_weight_state(cls, connection, character_id):
-        character = connection.execute(
-            "SELECT level, stats_json FROM characters WHERE id = %s",
-            (int(character_id),),
-        ).fetchone()
-        if character is None:
-            return {"carried_weight_kg": 0.0, "carry_capacity_kg": 0.0}
-
-        inventory = connection.execute(
-            """SELECT c.weight, i.quantity FROM character_items i
-               JOIN items_catalog c ON c.id = i.item_id
-               WHERE i.character_id = %s""",
-            (int(character_id),),
-        ).fetchall()
-        equipped = connection.execute(
-            """SELECT e.slot, c.weight FROM character_equipment e
-               JOIN items_catalog c ON c.id = e.item_id
-               WHERE e.character_id = %s""",
-            (int(character_id),),
-        ).fetchall()
-        equipment = {row["slot"]: {"weight": row["weight"]} for row in equipped}
-
-        bonuses = {}
-        for row in connection.execute(
-            """SELECT c.bonuses_json FROM character_equipment e
-               JOIN items_catalog c ON c.id = e.item_id
-               WHERE e.character_id = %s""",
-            (int(character_id),),
-        ).fetchall():
-            for stat, value in json.loads(row["bonuses_json"] or "{}").items():
-                bonuses[stat] = bonuses.get(stat, 0) + int(value)
-
-        capacity = character_carry_capacity({
-            "stats": json.loads(character["stats_json"] or "{}"),
-            "equipment_bonuses": bonuses,
-        })
-        carried = carried_weight_kg(inventory, equipment)
-        return {"carried_weight_kg": carried, "carry_capacity_kg": float(capacity)}
-
-    @classmethod
-    def _max_carryable_quantity(cls, connection, character_id, item, requested, carry_state=None):
-        requested = max(0, int(requested))
-        item_weight = float(item["weight"] or 0)
-        if requested == 0 or item_weight <= 0:
-            return requested
-        carry_state = carry_state or cls.carry_weight_state(connection, character_id)
-        capacity = float(carry_state["carry_capacity_kg"])
-        carried = float(carry_state["carried_weight_kg"])
-        available = max(0.0, capacity - carried)
-        return min(requested, math.floor((available + 1e-9) / item_weight))
-
-    @classmethod
-    def max_addable_quantity(cls, connection, character_id, item_id, requested, carry_state=None):
+    def max_addable_quantity(cls, connection, character_id, item_id, requested):
         requested = max(0, int(requested))
         item = cls._catalog_item(connection, int(item_id))
         if item is None or requested == 0:
@@ -306,9 +276,7 @@ class ItemsDatabase:
         free_slots = cls._free_slots(connection, int(character_id))
         slot_capacity = room_in_stacks + len(free_slots) * cls._stack_limit(item)
         amount = min(requested, slot_capacity)
-        return cls._max_carryable_quantity(
-            connection, int(character_id), item, amount, carry_state=carry_state
-        )
+        return amount
 
     @classmethod
     def _add_items(cls, connection, character_id: int, item_id: int, quantity: int) -> bool:
@@ -317,8 +285,6 @@ class ItemsDatabase:
         lock_character(connection, character_id)
         item = cls._catalog_item(connection, item_id)
         if item is None or quantity <= 0:
-            return False
-        if cls._max_carryable_quantity(connection, character_id, item, quantity) < quantity:
             return False
         stack_limit = cls._stack_limit(item)
 
@@ -372,7 +338,6 @@ class ItemsDatabase:
         room_in_stacks = sum(stack_limit - row["quantity"] for row in stacks)
         free_slots = cls._free_slots(connection, character_id)
         amount = min(quantity, room_in_stacks + len(free_slots) * stack_limit)
-        amount = cls._max_carryable_quantity(connection, character_id, item, amount)
         if amount and cls._add_items(connection, character_id, item_id, amount):
             return amount
         return 0
@@ -481,7 +446,302 @@ class ItemsDatabase:
             "equipment": equipment,
             "bonuses": self.get_stat_bonuses(character_id),
             "capacity": BACKPACK_SIZE,
-            "carried_weight_kg": carried_weight_kg(inventory, equipment),
+        }
+
+    def get_supplies_shop_catalog(self) -> List[Dict]:
+        with self.db.connection() as connection:
+            rows = connection.execute(
+                f"""SELECT id, name, item_type, rarity, weight, price, description,
+                           effects_json, icon
+                    FROM items_catalog WHERE id = ANY(%s) ORDER BY id""",
+                (list(SUPPLIES_SHOP_ITEM_IDS),),
+            ).fetchall()
+        return [
+            {
+                "item_id": row["id"],
+                "name": row["name"],
+                "item_type": row["item_type"],
+                "rarity": row["rarity"],
+                "weight": row["weight"],
+                "price": SUPPLIES_SHOP_PRICES[row["id"]],
+                "price_coins": SUPPLIES_SHOP_PRICES[row["id"]],
+                "description": row["description"],
+                "effects": json.loads(row["effects_json"] or "{}"),
+                "icon": row["icon"],
+            }
+            for row in rows
+        ]
+
+    def buy_supplies_item(self, user_id: int, character_id: int, item_id: int) -> Dict:
+        item_id = int(item_id)
+        price = SUPPLIES_SHOP_PRICES.get(item_id)
+        if price is None:
+            raise ValueError("Этого товара нет в магазине припасов")
+
+        with self.db.connection() as connection:
+            lock_character(connection, character_id)
+            character = connection.execute(
+                """SELECT coins FROM characters
+                   WHERE id = %s AND user_id = %s AND world_id = %s
+                   FOR UPDATE""",
+                (character_id, user_id, self.db.world_id),
+            ).fetchone()
+            if character is None:
+                raise ValueError("Персонаж не найден")
+            if int(character["coins"]) < price:
+                raise ValueError("Недостаточно монет")
+            if not self._add_items(connection, character_id, item_id, 1):
+                raise ValueError("В рюкзаке нет свободного места")
+
+            connection.execute(
+                """UPDATE characters SET coins = coins - %s, updated_at = %s
+                   WHERE id = %s AND user_id = %s AND world_id = %s""",
+                (price, time.time(), character_id, user_id, self.db.world_id),
+            )
+
+        return {
+            "character": self.db.get_character(user_id, character_id),
+            "inventory": self.get_inventory_state(character_id),
+        }
+
+    @staticmethod
+    def _card_shop_entries(cards) -> List[Dict]:
+        return [
+            {
+                **card_to_dict(card),
+                "price_coins": card.price_gold,
+                "legacy_price_copper": (
+                    card.price_gold * 10000 + card.price_silver * 100 + card.price_copper
+                ),
+                "available": card.price_gold > 0 and card.rarity != "unassigned",
+                "description": f"{card.effect_type}: {card.effect_data}",
+            }
+            for card in cards
+        ]
+
+    def get_card_shop_catalog(self) -> List[Dict]:
+        return self._card_shop_entries(
+            card for card in BASE_CARDS
+            if card.key in SHOP_CARD_KEYS and card.key not in DUNGEON_CARD_KEYS
+        )
+
+    def get_dungeon_card_shop_catalog(self) -> List[Dict]:
+        return self._card_shop_entries(
+            card for card in UNIVERSAL_CARDS if card.key in DUNGEON_CARD_KEYS
+        )
+
+    def buy_card(self, user_id: int, character_id: int, card_key: str, *, dungeon_shop=False) -> Dict:
+        card = next(
+            (
+                item for item in BASE_CARDS
+                if item.key == str(card_key)
+                and item.key in SHOP_CARD_KEYS
+                and (
+                    item.key in DUNGEON_CARD_KEYS
+                    if dungeon_shop
+                    else item.key not in DUNGEON_CARD_KEYS
+                )
+            ),
+            None,
+        )
+        if card is None:
+            if str(card_key) in DUNGEON_CARD_KEYS and not dungeon_shop:
+                raise ValueError("Эта карта продаётся только в подземелье")
+            if dungeon_shop:
+                raise ValueError("Этой карты нет у подземного торговца")
+            raise ValueError("Этой карты нет в карточной лавке")
+        if card.price_gold <= 0 or card.rarity == "unassigned":
+            raise ValueError(
+                "Покупка этой карты временно отключена до назначения цены в монетах"
+            )
+        price = int(card.price_gold)
+        with self.db.connection() as connection:
+            lock_character(connection, character_id)
+            character = connection.execute(
+                """SELECT coins, type FROM characters
+                   WHERE id = %s AND user_id = %s AND world_id = %s
+                   FOR UPDATE""",
+                (character_id, user_id, self.db.world_id),
+            ).fetchone()
+            if character is None:
+                raise ValueError("Персонаж не найден")
+            if not card_allowed_for(card, character["type"]):
+                raise ValueError("Эта карта недоступна классу персонажа")
+            owned = connection.execute(
+                """SELECT id, quantity, slot_index FROM character_card_collection
+                   WHERE character_id = %s AND card_key = %s""",
+                (character_id, card.key),
+            ).fetchone()
+            balance = int(character["coins"])
+            if balance < price:
+                raise ValueError("Недостаточно денег")
+            now = time.time()
+            if owned is not None:
+                connection.execute(
+                    """UPDATE character_card_collection
+                       SET quantity = quantity + 1, acquired_at = %s WHERE id = %s""",
+                    (now, owned["id"]),
+                )
+            else:
+                used_slots = {
+                    row["slot_index"]
+                    for row in connection.execute(
+                        """SELECT slot_index FROM character_card_collection
+                           WHERE character_id = %s""",
+                        (character_id,),
+                    ).fetchall()
+                }
+                slot_index = next((slot for slot in range(60) if slot not in used_slots), None)
+                if slot_index is None:
+                    raise ValueError("В коллекции нет свободных ячеек")
+                connection.execute(
+                    """INSERT INTO character_card_collection
+                       (character_id, card_key, quantity, slot_index, acquired_at)
+                       VALUES (%s, %s, 1, %s, %s)""",
+                    (character_id, card.key, slot_index, now),
+                )
+            connection.execute(
+                """UPDATE characters SET coins = %s, updated_at = %s
+                   WHERE id = %s AND user_id = %s AND world_id = %s""",
+                (
+                    balance - price, now,
+                    character_id, user_id, self.db.world_id,
+                ),
+            )
+        return {
+            "character": self.db.get_character(user_id, character_id),
+            "card": card_to_dict(card),
+        }
+
+    def buy_dungeon_card(self, user_id: int, character_id: int, card_key: str) -> Dict:
+        return self.buy_card(user_id, character_id, card_key, dungeon_shop=True)
+
+    def sell_card(self, user_id: int, character_id: int, card_key: str) -> Dict:
+        card = next((item for item in load_cards() if item.key == str(card_key)), None)
+        if card is None:
+            raise ValueError("Этой карты нет в коллекции")
+        sale_price = int(card_to_dict(card).get("sale_price_coins", 0))
+        if sale_price <= 0:
+            raise ValueError("Эту карту нельзя продать")
+
+        with self.db.connection() as connection:
+            lock_character(connection, character_id)
+            character = connection.execute(
+                """SELECT coins FROM characters
+                   WHERE id = %s AND user_id = %s AND world_id = %s
+                   FOR UPDATE""",
+                (character_id, user_id, self.db.world_id),
+            ).fetchone()
+            if character is None:
+                raise ValueError("Персонаж не найден")
+            owned = connection.execute(
+                """SELECT id, quantity FROM character_card_collection
+                   WHERE character_id = %s AND card_key = %s
+                   FOR UPDATE""",
+                (character_id, card.key),
+            ).fetchone()
+            if owned is None or int(owned["quantity"]) <= 0:
+                raise ValueError("У вас нет этой карты")
+
+            deck_rows = connection.execute(
+                """SELECT cards_json FROM character_decks
+                   WHERE character_id = %s""",
+                (character_id,),
+            ).fetchall()
+            in_decks = 0
+            for deck_row in deck_rows:
+                deck_cards = json.loads(deck_row["cards_json"] or "{}")
+                if isinstance(deck_cards, list):
+                    in_decks += deck_cards.count(card.key)
+                elif isinstance(deck_cards, dict):
+                    in_decks += int(deck_cards.get(card.key, 0))
+            if int(owned["quantity"]) <= in_decks:
+                raise ValueError("Нельзя продать карту, используемую в колоде")
+
+            now = time.time()
+            if int(owned["quantity"]) == 1:
+                connection.execute(
+                    "DELETE FROM character_card_collection WHERE id = %s",
+                    (owned["id"],),
+                )
+            else:
+                connection.execute(
+                    """UPDATE character_card_collection
+                       SET quantity = quantity - 1 WHERE id = %s""",
+                    (owned["id"],),
+                )
+            connection.execute(
+                """UPDATE characters SET coins = coins + %s, updated_at = %s
+                   WHERE id = %s AND user_id = %s AND world_id = %s""",
+                (sale_price, now, character_id, user_id, self.db.world_id),
+            )
+
+        return {
+            "character": self.db.get_character(user_id, character_id),
+            "sale_price_coins": sale_price,
+        }
+
+    def claim_dungeon_treasure(self, user_id: int, character_id: int, request_id: str) -> Dict:
+        try:
+            request_id = str(uuid.UUID(str(request_id)))
+        except (TypeError, ValueError, AttributeError) as error:
+            raise ValueError("Неверный идентификатор открытия сундука") from error
+
+        with self.db.connection() as connection:
+            lock_character(connection, character_id)
+            character = connection.execute(
+                """SELECT id FROM characters
+                   WHERE id = %s AND user_id = %s AND world_id = %s
+                   FOR UPDATE""",
+                (character_id, user_id, self.db.world_id),
+            ).fetchone()
+            if character is None:
+                raise ValueError("Персонаж не найден")
+
+            claim = connection.execute(
+                """SELECT rewards_json FROM character_dungeon_treasure_claims
+                   WHERE character_id = %s AND request_id = %s""",
+                (character_id, request_id),
+            ).fetchone()
+            if claim is None:
+                rewards = roll_dungeon_treasure()
+                for item in rewards["items"]:
+                    if not self._add_items(
+                        connection,
+                        character_id,
+                        int(item["item_id"]),
+                        int(item["quantity"]),
+                    ):
+                        raise ValueError("В рюкзаке недостаточно места для наград")
+                now = time.time()
+                if rewards["coins"]:
+                    connection.execute(
+                        """UPDATE characters SET coins = coins + %s, updated_at = %s
+                           WHERE id = %s AND user_id = %s AND world_id = %s""",
+                        (
+                            int(rewards["coins"]), now, character_id, user_id,
+                            self.db.world_id,
+                        ),
+                    )
+                connection.execute(
+                    """INSERT INTO character_dungeon_treasure_claims
+                       (character_id, request_id, rewards_json, created_at)
+                       VALUES (%s, %s, %s, %s)""",
+                    (character_id, request_id, json.dumps(rewards, ensure_ascii=False), now),
+                )
+            else:
+                rewards = json.loads(claim["rewards_json"])
+
+        return {
+            "character": self.db.get_character(user_id, character_id),
+            "inventory": self.get_inventory_state(character_id),
+            "rewards": [
+                *([f"{rewards['coins']} монет"] if rewards["coins"] else []),
+                *(
+                    f"{item['quantity']} × {item['name']}"
+                    for item in rewards["items"]
+                ),
+            ],
         }
 
     def use_item(self, user_id: int, character_id: int, slot_index: int) -> Dict:
@@ -527,55 +787,17 @@ class ItemsDatabase:
             if row is None:
                 raise ValueError("Ячейка пуста")
             item = self._catalog_item(connection, row["item_id"])
-            if item["item_type"] != "equipment" or item["equip_slot"] not in EQUIPMENT_SLOTS:
+            item_equip_slot = item["equip_slot"]
+            if (
+                item["item_type"] != "equipment"
+                or item_equip_slot not in (*EQUIPMENT_SLOTS, "weapon", "shield")
+            ):
                 raise ValueError("Этот предмет нельзя надеть")
-            effects = json.loads(item["effects_json"] or "{}")
-            two_handed = bool(effects.get("two_handed"))
-            either_hand = bool(effects.get("either_hand"))
-            valid_target = (
-                slot is None
-                or slot == item["equip_slot"]
-                or (item["equip_slot"] == "ring" and slot == "ring_2")
-                or (two_handed and slot in ("weapon", "shield"))
-                or (either_hand and slot in ("weapon", "shield"))
-            )
-            if not valid_target:
+            item_slot = "hands" if item_equip_slot in ("weapon", "shield") else item_equip_slot
+            target_slot = "hands" if slot in ("weapon", "shield") else slot
+            if target_slot is not None and target_slot != item_slot:
                 raise ValueError("Предмет не подходит для этого слота")
-            if slot is None:
-                if either_hand:
-                    weapon_occ = connection.execute(
-                        "SELECT 1 FROM character_equipment WHERE character_id = %s AND slot = 'weapon'",
-                        (character_id,),
-                    ).fetchone()
-                    shield_occ = connection.execute(
-                        "SELECT 1 FROM character_equipment WHERE character_id = %s AND slot = 'shield'",
-                        (character_id,),
-                    ).fetchone()
-                    if weapon_occ and not shield_occ:
-                        slot = "shield"
-                    else:
-                        slot = "weapon"
-                else:
-                    slot = item["equip_slot"]
-            if two_handed:
-                occupied_hand = connection.execute(
-                    """SELECT slot FROM character_equipment
-                       WHERE character_id = %s AND slot IN ('weapon', 'shield') LIMIT 1""",
-                    (character_id,),
-                ).fetchone()
-                if occupied_hand:
-                    raise ValueError("Чтобы надеть двуручный предмет, освободите обе руки")
-                slot = "weapon"
-            elif slot in ("weapon", "shield"):
-                other_hand = "shield" if slot == "weapon" else "weapon"
-                other_item = connection.execute(
-                    """SELECT c.effects_json FROM character_equipment e
-                       JOIN items_catalog c ON c.id = e.item_id
-                       WHERE e.character_id = %s AND e.slot = %s""",
-                    (character_id, other_hand),
-                ).fetchone()
-                if other_item and json.loads(other_item["effects_json"] or "{}").get("two_handed"):
-                    raise ValueError("Другая рука занята двуручным предметом")
+            slot = item_slot
 
             # Проверка класса: лучник может брать только разрешённые предметы
             char_row = connection.execute(
@@ -614,6 +836,8 @@ class ItemsDatabase:
 
     def unequip_item(self, character_id: int, slot: str, target_slot: Optional[int] = None) -> bool:
         """Снимает предмет в рюкзак: в указанную ячейку (если свободна) или в первую свободную"""
+        if slot in ("weapon", "shield"):
+            slot = "hands"
         with self.db.connection() as connection:
             lock_character(connection, character_id)
             row = connection.execute(
@@ -622,18 +846,6 @@ class ItemsDatabase:
                    WHERE e.character_id = %s AND e.slot = %s""",
                 (character_id, slot)
             ).fetchone()
-            actual_slot = slot
-            if row is None and slot in ("weapon", "shield"):
-                other_hand = "shield" if slot == "weapon" else "weapon"
-                other_item = connection.execute(
-                    """SELECT e.item_id, e.slot, c.effects_json FROM character_equipment e
-                       JOIN items_catalog c ON c.id = e.item_id
-                       WHERE e.character_id = %s AND e.slot = %s""",
-                    (character_id, other_hand),
-                ).fetchone()
-                if other_item and json.loads(other_item["effects_json"] or "{}").get("two_handed"):
-                    row = other_item
-                    actual_slot = other_hand
             if row is None:
                 raise ValueError("Слот пуст")
 
@@ -647,7 +859,7 @@ class ItemsDatabase:
 
             connection.execute(
                 "DELETE FROM character_equipment WHERE character_id = %s AND slot = %s",
-                (character_id, actual_slot)
+                (character_id, slot)
             )
             connection.execute(
                 """INSERT INTO character_items (character_id, item_id, quantity, slot_index, created_at)

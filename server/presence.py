@@ -11,71 +11,50 @@ PRESENCE = {}
 def cleanup():
     cutoff = time.time() - PRESENCE_TTL
     for token in list(PRESENCE):
-        if not PRESENCE[token].get("afk", False) and PRESENCE[token]["seen_at"] < cutoff:
+        if not PRESENCE[token].get("afk") and PRESENCE[token]["seen_at"] < cutoff:
             del PRESENCE[token]
+
+
+def _profile_fields(character):
+    fields = (
+        "character_id", "name", "type", "level", "xp", "hp", "max_hp", "mp",
+        "max_mp", "stats", "stat_points", "zone", "position_x", "position_y",
+        "position_direction",
+    )
+    payload = {field: copy.deepcopy(character.get(field)) for field in fields if field in character}
+    if "character_id" not in payload and "id" in character:
+        payload["character_id"] = character["id"]
+    return payload
 
 
 def update_presence(token, user_id, character, location):
     cleanup()
     character_id = character["id"]
-    already_present = any(
-        item["character_id"] == character_id and item["token"] == token and not item.get("afk", False)
-        for item in PRESENCE.values()
-    )
-    for previous_token in list(PRESENCE):
-        if PRESENCE[previous_token]["character_id"] == character_id:
-            del PRESENCE[previous_token]
+    for existing_token, entry in list(PRESENCE.items()):
+        if existing_token != token and entry.get("character_id") == character_id and entry.get("afk"):
+            del PRESENCE[existing_token]
     PRESENCE[token] = {
         "token": token,
         "user_id": user_id,
-        "character_id": character["id"],
-        "name": character["name"],
-        "type": character.get("type", "warrior"),
-        "level": character["level"],
-        "xp": character["xp"],
-        "hp": character["hp"],
-        "max_hp": character["max_hp"],
-        "mp": character["mp"],
-        "max_mp": character["max_mp"],
-        "stats": copy.deepcopy(character["stats"]),
-        "stat_points": character["stat_points"],
+        **_profile_fields(character),
         "location": location,
-        "position_x": character.get("position_x"),
-        "position_y": character.get("position_y"),
-        "position_direction": character.get("position_direction"),
         "afk": False,
         "seen_at": time.time(),
     }
-    return not already_present
 
 
 def mark_afk(token, user_id, character):
-    """Retain the last known location as an offline, attackable presence entry."""
+    location = PRESENCE.get(token, {}).get("location", character.get("zone", "tavern"))
+    update_presence(token, user_id, character, location)
+    PRESENCE[token]["afk"] = True
+
+
+def get_character_presence(character_id):
     cleanup()
-    character_id = int(character["id"])
-    entry = PRESENCE.get(token, {})
-    entry.update({
-        "token": token,
-        "user_id": user_id,
-        "character_id": character_id,
-        "name": character["name"],
-        "type": character.get("type", "warrior"),
-        "level": character["level"],
-        "xp": character["xp"],
-        "hp": character["hp"],
-        "max_hp": character["max_hp"],
-        "mp": character["mp"],
-        "max_mp": character["max_mp"],
-        "stats": copy.deepcopy(character["stats"]),
-        "stat_points": character["stat_points"],
-        "location": character.get("zone", entry.get("location", "tavern")),
-        "position_x": character.get("position_x"),
-        "position_y": character.get("position_y"),
-        "position_direction": character.get("position_direction"),
-        "afk": True,
-        "seen_at": time.time(),
-    })
-    PRESENCE[token] = entry
+    return next(
+        (copy.deepcopy(entry) for entry in PRESENCE.values() if entry.get("character_id") == character_id),
+        None,
+    )
 
 
 def character_level(character_id, location):
@@ -108,12 +87,6 @@ def occupants(user_id, location):
     return result
 
 
-def get_character_presence(character_id):
-    cleanup()
-    return next((dict(item) for item in PRESENCE.values()
-                 if int(item["character_id"]) == int(character_id)), None)
-
-
 def remove_character_presence(character_id):
     character_id = int(character_id)
     removed = False
@@ -124,10 +97,15 @@ def remove_character_presence(character_id):
     return removed
 
 
-def update_afk_character(character):
+def update_afk_character(character_id, character=None):
+    if character is None:
+        character = character_id
+        character_id = character.get("id", character.get("character_id"))
+    if character_id is None:
+        return None
     cleanup()
     for item in PRESENCE.values():
-        if int(item["character_id"]) != int(character["id"]) or not item.get("afk"):
+        if int(item["character_id"]) != int(character_id) or not item.get("afk"):
             continue
         for field in ("name", "type", "level", "xp", "hp", "max_hp", "mp", "max_mp",
                       "stats", "stat_points", "zone", "position_x", "position_y", "position_direction"):
@@ -135,5 +113,5 @@ def update_afk_character(character):
                 item[field] = copy.deepcopy(character[field])
         item["location"] = character.get("zone", item["location"])
         item["seen_at"] = time.time()
-        return dict(item)
+        return copy.deepcopy(item)
     return None

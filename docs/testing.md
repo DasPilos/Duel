@@ -19,15 +19,14 @@ git diff --check
 ## Основные наборы
 
 ```powershell
-python -m unittest tests.test_city_population tests.test_city_storage -q
-python -m unittest tests.test_production_buildings tests.test_production_building_window -q
-python -m unittest tests.test_transport tests.test_castle_window -q
+python -m unittest tests.test_world_terrain -q
+python -m unittest tests.test_server.ServerPersistenceTests.test_removed_city_progression_tables_are_absent tests.test_server.ServerPersistenceTests.test_retired_city_api_is_closed_but_map_terrain_is_available -q
 ```
 
-Фермерские проверки покрывают уровень 1/2, склад 500/800, места каждого поля,
-отдельные бонусы плуга `+5%` и рукояти `+8%`, накопительный таймер `122` секунды,
-серверные требования улучшений и Governor income. UI-тесты проверяют видимость
-карточек по уровню и прикрепление слота к правильному полю.
+Тесты проверяют спавн у кристалла возрождения, доступность глобальной карты,
+сохранение нужных городских точек интереса и отключение API удалённых систем.
+Старые тесты населения, городских улучшений, производства, кузницы, конюшни и
+перевозок помечены пропущенными вместе с удалённой игровой механикой.
 
 ## Ручная проверка интерфейса
 
@@ -37,5 +36,5 @@ python -m unittest tests.test_transport tests.test_castle_window -q
 python main.py
 ```
 
-Проверьте город и замок, свободные/занятые места, вкладку фермы, общие склады,
-конюшню и рейсы. Не тестируйте операции записи на production-данных.
+Проверьте спавн и возвращение к кристаллу, а также открытие гильдии, карточной
+лавки, магазина припасов и библиотеки.

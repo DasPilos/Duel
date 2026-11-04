@@ -1,6 +1,5 @@
 import pygame
 
-from core.carry_weight import GREEN, RED, YELLOW
 from ui.catalog_icons import draw_item_icon
 from ui.hud import draw_button
 
@@ -18,27 +17,19 @@ class MaterialContributionDialog:
         self.maximum = 0
         self.quantity = 0
         self.mode = "contribute"
-        self.carried_weight_kg = 0.0
-        self.carry_capacity_kg = 0.0
-        self.item_weight_kg = 0.0
         self.dragging = False
         self.rect = pygame.Rect(0, 0, self.WIDTH, self.HEIGHT)
         self.track_rect = pygame.Rect(0, 0, 0, 0)
         self.confirm_button = pygame.Rect(0, 0, 0, 0)
         self.cancel_button = pygame.Rect(0, 0, 0, 0)
 
-    def open(self, item_key, label, available, remaining, mode="deposit",
-             weight_state=None, item_weight_kg=0.0):
+    def open(self, item_key, label, available, remaining, mode="deposit"):
         self.item_key = item_key
         self.label = label
         self.mode = mode
         self.available = max(0, int(available))
         self.maximum = min(self.available, max(0, int(remaining)))
         self.quantity = 0
-        weight_state = weight_state or {}
-        self.carried_weight_kg = float(weight_state.get("carried_weight_kg", 0))
-        self.carry_capacity_kg = float(weight_state.get("carry_capacity_kg", 0))
-        self.item_weight_kg = max(0.0, float(item_weight_kg or 0))
         self.dragging = False
         self.is_open = True
 
@@ -122,18 +113,6 @@ class MaterialContributionDialog:
         pygame.draw.circle(screen, (229, 215, 182), (knob_x, self.track_rect.centery), 11)
         pygame.draw.circle(screen, (91, 88, 72), (knob_x, self.track_rect.centery), 11, 1)
         if self.mode == "withdraw":
-            resulting_weight = self.carried_weight_kg + self.quantity * self.item_weight_kg
-            if resulting_weight >= self.carry_capacity_kg and self.carry_capacity_kg > 0:
-                weight_color = RED
-            elif (self.carry_capacity_kg > 0
-                  and resulting_weight / self.carry_capacity_kg > 0.8):
-                weight_color = YELLOW
-            else:
-                weight_color = GREEN
-            weight_text = (f"Вес после забора: {resulting_weight:g} / "
-                           f"{self.carry_capacity_kg:g} кг")
-            screen.blit(scene.small_font.render(weight_text, True, weight_color),
-                        (self.rect.left + 24, self.rect.top + 145))
             note_text = "Выбранное количество будет помещено в рюкзак"
         elif self.mode == "deposit":
             note_text = "Выбранное количество поступит в общий запас здания"

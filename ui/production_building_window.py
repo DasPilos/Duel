@@ -275,9 +275,9 @@ class ProductionBuildingWindow:
             self.received_at = time.monotonic()
             self.message = None
             if action in ("upgrade/deposit", "storage/deposit", "storage/withdraw"):
-                refresh_carrying_state = getattr(self.scene.session, "refresh_carrying_state", None)
-                if refresh_carrying_state is not None:
-                    refresh_carrying_state()
+                refresh_equipment_state = getattr(self.scene.session, "refresh_equipment_state", None)
+                if refresh_equipment_state is not None:
+                    refresh_equipment_state()
         except ServerError as error:
             self.message = str(error)
         except (KeyError, AttributeError, OSError):
@@ -825,8 +825,6 @@ class ProductionBuildingWindow:
                     self.contribution_dialog.open(
                         ("storage_withdraw", resource), RESOURCES[resource]["label"],
                         quantity, withdrawable.get("max_withdraw", 0), mode="withdraw",
-                        weight_state=withdrawable,
-                        item_weight_kg=withdrawable.get("item_weight_kg", 0),
                     )
                     return
             for resource, button in self.storage_deposit_buttons.items():

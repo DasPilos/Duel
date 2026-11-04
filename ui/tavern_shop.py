@@ -2,8 +2,6 @@ from pathlib import Path
 
 import pygame
 from core import settings
-from core.currency import Currency
-from ui.catalog_icons import draw_item_icon
 from ui.hud import draw_button
 
 
@@ -140,7 +138,8 @@ class TavernShop:
                         if i == self.last_click_index and (current_time - self.last_click_time) < 0.3:
                             self.last_click_index = -1
                             self.last_click_time = 0
-                            return f"buy_drink_{i}"
+                            self.show_error("Покупки временно отключены до назначения цен в монетах")
+                            return "handled"
                         
                         self.last_click_index = i
                         self.last_click_time = current_time
@@ -190,12 +189,9 @@ class TavernShop:
                 name_rect = name_surf.get_rect(midleft=(rect.x + self.DRINK_ICON_SIZE + 15, rect.centery))
                 screen.blit(name_surf, name_rect)
 
-                coin = "gold" if drink["price"] >= 10000 else ("silver" if drink["price"] >= 100 else "copper")
-                draw_item_icon(screen, coin, (name_rect.right + 6, rect.centery - 16), 32)
-
-                price_text = Currency.format_amount(drink["price"])
+                price_text = "временно недоступно"
                 price_surf = self.small_font.render(price_text, True, (255, 225, 120))
-                screen.blit(price_surf, (name_rect.right + 44, name_rect.top))
+                screen.blit(price_surf, (name_rect.right + 10, name_rect.top))
             
             # Tooltip при наведении
             if self.hovered_drink_index >= 0 and self.hovered_drink_index < len(self.drinks):

@@ -9,12 +9,13 @@ import pygame
 
 from core import settings
 from combat.card_battle import CardBattle, build_battle_deck
-from combat.card_database import Card, choose_battle_reward, load_cards
+from combat.card_database import Card, cards_for_type, choose_battle_reward, load_cards
 from combat.fighter import Fighter
 from combat.character_stats import calculate_max_hp
 from combat.mechanics import get_critical_chance, get_dodge_chance
 from ui.character_card import CharacterCard
-from ui.character_profile import derived_values
+from ui.character_profile import derived_values, normalize_character_profile
+from ui.duel_renderer import DuelRenderer
 from ui.renderers.card_area import CardAreaRenderer
 from scenes.duel_scene import DuelScene
 from scenes.duel_input import DuelInputHandler
@@ -64,29 +65,645 @@ class TestCardBattle(unittest.TestCase):
         finally:
             pygame.quit()
 
-    def test_draft_cards_keep_fixed_slots_in_two_rows(self):
+    def test_bot_receives_cards_for_its_profession(self):
+        pygame.init()
+        try:
+            scene = DuelScene()
+            for profession, group_prefix in (
+                ("warrior", "Боец:"),
+                ("assassin", "Асасин:"),
+                ("archer", "Лучник:"),
+            ):
+                scene.opponent_profile = {
+                    "id": f"bot_{profession}",
+                    "name": f"Бот {profession}",
+                    "level": 1,
+                    "type": profession,
+                    "stats": {
+                        "strength": 2,
+                        "agility": 2,
+                        "intuition": 2,
+                        "wisdom": 3,
+                        "intellect": 3,
+                        "harmony": 3,
+                        "endurance": 4,
+                    },
+                    "hp": 50,
+                    "mp": 20,
+                }
+                scene.restart()
+
+                self.assertTrue(scene.battle.enemy_cards)
+                self.assertTrue(
+                    all(card.group_name.startswith(group_prefix) for card in scene.battle.enemy_cards)
+                )
+                self.assertTrue(
+                    all(card.group_name.startswith(group_prefix) for card in scene.battle.enemy_table)
+                )
+                expected_player_prefix = "Боец:"
+                self.assertTrue(
+                    all(card.group_name.startswith(expected_player_prefix) for card in scene.battle.table)
+                )
+        finally:
+            pygame.quit()
+
+    def test_bot_draft_uses_its_own_class_table_after_player_selects_card(self):
+        pygame.init()
+        try:
+            scene = DuelScene()
+            scene.player.set_profession("archer")
+            scene.enemy.set_profession("warrior")
+            scene.battle = CardBattle(
+                scene.player,
+                scene.enemy,
+                cards=cards_for_type("archer"),
+                enemy_cards=cards_for_type("warrior"),
+                rng=random.Random(1),
+            )
+            scene.phase = "draft"
+            scene.draft_next_side = "player"
+            renderer = scene.renderer.card_renderer
+            selected_player_card = scene.battle.table[0]
+            selected_rect = renderer.draft_slot_rect(0)
+
+            scene.input_handler.handle_event(
+                pygame.event.Event(
+                    pygame.MOUSEBUTTONDOWN,
+                    button=1,
+                    pos=selected_rect.center,
+                )
+            )
+            self.assertEqual(scene.phase, "draft_transfer")
+            self.assertIn(selected_player_card, scene.battle.hands["player"])
+
+            scene.card_transfer["started"] -= settings.PLAYER_DRAFT_PICK_MOVE_SECONDS
+            with patch("scenes.duel_scene.play_card_move_sound"):
+                scene.update(0)
+
+            self.assertEqual(scene.phase, "enemy_transfer")
+            self.assertTrue(scene.battle.hands["enemy"])
+            self.assertTrue(
+                all(card.group_name.startswith("Боец:") for card in scene.battle.hands["enemy"])
+            )
+            self.assertTrue(
+                all(card.group_name.startswith("Лучник:") for card in scene.battle.table)
+            )
+        finally:
+            pygame.quit()
+
+    def test_battle_starts_with_full_health_and_displays_final_hp(self):
+        pygame.init()
+        try:
+            scene = DuelScene()
+            character_profile = {
+                "id": 7,
+                "name": "Игрок",
+                "level": 1,
+                "xp": 0,
+                "type": "warrior",
+                "stats": {
+                    "strength": 3,
+                    "agility": 3,
+                    "intuition": 3,
+                    "wisdom": 3,
+                    "intellect": 3,
+                    "harmony": 3,
+                    "endurance": 5,
+                },
+                "hp": 1,
+                "mp": 15,
+            }
+            opponent_profile = {
+                **character_profile,
+                "id": "bot_warrior",
+                "name": "Бот",
+                "hp": 1,
+                "kind": "bot",
+            }
+            scene.online_session = SimpleNamespace(
+                character=character_profile,
+                selected_deck=None,
+            )
+            scene.opponent_profile = opponent_profile
+
+            scene.restart()
+
+            self.assertEqual(scene.player.hp, scene.player.max_hp)
+            self.assertEqual(scene.enemy.hp, scene.enemy.max_hp)
+            player_display = normalize_character_profile(scene.player)
+            enemy_display = normalize_character_profile(scene.enemy)
+            self.assertEqual(player_display["hp"], player_display["max_hp"])
+            self.assertEqual(enemy_display["hp"], enemy_display["max_hp"])
+            labels = []
+
+            def capture_text(_screen, _font, text, *_args, **_kwargs):
+                labels.append(text)
+
+            with patch("ui.duel_renderer.draw_text", side_effect=capture_text):
+                scene.renderer.draw_battle_stats(
+                    pygame.Surface((settings.WIDTH, settings.HEIGHT))
+                )
+
+            self.assertIn(
+                f"HP: {scene.enemy.hp}/{scene.enemy.max_hp}",
+                labels,
+            )
+        finally:
+            pygame.quit()
+
+    def test_card_details_open_with_right_click_and_close_with_left_click(self):
+        pygame.init()
+        try:
+            scene = DuelScene()
+            scene.player.set_profession("assassin")
+            scene.enemy.set_profession("warrior")
+            scene.battle = CardBattle(
+                scene.player,
+                scene.enemy,
+                cards=cards_for_type("assassin"),
+                enemy_cards=cards_for_type("warrior"),
+            )
+            scene.phase = "planning"
+            card = next(card for card in scene.battle.cards if card.effect_data.get("dice"))
+            scene.battle.hands["player"] = [card]
+            scene.player.unique_resource_current = 0
+            renderer = scene.renderer.card_renderer
+            card_rect = renderer.card_rect(scene.layout.player_hand, 1, 0)
+            handler = DuelInputHandler(scene)
+
+            handler.handle_event(
+                pygame.event.Event(
+                    pygame.MOUSEBUTTONDOWN,
+                    button=3,
+                    pos=card_rect.center,
+                )
+            )
+
+            self.assertNotIn(card, scene.battle.selected["player"])
+            self.assertIs(renderer.details_card, card)
+            self.assertFalse(scene.battle.can_select("player", card))
+            self.assertEqual(card.resource_type, "concentration")
+            renderer.close_details()
+
+            scene.player.unique_resource_current = card.resource_cost
+            handler.handle_event(
+                pygame.event.Event(
+                    pygame.MOUSEBUTTONDOWN,
+                    button=1,
+                    pos=card_rect.center,
+                )
+            )
+            self.assertIn(card, scene.battle.selected["player"])
+            selected_rect = renderer.card_rect(
+                scene.layout.player_selected,
+                1,
+                0,
+            )
+            handler.handle_event(
+                pygame.event.Event(
+                    pygame.MOUSEBUTTONDOWN,
+                    button=3,
+                    pos=selected_rect.center,
+                )
+            )
+            self.assertIs(renderer.details_card, card)
+            details = renderer._card_information_lines(card, detailed=True)
+            self.assertTrue(any(line.startswith("Стоимость:") for line in details))
+            self.assertTrue(any("Итоговый урон сейчас:" in line for line in details))
+            self.assertTrue(any("Формула и текущие значения:" in line for line in details))
+
+            surface = pygame.Surface((settings.WIDTH, settings.HEIGHT))
+            renderer._draw_card_details(surface)
+            self.assertIsNotNone(renderer.details_close_rect)
+            handler.handle_event(
+                pygame.event.Event(
+                    pygame.MOUSEBUTTONDOWN,
+                    button=1,
+                    pos=(0, 0),
+                )
+            )
+            self.assertIsNone(renderer.details_card)
+            handler.handle_event(
+                pygame.event.Event(
+                    pygame.MOUSEBUTTONDOWN,
+                    button=1,
+                    pos=scene.layout.play_cards_button.center,
+                )
+            )
+            self.assertEqual(scene.phase, "clash")
+        finally:
+            pygame.quit()
+
+    def test_b_key_burns_selected_card_for_fifteen_percent_resources(self):
+        pygame.init()
+        try:
+            scene = DuelScene()
+            scene.phase = "planning"
+            card, selected_card = scene.battle.cards[:2]
+            scene.battle.hands["player"] = [card, selected_card]
+            scene.battle.selected["player"] = [selected_card]
+            scene.player.mp = 0
+            scene.player.unique_resource_current = 0
+            expected_mana = int(scene.player.max_mp * 0.15)
+            expected_unique = int(scene.player.unique_resource_max * 0.15)
+
+            scene.input_handler.handle_event(
+                pygame.event.Event(pygame.KEYDOWN, key=pygame.K_b)
+            )
+            self.assertTrue(scene.burn_mode)
+            self.assertEqual(scene.battle.selected["player"], [selected_card])
+
+            card_rect = scene.renderer.card_renderer.card_rect(
+                scene.layout.player_hand,
+                1,
+                0,
+            )
+            scene.input_handler.handle_event(
+                pygame.event.Event(
+                    pygame.MOUSEBUTTONDOWN,
+                    button=1,
+                    pos=card_rect.center,
+                )
+            )
+            self.assertEqual(scene.burn_card_key, card.key)
+            self.assertIn(card, scene.battle.hands["player"])
+
+            scene.input_handler.handle_event(
+                pygame.event.Event(
+                    pygame.MOUSEBUTTONDOWN,
+                    button=1,
+                    pos=scene.layout.play_cards_button.center,
+                )
+            )
+
+            self.assertFalse(scene.burn_mode)
+            self.assertNotIn(card, scene.battle.hands["player"])
+            self.assertNotIn(card, scene.battle.deck)
+            self.assertNotIn(card, scene.battle.discard)
+            self.assertEqual(scene.battle.selected["player"], [selected_card])
+            self.assertEqual(scene.player.mp, expected_mana)
+            self.assertEqual(scene.player.unique_resource_current, expected_unique)
+        finally:
+            pygame.quit()
+
+    def test_hover_card_summary_only_shows_final_effect_outcomes(self):
+        pygame.init()
+        try:
+            scene = DuelScene()
+            scene.phase = "planning"
+            scene.player.set_profession("archer")
+            renderer = scene.renderer.card_renderer
+            card = Card(
+                "test_rooted_strike", "Удар с оплетением", "Проворный герой",
+                "accuracy", 2, "damage", {"dice": 4, "entangle": 2},
+            )
+
+            lines = renderer._card_hover_information_lines(card)
+
+            self.assertTrue(any(line.startswith("Итоговый урон:") for line in lines))
+            self.assertIn("Оплетение: 2 хода.", lines)
+            self.assertFalse(any("Стоимость" in line or "Формула" in line or "крит" in line.lower()
+                                 for line in lines))
+        finally:
+            pygame.quit()
+
+    def test_hover_card_summary_shows_magic_status_and_damage_debuff(self):
+        pygame.init()
+        try:
+            scene = DuelScene()
+            scene.phase = "planning"
+            scene.player.set_profession("mage")
+            card = Card(
+                "test_water_bolt", "Водяной удар", "Магия: Вода",
+                "mana", 5, "mage_damage_status",
+                {
+                    "damage": 12,
+                    "status": "вода",
+                    "status_duration": 2,
+                    "damage_percent": -8,
+                    "intellect_percent": 2,
+                },
+                effect_duration=2,
+            )
+
+            lines = scene.renderer.card_renderer._card_hover_information_lines(card)
+
+            self.assertTrue(any(line.startswith("Итоговый урон:") for line in lines))
+            self.assertIn("Статус «вода»: 1 ур. на 2 хода.", lines)
+            self.assertTrue(any(line.startswith("Снижение урона врага:") for line in lines))
+            self.assertFalse(any("Стоимость" in line or "Формула" in line for line in lines))
+        finally:
+            pygame.quit()
+
+    def test_burning_card_grants_fifteen_percent_and_removes_it_for_battle(self):
+        player = Fighter("Асасин", profession_type="assassin")
+        enemy = Fighter("Враг")
+        battle = CardBattle(
+            player,
+            enemy,
+            cards=[],
+        )
+        card = cards_for_type("assassin")[0]
+        battle.hands["player"] = [card]
+        player.mp = 0
+        player.unique_resource_current = 0
+        expected_mana = int(player.max_mp * 0.15)
+        expected_unique = int(player.unique_resource_max * 0.15)
+
+        self.assertTrue(battle.burn_card("player", card.key))
+
+        self.assertNotIn(card, battle.hands["player"])
+        self.assertNotIn(card, battle.deck)
+        self.assertNotIn(card, battle.discard)
+        self.assertEqual(player.mp, expected_mana)
+        self.assertEqual(player.unique_resource_current, expected_unique)
+        self.assertFalse(battle.burn_card("player", card.key))
+
+    def test_burning_card_restores_necromancers_necrotism(self):
+        player = Fighter("Некромант", profession_type="necromancer")
+        battle = CardBattle(
+            player,
+            Fighter("Враг"),
+            cards=[],
+        )
+        card = cards_for_type("necromancer")[0]
+        battle.hands["player"] = [card]
+        player.unique_resource_current = 0
+
+        self.assertTrue(battle.burn_card("player", card.key))
+
+        self.assertEqual(
+            player.unique_resource_current,
+            int(player.unique_resource_max * 0.15),
+        )
+
+    def test_necromancer_starts_battle_with_fifteen_percent_necrotism(self):
+        player = Fighter("Некромант", profession_type="necromancer")
+        enemy = Fighter("Противник", profession_type="necromancer")
+        battle = CardBattle(
+            player,
+            enemy,
+            cards=cards_for_type("necromancer"),
+            enemy_cards=cards_for_type("necromancer"),
+        )
+        player.unique_resource_current = player.unique_resource_max
+        enemy.unique_resource_current = enemy.unique_resource_max
+        expected = int(player.unique_resource_max * 0.15)
+
+        battle._start_turn(draw_cards=False)
+
+        self.assertEqual(player.unique_resource_current, expected)
+        self.assertEqual(enemy.unique_resource_current, expected)
+
+    def test_necromancer_recovers_eight_plus_level_necrotism_each_turn(self):
+        player = Fighter("Некромант", level=3, profession_type="necromancer")
+        enemy = Fighter("Противник")
+        battle = CardBattle(
+            player,
+            enemy,
+            cards=cards_for_type("necromancer"),
+            enemy_cards=cards_for_type("warrior"),
+        )
+
+        battle._start_turn(draw_cards=False)
+        player.unique_resource_current = 0
+        battle._start_turn(draw_cards=False)
+
+        self.assertEqual(player.unique_resource_current, 11)
+
+        player.unique_resource_current = player.unique_resource_max - 1
+        battle._start_turn(draw_cards=False)
+
+        self.assertEqual(player.unique_resource_current, player.unique_resource_max)
+
+    def test_necromancer_card_cost_label_uses_necrotism_name(self):
+        class CaptureFont:
+            text = None
+
+            def render(self, text, _antialias, _color):
+                self.text = text
+                return SimpleNamespace(get_rect=lambda **_kwargs: None)
+
+        class CaptureScreen:
+            def blit(self, *_args):
+                pass
+
+        renderer = CardAreaRenderer.__new__(CardAreaRenderer)
+        renderer.scene = SimpleNamespace(
+            player=Fighter("Некромант", profession_type="necromancer")
+        )
+        renderer.card_cost_font = CaptureFont()
+        card = next(card for card in cards_for_type("necromancer") if card.key == "necromancer_spirit")
+        rect = SimpleNamespace(centerx=50, bottom=100)
+
+        renderer._draw_card_costs(CaptureScreen(), card, rect)
+
+        self.assertEqual(renderer.card_cost_font.text, "20 НЕКРОТИЗМА")
+
+    def test_mage_opponent_profile_fills_missing_stats_before_recalculation(self):
+        fighter = Fighter("Противник")
+        profile = {
+            "name": "Маг-бот",
+            "level": 1,
+            "type": "mage",
+            "stats": {"strength": 0, "agility": 0, "intuition": 0},
+            "hp": 50,
+            "mp": 20,
+        }
+
+        DuelScene._apply_fighter_profile(fighter, profile)
+
+        self.assertEqual(fighter.profession_type, "mage")
+        self.assertEqual(fighter.stats["intellect"], 3)
+        self.assertGreater(fighter.max_hp, 0)
+        self.assertGreater(fighter.max_mp, 0)
+
+    def test_chance_modifiers_keep_unavailable_dodge_placeholder(self):
+        mage = Fighter("Маг", profession_type="mage")
+
+        adjusted = DuelRenderer._apply_chance_modifiers(
+            {"Уворот": "--", "Крит": "5% × 165%"},
+            mage,
+        )
+
+        self.assertEqual(adjusted["Уворот"], "--")
+        self.assertEqual(adjusted["Крит"], "5% × 165%")
+
+    def test_starting_draft_cards_fill_two_centered_rows_of_eleven(self):
         pygame.init()
         try:
             scene = DuelScene()
             renderer = scene.renderer.card_renderer
-            scene.battle.table = list(scene.battle.cards[:10])
-            slots = list(renderer.draft_slots())
-            rects = [renderer.draft_slot_rect(index) for index in range(10)]
-            self.assertTrue(all(rect.size == (renderer.CARD_WIDTH, renderer.CARD_HEIGHT) for rect in rects))
-            self.assertEqual(len({rect.y for rect in rects[:5]}), 1)
-            self.assertGreater(rects[5].y, rects[0].y)
+            scene.battle.table = list(scene.battle.cards[:22])
+            rects = [renderer.draft_slot_rect(index) for index in range(22)]
+            self.assertEqual(len({rect.y for rect in rects[:11]}), 1)
+            self.assertEqual(len({rect.y for rect in rects[11:]}), 1)
+            self.assertGreater(rects[11].y, rects[0].y)
             self.assertTrue(all(scene.layout.card_table.contains(rect) for rect in rects))
+            self.assertEqual(rects[0].left, scene.layout.card_table.left + 1)
+            self.assertEqual(rects[10].right, scene.layout.card_table.right - 1)
+            self.assertEqual(rects[0].width, rects[10].width)
+            self.assertEqual(rects[0].height, rects[10].height)
 
+            with patch.object(renderer, "_draw_moving_card") as draw_moving_card:
+                renderer._draw_reveal_cards(None, scene.battle.table, 10, scene.layout.card_table)
+            self.assertEqual(draw_moving_card.call_count, 22)
+            self.assertTrue(
+                all(call.kwargs["target_size"] == rects[index].size
+                    for index, call in enumerate(draw_moving_card.call_args_list))
+            )
+
+            slots = list(renderer.draft_slots())
             taken = slots[2]
             scene.battle.table.remove(taken)
             after = renderer.draft_slots()
             self.assertIsNone(after[2])
             self.assertEqual(after[3], slots[3])
+
+            scene.battle.draft_mode = "redraft"
+            redraft_rects = [renderer.draft_slot_rect(index) for index in range(6)]
+            self.assertEqual(redraft_rects[0].size, (renderer.CARD_WIDTH, renderer.CARD_HEIGHT))
+            self.assertEqual(redraft_rects[0].y, redraft_rects[4].y)
+            self.assertGreater(redraft_rects[5].y, redraft_rects[0].y)
+        finally:
+            pygame.quit()
+
+    def test_fighter_panel_uses_profession_type_for_class_colors(self):
+        pygame.init()
+        try:
+            scene = DuelScene()
+            expected_dominant_channels = {
+                "archer": "green",
+                "assassin": "purple",
+                "warrior": "red",
+            }
+            for profession, expected_color in expected_dominant_channels.items():
+                scene.player.set_profession(profession)
+                surface = pygame.Surface((settings.WIDTH, settings.HEIGHT))
+                surface.fill((0, 0, 0))
+                profile = {
+                    "type": "warrior",
+                    "profession_type": profession,
+                    "hp": scene.player.hp,
+                    "max_hp": scene.player.max_hp,
+                    "mp": scene.player.mp,
+                    "max_mp": scene.player.max_mp,
+                }
+
+                scene.renderer._draw_corner_fighter_card(
+                    surface,
+                    scene.player,
+                    profile,
+                    {},
+                    10,
+                    10,
+                    (80, 180, 120),
+                    "left",
+                )
+
+                red, green, blue, _alpha = surface.get_at((20, 20))
+                if expected_color == "green":
+                    self.assertGreater(green, red)
+                    self.assertGreater(green, blue)
+                elif expected_color == "purple":
+                    self.assertGreater(red, green)
+                    self.assertGreater(blue, green)
+                else:
+                    self.assertGreater(red, green)
+                    self.assertGreater(red, blue)
         finally:
             pygame.quit()
 
     def test_turn_timer_is_one_minute(self):
         self.assertEqual(settings.TURN_DECISION_SECONDS, 60)
+
+    def test_combat_messages_stay_above_each_fighters_stats_for_ten_seconds(self):
+        pygame.init()
+        screen = pygame.display.set_mode((settings.WIDTH, settings.HEIGHT))
+        try:
+            scene = DuelScene()
+            scene.battle.last_exchange = [
+                {
+                    "side": "player",
+                    "effect_text": "Дурман",
+                    "damage": 7,
+                    "dodged": False,
+                    "critical": False,
+                },
+                {
+                    "side": "enemy",
+                    "effect_text": "Яды не найдены",
+                    "damage": 3,
+                    "dodged": False,
+                    "critical": False,
+                },
+            ]
+            scene.resolver.damage_image = None
+
+            with patch("scenes.duel_resolver.play_damage_sound"):
+                scene.resolver._add_floating_damage()
+
+            messages = scene.active_floating_texts
+            self.assertEqual(len(messages), 4)
+            player_x = scene.resolver._floating_text_x("player")
+            enemy_x = scene.resolver._floating_text_x("enemy")
+            panel_top = scene.resolver._floating_text_panel_top()
+            self.assertCountEqual([message.x for message in messages], [player_x, enemy_x, enemy_x, player_x])
+            self.assertCountEqual(
+                [message.y for message in messages],
+                [
+                    panel_top - scene.resolver.FLOATING_TEXT_PANEL_GAP,
+                    panel_top - scene.resolver.FLOATING_TEXT_PANEL_GAP,
+                    panel_top - scene.resolver.FLOATING_TEXT_PANEL_GAP - scene.resolver.FLOATING_TEXT_LINE_HEIGHT,
+                    panel_top - scene.resolver.FLOATING_TEXT_PANEL_GAP - scene.resolver.FLOATING_TEXT_LINE_HEIGHT,
+                ],
+            )
+            self.assertTrue(all(message.duration == settings.FPS * 10 for message in messages))
+            self.assertTrue(all(message.vy == 0 and not message.fade_out for message in messages))
+
+            original_positions = [(message.x, message.y) for message in messages]
+            for _ in range(settings.FPS):
+                for message in messages:
+                    message.update()
+            self.assertEqual([(message.x, message.y) for message in messages], original_positions)
+            self.assertTrue(all(message.duration == settings.FPS * 9 for message in messages))
+
+            with patch("scenes.duel_resolver.play_damage_sound"):
+                scene.resolver._add_floating_damage()
+            positions_by_side = {
+                side: [
+                    (message.x, message.y)
+                    for message in scene.active_floating_texts
+                    if message.x == scene.resolver._floating_text_x(side)
+                ]
+                for side in ("player", "enemy")
+            }
+            for positions in positions_by_side.values():
+                self.assertEqual(len(positions), 4)
+                self.assertEqual(len({y for _x, y in positions}), 4)
+
+            messages = scene.active_floating_texts
+            for message in messages:
+                message.duration = 1
+            from ui.hud import update_and_draw_floating_texts
+
+            update_and_draw_floating_texts(screen, messages)
+            self.assertEqual(messages, [])
+        finally:
+            pygame.quit()
+
+    def test_card_phase_input_starts_with_burn_mode_disabled(self):
+        pygame.init()
+        try:
+            scene = DuelScene()
+            scene.phase = "planning"
+
+            scene.input_handler._handle_card_phase((0, 0), 1)
+
+            self.assertFalse(scene.burn_mode)
+            self.assertIsNone(scene.burn_card_key)
+        finally:
+            pygame.quit()
 
     def test_duel_screen_draws_in_every_card_phase(self):
         pygame.init()
@@ -155,12 +772,9 @@ class TestCardBattle(unittest.TestCase):
         pygame.init()
         try:
             scene = DuelScene()
-            self.assertEqual(settings.GAINED_POINTS_FONT_SIZE, 20)
-            self.assertGreaterEqual(scene.gained_points_font.get_height(), 20)
-            self.assertTrue(scene.gained_points_font.get_bold())
             self.assertEqual(scene.battle.hands["player"], [])
             self.assertEqual(scene.battle.hands["enemy"], [])
-            self.assertEqual(len(scene.battle.table), 10)
+            self.assertEqual(len(scene.battle.table), 22)
         finally:
             pygame.quit()
 
@@ -375,6 +989,7 @@ class TestCardBattle(unittest.TestCase):
         battle.hands["player"] = list(card_pool[:6])
         battle.hands["enemy"] = list(card_pool[6:11])
         battle.discard = list(card_pool[11:18])
+        battle.enemy_discard = list(card_pool[18:24])
 
         self.assertTrue(battle.prepare_redraft())
         battle.finish_afk_redraft()
@@ -403,6 +1018,7 @@ class TestCardBattle(unittest.TestCase):
             "enemy": [kept_enemy_card],
         }
         battle.discard = list(cards[:8])
+        battle.enemy_discard = list(cards[10:16])
 
         self.assertTrue(battle.prepare_redraft())
         self.assertEqual(battle.draft_first_side(), "player")
@@ -412,7 +1028,8 @@ class TestCardBattle(unittest.TestCase):
 
         side = battle.draft_first_side()
         while not battle.current_draft_complete():
-            battle.choose_redraft_card(side, battle.table[0].key)
+            table = battle.table_for(side)
+            battle.choose_redraft_card(side, table[0].key)
             side = "enemy" if side == "player" else "player"
         # Бонусная карта за более высокую характеристику убрана — обе стороны
         # получают ровно то, что выбрали в повторном драфте.
@@ -423,14 +1040,16 @@ class TestCardBattle(unittest.TestCase):
         self.assertIn(kept_enemy_card, battle.hands["enemy"])
         self.assertEqual(len(battle.hands["player"]), 3)
         self.assertEqual(len(battle.hands["enemy"]), 3)
-        self.assertEqual(len(battle.deck), 4)
+        self.assertEqual(len(battle.deck), 6)
+        self.assertEqual(len(battle.enemy_deck), 4)
         self.assertEqual(battle.discard, [])
 
         battle.start_next_turn()
 
         self.assertEqual(len(battle.hands["player"]), 4)
         self.assertEqual(len(battle.hands["enemy"]), 4)
-        self.assertEqual(len(battle.deck), 2)
+        self.assertEqual(len(battle.deck), 5)
+        self.assertEqual(len(battle.enemy_deck), 3)
 
     def test_redraft_starts_only_after_deck_is_empty(self):
         cards = load_cards()
@@ -443,6 +1062,7 @@ class TestCardBattle(unittest.TestCase):
         battle = CardBattle(player, enemy, cards=[])
         battle.draft_mode = None
         battle.deck = list(cards[:2])
+        battle.enemy_deck = list(cards[7:13])
         battle.discard = list(cards[2:7])
 
         self.assertFalse(battle.prepare_redraft())
@@ -454,16 +1074,19 @@ class TestCardBattle(unittest.TestCase):
 
         side = battle.draft_first_side()
         while not battle.current_draft_complete():
-            battle.choose_redraft_card(side, battle.table[0].key)
+            table = battle.table_for(side)
+            battle.choose_redraft_card(side, table[0].key)
             side = "enemy" if side == "player" else "player"
         self.assertIsNone(battle.take_draft_bonus_card())
         battle.finish_redraft()
 
-        self.assertEqual(len(battle.deck), 3)
+        self.assertEqual(len(battle.deck), 5)
+        self.assertEqual(len(battle.enemy_deck), 4)
         battle.start_next_turn()
         self.assertEqual(len(battle.hands["player"]), 3)
         self.assertEqual(len(battle.hands["enemy"]), 3)
-        self.assertEqual(len(battle.deck), 1)
+        self.assertEqual(len(battle.deck), 4)
+        self.assertEqual(len(battle.enemy_deck), 3)
 
     def test_duel_scene_waits_until_next_turn_after_last_draw(self):
         pygame.init()
@@ -486,10 +1109,99 @@ class TestCardBattle(unittest.TestCase):
             with patch("scenes.duel_scene.play_draft_music"):
                 scene.update(0)
 
-            self.assertEqual(scene.battle.deck, [])
-            self.assertEqual(len(scene.battle.discard), 6)
-            self.assertEqual(scene.battle.draft_mode, None)
+            self.assertEqual(scene.phase, "card_draw_choice")
+            self.assertEqual(len(scene.battle.draw_choices["player"]), 2)
+            self.assertEqual(len(scene.battle.draw_choices["enemy"]), 0)
+            self.assertAlmostEqual(
+                scene.draw_choice_deadline - time.monotonic(),
+                settings.DRAW_CHOICE_SECONDS,
+                delta=0.1,
+            )
+        finally:
+            pygame.quit()
+
+    def test_draw_choices_use_each_side_deck_and_put_unselected_card_at_bottom(self):
+        cards = load_cards()
+        player = Fighter("Игрок")
+        enemy = Fighter("Противник")
+        battle = CardBattle(player, enemy, cards=[])
+        battle.dual_table = True
+        battle.deck = list(cards[:4])
+        battle.enemy_deck = list(cards[4:8])
+
+        player_choices = battle.prepare_draw_choice("player")
+        enemy_choices = battle.prepare_draw_choice("enemy")
+
+        self.assertEqual(player_choices, [cards[3], cards[2]])
+        self.assertEqual(enemy_choices, [cards[7], cards[6]])
+        self.assertEqual(battle.deck, cards[:2])
+        self.assertEqual(battle.enemy_deck, cards[4:6])
+
+        self.assertTrue(battle.choose_draw_card("player", cards[2].key))
+        self.assertTrue(battle.choose_draw_card("enemy", cards[7].key))
+
+        self.assertEqual(battle.hands["player"], [cards[2]])
+        self.assertEqual(battle.hands["enemy"], [cards[7]])
+        self.assertEqual(battle.deck, [cards[3], *cards[:2]])
+        self.assertEqual(battle.enemy_deck, [cards[6], *cards[4:6]])
+
+    def test_draw_choice_timeout_defaults_to_top_card_for_both_fighters(self):
+        pygame.init()
+        try:
+            scene = DuelScene()
+            cards = load_cards()
+            scene.battle.deck = list(cards[:4])
+            scene.battle.enemy_deck = list(cards[4:8])
+            scene.battle.draft_mode = None
+            scene.battle.hands = {"player": [], "enemy": []}
+
+            scene._start_next_card_draw(time.monotonic())
+            player_top = scene.battle.draw_choices["player"][0]
+            enemy_top = scene.battle.draw_choices["enemy"][0]
+            scene.draw_choice_deadline = time.monotonic() - 1
+
+            scene.update(0)
+
             self.assertEqual(scene.phase, "planning")
+            self.assertEqual(scene.battle.hands["player"], [player_top])
+            self.assertEqual(scene.battle.hands["enemy"], [enemy_top])
+            self.assertEqual(scene.battle.deck[0], cards[2])
+            self.assertEqual(scene.battle.enemy_deck[0], cards[6])
+            self.assertIsNone(scene.draw_choice_deadline)
+        finally:
+            pygame.quit()
+
+    def test_player_can_choose_displayed_card_and_bot_selects_from_own_draw(self):
+        pygame.init()
+        try:
+            scene = DuelScene()
+            cards = load_cards()
+            scene.battle.deck = list(cards[:4])
+            scene.battle.enemy_deck = list(cards[4:8])
+            scene.battle.draft_mode = None
+            scene.battle.hands = {"player": [], "enemy": []}
+            scene._start_next_card_draw(time.monotonic())
+            selected = scene.battle.draw_choices["player"][1]
+            enemy_selected = scene.battle.draw_choices["enemy"][0]
+            card_area = scene.renderer.card_renderer.draw_choice_area("player")
+            card_rect = scene.renderer.card_renderer.card_rect(card_area, 2, 1)
+            scene.renderer.card_renderer.draw(
+                pygame.Surface((settings.WIDTH, settings.HEIGHT))
+            )
+
+            scene.input_handler.handle_event(
+                pygame.event.Event(
+                    pygame.MOUSEBUTTONDOWN,
+                    button=1,
+                    pos=card_rect.center,
+                )
+            )
+
+            self.assertEqual(scene.phase, "planning")
+            self.assertEqual(scene.battle.hands["player"], [selected])
+            self.assertEqual(scene.battle.hands["enemy"], [enemy_selected])
+            self.assertIn(cards[0], scene.battle.deck)
+            self.assertIn(cards[4], scene.battle.enemy_deck)
         finally:
             pygame.quit()
 
@@ -505,6 +1217,7 @@ class TestCardBattle(unittest.TestCase):
         battle.draft_mode = None
         battle.hands = {"player": [cards[8]], "enemy": [cards[9]]}
         battle.discard = list(cards[:8])
+        battle.enemy_discard = list(cards[10:16])
 
         battle.start_next_turn()
 
@@ -512,7 +1225,8 @@ class TestCardBattle(unittest.TestCase):
         self.assertEqual(battle.draft_mode, None)
         self.assertEqual(battle.table, [])
         self.assertEqual(battle.discard, [])
-        self.assertEqual(len(battle.deck), 4)
+        self.assertEqual(len(battle.deck), 6)
+        self.assertEqual(len(battle.enemy_deck), 4)
         self.assertEqual(len(battle.hands["player"]), 3)
         self.assertEqual(len(battle.hands["enemy"]), 3)
 
@@ -522,12 +1236,13 @@ class TestCardBattle(unittest.TestCase):
         battle.draft_mode = None
         battle.deck = [cards[0]]
         battle.discard = list(cards[1:7])
+        battle.enemy_deck = list(cards[7:14])
 
         battle.start_next_turn()
 
         self.assertEqual(len(battle.discard), 6)
         self.assertEqual(len(battle.hands["player"]), 1)
-        self.assertEqual(len(battle.hands["enemy"]), 0)
+        self.assertEqual(len(battle.hands["enemy"]), 1)
 
         battle.start_next_turn()
 
@@ -535,7 +1250,7 @@ class TestCardBattle(unittest.TestCase):
         self.assertEqual(battle.discard, [])
         self.assertEqual(battle.table, [])
         self.assertEqual(len(battle.hands["player"]), 3)
-        self.assertEqual(len(battle.hands["enemy"]), 2)
+        self.assertEqual(len(battle.hands["enemy"]), 3)
 
     def test_starting_deal_gives_no_bonus_card_for_higher_stats(self):
         class LastChoiceRandom(random.Random):
@@ -556,14 +1271,15 @@ class TestCardBattle(unittest.TestCase):
         )
         for _ in range(battle.STARTING_PICK_LIMIT):
             battle.choose_starting_card("player", battle.table[0].key)
-            battle.choose_starting_card("enemy", battle.table[0].key)
+            battle.choose_starting_card("enemy", battle.table_for("enemy")[0].key)
 
         battle.finish_starting_deal()
 
         # Более высокая характеристика больше не даёт дополнительную карту.
         self.assertIsNone(battle.starting_bonus_side)
-        self.assertEqual(len(battle.hands["player"]), 3)
-        self.assertEqual(len(battle.hands["enemy"]), 3)
+        starting_hand_size = battle.STARTING_RANDOM_CARDS + battle.STARTING_PICK_LIMIT
+        self.assertEqual(len(battle.hands["player"]), starting_hand_size)
+        self.assertEqual(len(battle.hands["enemy"]), starting_hand_size)
 
     def test_duel_scene_starts_redraft_when_deck_is_empty(self):
         pygame.init()
@@ -579,6 +1295,8 @@ class TestCardBattle(unittest.TestCase):
             }
             scene.battle.deck = []
             scene.battle.discard = list(cards[:8])
+            scene.battle.enemy_deck = []
+            scene.battle.enemy_discard = list(cards[8:16])
             scene.battle.table = []
             scene.battle.draft_mode = None
             scene.phase = "deck_shuffle"

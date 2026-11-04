@@ -121,6 +121,19 @@ class GameClient:
     def list_characters(self):
         return self._request("GET", "/api/characters", authenticated=True)["characters"]
 
+    def list_worlds(self):
+        return self._request("GET", "/api/worlds", authenticated=True)["worlds"]
+
+    def list_lobby(self):
+        return self._request("GET", "/api/lobby", authenticated=True)["players"]
+
+    def get_me(self):
+        return self._request("GET", "/api/me", authenticated=True)["user"]
+
+    def get_item_catalog(self, item_ids):
+        ids = ",".join(str(int(item_id)) for item_id in item_ids)
+        return self._request("GET", f"/api/items/catalog?ids={ids}", authenticated=True)["items"]
+
     def list_opponents(self):
         return self._request("GET", "/api/opponents", authenticated=True)["opponents"]
 
@@ -153,6 +166,30 @@ class GameClient:
         path = f"/api/social/snapshot?{urlencode(query)}"
         return self._request("GET", path, authenticated=True)
 
+    def create_coop_invite(self, character_id, target_id):
+        return self._request(
+            "POST",
+            "/api/social/coop/invites",
+            {"character_id": character_id, "target_id": target_id},
+            authenticated=True,
+        )
+
+    def respond_coop_invite(self, character_id, invite_id, accepted):
+        return self._request(
+            "POST",
+            f"/api/social/coop/invites/{quote(str(invite_id))}/respond",
+            {"character_id": character_id, "accepted": bool(accepted)},
+            authenticated=True,
+        )
+
+    def leave_coop_party(self, character_id):
+        return self._request(
+            "POST",
+            "/api/social/coop/leave",
+            {"character_id": character_id},
+            authenticated=True,
+        )
+
     def send_message(self, character_id, location, text, recipient_id=None):
         return self._request("POST", "/api/chat/messages", {"character_id": character_id, "location": location, "text": text, "recipient_id": recipient_id}, authenticated=True)
 
@@ -180,10 +217,10 @@ class GameClient:
     def cancel_duel_application(self, character_id, location):
         return self._request("POST", "/api/social/duel-applications/cancel", {"character_id": character_id, "location": location}, authenticated=True)
 
-    def duel_board(self, location="tavern"):
+    def duel_board(self, location="world_map"):
         return self._request("GET", f"/api/social/offers?location={quote(location)}", authenticated=True)
 
-    def list_duel_offers(self, location="tavern"):
+    def list_duel_offers(self, location="world_map"):
         return self.duel_board(location)["offers"]
 
     def respond_duel_offer(self, character_id, offer_id, accepted):
@@ -192,6 +229,18 @@ class GameClient:
     def load_character(self, character_id=None):
         path = "/api/characters/me" if character_id is None else f"/api/characters/{character_id}"
         return self._request("GET", path, authenticated=True)["character"]
+
+    def choose_character_talent(self, character_id, level, choice_id):
+        return self._request(
+            "POST",
+            "/api/character/talents/choose",
+            {
+                "character_id": character_id,
+                "level": level,
+                "choice_id": choice_id,
+            },
+            authenticated=True,
+        )["character"]
 
     def save_character(self, character):
         return self._request("PUT", f"/api/characters/{character['id']}", character, authenticated=True)["character"]
@@ -245,7 +294,69 @@ class GameClient:
     def get_inventory(self, character_id):
         """Рюкзак, экипировка и бонусы: {"inventory", "equipment", "bonuses", "capacity"}"""
         return self._request("GET", f"/api/inventory/{character_id}", authenticated=True)
-    
+
+    def get_supplies_shop_catalog(self):
+        return self._request("GET", "/api/supplies-shop", authenticated=True)["items"]
+
+    def buy_supplies_item(self, character_id, item_id):
+        return self._request(
+            "POST",
+            "/api/supplies-shop/buy",
+            {"character_id": character_id, "item_id": item_id},
+            authenticated=True,
+        )
+
+    def get_card_shop_catalog(self):
+        return self._request("GET", "/api/card-shop", authenticated=True)["cards"]
+
+    def get_dungeon_card_shop_catalog(self):
+        return self._request("GET", "/api/dungeon/card-shop", authenticated=True)["cards"]
+
+    def buy_card(self, character_id, card_key):
+        return self._request(
+            "POST",
+            "/api/card-shop/buy",
+            {"character_id": character_id, "card_key": card_key},
+            authenticated=True,
+        )
+
+    def sell_card(self, character_id, card_key):
+        return self._request(
+            "POST",
+            "/api/card-shop/sell",
+            {"character_id": character_id, "card_key": card_key},
+            authenticated=True,
+        )
+
+    def buy_dungeon_card(self, character_id, card_key):
+        return self._request(
+            "POST",
+            "/api/dungeon/card-shop/buy",
+            {"character_id": character_id, "card_key": card_key},
+            authenticated=True,
+        )
+
+    def claim_dungeon_treasure(self, character_id, request_id):
+        return self._request(
+            "POST",
+            "/api/dungeon/treasure",
+            {"character_id": character_id, "request_id": request_id},
+            authenticated=True,
+        )
+
+    def claim_npc_kill_xp(self, character_id, encounter_id, defeated_types, request_id):
+        return self._request(
+            "POST",
+            "/api/world/npc-kills",
+            {
+                "character_id": character_id,
+                "encounter_id": encounter_id,
+                "defeated_types": list(defeated_types),
+                "request_id": request_id,
+            },
+            authenticated=True,
+        )
+
     def get_equipment(self, character_id):
         """Получить экипировку персонажа"""
         return self._request("GET", f"/api/equipment/{character_id}", authenticated=True)["equipment"]
@@ -314,13 +425,16 @@ class GameClient:
 
     def report_battle_result(self, character_id, outcome, opponent_level, hp, mp,
                              opponent_id=None, opponent_hp=None, opponent_mp=None,
-                             battle_record=None):
+                             battle_record=None, battle_id=None):
+        if battle_id is None:
+            battle_id = ":".join(map(str, (character_id, outcome, opponent_level, hp, mp)))
         payload = {
             "character_id": character_id,
             "outcome": outcome,
             "opponent_level": opponent_level,
             "hp": hp,
             "mp": mp,
+            "battle_id": str(battle_id),
         }
         if opponent_id is not None:
             payload.update({
@@ -362,6 +476,18 @@ class GameClient:
             {"character_id": character_id, "card_keys": list(card_keys)},
             authenticated=True,
         )["reward"]
+
+    def claim_guild_quest_reward(self, character_id, quest_id, request_id):
+        return self._request(
+            "POST",
+            "/api/guild/quest-reward",
+            {
+                "character_id": character_id,
+                "quest_id": quest_id,
+                "request_id": request_id,
+            },
+            authenticated=True,
+        )
     
     # Действия с инвентарём возвращают новое состояние (как get_inventory);
     # use_item дополнительно возвращает обновлённого персонажа в "character".

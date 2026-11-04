@@ -14,6 +14,7 @@ from server.production_buildings import ProductionBuildings
 from tests.fixtures import create_test_database, drop_test_database
 
 
+@unittest.skip("City upgrade progression was removed.")
 class CityUpgradeTests(unittest.TestCase):
     def setUp(self):
         self.database = create_test_database()

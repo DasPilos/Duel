@@ -263,7 +263,6 @@ class InventoryWindow:
             str(item["slot_index"]): dict(item)
             for item in state.get("inventory", [])
         }
-        character["carried_weight_kg"] = float(state.get("carried_weight_kg", 0))
         updated = state.get("character")
         if updated:
             for key in ("hp", "max_hp", "mp", "max_mp"):
@@ -332,11 +331,9 @@ class InventoryWindow:
             if self._request(client.move_item, character_id, source[1], target[1]):
                 self.selected = target
         elif source[0] == "bag" and target[0] == "equip":
-            two_handed_hand_target = (
-                (item.get("effects", {}).get("two_handed") or item.get("effects", {}).get("either_hand"))
-                and target[1] in ("weapon", "shield")
-            )
-            if item.get("equip_slot") != target[1] and not two_handed_hand_target:
+            item_slot = item.get("equip_slot")
+            target_slot = "hands" if item_slot in ("weapon", "shield") else item_slot
+            if target_slot != target[1]:
                 self._say("Предмет не подходит для этого слота", RED)
             elif self._request(client.equip_item, character_id, source[1], target[1]):
                 self._say(f"Надето: {item['name']}", GREEN)
@@ -367,11 +364,20 @@ class InventoryWindow:
         return card_type.get_or_create(character.get("id"))
 
     def _highlight_slot(self):
-        """Слот карточки, в который можно бросить перетаскиваемый предмет"""
-        if not self.dragging or self.pressed is None or self.pressed[0] != "bag":
+        """Подсвечивает слот для переносимого или наведённого предмета экипировки."""
+        target = (
+            self.pressed
+            if self.dragging and self.pressed is not None and self.pressed[0] == "bag"
+            else self._target_at(pygame.mouse.get_pos())
+        )
+        if target is None or target[0] != "bag":
             return None
-        item = self._item_at(self.pressed)
-        return item.get("equip_slot") if item else None
+        item = self._item_at(target)
+        if item is None:
+            return None
+        slot = item.get("equip_slot")
+        slot = "hands" if slot in ("weapon", "shield") else slot
+        return slot if slot in SLOT_LABELS else None
 
     def handle_event(self, event):
         """Окно модальное: пока оно открыто, поглощает все события ввода"""
@@ -542,7 +548,10 @@ class InventoryWindow:
         equipped = self.selected[0] == "equip"
         if equipped:
             label = "СНЯТЬ"
-        elif item.get("equip_slot"):
+        elif (
+            item.get("equip_slot") in SLOT_LABELS
+            or item.get("equip_slot") in ("weapon", "shield")
+        ):
             label = "НАДЕТЬ"
         elif item.get("can_use"):
             label = "ИСПОЛЬЗОВАТЬ"
@@ -563,7 +572,9 @@ class InventoryWindow:
         rarity = item.get("rarity", "common")
         kind = TYPE_LABELS.get(item.get("item_type"), item.get("item_type", ""))
         if item.get("equip_slot"):
-            kind = f"{kind} · {SLOT_LABELS.get(item['equip_slot'], item['equip_slot'])}"
+            slot = item["equip_slot"]
+            slot = "hands" if slot in ("weapon", "shield") else slot
+            kind = f"{kind} · {SLOT_LABELS.get(slot, slot)}"
         lines = [
             (item.get("name", "?"), RARITY_COLORS.get(rarity, TEXT), self.font),
             (f"{RARITY_LABELS.get(rarity, rarity)} · {kind}", TEXT_DIM, self.small_font),
@@ -576,11 +587,10 @@ class InventoryWindow:
         effects = item.get("effects", {})
         damage = weapon_damage_range({"weapon": item}) if item.get("equip_slot") == "weapon" else None
         if damage:
-            text = str(damage[0]) if damage[0] == damage[1] else f"{damage[0]}-{damage[1]}"
-            lines.append((f"Урон: {text}", GOLD, self.small_font))
+            lines.append((f"Урон: {damage[1]}", GOLD, self.small_font))
         if item.get("can_use") and effects.get("type") in ("hp", "mp"):
             lines.append((f"Восстанавливает {effects.get('value', 0)} {'здоровья' if effects['type'] == 'hp' else 'маны'}", GREEN, self.small_font))
-        lines.append((f"Вес: {item.get('weight', 0):g} кг   ·   Цена: {format_item_price(item)}", TEXT_DIM, self.small_font))
+        lines.append((f"Цена: {format_item_price(item)}", TEXT_DIM, self.small_font))
         return lines
 
     def _draw_item_text(self, screen, item, x, y, width):

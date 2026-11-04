@@ -2,19 +2,61 @@ from pathlib import Path
 import math
 import random
 import time
+import uuid
 import pygame
 from core import settings
-from core.carry_weight import character_movement_speed_multiplier
-from core.production_buildings import plot_slot_ranges
+from core.user_preferences import get_user_preferences
+from core.map_config import (
+    ANCIENT_ENT_TILE,
+    CARD_SHOP_BOUNDS,
+    DUNGEON_ENTRANCE_BOUNDS,
+    DUNGEON_ROOM_ORIGIN,
+    DUNGEON_ROOM_SIZE,
+    GRAVEYARD_BOUNDS,
+    GUILD_BOUNDS,
+    LIBRARY_BOUNDS,
+    KOBOLD_CAMP_SIZE,
+    KOBOLD_CAMP_TILE,
+    KOBOLD_CAMP2_TILE,
+    KOBOLD_CAMP3_TILE,
+    KOBOLD_RESPAWN_SECONDS,
+    KOBOLD_SPAWN_TILE,
+    MAP_HEIGHT_TILES,
+    MAP_VERSION,
+    MAP_WIDTH_TILES,
+    RESPAWN_CRYSTAL,
+    SHOW_OUTSIDE_CITY_LOCATIONS,
+    SUPPLIES_SHOP_BOUNDS,
+    TILE_SIZE,
+    city_area_payload,
+    forest_area_payload,
+    is_graveyard_tile,
+    is_library_tile,
+    is_city_tile,
+    is_card_shop_tile,
+    is_dungeon_entrance_tile,
+    is_forest_tile,
+    is_guild_tile,
+    is_supplies_shop_tile,
+    tile_center,
+)
+from core.quests import quest_log_for
 from client.network import ServerError
 from client.structures import hydrate_structures
 from ui.hud import draw_button
+from ui.arena_overlay import ArenaController, draw_kobold, draw_necromancer, draw_skeleton
+from ui.guild_window import GuildWindow
+from ui.library_window import LibraryWindow
+from ui.talent_tree_window import TalentTreeWindow
+from ui.supplies_shop_window import SuppliesShopWindow
+from ui.card_shop_window import CardShopWindow
+from ui.dungeon_window import DungeonRoomWindow
 from ui.character_profile_overlay import CharacterProfileOverlay
 from ui.chat import ChatPanel
 from ui.afk_presence import active_player_entities, draw_active_players, draw_afk_players
 from ui.catalog_icons import draw_building_icon
-from ui.map_travel import draw_mobile_hover_card, draw_traveling_entities, mobile_entity_at
-from ui.production_building_window import VIEWS, ProductionBuildingWindow, object_building, point_in_polygon
+from ui.map_travel import draw_mobile_hover_card, mobile_entity_at
+from ui.production_building_window import point_in_polygon
 from scenes.city.exterior import draw_city_exterior
 
 
@@ -83,19 +125,18 @@ def walk_grid_line(gx1, gy1, gx2, gy2):
 class WorldMapScene:
     """
     Сцена глобальной карты.
-    Тайл: 32x32 пикселя.
-    Размер карты: 512 тайлов по ширине (16384 px) x 256 тайлов по высоте (8192 px).
+    Тайл: 48x48 пикселей (TILE_SIZE).
+    Размер карты: 256 тайлов по ширине x 128 тайлов по высоте.
     Координатная сетка начинается с левого верхнего угла: (0, 0) = [0, 0].
     """
 
-    CITY_VISUAL_REFRESH_SECONDS = 10.0
-
     def __init__(self, session, spawn_gate=None, spawn_pos=None):
         self.session = session
-        refresh_carrying_state = getattr(session, "refresh_carrying_state", None)
-        if refresh_carrying_state is not None:
+        self.preferences = get_user_preferences()
+        refresh_equipment_state = getattr(session, "refresh_equipment_state", None)
+        if refresh_equipment_state is not None:
             try:
-                refresh_carrying_state()
+                refresh_equipment_state()
             except Exception:
                 pass
         self.finished = False
@@ -103,12 +144,11 @@ class WorldMapScene:
         self.navigate = None
         self.city_gate = None
 
-        # Размеры сетки: 512 по X, 256 по Y
-        self.grid_w = 512
-        self.grid_h = 256
-        self.tile_size = 32
-        self.world_w = self.grid_w * self.tile_size  # 16384 px
-        self.world_h = self.grid_h * self.tile_size  # 8192 px
+        self.grid_w = MAP_WIDTH_TILES
+        self.grid_h = MAP_HEIGHT_TILES
+        self.tile_size = TILE_SIZE
+        self.world_w = self.grid_w * self.tile_size
+        self.world_h = self.grid_h * self.tile_size
 
         # Фиксированный масштаб (1.0x)
         self.zoom = 1.0
@@ -119,13 +159,14 @@ class WorldMapScene:
         self.min_world_y = 0
         self.max_world_y = self.world_h
 
-        # Точки появления при выходе из ворот города Радбург:
+        center_x = self.world_w // 2
+        center_y = self.world_h // 2
         gate_spawns = {
-            "east": (75 * self.tile_size + 16, 53 * self.tile_size + 16, "e"),
-            "main": (75 * self.tile_size + 16, 53 * self.tile_size + 16, "e"),
-            "north": (67 * self.tile_size + 16, 45 * self.tile_size + 16, "n"),
-            "south": (67 * self.tile_size + 16, 61 * self.tile_size + 16, "s"),
-            "west": (59 * self.tile_size + 16, 53 * self.tile_size + 16, "w"),
+            "east": (self.world_w - 16, center_y, "e"),
+            "main": (center_x, center_y, "s"),
+            "north": (center_x, 16, "n"),
+            "south": (center_x, self.world_h - 16, "s"),
+            "west": (16, center_y, "w"),
         }
 
         if spawn_pos is not None:
@@ -138,13 +179,15 @@ class WorldMapScene:
             self.player_y = float(sp[1])
             self.player_direction = sp[2]
         else:
-            # Базовый старт игрока (по центру карты или в свободной точке)
-            self.player_x = float(self.world_w // 2)
-            self.player_y = float(self.world_h // 2)
-            self.player_direction = "s"
+            # Новые и перенесённые персонажи появляются у кристалла на актуальной карте.
+            self.player_x, self.player_y = map(float, RESPAWN_CRYSTAL["approach_pos"])
+            self.player_direction = "n"
+
+        self.player_x = max(10.0, min(self.world_w - 10.0, self.player_x))
+        self.player_y = max(6.0, min(self.world_h - 6.0, self.player_y))
 
         self.player_target = None
-        self.player_speed = 220.0
+        self.player_speed = 220.0 * self.tile_size / 32
         self.player_state = "idle"
         self.player_anim_timer = 0.0
         self.click_effect = None
@@ -179,8 +222,6 @@ class WorldMapScene:
                 "position_y": self.player_y,
                 "position_direction": self.player_direction,
             }
-            self.chat.travelers_provider = self._get_traveling_citizens
-            self.chat.convoys_provider = self._get_traveling_convoys
 
         # UI элементы
         self.player_pos_button = pygame.Rect(20, 20, 160, 45)
@@ -199,20 +240,54 @@ class WorldMapScene:
         self.action_notice = None
         self.action_notice_timer = 0.0
 
-        # Окна производственных зданий (поселение, лагерь лесорубов); открыто не больше одного
-        self.building_windows = {building: ProductionBuildingWindow(self, building) for building in VIEWS}
-        self.building_window = None
-
         # Всплывающие сообщения в игровом мире
         self.floating_messages = []
         self.last_too_far_phrase = None
 
         # Строения карты живут на сервере и приходят вместе с рельефом (_load_terrain)
         self.objects = []
-        self.city_visual_state = {"city_level": 1, "active": False}
-        self.city_visual_refresh_at = 0.0
+        self.show_outside_city_locations = SHOW_OUTSIDE_CITY_LOCATIONS
+        self._set_city_area(city_area_payload())
+        self.forest_bounds = (
+            tuple(forest_area_payload()["bounds"])
+            if self.show_outside_city_locations else (0, 0, 0, 0)
+        )
+        self.library_bounds = LIBRARY_BOUNDS
+        self.graveyard_bounds = GRAVEYARD_BOUNDS if self.show_outside_city_locations else (0, 0, 0, 0)
+        self.dungeon_entrance_bounds = DUNGEON_ENTRANCE_BOUNDS if self.show_outside_city_locations else (0, 0, 0, 0)
 
         self.obstacles = self._load_terrain()
+
+        # Кобольд на карте и пошаговый бой на гексагональной арене при подходе к нему
+        self.arena = None
+        self.arena_source = None
+        self.ancient_ent_defeated = False
+        self.kobold_respawn_at = None
+        self.camp_respawn_at = None
+        self.camp2_respawn_at = None
+        self.camp3_respawn_at = None
+        self.graveyard_respawn_at = {}
+        self.dungeon_entry_elapsed = None
+        self.dungeon_fade_alpha = 0
+        self.dungeon_room = None
+        self.dungeon_treasure_request_id = None
+        self.dungeon_cleared_rooms = set()
+        self.dungeon_completed_rooms = set()
+        self.dungeon_message = None
+        self.arena_reward_request_id = None
+        self.dungeon_room_window = DungeonRoomWindow(self)
+        self.guild_window = GuildWindow(self)
+        self.supplies_shop_window = SuppliesShopWindow(self)
+        self.card_shop_window = CardShopWindow(self)
+        self.library_window = LibraryWindow(self)
+        self.talent_tree_window = TalentTreeWindow(self)
+        self._last_player_tile = self._player_tile()
+        self._sync_kobold()
+        if self.show_outside_city_locations:
+            self.objects.append(self._ancient_ent_object())
+        self.objects.append(self._library_object())
+        self.objects.append(self._talent_tree_object())
+        self._sync_graveyard()
 
         # Анимация строения лесника 10х10 тайлов (3 кадра анимации дыма из assets/forester's1.png)
         self.forester_frames = []
@@ -222,64 +297,6 @@ class WorldMapScene:
         self.player_directional_frames = {}
         self.player_run_directional_frames = {}
         self._load_player_directional_sprites()
-        self._restore_player_work()
-
-    def _restore_player_work(self):
-        client = getattr(self.session, "client", None)
-        get_player_work = getattr(client, "get_player_work", None)
-        if get_player_work is None:
-            return
-        try:
-            work = get_player_work(self.session.character["id"])
-        except (ServerError, KeyError, AttributeError, OSError):
-            return
-        if not work:
-            return
-
-        building = work.get("building")
-        window = self.building_windows.get(building)
-        if window is None or not window.load():
-            return
-        slot_index = int(work["slot_index"])
-        character_worker_id = f"player:{self.session.character['id']}"
-        if not any(
-            slot.get("slot_index") == slot_index and slot.get("worker_id") == character_worker_id
-            for slot in window._state().get("worker_slots", [])
-        ):
-            return
-
-        selected_plot = next(
-            (index for index, slots in enumerate(plot_slot_ranges(building)) if slot_index in slots),
-            None,
-        )
-        if selected_plot is None:
-            return
-        window.selected_plot = selected_plot
-        window.tab = "production"
-        window.is_open = True
-        self.building_window = window
-
-    def _get_traveling_citizens(self):
-        client = getattr(self.session, "client", None)
-        get_travelers = getattr(client, "get_world_traveling_citizens", None)
-        character = getattr(self.session, "character", None) or {}
-        if get_travelers is None or character.get("id") is None:
-            return []
-        try:
-            return get_travelers(character["id"])
-        except (ServerError, AttributeError, KeyError, OSError):
-            return []
-
-    def _get_traveling_convoys(self):
-        client = getattr(self.session, "client", None)
-        getter = getattr(client, "get_traveling_convoys", None)
-        character = getattr(self.session, "character", None) or {}
-        if getter is None or character.get("id") is None:
-            return []
-        try:
-            return getter(character["id"])
-        except (ServerError, AttributeError, KeyError, OSError):
-            return []
 
     @staticmethod
     def cart_travel_seconds(tile_count):
@@ -439,7 +456,8 @@ class WorldMapScene:
         psx, psy = self.world_to_screen(self.player_x, self.player_y)
         player_rect = pygame.Rect(psx - 22, psy - 58, 44, 62)
         if player_rect.collidepoint(screen_pos):
-            char_name = getattr(self.session, "character", {}).get("name", "Герой") if hasattr(self.session, "character") else "Герой"
+            character = getattr(self.session, "character", None)
+            char_name = character.get("name", "Герой") if isinstance(character, dict) else "Герой"
             status_str = "Бежит" if self.player_state == "walk" else "В покое"
             return {
                 "id": "player",
@@ -575,7 +593,7 @@ class WorldMapScene:
 
         eid = self.active_entity.get("id")
         if eid == "player":
-            self.profile_overlay.open(self.session.character, None)
+            self.active_entity = None
             self.action_notice = None
             return
 
@@ -584,16 +602,49 @@ class WorldMapScene:
             self._on_too_far(self.active_entity)
             return
 
-        building = object_building(eid)
-        if building is not None:
-            self.building_window = self.building_windows[building]
-            self.building_window.open()
+        if eid == "kobold":
+            self.start_kobold_battle()
+            return
+        if eid == "ancient_ent":
+            self.start_ancient_ent_battle()
+            return
+        if eid in self.GRAVEYARD_MOBS:
+            self.start_graveyard_battle(eid)
+            return
+        if eid == "library":
+            self.library_window.open()
+            return
+        if eid == "talent_tree":
+            self.talent_tree_window.open()
+            return
+        if eid in self.CAMP_RESPAWN_ATTRS:
+            self.start_camp_battle(eid)
             return
         if eid in ("town_radburg", "main_castle"):
-            gate = self._get_nearest_gate(self.active_entity)
-            self.navigate = "city"
-            self.city_gate = gate
-            self.finished = True
+            self.action_notice = "Город находится на этой карте"
+            self.action_notice_timer = 2.0
+            return
+        if eid == "crystal_of_life":
+            character = getattr(self.session, "character", None)
+            if not character:
+                self.action_notice = "Персонаж не загружен"
+                self.action_notice_timer = 2.0
+                return
+            character["hp"] = character.get("max_hp", 100)
+            try:
+                self.session.client.save_character(character)
+            except ServerError as error:
+                self.action_notice = f"Здоровье восстановлено, но не сохранено: {error}"
+                self.action_notice_timer = 3.0
+                return
+            self._add_floating_message(
+                "✨ Кристалл возрождения исцеляет ваши раны!",
+                self.player_x,
+                self.player_y - 36,
+                (100, 240, 255),
+            )
+            self.action_notice = "Здоровье полностью восстановлено!"
+            self.action_notice_timer = 2.5
             return
         else:
             self.action_notice = "Взаимодействие выполнено!"
@@ -628,6 +679,8 @@ class WorldMapScene:
         Проверяет коллизию ног персонажа с границами карты и твердыми препятствиями (зданиями, сундуками).
         Персонаж не может проходить сквозь твердые объекты.
         """
+        if self.dungeon_room is not None:
+            return self._check_dungeon_collision(px, py)
         if px - 10 < self.min_world_x or px + 10 > self.max_world_x:
             return True
         if py - 6 < self.min_world_y or py + 6 > self.max_world_y:
@@ -638,11 +691,786 @@ class WorldMapScene:
             for s_rect in obj.get("solid_rects", []):
                 if feet_rect.colliderect(s_rect):
                     return True
+        if feet_rect.collidelist(self.city_wall_rects) != -1:
+            return True
         for obstacle in self.obstacles:
             if (obstacle["bounds"].collidepoint(px, py) and point_in_polygon((px, py), obstacle["points"])
                     and not any(passage.collidepoint(px, py) for passage in obstacle["passages"])):
                 return True
         return False
+
+    def _player_tile(self):
+        return int(self.player_x // self.tile_size), int(self.player_y // self.tile_size)
+
+    def _kobold_object(self):
+        tx, ty = KOBOLD_SPAWN_TILE
+        x, y = tile_center(tx, ty)
+        return {
+            "id": "kobold",
+            "name": "Кобольд",
+            "type": "Враг • 1 ур.",
+            "desc": "Злобный лесной кобольд. Подойдите вплотную, чтобы начать бой на арене.",
+            "icon": "👹",
+            "tile_x": tx,
+            "tile_y": ty,
+            "tile_w": 1,
+            "tile_h": 1,
+            "x": x,
+            "y": y,
+            "radius": self.tile_size // 2,
+            "solid_rects": [],
+        }
+
+    def _ancient_ent_object(self):
+        tx, ty = ANCIENT_ENT_TILE
+        x, y = tile_center(tx, ty)
+        return {
+            "id": "ancient_ent",
+            "name": "ДРЕВНИЙ ЕНТ" if not self.ancient_ent_defeated else "Древнее дерево",
+            "type": "Босс леса",
+            "desc": ("Древний энт охраняет лес. Подойдите к дереву, чтобы бросить вызов."
+                     if not self.ancient_ent_defeated else "Древний энт повержен."),
+            "icon": "🌳",
+            "tile_x": tx,
+            "tile_y": ty,
+            "tile_w": 1,
+            "tile_h": 1,
+            "x": x,
+            "y": y,
+            "radius": self.tile_size,
+            "solid_rects": [[
+                tx * self.tile_size + self.tile_size // 3,
+                ty * self.tile_size + self.tile_size // 2,
+                self.tile_size // 3,
+                self.tile_size // 2,
+            ]],
+        }
+
+    def _library_object(self):
+        left, top, width, height = self.library_bounds
+        entrance = (left + width // 2, top + height)
+        return {
+            "id": "library",
+            "name": "Библиотека",
+            "type": "Справочник мира",
+            "desc": "Справочник по существам, предметам, картам, классам, эффектам и местам.",
+            "icon": "📚",
+            "tile_x": left,
+            "tile_y": top,
+            "tile_w": width,
+            "tile_h": height,
+            "x": (left + width / 2) * self.tile_size,
+            "y": (top + height / 2) * self.tile_size,
+            "radius": self.tile_size * 2,
+            "entrance_tile": list(entrance),
+            "approach_pos": tile_center(*entrance),
+            "solid_rects": [],
+        }
+
+    def _talent_tree_object(self):
+        tile_x, tile_y = (22, 37)
+        return {
+            "id": "talent_tree",
+            "name": "Древо талантов",
+            "type": "Развитие персонажа",
+            "desc": "Выбирайте бесплатные улучшения своего класса по мере роста уровня.",
+            "icon": "🌳",
+            "tile_x": tile_x,
+            "tile_y": tile_y,
+            "tile_w": 2,
+            "tile_h": 2,
+            "x": (tile_x + 1) * self.tile_size,
+            "y": (tile_y + 1) * self.tile_size,
+            "radius": self.tile_size * 2,
+            "entrance_tile": [tile_x + 1, tile_y + 2],
+            "approach_pos": tile_center(tile_x + 1, tile_y + 2),
+            "solid_rects": [],
+        }
+
+    def _graveyard_mob_object(self, eid):
+        tx, ty = self.GRAVEYARD_MOBS[eid]
+        x, y = tile_center(tx, ty)
+        is_necromancer = eid == "necromancer"
+        name = "Некромансер" if is_necromancer else "Скелет"
+        return {
+            "id": eid,
+            "name": name,
+            "type": "Враг кладбища",
+            "desc": f"{name}. Подойдите, чтобы вступить в бой.",
+            "icon": "☠" if is_necromancer else "💀",
+            "tile_x": tx,
+            "tile_y": ty,
+            "tile_w": 1,
+            "tile_h": 1,
+            "x": x,
+            "y": y,
+            "radius": self.tile_size // 2,
+            "solid_rects": [],
+        }
+
+    def _graveyard_mob_alive(self, eid):
+        respawn_at = self.graveyard_respawn_at.get(eid)
+        return respawn_at is None or time.time() >= respawn_at
+
+    def _sync_graveyard(self):
+        self.objects = [obj for obj in self.objects if obj.get("id") not in self.GRAVEYARD_MOBS]
+        if not self.show_outside_city_locations:
+            return
+        if self.arena is not None:
+            return
+        for eid in self.GRAVEYARD_MOBS:
+            if self._graveyard_mob_alive(eid):
+                self.objects.append(self._graveyard_mob_object(eid))
+
+    def _kobold_camp_object(self, eid="kobold_camp"):
+        cx, cy = self.CAMP_TILES[eid]
+        x, y = tile_center(cx, cy)
+        with_ally = eid == "kobold_camp_2"
+        return {
+            "id": eid,
+            "name": "Лесной лагерь кобольдов" if with_ally else "Лагерь кобольдов",
+            "type": f"Враги • {KOBOLD_CAMP_SIZE} кобольда",
+            "desc": ("Стоянка кобольдов в чаще. В бою вам поможет лучник Ельпачино Фред."
+                     if with_ally else
+                     "Стоянка кобольдов. Подойдите вплотную — в бой вступят все кобольды лагеря сразу."),
+            "icon": "⛺",
+            "tile_x": cx - 1,
+            "tile_y": cy - 1,
+            "tile_w": 3,
+            "tile_h": 3,
+            "x": x,
+            "y": y,
+            "radius": self.tile_size * 3 // 2,
+            "solid_rects": [],
+        }
+
+    CAMP_TILES = {
+    "kobold_camp": KOBOLD_CAMP_TILE,
+    "kobold_camp_2": KOBOLD_CAMP2_TILE,
+    "kobold_camp_3": KOBOLD_CAMP3_TILE,
+    }
+    CAMP_RESPAWN_ATTRS = {
+    "kobold_camp": "camp_respawn_at",
+    "kobold_camp_2": "camp2_respawn_at",
+    "kobold_camp_3": "camp3_respawn_at",
+    }
+    GRAVEYARD_MOBS = {"skeleton": (29, 43), "necromancer": (33, 43)}
+
+    def kobold_alive(self):
+        return self.kobold_respawn_at is None or time.time() >= self.kobold_respawn_at
+
+    def camp_alive(self, eid="kobold_camp"):
+        respawn_at = getattr(self, self.CAMP_RESPAWN_ATTRS[eid], None)
+        return respawn_at is None or time.time() >= respawn_at
+
+    def _sync_enemy_object(self, eid, visible, factory):
+        present = any(obj.get("id") == eid for obj in self.objects)
+        if visible and not present:
+            self.objects.append(factory())
+        elif not visible and present:
+            self.objects = [obj for obj in self.objects if obj.get("id") != eid]
+            if self.active_entity and self.active_entity.get("id") == eid:
+                self.active_entity = None
+
+    def _sync_kobold(self):
+        """Кобольд и лагерь стоят на карте, пока живы; во время боя на арене их скрываем."""
+        if not self.show_outside_city_locations:
+            hidden_ids = {"kobold", *self.CAMP_TILES, "ancient_ent"}
+            self.objects = [obj for obj in self.objects if obj.get("id") not in hidden_ids]
+            return
+        in_battle = self.arena is not None
+        kobold_visible = not in_battle and self.kobold_alive()
+        if kobold_visible:
+            self.kobold_respawn_at = None
+        self._sync_enemy_object("kobold", kobold_visible, self._kobold_object)
+        for eid, attr in self.CAMP_RESPAWN_ATTRS.items():
+            camp_visible = not in_battle and self.camp_alive(eid)
+            if camp_visible:
+                setattr(self, attr, None)
+            self._sync_enemy_object(eid, camp_visible, lambda eid=eid: self._kobold_camp_object(eid))
+
+    def _start_arena(self, source, enemy_tile, enemy_count, ally=False, boss=None):
+        self.player_target = None
+        self.player_state = "idle"
+        self.active_entity = None
+        self.hovered_entity = None
+        self.guild_window.close()
+        self.supplies_shop_window.close()
+        self.card_shop_window.close()
+        self.library_window.close()
+        self.talent_tree_window.close()
+        self.arena = ArenaController.start(
+            self, enemy_tile, enemy_count=enemy_count, ally=ally, boss=boss
+        )
+        self.arena_source = source
+        self.arena_reward_request_id = str(uuid.uuid4())
+        self._sync_kobold()
+        self._sync_graveyard()
+        self.camera_follow_player = False
+        self.camera_x, self.camera_y = self.arena.arena_center_world()
+        self._clamp_camera()
+        return True
+
+    @staticmethod
+    def _npc_xp_type(name):
+        normalized = str(name).casefold()
+        if "кобольд" in normalized:
+            return "kobold"
+        if "древний ент" in normalized:
+            return "ancient_ent"
+        if "король скелетов" in normalized:
+            return "skeleton_king"
+        if "страж" in normalized:
+            return "skeleton_guard"
+        if "некромансер" in normalized:
+            return "necromancer"
+        if "скелет" in normalized:
+            return "skeleton"
+        return None
+
+    def _claim_npc_kill_xp(self, battle, source):
+        character = getattr(self.session, "character", None)
+        if not isinstance(character, dict) or character.get("id") is None:
+            return
+        defeated = [
+            npc_type
+            for enemy_id in battle.enemy_ids
+            if battle.fighters[enemy_id].hp <= 0
+            and (npc_type := self._npc_xp_type(battle.fighters[enemy_id].name)) is not None
+        ]
+        if not defeated:
+            return
+        encounter_id = (
+            f"dungeon_room_{self.dungeon_room}"
+            if source == "dungeon"
+            else source
+        )
+        try:
+            result = self.session.client.claim_npc_kill_xp(
+                character["id"],
+                encounter_id,
+                defeated,
+                self.arena_reward_request_id,
+            )
+        except (ServerError, AttributeError, KeyError, OSError) as error:
+            self.action_notice = f"Опыт не начислен: {error}"
+            self.action_notice_timer = 4.0
+            return
+        character.update(result["character"])
+        xp_awarded = int(result["xp"])
+        self._add_floating_message(
+            f"+{xp_awarded} опыта",
+            self.player_x,
+            self.player_y - 54,
+            (255, 220, 100),
+        )
+
+    def start_kobold_battle(self):
+        if self.arena is not None or not self.kobold_alive():
+            return False
+        return self._start_arena("kobold", KOBOLD_SPAWN_TILE, 1)
+
+    def start_camp_battle(self, eid="kobold_camp"):
+        if self.arena is not None or not self.camp_alive(eid):
+            return False
+        return self._start_arena(eid, self.CAMP_TILES[eid], KOBOLD_CAMP_SIZE, ally=eid == "kobold_camp_2")
+
+    def start_ancient_ent_battle(self):
+        if self.arena is not None or self.ancient_ent_defeated:
+            return False
+        return self._start_arena(
+            "ancient_ent", ANCIENT_ENT_TILE, 1, boss="ancient_ent"
+        )
+
+    def start_graveyard_battle(self, eid):
+        if self.arena is not None or eid not in self.GRAVEYARD_MOBS or not self._graveyard_mob_alive(eid):
+            return False
+        return self._start_arena(eid, self.GRAVEYARD_MOBS[eid], 1, boss=eid)
+
+    def _check_kobold_encounter(self):
+        """Реакция на смену тайла: вход в гильдию и столкновение с врагами."""
+        tile = self._player_tile()
+        if tile == self._last_player_tile:
+            return
+        previous, self._last_player_tile = self._last_player_tile, tile
+        if self.arena is not None:
+            return
+        if self.show_outside_city_locations:
+            ent_x, ent_y = ANCIENT_ENT_TILE
+            if not self.ancient_ent_defeated and max(abs(tile[0] - ent_x), abs(tile[1] - ent_y)) <= 1:
+                self.start_ancient_ent_battle()
+                return
+            kx, ky = KOBOLD_SPAWN_TILE
+            if self.kobold_alive() and max(abs(tile[0] - kx), abs(tile[1] - ky)) <= 1:
+                self.start_kobold_battle()
+                return
+            for eid, (cx, cy) in self.CAMP_TILES.items():
+                if self.camp_alive(eid) and max(abs(tile[0] - cx), abs(tile[1] - cy)) <= 2:
+                    self.start_camp_battle(eid)
+                    return
+            for eid, (mx, my) in self.GRAVEYARD_MOBS.items():
+                if self._graveyard_mob_alive(eid) and max(abs(tile[0] - mx), abs(tile[1] - my)) <= 1:
+                    self.start_graveyard_battle(eid)
+                    return
+        if is_library_tile(*tile) and not (previous and is_library_tile(*previous)):
+            self.player_target = None
+            self.player_state = "idle"
+            self.library_window.open()
+        elif is_guild_tile(*tile) and not (previous and is_guild_tile(*previous)):
+            self.player_target = None
+            self.player_state = "idle"
+            self.guild_window.open()
+        elif is_supplies_shop_tile(*tile) and not (previous and is_supplies_shop_tile(*previous)):
+            self.player_target = None
+            self.player_state = "idle"
+            self.supplies_shop_window.open()
+        elif is_card_shop_tile(*tile) and not (previous and is_card_shop_tile(*previous)):
+            self.player_target = None
+            self.player_state = "idle"
+            self.card_shop_window.open()
+
+    def save_character_quietly(self):
+        character = getattr(self.session, "character", None)
+        if not isinstance(character, dict):
+            return
+        try:
+            self.session.client.save_character(character)
+        except (ServerError, AttributeError, OSError):
+            pass
+
+    def _finish_arena(self):
+        arena, self.arena = self.arena, None
+        source = getattr(self, "arena_source", "kobold")
+        self.arena_source = None
+        battle = arena.battle
+        result = battle.result
+        character = getattr(self.session, "character", None)
+        self._claim_npc_kill_xp(battle, source)
+        self.arena_reward_request_id = None
+        if source == "dungeon":
+            if result == "win":
+                self.dungeon_cleared_rooms.add(self.dungeon_room)
+                if isinstance(character, dict):
+                    character["hp"] = max(1, int(battle.player.hp))
+                    character["mp"] = int(battle.player.mp)
+                    self.save_character_quietly()
+                self.player_target = None
+                self.player_state = "idle"
+                self.camera_follow_player = True
+                self.camera_x, self.camera_y = self.player_x, self.player_y
+                self._clamp_camera()
+            else:
+                if result == "loss" and isinstance(character, dict):
+                    character["hp"] = int(character.get("max_hp", battle.player.max_hp))
+                    character["mp"] = int(battle.player.mp)
+                    self.save_character_quietly()
+                self.exit_dungeon()
+            return
+        if result == "win":
+            if source == "ancient_ent":
+                self.ancient_ent_defeated = True
+                message = "ДРЕВНИЙ ЕНТ повержен!"
+            elif source in self.GRAVEYARD_MOBS:
+                self.graveyard_respawn_at[source] = time.time() + KOBOLD_RESPAWN_SECONDS
+                message = f"{'Некромансер' if source == 'necromancer' else 'Скелет'} повержен!"
+            elif source in self.CAMP_RESPAWN_ATTRS:
+                setattr(self, self.CAMP_RESPAWN_ATTRS[source], time.time() + KOBOLD_RESPAWN_SECONDS)
+                message = "Лагерь кобольдов разгромлен!"
+            else:
+                self.kobold_respawn_at = time.time() + KOBOLD_RESPAWN_SECONDS
+                message = "Кобольд повержен!"
+            color = (120, 235, 140)
+            hp = max(1, int(battle.player.hp))
+            if source in self.CAMP_RESPAWN_ATTRS or source == "kobold":
+                finished = quest_log_for(self.session).record_kills("kobold", len(battle.enemy_ids))
+                for index, quest in enumerate(finished):
+                    self._add_floating_message(f"Задание «{quest.title}» выполнено — сдайте в гильдии",
+                                               self.player_x, self.player_y - 70 - index * 26, (255, 220, 90))
+            elif source == "ancient_ent":
+                finished = quest_log_for(self.session).record_kills("ancient_ent")
+                for index, quest in enumerate(finished):
+                    self._add_floating_message(f"Задание «{quest.title}» выполнено — сдайте в гильдии",
+                                               self.player_x, self.player_y - 70 - index * 26, (255, 220, 90))
+            elif source in self.GRAVEYARD_MOBS:
+                finished = quest_log_for(self.session).record_kills(source)
+                for index, quest in enumerate(finished):
+                    self._add_floating_message(f"Задание «{quest.title}» выполнено — сдайте в гильдии",
+                                               self.player_x, self.player_y - 70 - index * 26, (255, 220, 90))
+            self._sync_graveyard()
+        else:
+            self.player_x, self.player_y = (float(v) for v in RESPAWN_CRYSTAL["approach_pos"])
+            self.player_direction = "s"
+            if result == "loss":
+                message, color = "Вы пали и возродились у кристалла", (255, 120, 100)
+                hp = int((character or {}).get("max_hp", battle.player.max_hp))
+            else:
+                message, color = "Телепорт к кристаллу возрождения", (110, 210, 255)
+                hp = max(1, int(battle.player.hp))
+        self.player_target = None
+        self.player_state = "idle"
+        self._last_player_tile = self._player_tile()
+        self.camera_follow_player = True
+        self.camera_x, self.camera_y = self.player_x, self.player_y
+        self._clamp_camera()
+        self._sync_kobold()
+        self._add_floating_message(message, self.player_x, self.player_y - 40, color)
+        self.action_notice = message
+        self.action_notice_timer = 3.0
+        if isinstance(character, dict):
+            character["hp"] = hp
+            character["mp"] = int(battle.player.mp)
+            try:
+                self.session.client.save_character(character)
+            except (ServerError, AttributeError, OSError):
+                pass
+
+    def _update_dungeon_gate(self, dt):
+        if not self.show_outside_city_locations:
+            self.dungeon_entry_elapsed = None
+            self.dungeon_fade_alpha = 0
+            return
+        if self.arena is not None:
+            return
+        if is_dungeon_entrance_tile(*self._player_tile(), bounds=self.dungeon_entrance_bounds):
+            if self.dungeon_entry_elapsed is None:
+                self.dungeon_entry_elapsed = 0.0
+            self.dungeon_entry_elapsed = min(5.0, self.dungeon_entry_elapsed + dt)
+            self.dungeon_fade_alpha = (
+                min(255, int((self.dungeon_entry_elapsed - 2.0) * 85))
+                if self.dungeon_entry_elapsed >= 2.0 else 0
+            )
+            if self.dungeon_entry_elapsed >= 5.0:
+                self._enter_dungeon()
+        else:
+            self.dungeon_entry_elapsed = None
+            self.dungeon_fade_alpha = 0
+
+    def _enter_dungeon(self):
+        self.dungeon_entry_elapsed = None
+        self.dungeon_fade_alpha = 255
+        self.player_target = None
+        self.player_state = "idle"
+        self.active_entity = None
+        self.dungeon_treasure_request_id = None
+        self.dungeon_cleared_rooms.clear()
+        self.dungeon_completed_rooms.clear()
+        self.dungeon_message = None
+        self.dungeon_room_window.room = None
+        self.dungeon_room_window.treasure_opened = False
+        self.dungeon_room_window.treasure_request_id = None
+        self.dungeon_room_window.treasure_rewards = []
+        self._enter_dungeon_room(1)
+
+    def _enter_dungeon_room(self, room):
+        self.dungeon_room = int(room)
+        if self.dungeon_room not in range(1, 7):
+            raise ValueError("Комнаты подземелья идут от 1 до 6")
+        ox, oy = DUNGEON_ROOM_ORIGIN
+        self.player_x = (ox + 1.5) * self.tile_size
+        self.player_y = (oy + DUNGEON_ROOM_SIZE[1] / 2 + 0.5) * self.tile_size
+        self.player_target = None
+        self.player_state = "idle"
+        self.camera_follow_player = True
+        self.camera_x, self.camera_y = self.player_x, self.player_y
+        self._last_player_tile = self._player_tile()
+        self.dungeon_room_window.close()
+        self.arena = None
+        self.arena_source = None
+        self._clamp_camera()
+
+    def advance_dungeon_room(self):
+        if self.dungeon_room_window.is_open and self.dungeon_room == 2:
+            self.dungeon_completed_rooms.add(2)
+            self.dungeon_room_window.close()
+
+    def _dungeon_gate_open(self):
+        if self.dungeon_room in (1, 3, 5):
+            return self.dungeon_room in self.dungeon_cleared_rooms
+        if self.dungeon_room in (2, 4):
+            return self.dungeon_room in self.dungeon_completed_rooms
+        return False
+
+    def _dungeon_room_world_bounds(self):
+        left, top = DUNGEON_ROOM_ORIGIN
+        width, height = DUNGEON_ROOM_SIZE
+        return (
+            left * self.tile_size,
+            top * self.tile_size,
+            (left + width) * self.tile_size,
+            (top + height) * self.tile_size,
+        )
+
+    def _check_dungeon_collision(self, px, py):
+        left, top, right, bottom = self._dungeon_room_world_bounds()
+        if px - 10 < left or px + 10 > right or py - 6 < top or py + 6 > bottom:
+            door_y = (DUNGEON_ROOM_ORIGIN[1] + DUNGEON_ROOM_SIZE[1] / 2) * self.tile_size
+            can_pass_door = (
+                self._dungeon_gate_open()
+                and abs(py - door_y) <= self.tile_size / 2
+                and self.dungeon_room < 6
+            )
+            if px + 10 > right and can_pass_door:
+                return False
+            return True
+        if py - 6 <= top or py + 6 >= bottom or px - 10 <= left:
+            return True
+        if px + 10 >= right:
+            door_y = (DUNGEON_ROOM_ORIGIN[1] + DUNGEON_ROOM_SIZE[1] / 2) * self.tile_size
+            if not (
+                self._dungeon_gate_open()
+                and abs(py - door_y) <= self.tile_size / 2
+                and self.dungeon_room < 6
+            ):
+                return True
+        return False
+
+    def _try_dungeon_room_transition(self):
+        if self.dungeon_room >= 6 or not self._dungeon_gate_open():
+            return False
+        _, _, right, _ = self._dungeon_room_world_bounds()
+        door_y = (DUNGEON_ROOM_ORIGIN[1] + DUNGEON_ROOM_SIZE[1] / 2) * self.tile_size
+        if self.player_x + 10 >= right and abs(self.player_y - door_y) <= self.tile_size / 2:
+            self._enter_dungeon_room(self.dungeon_room + 1)
+            return True
+        return False
+
+    def _dungeon_actor_world_position(self):
+        left, top = DUNGEON_ROOM_ORIGIN
+        return (
+            (left + 8.5) * self.tile_size,
+            (top + DUNGEON_ROOM_SIZE[1] / 2 + 0.5) * self.tile_size,
+        )
+
+    def _interact_dungeon(self):
+        if self.dungeon_room_window.is_open or self.arena is not None:
+            return
+        actor_x, actor_y = self._dungeon_actor_world_position()
+        if math.hypot(self.player_x - actor_x, self.player_y - actor_y) > self.tile_size * 1.75:
+            self.dungeon_message = "Подойдите ближе к объекту"
+            return
+        if self.dungeon_room == 2:
+            self.dungeon_room_window.open(2)
+        elif self.dungeon_room == 4:
+            self._use_dungeon_fountain()
+        elif self.dungeon_room == 6:
+            if self.dungeon_room_window.treasure_opened:
+                self.exit_dungeon()
+            else:
+                self.dungeon_room_window.open(6)
+
+    def _update_dungeon_encounter(self):
+        if self.dungeon_room not in (1, 3, 5) or self.dungeon_room in self.dungeon_cleared_rooms:
+            return
+        enemy_x, enemy_y = self._dungeon_actor_world_position()
+        if math.hypot(self.player_x - enemy_x, self.player_y - enemy_y) > self.tile_size * 1.75:
+            return
+        self.player_target = None
+        self.player_state = "idle"
+        self.arena = ArenaController.start_dungeon(self, self.dungeon_room)
+        self.arena_source = "dungeon"
+        self.arena_reward_request_id = str(uuid.uuid4())
+        self.camera_follow_player = False
+        self.camera_x, self.camera_y = self.arena.arena_center_world()
+        self._clamp_camera()
+
+    def exit_dungeon(self):
+        dungeon_cleared = (
+            self.dungeon_room == 6 and self.dungeon_room_window.treasure_opened
+        )
+        finished_quests = (
+            quest_log_for(self.session).record_progress("dungeon_clear")
+            if dungeon_cleared
+            else []
+        )
+        self.dungeon_room_window.close()
+        self.arena = None
+        self.arena_source = None
+        self.dungeon_room = None
+        left, top, _, height = self.dungeon_entrance_bounds
+        self.player_x, self.player_y = map(float, tile_center(left - 1, top + height // 2))
+        self.player_target = None
+        self.player_state = "idle"
+        self.dungeon_entry_elapsed = None
+        self.dungeon_fade_alpha = 0
+        self.dungeon_cleared_rooms.clear()
+        self.dungeon_completed_rooms.clear()
+        self.dungeon_message = None
+        self._last_player_tile = self._player_tile()
+        self.camera_follow_player = True
+        self.camera_x, self.camera_y = self.player_x, self.player_y
+        self._clamp_camera()
+        for index, quest in enumerate(finished_quests):
+            self._add_floating_message(
+                f"Задание «{quest.title}» выполнено — сдайте в гильдии",
+                self.player_x,
+                self.player_y - 70 - index * 26,
+                (255, 220, 90),
+            )
+
+    def _use_dungeon_fountain(self):
+        if 4 in self.dungeon_completed_rooms:
+            self.dungeon_message = "Фонтан уже восстановил здоровье и ману"
+            return True
+        character = getattr(self.session, "character", None)
+        if not isinstance(character, dict):
+            return False
+        character["hp"] = int(character.get("max_hp", 100))
+        character["mp"] = int(character.get("max_mp", character.get("mp", 0)))
+        try:
+            self.session.client.save_character(character)
+        except (ServerError, AttributeError, OSError) as error:
+            self.dungeon_message = f"Исцеление не сохранено: {error}"
+            return False
+        self.dungeon_completed_rooms.add(4)
+        self.dungeon_message = "Фонтан восстановил здоровье и ману"
+        return True
+
+    def _draw_dungeon_room(self, screen):
+        screen.fill((18, 19, 23))
+        left, top = DUNGEON_ROOM_ORIGIN
+        width, height = DUNGEON_ROOM_SIZE
+        door_y = top + height // 2
+        gate_open = self._dungeon_gate_open()
+        for tile_y in range(top, top + height):
+            for tile_x in range(left, left + width):
+                sx, sy = self.world_to_screen(tile_x * self.tile_size, tile_y * self.tile_size)
+                sx2, sy2 = self.world_to_screen(
+                    (tile_x + 1) * self.tile_size,
+                    (tile_y + 1) * self.tile_size,
+                )
+                rect = pygame.Rect(sx, sy, sx2 - sx + 1, sy2 - sy + 1)
+                is_wall = (
+                    tile_y in (top, top + height - 1)
+                    or tile_x == left
+                    or (tile_x == left + width - 1 and not (tile_y == door_y and gate_open))
+                )
+                color = (61, 58, 60) if is_wall else (
+                    (47, 45, 48) if (tile_x + tile_y) % 2 else (53, 50, 53)
+                )
+                pygame.draw.rect(screen, color, rect)
+                pygame.draw.rect(screen, (32, 30, 33), rect, 1)
+        if self.dungeon_room < 6:
+            door_x, door_screen_y = self.world_to_screen(
+                (left + width - 0.5) * self.tile_size,
+                (door_y + 0.5) * self.tile_size,
+            )
+            if not gate_open:
+                pygame.draw.line(
+                    screen, (155, 55, 48), (door_x - 20, door_screen_y - 22),
+                    (door_x - 20, door_screen_y + 22), 6,
+                )
+                pygame.draw.line(
+                    screen, (155, 55, 48), (door_x + 20, door_screen_y - 22),
+                    (door_x + 20, door_screen_y + 22), 6,
+                )
+        room_names = {
+            1: "Комната I • Скелетный дозор",
+            2: "Комната II • Подземный торговец",
+            3: "Комната III • Некромант",
+            4: "Комната IV • Целебный фонтан",
+            5: "Комната V • Король скелетов",
+            6: "Комната VI • Сокровищница",
+        }
+        title = self.large_font.render(room_names[self.dungeon_room], True, (220, 218, 207))
+        screen.blit(title, title.get_rect(center=(settings.WIDTH // 2, 42)))
+        actor_x, actor_y = self._dungeon_actor_world_position()
+        actor_screen = self.world_to_screen(actor_x, actor_y)
+        if self.arena is not None:
+            self.arena.draw_world(screen)
+            self._draw_player_character(screen)
+            self.arena.draw_ui(screen)
+        else:
+            if self.dungeon_room in (1, 3, 5) and self.dungeon_room not in self.dungeon_cleared_rooms:
+                enemy_names = {1: "2 СКЕЛЕТА", 3: "СКЕЛЕТЫ • НЕКРОМАНСЕР", 5: "СТРАЖА • КОРОЛЬ"}
+                pygame.draw.ellipse(
+                    screen, (17, 16, 18),
+                    (actor_screen[0] - 56, actor_screen[1] + 8, 112, 26),
+                )
+                for offset in (-22, 22):
+                    pygame.draw.circle(screen, (196, 194, 180), (actor_screen[0] + offset, actor_screen[1] - 22), 10)
+                    pygame.draw.line(screen, (196, 194, 180), (actor_screen[0] + offset, actor_screen[1] - 12),
+                                     (actor_screen[0] + offset, actor_screen[1] + 10), 4)
+                enemy_label = self.small_font.render(enemy_names[self.dungeon_room], True, (235, 190, 155))
+                screen.blit(enemy_label, enemy_label.get_rect(center=(actor_screen[0], actor_screen[1] + 34)))
+            elif self.dungeon_room in (2, 4, 6):
+                object_names = {2: "ТОРГОВЕЦ", 4: "ФОНТАН", 6: "СУНДУК"}
+                object_colors = {2: (166, 122, 77), 4: (76, 157, 193), 6: (184, 138, 54)}
+                pygame.draw.ellipse(
+                    screen, (17, 16, 18),
+                    (actor_screen[0] - 54, actor_screen[1] + 18, 108, 24),
+                )
+                if self.dungeon_room == 4:
+                    pygame.draw.circle(screen, object_colors[4], actor_screen, 34)
+                    pygame.draw.circle(screen, (147, 217, 230), actor_screen, 22, 4)
+                else:
+                    pygame.draw.rect(
+                        screen, object_colors[self.dungeon_room],
+                        (actor_screen[0] - 32, actor_screen[1] - 28, 64, 54),
+                        border_radius=8,
+                    )
+                object_label = self.small_font.render(
+                    object_names[self.dungeon_room], True, (245, 232, 195)
+                )
+                screen.blit(
+                    object_label,
+                    object_label.get_rect(center=(actor_screen[0], actor_screen[1] + 40)),
+                )
+            self._draw_player_character(screen)
+            hint_text = "ПКМ — идти • E / ЛКМ — взаимодействовать"
+            if self.dungeon_room in (1, 3, 5) and not gate_open:
+                hint_text = "Враги преграждают проход"
+            elif self.dungeon_room == 2 and not gate_open:
+                hint_text = "Поговорите с торговцем и закройте магазин, чтобы пройти дальше"
+            elif self.dungeon_room == 4 and not gate_open:
+                hint_text = "Используйте фонтан, чтобы открыть проход"
+            elif self.dungeon_room == 6:
+                hint_text = "Откройте сундук и заберите награды"
+            hint = self.small_font.render(hint_text, True, (235, 220, 185))
+            screen.blit(hint, hint.get_rect(center=(settings.WIDTH // 2, settings.HEIGHT - 36)))
+            if self.dungeon_message:
+                message = self.small_font.render(self.dungeon_message, True, (255, 220, 150))
+                screen.blit(message, message.get_rect(center=(settings.WIDTH // 2, settings.HEIGHT - 62)))
+            if self.dungeon_room == 6 and self.dungeon_room_window.treasure_opened:
+                exit_hint = self.small_font.render("Подойдите к сундуку и нажмите E, чтобы выйти", True, (200, 230, 200))
+                screen.blit(exit_hint, exit_hint.get_rect(center=(settings.WIDTH // 2, settings.HEIGHT - 88)))
+            self.dungeon_room_window.draw(screen)
+        if self.dungeon_fade_alpha:
+            shade = pygame.Surface((settings.WIDTH, settings.HEIGHT), pygame.SRCALPHA)
+            shade.fill((0, 0, 0, self.dungeon_fade_alpha))
+            screen.blit(shade, (0, 0))
+
+    def _draw_dungeon_entrance(self, screen):
+        left, top, width, height = self.dungeon_entrance_bounds
+        x, y = self.world_to_screen((left + width / 2) * self.tile_size,
+                                    (top + height / 2) * self.tile_size)
+        scale = self.zoom
+        arch = pygame.Rect(
+            int(x - 24 * scale),
+            int(y - 34 * scale),
+            max(1, int(48 * scale)),
+            max(1, int(68 * scale)),
+        )
+        pygame.draw.rect(screen, (20, 20, 24), arch, border_radius=12)
+        pygame.draw.rect(screen, (104, 105, 112), arch, max(1, int(5 * scale)), border_radius=12)
+        pygame.draw.ellipse(screen, (5, 6, 8), arch.inflate(-int(14 * scale), -int(12 * scale)))
+        self._draw_badge(screen, x, arch.top, "ВХОД В ПОДЗЕМЕЛЬЕ", (140, 140, 150))
+
+    def _set_city_area(self, area):
+        self.city_bounds = tuple(area["bounds"])
+        self.city_wall_tiles = {tuple(tile) for tile in area.get("wall_tiles", [])}
+        self.city_wall_rects = [pygame.Rect(rect) for rect in area.get("solid_rects", [])]
+
+    def is_city_tile(self, tile_x, tile_y):
+        return is_city_tile(tile_x, tile_y, self.city_bounds)
+
+    def player_in_city(self):
+        return self.is_city_tile(int(self.player_x // self.tile_size), int(self.player_y // self.tile_size))
+
+    def is_forest_tile(self, tile_x, tile_y):
+        return is_forest_tile(tile_x, tile_y, self.forest_bounds)
+
+    def player_in_forest(self):
+        return self.is_forest_tile(int(self.player_x // self.tile_size), int(self.player_y // self.tile_size))
 
     def _load_terrain(self):
         """Рельеф, строения и проложенные сервером дороги приходят готовыми для отрисовки."""
@@ -651,18 +1479,38 @@ class WorldMapScene:
         except (ServerError, AttributeError, KeyError, OSError):
             self.road_tiles = set()
             self.road_travel_seconds = 0
-            self.city_visual_state = {"city_level": 1, "active": False}
             return []
+
+        if terrain.get("map_version") != MAP_VERSION:
+            # Старый сервер присылает пиксели под другой размер тайла — используем локальную раскладку
+            terrain = {
+                **terrain,
+                "width_tiles": MAP_WIDTH_TILES,
+                "height_tiles": MAP_HEIGHT_TILES,
+                "objects": [dict(RESPAWN_CRYSTAL)],
+                "obstacles": [],
+                "city_area": None,
+                "forest_area": None,
+                "library_area": None,
+                "graveyard_area": None,
+                "roads": {"routes": [], "tiles": [], "travel_seconds": 0},
+            }
         self.objects = hydrate_structures(terrain.get("objects", []))
-        self.city_visual_state = dict(terrain.get(
-            "city_visual_state", {"city_level": 1, "active": False}
-        ))
+        # Старый сервер не присылает зону города — остаётся локальная раскладка стен
+        if terrain.get("city_area"):
+            self._set_city_area(terrain["city_area"])
+        if self.show_outside_city_locations and terrain.get("forest_area"):
+            self.forest_bounds = tuple(terrain["forest_area"]["bounds"])
+        if terrain.get("library_area"):
+            self.library_bounds = tuple(terrain["library_area"]["bounds"])
+        if self.show_outside_city_locations and terrain.get("graveyard_area"):
+            self.graveyard_bounds = tuple(terrain["graveyard_area"]["bounds"])
         roads = terrain.get("roads", {})
         self.road_tiles = {tuple(tile) for tile in roads.get("tiles", [])}
         self.road_routes = roads.get("routes", [])
         self.road_travel_seconds = roads.get("travel_seconds", 0)
         obstacles = []
-        for obstacle in terrain.get("obstacles", []):
+        for obstacle in terrain.get("obstacles", []) if self.show_outside_city_locations else []:
             points = [tuple(point) for point in obstacle["points"]]
             xs = [x for x, _ in points]
             ys = [y for _, y in points]
@@ -679,21 +1527,6 @@ class WorldMapScene:
                 **obstacle, "points": points, "bounds": bounds, "passages": passages, "surface": surface, "origin": origin,
             })
         return obstacles
-
-    def _refresh_city_visual_state(self):
-        now = time.monotonic()
-        if now < self.city_visual_refresh_at:
-            return False
-        self.city_visual_refresh_at = now + self.CITY_VISUAL_REFRESH_SECONDS
-        try:
-            population = self.session.client.get_city_population(
-                self.session.character["id"]
-            )
-        except (ServerError, AttributeError, KeyError, OSError, TypeError, ValueError):
-            return False
-        self.city_visual_state = dict(population.get("city_upgrade", {}))
-        self.city_visual_state.setdefault("city_level", int(population.get("castle_level", 1)))
-        return True
 
     @staticmethod
     def _render_mountains(points, peaks, passages=()):
@@ -819,16 +1652,59 @@ class WorldMapScene:
                     self._save_profile_card(profile)
                 elif action == "deck_selected":
                     self.session.selected_deck = profile
+                elif action == "delete_deck":
+                    try:
+                        self.session.delete_deck(profile.get("id"))
+                        self.profile_overlay.deck_panel.open(self.session.get_decks())
+                    except (ServerError, AttributeError, OSError) as error:
+                        self.profile_overlay.deck_panel.error = str(error)
                 return
 
         if self.chat is not None and self.chat.handle_event(event):
             return
 
-        # Окно здания поглощает остальные взаимодействия с картой
-        if self.building_window is not None:
-            self.building_window.handle_event(event)
-            if not self.building_window.is_open:
-                self.building_window = None
+        if self.dungeon_room is not None:
+            if self.dungeon_room_window.is_open:
+                self.dungeon_room_window.handle_event(event)
+            elif self.arena is not None:
+                self.arena.handle_event(event)
+            elif (
+                event.type == pygame.KEYDOWN
+                and event.key == self.preferences.key_bindings["interact"]
+            ):
+                self._interact_dungeon()
+            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                self._interact_dungeon()
+            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 3:
+                wx, wy = self.screen_to_world(*event.pos)
+                left, top, right, bottom = self._dungeon_room_world_bounds()
+                self.player_target = (
+                    max(left + 18, min(right + self.tile_size, wx)),
+                    max(top + 18, min(bottom - 18, wy)),
+                )
+                self.player_state = "walk"
+                self.camera_follow_player = True
+            return
+
+        # Окно гильдии модальное: пока открыто, клики по карте не проходят
+        if self.guild_window.is_open:
+            self.guild_window.handle_event(event)
+            return
+        if self.library_window.is_open:
+            self.library_window.handle_event(event)
+            return
+        if self.talent_tree_window.is_open:
+            self.talent_tree_window.handle_event(event)
+            return
+        if self.supplies_shop_window.is_open or self.card_shop_window.is_open:
+            if self.card_shop_window.is_open:
+                self.card_shop_window.handle_event(event)
+                return
+            self.supplies_shop_window.handle_event(event)
+            return
+
+        # Во время боя на арене ввод мыши принадлежит интерфейсу боя
+        if self.arena is not None and self.arena.handle_event(event):
             return
 
         if event.type == pygame.KEYDOWN:
@@ -836,10 +1712,10 @@ class WorldMapScene:
                 if self.active_entity is not None:
                     self.active_entity = None
                 return
-            if event.key == pygame.K_g:
+            if event.key == self.preferences.key_bindings["grid"]:
                 self.show_grid = not self.show_grid
                 return
-            if event.key == pygame.K_SPACE:
+            if event.key == self.preferences.key_bindings["center"]:
                 # Центрировать камеру на персонаже
                 self.camera_x = self.player_x
                 self.camera_y = self.player_y
@@ -935,18 +1811,20 @@ class WorldMapScene:
             self.profile_overlay.update_profile(saved_profile)
 
     def update(self, dt):
-        self._refresh_city_visual_state()
         if self.chat is not None:
             self.chat.update(dt)
+        if self.arena is not None:
+            self.arena.update(dt)
+            if self.arena.done:
+                self._finish_arena()
+        self._sync_kobold()
         # 1. Движение персонажа к целевой точке (Dota-стиль) с проверкой коллизий
-        if self.player_target is not None:
+        if self.player_target is not None and self.arena is None:
             tx, ty = self.player_target
             dx = tx - self.player_x
             dy = ty - self.player_y
             dist = math.hypot(dx, dy)
-            step = self.player_speed * character_movement_speed_multiplier(
-                getattr(self.session, "character", None)
-            ) * dt
+            step = self.player_speed * dt
 
             if dist <= step or dist < 2.0:
                 if not self._check_collision(tx, ty):
@@ -987,17 +1865,18 @@ class WorldMapScene:
                 self.camera_x += (self.player_x - self.camera_x) * min(1.0, 8.0 * dt)
                 self.camera_y += (self.player_y - self.camera_y) * min(1.0, 8.0 * dt)
 
-        # Проверка наступления персонажа на ворота города Радбург на глобальной карте
-        pgx = int(self.player_x // self.tile_size)
-        pgy = int(self.player_y // self.tile_size)
-        for obj in self.objects:
-            if obj.get("id") in ("town_radburg", "main_castle"):
-                for ent_info in obj.get("entrances", []):
-                    if (pgx, pgy) in ent_info.get("tiles", []):
-                        self.navigate = "city"
-                        self.city_gate = ent_info.get("id", "east")
-                        self.finished = True
-                        return
+        if self.dungeon_room is None:
+            self._update_dungeon_gate(dt)
+        elif self.arena is None:
+            if not self._try_dungeon_room_transition():
+                self._update_dungeon_encounter()
+        if self.arena is None and self.dungeon_room is None:
+            self._sync_graveyard()
+            self._check_kobold_encounter()
+        if self.dungeon_room_window.is_open:
+            self.dungeon_room_window.update(dt)
+        if self.dungeon_room is not None and self.dungeon_fade_alpha:
+            self.dungeon_fade_alpha = max(0, self.dungeon_fade_alpha - int(510 * dt))
 
         # 2. Анимационный таймер персонажа
         self.player_anim_timer += dt
@@ -1017,7 +1896,13 @@ class WorldMapScene:
 
         # 5. Определение сущности под курсором мыши (hover)
         m_pos = pygame.mouse.get_pos()
-        if self.building_window is not None or m_pos[1] <= 75 or (self.active_entity and self.active_window_rect.collidepoint(m_pos)):
+        if (self.arena is not None or self.guild_window.is_open
+                or self.library_window.is_open
+                or self.talent_tree_window.is_open
+                or self.supplies_shop_window.is_open
+                or self.card_shop_window.is_open
+                or m_pos[1] <= 75
+                or (self.active_entity and self.active_window_rect.collidepoint(m_pos))):
             self.hovered_entity = None
             self.hovered_mobile_entity = None
         else:
@@ -1031,36 +1916,42 @@ class WorldMapScene:
                 self.action_notice = None
 
         # 7. Скролл карты стрелками / WASD
-        keys = pygame.key.get_pressed()
-        speed = 850.0 * dt
-        if keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT]:
-            speed *= 2.2
+        if self.dungeon_room is None:
+            keys = pygame.key.get_pressed()
+            bindings = self.preferences.key_bindings
+            speed = 850.0 * dt
+            if keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT]:
+                speed *= 2.2
 
-        moved = False
-        if keys[pygame.K_a] or keys[pygame.K_LEFT]:
-            self.camera_x -= speed
-            moved = True
-        if keys[pygame.K_d] or keys[pygame.K_RIGHT]:
-            self.camera_x += speed
-            moved = True
-        if keys[pygame.K_w] or keys[pygame.K_UP]:
-            self.camera_y -= speed
-            moved = True
-        if keys[pygame.K_s] or keys[pygame.K_DOWN]:
-            self.camera_y += speed
-            moved = True
+            moved = False
+            if keys[bindings["move_left"]] or keys[pygame.K_LEFT]:
+                self.camera_x -= speed
+                moved = True
+            if keys[bindings["move_right"]] or keys[pygame.K_RIGHT]:
+                self.camera_x += speed
+                moved = True
+            if keys[bindings["move_up"]] or keys[pygame.K_UP]:
+                self.camera_y -= speed
+                moved = True
+            s_cancels = self.arena is not None and self.arena.mode == "cards"
+            if (keys[bindings["move_down"]] and not s_cancels) or keys[pygame.K_DOWN]:
+                self.camera_y += speed
+                moved = True
 
-        if moved:
-            self.camera_follow_player = False
-            self._clamp_camera()
-        elif self.camera_follow_player:
-            self._clamp_camera()
+            if moved:
+                self.camera_follow_player = False
+                self._clamp_camera()
+            elif self.camera_follow_player:
+                self._clamp_camera()
 
     # ------------------------------------------------------------------
     # Отрисовка
     # ------------------------------------------------------------------
 
     def draw(self, screen):
+        if self.dungeon_room is not None:
+            self._draw_dungeon_room(screen)
+            return
         screen.fill((20, 24, 28))
 
         top_left_wx, top_left_wy = self.screen_to_world(0, 0)
@@ -1106,7 +1997,30 @@ class WorldMapScene:
                     # Узкая грунтовая дорога (1 тайл): протоптанная земляная колея
                     cell_color = (120, 96, 60) if (gx + gy) % 2 == 0 else (128, 103, 65)
 
+                if (gx, gy) in self.city_wall_tiles:
+                    cell_color = (48, 48, 52) if (gx + gy) % 2 == 0 else (42, 42, 46)
+                elif is_guild_tile(gx, gy):
+                    # Зона гильдии искателей приключений (часть города)
+                    cell_color = (196, 160, 40) if (gx + gy) % 2 == 0 else (206, 170, 48)
+                elif is_supplies_shop_tile(gx, gy):
+                    cell_color = (35, 95, 155) if (gx + gy) % 2 == 0 else (42, 108, 170)
+                elif is_card_shop_tile(gx, gy):
+                    cell_color = (117, 70, 145) if (gx + gy) % 2 == 0 else (130, 80, 158)
+                elif is_library_tile(gx, gy, self.library_bounds):
+                    cell_color = (62, 62, 68) if (gx + gy) % 2 == 0 else (70, 70, 76)
+                elif is_graveyard_tile(gx, gy, self.graveyard_bounds):
+                    cell_color = (53, 59, 57) if (gx + gy) % 2 == 0 else (60, 66, 63)
+                if self.is_city_tile(gx, gy):
+                    # Городская мостовая внутри стен
+                    cell_color = (108, 108, 112) if (gx + gy) % 2 == 0 else (116, 116, 120)
+                elif self.is_forest_tile(gx, gy):
+                    cell_color = (14, 48, 22) if (gx + gy) % 2 == 0 else (17, 54, 26)
+
                 pygame.draw.rect(screen, cell_color, rect)
+
+                if (gx, gy) in self.city_wall_tiles:
+                    pygame.draw.rect(screen, (66, 66, 72), rect.inflate(-6, -6), border_radius=3)
+                    pygame.draw.rect(screen, (28, 28, 32), rect.inflate(-6, -6), 2, border_radius=3)
 
                 if (gx, gy) in self.road_tiles:
                     pygame.draw.line(screen, (95, 74, 44), rect.topleft, rect.topright, 1)
@@ -1117,30 +2031,53 @@ class WorldMapScene:
 
         # 2. Рельеф с сервера и интерактивные объекты карты
         self._draw_terrain(screen)
+        self._draw_guild_label(screen)
+        self._draw_supplies_shop_label(screen)
+        self._draw_card_shop_label(screen)
+        self._draw_library_label(screen)
+        self._draw_talent_tree_label(screen)
+        if self.show_outside_city_locations:
+            self._draw_graveyard_label(screen)
+            self._draw_dungeon_entrance(screen)
         self._draw_objects(screen)
+        if self.arena is not None:
+            self.arena.draw_world(screen)
 
         # 3. Игровой персонаж и эффекты клика (Dota-стиль)
         self._draw_click_effect(screen)
         self._draw_player_character(screen)
         draw_active_players(self, screen, "world_map")
-        draw_traveling_entities(self, screen, "world_map")
         draw_afk_players(self, screen, "world_map")
 
         # 4. Всплывающие сообщения в мире ("Слишком далеко" и т.д.)
         self._draw_floating_messages(screen)
 
         # 5. Всплывающее окно активного объекта (ЛКМ)
-        self._draw_active_window(screen)
+        if self.arena is None:
+            self._draw_active_window(screen)
 
-        # 6. Всплывающее окно при наведении курсора (hover tooltip)
-        self._draw_hover_popup(screen, mouse_pos)
+            # 6. Всплывающее окно при наведении курсора (hover tooltip)
+            self._draw_hover_popup(screen, mouse_pos)
 
         # 7. Верхний HUD и подсказки
         self._draw_hud(screen, hover_wx, hover_wy)
+        if self.arena is not None:
+            self.arena.draw_ui(screen)
+        if self.dungeon_entry_elapsed is not None and self.dungeon_entry_elapsed >= 2:
+            shade = pygame.Surface((settings.WIDTH, settings.HEIGHT), pygame.SRCALPHA)
+            shade.fill((0, 0, 0, self.dungeon_fade_alpha))
+            screen.blit(shade, (0, 0))
 
-        # 8. Окно производственного здания
-        if self.building_window is not None:
-            self.building_window.draw(screen)
+        if self.guild_window.is_open:
+            self.guild_window.draw(screen)
+        if self.library_window.is_open:
+            self.library_window.draw(screen)
+        if self.talent_tree_window.is_open:
+            self.talent_tree_window.draw(screen)
+        if self.supplies_shop_window.is_open:
+            self.supplies_shop_window.draw(screen)
+        if self.card_shop_window.is_open:
+            self.card_shop_window.draw(screen)
         if self.chat is not None:
             self.chat.draw(screen)
         if (self.hovered_mobile_entity is not None
@@ -1148,6 +2085,61 @@ class WorldMapScene:
             draw_mobile_hover_card(self, screen, self.hovered_mobile_entity)
         else:
             self.profile_overlay.draw(screen, opponent=self.session.character, show_player_only=True)
+
+    def _draw_guild_label(self, screen):
+        gx, gy, gw, _ = GUILD_BOUNDS
+        sx, sy = self.world_to_screen((gx + gw / 2) * self.tile_size, gy * self.tile_size)
+        self._draw_badge(screen, int(sx), int(sy) - 4, "Гильдия искателей приключений", (235, 200, 70))
+
+    def _draw_supplies_shop_label(self, screen):
+        sx, sy, width, _ = SUPPLIES_SHOP_BOUNDS
+        x, y = self.world_to_screen((sx + width / 2) * self.tile_size, sy * self.tile_size)
+        self._draw_badge(screen, int(x), int(y) - 4, "Магазин с припасами", (105, 185, 245))
+
+    def _draw_card_shop_label(self, screen):
+        sx, sy, width, _ = CARD_SHOP_BOUNDS
+        x, y = self.world_to_screen((sx + width / 2) * self.tile_size, sy * self.tile_size)
+        self._draw_badge(screen, int(x), int(y) - 4, "Карточная лавка", (205, 150, 240))
+
+    def _draw_library_label(self, screen):
+        x, y, width, _ = self.library_bounds
+        sx, sy = self.world_to_screen((x + width / 2) * self.tile_size, y * self.tile_size)
+        self._draw_badge(screen, int(sx), int(sy) - 4, "Библиотека", (150, 150, 175))
+
+    def _draw_talent_tree_label(self, screen):
+        sx, sy = self.world_to_screen(23 * self.tile_size, 37 * self.tile_size)
+        self._draw_badge(
+            screen, int(sx), int(sy) - 4, "Древо талантов", (155, 210, 125)
+        )
+
+    def _draw_graveyard_label(self, screen):
+        x, y, width, _ = self.graveyard_bounds
+        sx, sy = self.world_to_screen((x + width / 2) * self.tile_size, y * self.tile_size)
+        self._draw_badge(screen, int(sx), int(sy) - 4, "Кладбище", (135, 155, 145))
+
+    def _draw_kobold_camp(self, screen, obj):
+        ts = self.tile_size
+        cx, cy = self.world_to_screen(obj["x"], obj["y"])
+        cx, cy = int(cx), int(cy)
+        # Шатёр
+        tent = [(cx - ts, cy - ts // 4), (cx - ts // 4, cy - ts - ts // 3), (cx + ts // 2, cy - ts // 4)]
+        pygame.draw.polygon(screen, (122, 82, 46), tent)
+        pygame.draw.polygon(screen, (70, 44, 24), tent, 2)
+        pygame.draw.polygon(screen, (40, 26, 16), [(cx - ts // 2, cy - ts // 4), (cx - ts // 4, cy - ts // 1.4),
+                                                   (cx, cy - ts // 4)])
+        # Костёр
+        flicker = 0.85 + 0.15 * math.sin(self.player_anim_timer * 9.0)
+        pygame.draw.line(screen, (92, 60, 32), (cx - 10, cy + 10), (cx + 10, cy + 4), 4)
+        pygame.draw.line(screen, (92, 60, 32), (cx - 10, cy + 4), (cx + 10, cy + 10), 4)
+        pygame.draw.circle(screen, (240, 130, 40), (cx, cy + 2), int(9 * flicker))
+        pygame.draw.circle(screen, (255, 220, 110), (cx, cy + 4), int(4 * flicker))
+        # Три кобольда вокруг костра
+        for dx, dy in ((ts, -ts // 3), (-ts, ts // 2), (ts // 2, ts)):
+            draw_kobold(screen, cx + dx, cy + dy, ts)
+        label = f"Лагерь кобольдов • {KOBOLD_CAMP_SIZE} врага"
+        if obj.get("id") == "kobold_camp_2":
+            label = f"Лесной лагерь • {KOBOLD_CAMP_SIZE} врага • союзник Ельпачино Фред"
+        self._draw_badge(screen, cx, cy - int(ts * 1.5), label, (220, 90, 70))
 
     def _draw_badge(self, screen, cx, bottom_y, text, border_color):
         """Вспомогательный метод для аккуратной плашки с текстом над объектом."""
@@ -1163,7 +2155,105 @@ class WorldMapScene:
         pulse = 1.0 + 0.12 * math.sin(self.player_anim_timer * 6.0)
 
         for obj in self.objects:
-            if obj.get("id") == "lumber_camp":
+            if obj.get("id") == "crystal_of_life":
+                self._draw_respawn_crystal(screen, obj, pulse)
+
+            elif obj.get("id") == "kobold":
+                sx, sy = self.world_to_screen(obj["x"], obj["y"])
+                draw_kobold(screen, sx, sy, self.tile_size)
+                self._draw_badge(screen, sx, sy - int(self.tile_size * 0.85), "Кобольд • 1 ур.", (220, 90, 70))
+
+            elif obj.get("id") == "ancient_ent":
+                sx, sy = self.world_to_screen(obj["x"], obj["y"])
+                scale = max(1, round(self.tile_size * self.zoom))
+                k = scale / 48
+                pygame.draw.ellipse(screen, (11, 17, 12), (
+                    sx - int(42 * k), sy + int(12 * k), int(84 * k), int(20 * k)
+                ))
+                trunk = pygame.Rect(
+                    sx - int(15 * k), sy - int(20 * k), int(30 * k), int(54 * k)
+                )
+                pygame.draw.rect(screen, (98, 61, 34), trunk, border_radius=max(4, int(8 * k)))
+                pygame.draw.rect(screen, (53, 42, 27), trunk, max(1, int(3 * k)),
+                                 border_radius=max(4, int(8 * k)))
+                for dx, dy, radius in ((-26, -29, 25), (0, -45, 30), (26, -29, 25),
+                                       (-14, -10, 24), (15, -11, 24)):
+                    center = (sx + int(dx * k), sy + int(dy * k))
+                    pygame.draw.circle(screen, (37, 104, 49), center, int(radius * k))
+                    pygame.draw.circle(screen, (22, 72, 34), center, int(radius * k),
+                                       max(1, int(2 * k)))
+                for eye_x in (-7, 7):
+                    pygame.draw.circle(screen, (255, 190, 65),
+                                       (sx + int(eye_x * k), sy - int(3 * k)),
+                                       max(2, int(3 * k)))
+                label = "ДРЕВНИЙ ЕНТ" if not self.ancient_ent_defeated else "Энт повержен"
+                self._draw_badge(screen, sx, sy - int(1.35 * scale), label,
+                                 (220, 150, 75) if not self.ancient_ent_defeated else (130, 170, 125))
+
+            elif obj.get("id") == "library":
+                sx, sy = self.world_to_screen(
+                    obj["tile_x"] * self.tile_size, obj["tile_y"] * self.tile_size
+                )
+                width = obj["tile_w"] * self.tile_size
+                height = obj["tile_h"] * self.tile_size
+                building = pygame.Rect(int(sx), int(sy), width, height)
+                pygame.draw.rect(screen, (48, 48, 60), building, border_radius=5)
+                pygame.draw.rect(screen, (112, 112, 135), building, 3, border_radius=5)
+                for index in range(1, obj["tile_w"]):
+                    x = building.left + index * self.tile_size
+                    pygame.draw.line(screen, (72, 72, 88), (x, building.top + 8),
+                                     (x, building.bottom - 8), 2)
+                for index in range(1, obj["tile_h"]):
+                    y = building.top + index * self.tile_size
+                    pygame.draw.line(screen, (72, 72, 88), (building.left + 8, y),
+                                     (building.right - 8, y), 2)
+                pygame.draw.rect(
+                    screen, (112, 82, 54),
+                    (building.centerx - self.tile_size // 4, building.bottom - self.tile_size,
+                     self.tile_size // 2, self.tile_size),
+                )
+                self._draw_badge(screen, building.centerx, building.top - 8,
+                                 "БИБЛИОТЕКА", (165, 165, 190))
+
+            elif obj.get("id") == "talent_tree":
+                sx, sy = self.world_to_screen(obj["x"], obj["y"])
+                scale = max(1, round(self.tile_size * self.zoom))
+                k = scale / 48
+                pygame.draw.ellipse(
+                    screen, (12, 19, 13),
+                    (sx - int(34 * k), sy + int(13 * k), int(68 * k), int(16 * k)),
+                )
+                trunk = pygame.Rect(
+                    sx - int(9 * k), sy - int(5 * k), int(18 * k), int(46 * k)
+                )
+                pygame.draw.rect(screen, (105, 75, 43), trunk, border_radius=max(2, int(5 * k)))
+                for dx, dy, radius in ((-17, -18, 19), (0, -31, 23), (17, -18, 19)):
+                    center = (sx + int(dx * k), sy + int(dy * k))
+                    pygame.draw.circle(screen, (78, 145, 66), center, max(2, int(radius * k)))
+                    pygame.draw.circle(
+                        screen, (48, 105, 48), center, max(2, int(radius * k)),
+                        max(1, int(2 * k)),
+                    )
+
+            elif obj.get("id") in ("skeleton", "necromancer"):
+                sx, sy = self.world_to_screen(obj["x"], obj["y"])
+                if obj.get("id") == "skeleton":
+                    draw_skeleton(screen, int(sx), int(sy), self.tile_size * self.zoom)
+                    badge = "СКЕЛЕТ"
+                    badge_color = (190, 185, 160)
+                else:
+                    draw_necromancer(screen, int(sx), int(sy), self.tile_size * self.zoom)
+                    badge = "НЕКРОМАНСЕР"
+                    badge_color = (175, 110, 195)
+                self._draw_badge(
+                    screen, int(sx), int(sy - int(self.tile_size * self.zoom * 0.7)),
+                    badge, badge_color,
+                )
+
+            elif obj.get("id") in self.CAMP_TILES:
+                self._draw_kobold_camp(screen, obj)
+
+            elif obj.get("id") == "lumber_camp":
                 # Лагерь лесорубов 10х10 тайлов (320х320 px)
                 top_left_x = obj["tile_x"] * self.tile_size
                 top_left_y = obj["tile_y"] * self.tile_size
@@ -1295,7 +2385,7 @@ class WorldMapScene:
                 city_rect = pygame.Rect(sx, sy, obj_w, obj_h)
                 if not city_rect.colliderect(pygame.Rect(0, 0, settings.WIDTH, settings.HEIGHT)):
                     continue
-                draw_city_exterior(screen, city_rect, self.city_visual_state)
+                draw_city_exterior(screen, city_rect, {"city_level": 1, "active": False})
                 is_active = self.active_entity and self.active_entity.get("id") == obj["id"]
                 is_hovered = self.hovered_entity and self.hovered_entity.get("id") == obj["id"]
                 if is_active:
@@ -1305,9 +2395,8 @@ class WorldMapScene:
                 else:
                     pygame.draw.rect(screen, (100, 125, 155), city_rect, 2, border_radius=8)
                 badge_color = (255, 215, 60) if is_active else (100, 200, 255) if is_hovered else (220, 200, 160)
-                level = int(self.city_visual_state.get("city_level", 1))
                 self._draw_badge(screen, city_rect.centerx, sy - 12,
-                                 f"Город Радбург · ур. {level}", badge_color)
+                                 "Город Радбург", badge_color)
 
             elif obj.get("id") in ("town_radburg", "main_castle") or obj.get("is_placeholder"):
                 # Заглушка города (например, Город Радбург 15х15 тайлов, 480х480 px)
@@ -1454,6 +2543,59 @@ class WorldMapScene:
                 # Бейдж названия над замком
                 badge_color = (255, 215, 60) if is_active else (100, 200, 255) if is_hovered else (220, 200, 160)
                 self._draw_badge(screen, castle_rect.centerx, sy - 12, f"🏛️ {obj['name']} [15x15]", badge_color)
+
+    def _draw_respawn_crystal(self, screen, obj, pulse):
+        sx, sy = self.world_to_screen(
+            obj["tile_x"] * self.tile_size,
+            obj["tile_y"] * self.tile_size,
+        )
+        width = obj["tile_w"] * self.tile_size
+        height = obj["tile_h"] * self.tile_size
+        bounds = pygame.Rect(sx, sy, width, height)
+        if not bounds.colliderect(pygame.Rect(0, 0, settings.WIDTH, settings.HEIGHT)):
+            return
+
+        is_active = self.active_entity and self.active_entity.get("id") == obj["id"]
+        is_hovered = self.hovered_entity and self.hovered_entity.get("id") == obj["id"]
+        cx, cy = bounds.center
+        k = self.tile_size / 32
+        glow_radius = int(34 * k * pulse)
+        glow = pygame.Surface((glow_radius * 2, glow_radius * 2), pygame.SRCALPHA)
+        pygame.draw.circle(glow, (65, 205, 255, 36), (glow_radius, glow_radius), glow_radius)
+        pygame.draw.circle(glow, (105, 230, 255, 24), (glow_radius, glow_radius), glow_radius // 2)
+        screen.blit(glow, (cx - glow_radius, cy - glow_radius))
+
+        pedestal = pygame.Rect(sx + int(12 * k), sy + height - int(28 * k), width - int(24 * k), int(20 * k))
+        pygame.draw.ellipse(screen, (14, 29, 38), pedestal.move(0, 5))
+        pygame.draw.ellipse(screen, (35, 92, 112), pedestal)
+        pygame.draw.ellipse(screen, (105, 218, 238), pedestal, 2)
+        pygame.draw.line(screen, (116, 225, 255), (pedestal.left + 8, cy + int(16 * k)),
+                         (pedestal.right - 8, cy + int(16 * k)), 2)
+
+        mid = (cx, cy + int(10 * k))
+        crystal = [
+            (cx, sy + int(8 * k)),
+            (cx + int(18 * k), cy - int(8 * k)),
+            (cx + int(12 * k), cy + int(18 * k)),
+            (cx, sy + height - int(28 * k)),
+            (cx - int(12 * k), cy + int(18 * k)),
+            (cx - int(18 * k), cy - int(8 * k)),
+        ]
+        pygame.draw.polygon(screen, (35, 152, 205), crystal)
+        pygame.draw.polygon(screen, (151, 240, 255), [crystal[0], crystal[1], mid])
+        pygame.draw.polygon(screen, (68, 197, 232), [crystal[0], mid, crystal[5]])
+        pygame.draw.polygon(screen, (33, 122, 181), [crystal[1], crystal[2], mid])
+        pygame.draw.polygon(screen, (23, 93, 150), [crystal[2], crystal[3], mid])
+        pygame.draw.polygon(screen, (46, 166, 211), [crystal[3], crystal[4], mid])
+        pygame.draw.polygon(screen, (94, 220, 245), [crystal[4], crystal[5], mid])
+        pygame.draw.polygon(screen, (205, 252, 255), crystal, 2)
+
+        if is_active:
+            pygame.draw.rect(screen, (255, 215, 60), bounds, 2, border_radius=8)
+        elif is_hovered:
+            pygame.draw.rect(screen, (80, 200, 255), bounds.inflate(6, 6), 2, border_radius=8)
+        badge_color = (255, 215, 60) if is_active else (100, 200, 255) if is_hovered else (170, 235, 255)
+        self._draw_badge(screen, cx, sy - 8, f"💎 {obj['name']} [3x3]", badge_color)
 
     def _draw_rift_object(self, screen, obj):
         """Разлом на карте: скала, расколотая ущельем снизу-слева вверх-направо, вход снизу."""
@@ -1662,7 +2804,7 @@ class WorldMapScene:
 
     def _draw_active_window(self, screen):
         """Отрисовывает окно активного объекта (выбранного по ЛКМ)."""
-        if self.active_entity is None or self.building_window is not None:
+        if self.active_entity is None:
             return
 
         ent = self.active_entity
@@ -1742,6 +2884,12 @@ class WorldMapScene:
                 action_label = "ОТКРЫТЬ РАЗЛОМ"
             elif ent.get("id") == "wheat_farm":
                 action_label = "ОТКРЫТЬ ПОСЕЛЕНИЕ"
+            elif ent.get("id") == "kobold" or ent.get("id") in self.CAMP_TILES:
+                action_label = "НАПАСТЬ"
+            elif ent.get("id") == "ancient_ent":
+                action_label = "ОСМОТРЕТЬ ДЕРЕВО" if self.ancient_ent_defeated else "ВЫЗВАТЬ ДРЕВНЕГО ЕНТА"
+            elif ent.get("id") == "crystal_of_life":
+                action_label = "ВОССТАНОВИТЬ ЗДОРОВЬЕ"
             elif ent.get("id") in ("town_radburg", "main_castle"):
                 action_label = "ВОЙТИ В ГОРОД"
             else:
@@ -1780,6 +2928,11 @@ class WorldMapScene:
         - В покое (idle): 8-направленная стойка с дыханием (assets/2Idle/), 4 кадра.
         - Процедурный чиби-воин как фолбэк при отсутствии файлов.
         """
+        if (
+            self.arena is not None
+            and "player" in self.arena.battle.buried_units
+        ):
+            return
         sx, sy = self.world_to_screen(self.player_x, self.player_y)
 
         # Тень под ногами
@@ -1840,7 +2993,8 @@ class WorldMapScene:
             name_y = cy - 23
 
         # Маркер имени игрока над головой
-        char_name = getattr(self.session, "character", {}).get("name", "Герой") if hasattr(self.session, "character") else "Герой"
+        character = getattr(self.session, "character", None)
+        char_name = character.get("name", "Герой") if isinstance(character, dict) else "Герой"
         name_surf = self.grid_font.render(char_name, True, (255, 235, 150))
         n_rect = name_surf.get_rect(midbottom=(sx, name_y))
         bg = n_rect.inflate(8, 2)
@@ -1859,7 +3013,8 @@ class WorldMapScene:
         hover_gx = int(hover_wx // self.tile_size)
         hover_gy = int(hover_wy // self.tile_size)
 
-        info_str = f"Карта: 512x256 (32px) | Персонаж: X={int(self.player_x)}, Y={int(self.player_y)} | Тайл: [{hover_gx}, {hover_gy}]"
+        zone_str = " | Город" if self.player_in_city() else " | Лес" if self.player_in_forest() else ""
+        info_str = f"Карта: {self.grid_w}x{self.grid_h} ({self.tile_size}px) | Персонаж: X={int(self.player_x)}, Y={int(self.player_y)} | Тайл: [{hover_gx}, {hover_gy}]{zone_str}"
         info_surf = self.font.render(info_str, True, (240, 240, 240))
         screen.blit(info_surf, (640, 27))
 
@@ -1869,4 +3024,3 @@ class WorldMapScene:
 
     def close(self):
         pass
-

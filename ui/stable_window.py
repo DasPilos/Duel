@@ -147,9 +147,6 @@ class StableWindow:
             self.inventory_state = self.scene.session.client.get_inventory(
                 self.scene.session.character["id"]
             )
-            self.scene.session.character["carried_weight_kg"] = float(
-                self.inventory_state.get("carried_weight_kg", 0)
-            )
         except (ServerError, AttributeError, KeyError, OSError) as error:
             self.inventory_state = None
             self.message = self.message or str(error)

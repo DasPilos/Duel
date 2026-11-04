@@ -1,7 +1,7 @@
 # Game
 
-Pygame RPG with online accounts, shared city state, production buildings,
-transport logistics, and a turn-based card battle system.
+Pygame RPG with online accounts, a global-map city hub, and a turn-based card
+battle system.
 
 ## Быстрый старт
 
@@ -25,8 +25,7 @@ realtime-события и локальное состояние клиента.
 
 ### `server/`
 
-HTTP API, PostgreSQL migrations, world-scoped users and characters, citizen
-population, city upgrades, production storage, carts and convoys, chat,
+HTTP API, PostgreSQL migrations, world-scoped users and characters, chat,
 moderation, battle archive, bots, and WebSocket gateway.
 
 ### `ui/chat/`
@@ -52,7 +51,7 @@ moderation, battle archive, bots, and WebSocket gateway.
 
 ### `scenes/`
 
-Экран авторизации, выбор мира и персонажа, город, глобальная карта, таверна,
+Экран авторизации, выбор мира и персонажа, глобальная карта с городским хабом,
 задний двор и дуэль.
 Дополнительные модули отвечают за ввод, тайминги боя и комментарии.
 
@@ -74,7 +73,7 @@ Pygame-интерфейс, карточки персонажей, рендери
 - [`card_battle.md`](card_battle.md) — колода, драфт, карты, формулы и временные эффекты.
 - [`file_contracts.md`](file_contracts.md) — публичные контракты каждого файла + история изменений.
 - [`server.md`](server.md) — запуск локального сервера и клиента.
-- [`CITY_SYSTEM.md`](CITY_SYSTEM.md) — город, население, производство и уровни фермы.
+- [`WORLD_MAP_SYSTEM.md`](WORLD_MAP_SYSTEM.md) — глобальная карта и доступные точки города.
 - [`testing.md`](testing.md) — тестовая БД и релизная проверка.
 - [`RELEASE_NOTES_2026-10-09.md`](RELEASE_NOTES_2026-10-09.md) — изменения относительно базовой ревизии.
 

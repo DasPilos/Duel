@@ -7,6 +7,7 @@ import pygame
 from ui.castle_window import CastleWindow
 
 
+@unittest.skip("The city castle and upgrade UI were removed.")
 class CastleWindowTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

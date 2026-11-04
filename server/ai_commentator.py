@@ -30,9 +30,7 @@ _PROFESSION_NAMES = {
     "warrior": "боец",
     "archer": "лучник",
     "assassin": "асассин",
-    "battle_mage": "боевой маг",
-    "support_mage": "маг поддержки",
-    "harmonist": "гармонист",
+    "mage": "маг",
 }
 _QUEUE = queue.Queue(maxsize=COMMENTARY_QUEUE_SIZE)
 _LOCK = threading.Lock()

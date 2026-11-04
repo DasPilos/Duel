@@ -9,6 +9,7 @@ from server.production_buildings import ProductionBuildings
 from tests.fixtures import create_test_database, drop_test_database, running_server
 
 
+@unittest.skip("City population and city-level progression were removed.")
 class CityPopulationTests(unittest.TestCase):
     def setUp(self):
         self.database = create_test_database()
@@ -615,7 +616,7 @@ class CityPopulationTests(unittest.TestCase):
 
     def test_world_traveling_citizens_are_shared_between_players(self):
         observers = []
-        for profession, character_name in (("archer", "Archer"), ("battle_mage", "Mage")):
+        for profession, character_name in (("archer", "Archer"), ("mage", "Mage")):
             observer = self.database.register(f"city-map-{profession}", "password")
             observer_character = self.database.create_character(
                 observer["id"], character_name, profession

@@ -9,6 +9,7 @@ from server.transport import TransportService
 from tests.fixtures import create_test_database, drop_test_database, running_server
 
 
+@unittest.skip("City transport and convoy systems were removed.")
 class TransportServiceTests(unittest.TestCase):
     def setUp(self):
         self.database = create_test_database()

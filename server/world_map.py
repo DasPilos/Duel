@@ -3,7 +3,21 @@
 import math
 import random
 
+from core.map_config import (
+    MAP_HEIGHT_TILES,
+    MAP_VERSION,
+    MAP_WIDTH_TILES,
+    RESPAWN_CRYSTAL,
+    SHOW_OUTSIDE_CITY_LOCATIONS,
+    TILE_SIZE,
+    city_area_payload,
+    forest_area_payload,
+    graveyard_area_payload,
+    library_area_payload,
+)
 
+
+# Старая раскладка рельефа/дорог (в текущую карту не выдаётся) задана под тайл 32 px.
 TILE = 32
 # Горный разлом: тайлы X 130..134, Y 95..102; проход к нему прорублен через южное подножие
 RIFT_TILES = (130, 95, 5, 8)
@@ -173,7 +187,6 @@ OBSTACLES = (
     _lake("lake_1", "Озеро", ((40, 26), (62, 38), (98, 33), (102, 17), (83, 19), (74, 24), (61, 27)), seed=402638),
 )
 
-
 def is_passable(x, y):
     return not any(
         point_in_polygon((x, y), obstacle["points"])
@@ -182,9 +195,19 @@ def is_passable(x, y):
     )
 
 
-def terrain_payload(city_level=1):
-    from server.structures import world_structures
-    from server.world_roads import roads_payload
-
-    return {"obstacles": [dict(obstacle) for obstacle in OBSTACLES],
-            **world_structures(city_level), "roads": roads_payload(city_level)}
+def terrain_payload():
+    payload = {
+        "map_version": MAP_VERSION,
+        "tile_size": TILE_SIZE,
+        "width_tiles": MAP_WIDTH_TILES,
+        "height_tiles": MAP_HEIGHT_TILES,
+        "obstacles": [],
+        "objects": [dict(RESPAWN_CRYSTAL)],
+        "city_area": city_area_payload(),
+        "library_area": library_area_payload(),
+        "roads": {"routes": [], "tiles": [], "travel_seconds": 0},
+    }
+    if SHOW_OUTSIDE_CITY_LOCATIONS:
+        payload["forest_area"] = forest_area_payload()
+        payload["graveyard_area"] = graveyard_area_payload()
+    return payload

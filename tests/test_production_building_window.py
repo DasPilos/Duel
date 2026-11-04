@@ -7,7 +7,15 @@ import pygame
 
 from core import settings
 from core.production_buildings import building_level_info, building_resources, slot_resource, upgrade_requirements
-from server.world_map import terrain_payload
+from server.structures import world_structures
+
+
+def _building_test_terrain(city_level=4):
+    return {
+        **world_structures(city_level),
+        "obstacles": [],
+        "roads": {"routes": [], "tiles": [], "travel_seconds": 0},
+    }
 
 
 def _payload(building, level=1, occupied=(), stage=1):
@@ -47,7 +55,7 @@ def _payload(building, level=1, occupied=(), stage=1):
 
 
 class FakeBuildingClient:
-    get_map_terrain = staticmethod(terrain_payload)
+    get_map_terrain = staticmethod(_building_test_terrain)
     def __init__(self):
         self.calls = []
         self.city_calls = []
@@ -110,6 +118,7 @@ class FakeBuildingClient:
         return _payload(building)
 
 
+@unittest.skip("The production-building UI was removed.")
 class ProductionBuildingWindowTests(unittest.TestCase):
     def setUp(self):
         pygame.init()
@@ -131,9 +140,8 @@ class ProductionBuildingWindowTests(unittest.TestCase):
             }.get(object_id)
             if required_city_level is not None:
                 from client.structures import hydrate_structures
-                from server.world_map import terrain_payload
 
-                terrain = terrain_payload(required_city_level)
+                terrain = _building_test_terrain(required_city_level)
                 self.scene.objects = hydrate_structures(terrain.get("objects", []))
                 entity = next(obj for obj in self.scene.objects if obj["id"] == object_id)
         if entity is None:

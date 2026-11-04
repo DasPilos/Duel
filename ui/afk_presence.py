@@ -1,6 +1,7 @@
 import pygame
 
 from core import settings
+from ui.class_identity import class_icon
 
 
 def active_player_entities(scene, location):
@@ -71,8 +72,16 @@ def draw_afk_players(scene, screen, location):
             name_y = sy - 44
 
         label = scene.grid_font.render(f"{occupant.get('name', 'Игрок')} (АФК)", True, (153, 157, 163))
-        label_rect = label.get_rect(midbottom=(sx, name_y))
-        background = label_rect.inflate(8, 4)
+        icon = class_icon(occupant.get("type", "warrior"))
+        group_width = icon.get_width() + 4 + label.get_width()
+        group_left = sx - group_width // 2
+        label_rect = label.get_rect(
+            midbottom=(group_left + icon.get_width() + 4 + label.get_width() // 2, name_y)
+        )
+        icon_y = name_y - label.get_height() + (label.get_height() - icon.get_height()) // 2
+        icon_rect = pygame.Rect(group_left, icon_y, icon.get_width(), icon.get_height())
+        background = label_rect.union(icon_rect).inflate(8, 4)
         pygame.draw.rect(screen, (20, 22, 26), background, border_radius=3)
         pygame.draw.rect(screen, (105, 109, 115), background, 1, border_radius=3)
+        screen.blit(icon, icon_rect)
         screen.blit(label, label_rect)

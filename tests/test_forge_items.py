@@ -6,6 +6,7 @@ from server.items_database import ItemsDatabase, CATALOG
 from tests.fixtures import create_test_database, drop_test_database
 
 
+@unittest.skip("The city forge system was removed.")
 class ForgeItemsTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

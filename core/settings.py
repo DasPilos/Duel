@@ -75,6 +75,8 @@ DAMAGE_ANIMATION_SECONDS = 1.0
 # Полёт карт к спрайтам после "Завершить ход" ускорен в 2 раза.
 ATTACK_ANIMATION_SECONDS = 0.5
 DRAFT_TIMEOUT_SECONDS = 90
+STARTING_DRAFT_TIMEOUT_SECONDS = 30
+DRAW_CHOICE_SECONDS = 15
 DECK_SHUFFLE_SECONDS = 2.0
 # Полёт сыгранных карт в сток-колоду ускорен в 3 раза.
 DISCARD_MOVE_SECONDS = DECK_SHUFFLE_SECONDS / 3

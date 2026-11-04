@@ -7,7 +7,7 @@ class ClientState:
 
 class ChatState:
     def __init__(self):
-        self.channels = ["tavern", "backyard"]
+        self.channels = ["world_map", "backyard"]
         self.messages_by_channel = {channel: [] for channel in self.channels}
         self.unread_by_channel = {channel: 0 for channel in self.channels}
         self.connection_status = "disconnected"

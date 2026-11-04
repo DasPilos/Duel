@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pygame
 
 from core import settings
+from core.map_config import KOBOLD_SPAWN_TILE, MAP_VERSION, TILE_SIZE as T
 from server.world_map import OBSTACLES, _edge_distance, is_passable, point_in_polygon, terrain_payload
 from server.structures import WORLD_OBJECTS, city_structures
 from server import presence
@@ -268,84 +269,89 @@ class WorldTerrainTests(unittest.TestCase):
         self.assertEqual({tuple(tile) for tile in roads["tiles"]},
                          {tuple(tile) for route in roads["routes"] for tile in route["tiles"]})
 
-    def test_city_level_filters_country_objects_and_roads(self):
-        level_one = terrain_payload(city_level=1)
-        self.assertEqual(
-            {obj["id"] for obj in level_one["objects"] if obj["id"] in COUNTRY_BUILDINGS},
-            {"wheat_farm", "lumber_camp"},
-        )
-        self.assertEqual(
-            {route["building_id"] for route in level_one["roads"]["routes"]},
-            {"wheat_farm", "lumber_camp"},
-        )
-        self.assertEqual(
-            {route["building_id"] for route in roads_payload(city_level=2)["routes"]},
-            {"wheat_farm", "lumber_camp", "mountain_rift"},
-        )
-        self.assertEqual(
-            {route["building_id"] for route in roads_payload(city_level=3)["routes"]},
-            {"wheat_farm", "lumber_camp", "mountain_rift", "barnyard"},
-        )
+    def test_new_world_map_has_only_the_respawn_crystal(self):
+        terrain = terrain_payload()
+        self.assertEqual(terrain["map_version"], MAP_VERSION)
+        self.assertEqual(terrain["tile_size"], 48)
+        self.assertEqual((terrain["width_tiles"], terrain["height_tiles"]), (256, 128))
+        self.assertEqual(terrain["city_area"]["bounds"][0], 0)
+        self.assertNotIn("forest_area", terrain)
+        self.assertNotIn("graveyard_area", terrain)
+        self.assertEqual(len(terrain["objects"]), 1)
+        crystal = terrain["objects"][0]
+        self.assertEqual(crystal["id"], "crystal_of_life")
+        self.assertEqual((crystal["tile_x"], crystal["tile_y"]), (11, 33))
+        self.assertEqual((crystal["tile_w"], crystal["tile_h"]), (3, 3))
+        self.assertEqual(crystal["solid_rects"], [[11 * T, 33 * T, 3 * T, 3 * T]])
+        self.assertEqual(terrain["obstacles"], [])
+        self.assertEqual(terrain["roads"], {"routes": [], "tiles": [], "travel_seconds": 0})
 
     def test_structures_come_from_server(self):
+        from client.network import ServerError
+
         database = create_test_database()
         try:
             with running_server(database) as client:
                 client.register("builder", "secret1")
                 client.login("builder", "secret1")
                 terrain = client.get_map_terrain()
-                city = client.get_city_structures()
+                with self.assertRaises(ServerError):
+                    client.get_city_structures()
         finally:
             drop_test_database(database)
-        world_ids = [obj["id"] for obj in terrain["objects"]]
-        for object_id in ("wheat_farm", "lumber_camp", "town_radburg"):
-            self.assertIn(object_id, world_ids)
-        for object_id in ("mountain_rift", "barnyard", "black_pit"):
-            self.assertNotIn(object_id, world_ids)
-        self.assertEqual(
-            {route["building_id"] for route in terrain["roads"]["routes"]},
-            {"wheat_farm", "lumber_camp"},
-        )
-        self.assertEqual(len(city["objects"]), 13)
-        self.assertEqual(city["objects"][3]["id"], "barn_building")
-        stable = city["objects"][-1]
-        self.assertEqual(stable["id"], "stable_building")
-        self.assertEqual((stable["tile_x"], stable["tile_y"], stable["tile_w"], stable["tile_h"]), (77, 6, 17, 6))
-        self.assertEqual(stable["entrance_tile"], [85, 11])
-        self.assertEqual(len(city["walls"]), 12)
-        route = terrain["roads"]["routes"][0]
-        self.assertTrue({"building_id", "gate_id", "tiles", "distance_tiles", "distance_pixels", "resources"}.issubset(route))
-        self.assertTrue(route["resources"])
+        self.assertEqual((terrain["width_tiles"], terrain["height_tiles"]), (256, 128))
+        self.assertEqual([obj["id"] for obj in terrain["objects"]], ["crystal_of_life"])
+        crystal = terrain["objects"][0]
+        self.assertEqual((crystal["tile_x"], crystal["tile_y"], crystal["tile_w"], crystal["tile_h"]),
+                         (11, 33, 3, 3))
+        self.assertEqual(terrain["obstacles"], [])
+        self.assertEqual(terrain["roads"]["routes"], [])
+        self.assertEqual(terrain["roads"]["tiles"], [])
+        self.assertIn("city_area", terrain)
+        self.assertNotIn("city_visual_state", terrain)
 
-    def test_global_city_uses_modular_visual_state(self):
-        from unittest.mock import patch
+    def test_legacy_server_map_is_replaced_with_current_layout(self):
         from scenes.world_map_scene import WorldMapScene
 
         town = next(obj for obj in WORLD_OBJECTS if obj["id"] == "town_radburg")
-        visual_state = {
-            "city_level": 1, "population": 8, "active": True, "phase_index": 2,
-        }
 
         class Client:
             def get_map_terrain(self):
                 return {
-                    "objects": [town], "obstacles": [],
-                    "roads": {"routes": [], "tiles": [], "travel_seconds": 0},
-                    "city_visual_state": visual_state,
+                    "objects": [town],
+                    "obstacles": [{"id": "old_lake"}],
+                    "roads": {"routes": [{"building_id": "old_farm"}],
+                              "tiles": [[20, 20]], "travel_seconds": 60},
                 }
 
         pygame.init()
         try:
-            screen = pygame.display.set_mode((settings.WIDTH, settings.HEIGHT), pygame.HIDDEN)
+            pygame.display.set_mode((settings.WIDTH, settings.HEIGHT), pygame.HIDDEN)
             scene = WorldMapScene(SimpleNamespace(
                 character={"id": 1, "name": "Test"}, client=Client(),
             ))
-            scene.camera_x = town["x"] + town["tile_w"] * scene.tile_size / 2
-            scene.camera_y = town["y"] + town["tile_h"] * scene.tile_size / 2
-            with patch("scenes.world_map_scene.draw_city_exterior") as draw_city:
-                scene._draw_objects(screen)
-            draw_city.assert_called_once()
-            self.assertEqual(draw_city.call_args.args[2], visual_state)
+            self.assertEqual((scene.grid_w, scene.grid_h), (256, 128))
+            self.assertEqual([obj["id"] for obj in scene.objects], [
+                "crystal_of_life", "library", "talent_tree",
+            ])
+            self.assertEqual(scene.city_bounds[0], 0)
+            self.assertFalse(scene.show_outside_city_locations)
+            self.assertEqual(scene.graveyard_bounds, (0, 0, 0, 0))
+            scene.player_x = KOBOLD_SPAWN_TILE[0] * T + T // 2
+            scene.player_y = KOBOLD_SPAWN_TILE[1] * T + T // 2
+            scene._check_kobold_encounter()
+            scene._update_dungeon_gate(5.0)
+            self.assertIsNone(scene.arena)
+            self.assertIsNone(scene.dungeon_entry_elapsed)
+            self.assertEqual(
+                (scene.objects[0]["tile_x"], scene.objects[0]["tile_y"],
+                 scene.objects[0]["tile_w"], scene.objects[0]["tile_h"]),
+                (11, 33, 3, 3),
+            )
+            self.assertEqual(scene.obstacles, [])
+            self.assertEqual(scene.road_tiles, set())
+            self.assertEqual(scene.road_routes, [])
+            self.assertEqual(scene.road_travel_seconds, 0)
         finally:
             pygame.quit()
 
@@ -356,8 +362,25 @@ class WorldTerrainTests(unittest.TestCase):
             from scenes.world_map_scene import WorldMapScene
 
             scene = WorldMapScene(SimpleNamespace(character={"id": 1, "name": "Т"}, client=SimpleNamespace()))
-            self.assertEqual(scene.objects, [])
+            self.assertEqual([obj["id"] for obj in scene.objects], ["library", "talent_tree"])
             self.assertEqual(scene.obstacles, [])
+        finally:
+            pygame.quit()
+
+    def test_world_map_player_draw_handles_missing_character(self):
+        pygame.init()
+        try:
+            screen = pygame.display.set_mode((settings.WIDTH, settings.HEIGHT), pygame.HIDDEN)
+            from scenes.world_map_scene import WorldMapScene
+
+            client = SimpleNamespace(
+                get_player_work=lambda _character_id: self.fail(
+                    "Player work must not be loaded without a selected character"
+                ),
+            )
+            scene = WorldMapScene(SimpleNamespace(character=None, client=client))
+
+            scene._draw_player_character(screen)
         finally:
             pygame.quit()
 
@@ -415,7 +438,7 @@ class WorldTerrainTests(unittest.TestCase):
                 scene.chat.close()
             pygame.quit()
 
-    def test_saved_world_and_city_checkpoints_restore_exact_position(self):
+    def test_world_checkpoints_restore_position_and_legacy_city_checkpoint_migrates(self):
         pygame.init()
         try:
             pygame.display.set_mode((settings.WIDTH, settings.HEIGHT), pygame.HIDDEN)
@@ -440,9 +463,11 @@ class WorldTerrainTests(unittest.TestCase):
             city_checkpoint = checkpoint_for_scene(city)
             resumed_city = scene_for_saved_character(
                 SimpleNamespace(character=city_checkpoint, client=client))
-            self.assertIsInstance(resumed_city, CityScene)
-            self.assertEqual((resumed_city.player_x, resumed_city.player_y,
-                              resumed_city.player_direction), (1450.5, 890.25, "e"))
+            self.assertIsInstance(resumed_city, WorldMapScene)
+            self.assertEqual(
+                (int(resumed_city.player_x // T), int(resumed_city.player_y // T)),
+                (12, 36),
+            )
         finally:
             pygame.quit()
 
@@ -486,14 +511,7 @@ class WorldTerrainTests(unittest.TestCase):
                 pygame.MOUSEBUTTONDOWN, button=1, pos=menu.buttons["quit"].center))
             self.assertEqual(action, "quit")
             self.assertFalse(menu.is_open)
-            menu.begin_quit()
-            self.assertFalse(menu.update_quit(2.5))
-            self.assertEqual(menu.quit_remaining, 2.5)
-            screen.fill((255, 255, 255))
-            menu.draw(screen, font, small_font)
-            self.assertLess(screen.get_at((0, 0)).r, 255)
-            self.assertIn("Выход через 3...", rendered_titles)
-            self.assertTrue(menu.update_quit(2.5))
+            self.assertFalse(hasattr(menu, "begin_quit"))
         finally:
             pygame.quit()
 
@@ -525,7 +543,7 @@ class WorldTerrainTests(unittest.TestCase):
         self.assertTrue(toggle_player_profile(scene))
         self.assertFalse(overlay.is_open)
 
-    def test_terrain_comes_from_server(self):
+    def test_server_returns_new_map_with_respawn_crystal_only(self):
         database = create_test_database()
         try:
             with running_server(database) as client:
@@ -534,34 +552,155 @@ class WorldTerrainTests(unittest.TestCase):
                 terrain = client.get_map_terrain()
         finally:
             drop_test_database(database)
-        self.assertEqual(terrain["obstacles"][0]["id"], "mountains_1")
-        self.assertTrue(terrain["obstacles"][0]["peaks"])
+        self.assertEqual((terrain["width_tiles"], terrain["height_tiles"]), (256, 128))
+        self.assertEqual([obj["id"] for obj in terrain["objects"]], ["crystal_of_life"])
+        self.assertEqual(
+            (terrain["objects"][0]["tile_x"], terrain["objects"][0]["tile_y"],
+             terrain["objects"][0]["tile_w"], terrain["objects"][0]["tile_h"]),
+            (11, 33, 3, 3),
+        )
+        self.assertEqual(terrain["obstacles"], [])
+        self.assertEqual(terrain["roads"]["routes"], [])
 
-    def test_player_cannot_walk_into_mountains(self):
+    def test_new_map_has_only_crystal_and_respects_its_boundaries(self):
         pygame.init()
         try:
-            screen = pygame.display.set_mode((settings.WIDTH, settings.HEIGHT), pygame.HIDDEN)
-            client = SimpleNamespace(get_map_terrain=lambda: terrain_payload(city_level=2))
+            pygame.display.set_mode((settings.WIDTH, settings.HEIGHT), pygame.HIDDEN)
+            client = SimpleNamespace(get_map_terrain=terrain_payload)
             from scenes.world_map_scene import WorldMapScene
 
             scene = WorldMapScene(SimpleNamespace(character={"id": 1, "name": "Т"}, client=client))
-            self.assertTrue(scene._check_collision(4400, 2880))
-            scene.player_x, scene.player_y = 3500, 2880
-            scene.player_target = (4400, 2880)
-            for _ in range(600):
-                scene.update(1 / 30)
-            self.assertTrue(is_passable(scene.player_x, scene.player_y))
-            self.assertLess(scene.player_x, 3900)
-            # С юга по проходу можно подойти к входу в разлом
-            scene.player_x, scene.player_y = 4240, 3470
-            scene.player_target = (4240, 3328)
-            for _ in range(300):
-                scene.update(1 / 30)
-            self.assertEqual((scene.player_x, scene.player_y), (4240, 3328))
-            rift = next(obj for obj in scene.objects if obj["id"] == "mountain_rift")
-            self.assertTrue(scene._is_within_one_tile(rift))
-            scene.camera_x, scene.camera_y = 4400, 2880
-            scene.draw(screen)
+            self.assertEqual((scene.grid_w, scene.grid_h), (256, 128))
+            self.assertEqual(
+                (int(scene.player_x // T), int(scene.player_y // T)),
+                (12, 36),
+            )
+            self.assertEqual([obj["id"] for obj in scene.objects], [
+                "crystal_of_life", "library", "talent_tree",
+            ])
+            crystal = scene.objects[0]
+            self.assertEqual(
+                (crystal["tile_x"], crystal["tile_y"], crystal["tile_w"], crystal["tile_h"]),
+                (11, 33, 3, 3),
+            )
+            self.assertEqual(crystal["solid_rects"], [pygame.Rect(11 * T, 33 * T, 3 * T, 3 * T)])
+            self.assertEqual(scene.obstacles, [])
+            self.assertFalse(scene._check_collision(scene.world_w / 2, scene.world_h / 2))
+            self.assertTrue(scene._check_collision(12 * T + T // 2, 34 * T + T // 2))
+            self.assertTrue(scene._check_collision(scene.world_w + 1, scene.world_h / 2))
+        finally:
+            pygame.quit()
+
+    def test_legacy_city_save_resumes_on_the_new_world_map(self):
+        from main import scene_for_saved_character
+        from scenes.world_map_scene import WorldMapScene
+
+        pygame.init()
+        try:
+            pygame.display.set_mode((settings.WIDTH, settings.HEIGHT), pygame.HIDDEN)
+            session = SimpleNamespace(
+                character={
+                    "id": 1, "name": "Перенесённый герой", "zone": "city",
+                    "position_x": 1600, "position_y": 1600,
+                },
+                client=SimpleNamespace(get_map_terrain=lambda: terrain_payload()),
+            )
+            scene = scene_for_saved_character(session)
+            self.assertIsInstance(scene, WorldMapScene)
+            self.assertEqual(
+                (int(scene.player_x // T), int(scene.player_y // T)),
+                (12, 36),
+            )
+            new_character = SimpleNamespace(
+                character={"id": 2, "name": "Новый герой"},
+                client=SimpleNamespace(get_map_terrain=lambda: terrain_payload()),
+            )
+            new_scene = scene_for_saved_character(new_character)
+            self.assertIsInstance(new_scene, WorldMapScene)
+            self.assertEqual(
+                (int(new_scene.player_x // T), int(new_scene.player_y // T)),
+                (12, 36),
+            )
+        finally:
+            pygame.quit()
+
+    def test_city_walls_surround_crystal_with_east_gate(self):
+        from core.map_config import is_city_tile
+
+        area = terrain_payload()["city_area"]
+        self.assertEqual(area["bounds"], [0, 25, 25, 19])
+        self.assertEqual(area["gate_tiles"], [[24, 33], [24, 34], [24, 35]])
+        walls = {tuple(tile) for tile in area["wall_tiles"]}
+        ring = walls | {tuple(tile) for tile in area["gate_tiles"]}
+        expected_ring = {
+            (x, y) for x in range(25) for y in range(25, 44)
+            if x in (0, 24) or y in (25, 43)
+        }
+        self.assertEqual(ring, expected_ring)
+        self.assertEqual(walls, expected_ring - {(24, 33), (24, 34), (24, 35)})
+        self.assertTrue(is_city_tile(11, 33))
+        crystal = terrain_payload()["objects"][0]
+        left, top, width, height = area["bounds"]
+        self.assertEqual(crystal["tile_x"] * 2 + crystal["tile_w"], left * 2 + width)
+        self.assertEqual(crystal["tile_y"] * 2 + crystal["tile_h"], top * 2 + height)
+        self.assertTrue(is_city_tile(24, 33))
+        self.assertTrue(is_city_tile(1, 42))
+        self.assertFalse(is_city_tile(25, 33))
+        self.assertFalse(is_city_tile(-1, 33))
+        self.assertFalse(is_city_tile(12, 24))
+        self.assertFalse(is_city_tile(12, 44))
+
+        pygame.init()
+        try:
+            pygame.display.set_mode((settings.WIDTH, settings.HEIGHT), pygame.HIDDEN)
+            from scenes.world_map_scene import WorldMapScene
+
+            scene = WorldMapScene(SimpleNamespace(
+                character={"id": 1, "name": "Т"},
+                client=SimpleNamespace(get_map_terrain=terrain_payload),
+            ))
+            for x, y in walls:
+                self.assertTrue(scene._check_collision(x * T + T // 2, y * T + T // 2))
+            for x, y in area["gate_tiles"]:
+                self.assertFalse(scene._check_collision(x * T + T // 2, y * T + T // 2))
+            self.assertFalse(scene._check_collision(20 * T + T // 2, 30 * T + T // 2))
+            scene.player_x, scene.player_y = 1 * T + T // 2, 42 * T + T // 2
+            self.assertTrue(scene.player_in_city())
+            self.assertFalse(scene.player_in_forest())
+            self.assertNotIn("forest_area", terrain_payload())
+            self.assertNotIn("graveyard_area", terrain_payload())
+            scene.player_x, scene.player_y = 15 * T + T // 2, 33 * T + T // 2
+            self.assertTrue(scene.player_in_city())
+            scene.player_x = 25 * T
+            self.assertFalse(scene.player_in_city())
+        finally:
+            pygame.quit()
+
+    def test_respawn_crystal_restores_health_when_player_is_nearby(self):
+        from scenes.world_map_scene import WorldMapScene
+
+        pygame.init()
+        try:
+            pygame.display.set_mode((settings.WIDTH, settings.HEIGHT), pygame.HIDDEN)
+            saved = []
+
+            class Client:
+                def get_map_terrain(self):
+                    return terrain_payload()
+
+                def save_character(self, character):
+                    saved.append(dict(character))
+
+            character = {"id": 1, "name": "Т", "hp": 5, "max_hp": 120}
+            scene = WorldMapScene(SimpleNamespace(character=character, client=Client()))
+            scene.active_entity = scene.objects[0]
+            scene.player_x, scene.player_y = scene.objects[0]["approach_pos"]
+
+            scene._trigger_active_action()
+
+            self.assertEqual(character["hp"], 120)
+            self.assertEqual(saved[0]["hp"], 120)
+            self.assertEqual(scene.action_notice, "Здоровье полностью восстановлено!")
         finally:
             pygame.quit()
 

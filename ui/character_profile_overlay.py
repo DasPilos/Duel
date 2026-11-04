@@ -1,10 +1,11 @@
 import pygame
 
-from combat.card_database import is_mage_profession
+from client.network import ServerError
 from core import settings
 from ui.character_card import CharacterCard
 from ui.mage_card import MageCard
 from ui.hud import draw_button
+from ui.backpack_panel import BackpackPanel
 from ui.collection_panel import CollectionPanel
 from ui.deck_selection_panel import DeckSelectionPanel
 
@@ -17,6 +18,9 @@ class CharacterProfileOverlay:
         self.collection_loader = collection_loader
         self.deck_loader = deck_loader
         self.deck_creator = deck_creator
+        self.inventory_requested = False
+        self.settings_requested = False
+        self.deck_requested = False
         self.player_card = CharacterCard()
         self.card = CharacterCard()
         self.player_frame = pygame.Rect(settings.PLAYER_CARD_RECT)
@@ -27,35 +31,36 @@ class CharacterProfileOverlay:
             85,
             34,
         )
-        # Кнопка рюкзака на верхней части рамки игрока, снаружи справа
+        # Кнопки персонажа вынесены вправо от карточки, ниже строки монет.
         self.backpack_button = pygame.Rect(
             self.player_frame.right + 5,
-            self.player_frame.y,
+            self.player_frame.y + 200,
             130,
             40,
         )
-        # 9 дополнительных кнопок вертикально вниз
-        self.slot_buttons = []
-        for i in range(9):
-            slot_offset = i * 45 if i == 0 else i * 45 + 45
-            button = pygame.Rect(
-                self.player_frame.right + 5,
-                self.player_frame.y + 50 + slot_offset,
-                100,
-                40,
-            )
-            self.slot_buttons.append(button)
-        
-        # Окно инвентаря глобальное (main.py): кнопка лишь просит его открыть
-        self.inventory_requested = False
+        self.collection_button = pygame.Rect(
+            self.player_frame.right + 5,
+            self.player_frame.y + 50,
+            130,
+            40,
+        )
+        self.slot_buttons = [self.collection_button]
+        self.backpack_panel = BackpackPanel()
         self.collection_panel = CollectionPanel()
         self.deck_panel = DeckSelectionPanel(action_font, action_font, collection_loader)
+        self.deck_panel.on_save = self.submit_deck
         self.selected_deck = None
         self.deck_button = pygame.Rect(
             self.player_frame.right + 5,
-            self.player_frame.y + 95,
-            100,
+            self.backpack_button.bottom + 8,
+            130,
             40,
+        )
+        self.settings_button = pygame.Rect(
+            self.player_frame.right - 48,
+            self.player_frame.y + 14,
+            32,
+            32,
         )
         
         self.profile = None
@@ -70,30 +75,35 @@ class CharacterProfileOverlay:
         self.counterpart = dict(counterpart) if isinstance(counterpart, dict) else counterpart
 
     def close(self):
+        self.backpack_panel.close()
         self.collection_panel.close()
         self.deck_panel.close()
+        self.inventory_requested = False
+        self.settings_requested = False
+        self.deck_requested = False
         self.profile = None
         self.counterpart = None
 
     def handle_event(self, event):
-        deck_action = self.deck_panel.handle_event(event)
-        if deck_action == "create":
-            self._create_deck()
+        if self.deck_panel.handle_event(event):
             return True
-        if deck_action:
-            return deck_action
         return self.collection_panel.handle_event(event)
 
-    def _create_deck(self):
+    def submit_deck(self):
         panel = self.deck_panel
+        error = panel.validation_error()
+        if error:
+            panel.error = error
+            return
         if self.deck_creator is None:
-            panel.error = "Создание колод доступно только онлайн"
+            panel.error = "Создание колоды недоступно"
             return
         try:
             self.deck_creator(panel.name.strip(), list(panel.selected_cards))
-            panel.open(self.deck_loader() if self.deck_loader else [])
-        except Exception as error:  # отказ сервера показываем в панели, выбор карт сохраняется
+        except (ServerError, OSError) as error:
             panel.error = str(error)
+            return
+        panel.finish_creation(self.deck_loader() if self.deck_loader else [])
 
     def update_counterpart(self, profile):
         self.counterpart = dict(profile)
@@ -104,28 +114,36 @@ class CharacterProfileOverlay:
 
     @staticmethod
     def _is_mage(profile):
-        return isinstance(profile, dict) and is_mage_profession(profile.get("type"))
+        return isinstance(profile, dict) and profile.get("type") == "mage"
+
+    @staticmethod
+    def _is_warrior(profile):
+        return isinstance(profile, dict) and profile.get("type", "warrior") == "warrior"
 
     def _card_for_profile(self, profile, current_card):
         card_type = MageCard if self._is_mage(profile) else CharacterCard
-        # Точный тип: MageCard — наследник CharacterCard
-        if type(current_card) is card_type:
-            return current_card
-        character_id = None
-        if isinstance(profile, dict):
-            character_id = profile.get("character_id", profile.get("id"))
-        else:
-            character_id = getattr(profile, "character_id", getattr(profile, "id", None))
-        return card_type.get_or_create(character_id)
+        if not isinstance(current_card, card_type):
+            return card_type()
+        return current_card
 
     @staticmethod
-    def _draw_card(card, screen, frame, *, border_color, editable, title=None, kind="player"):
+    def _draw_card(card, screen, frame, *, border_color, editable, opponent=None, title=None, kind="player"):
+        if isinstance(card, MageCard):
+            card.draw(
+                screen,
+                frame,
+                border_color=border_color,
+                title=title,
+                editable=editable,
+            )
+            return
         card.sync(card.state if card.state else {}, title=title, kind=kind)
         card.draw(
             screen,
             frame,
             border_color=border_color,
             editable=editable,
+            opponent=opponent if CharacterProfileOverlay._is_warrior(opponent) else None,
         )
 
     def handle_click(self, position):
@@ -133,39 +151,48 @@ class CharacterProfileOverlay:
             self.collection_panel.handle_click(position)
             return "handled", None
         if self.deck_panel.is_open:
-            selected = self.deck_panel.handle_click(position)
-            if selected == "create":
-                self._create_deck()
-                return "handled", None
-            if isinstance(selected, tuple):
-                return selected
-            if isinstance(selected, dict):
-                self.selected_deck = selected
-                return "deck_selected", selected
+            result = self.deck_panel.handle_click(position)
+            if isinstance(result, dict):
+                self.selected_deck = result
+                return "deck_selected", result
+            if isinstance(result, tuple) and result[0] == "delete_deck":
+                return "delete_deck", result[1]
             return "handled", None
 
+        # Обработка клика по рюкзаку (приоритет выше всего)
+        if self.backpack_panel.is_open:
+            cell_index = self.backpack_panel.handle_click(position)
+            if cell_index is not None:
+                return f"backpack_cell_{cell_index}", None
+            # Если рюкзак был закрыт кликом вне панели, возвращаем handled
+            if not self.backpack_panel.is_open:
+                return "handled", None
+            return "handled", None
+        
         if self.is_open and self.close_button.collidepoint(position):
             self.close()
             return "close", None
+
+        if self.is_open and self.settings_button.collidepoint(position):
+            self.settings_requested = True
+            return "settings", None
         
         # Обработка клика по кнопке рюкзака
         if self.is_open and self.backpack_button.collidepoint(position):
             self.inventory_requested = True
-            return "handled", None
+            return "backpack", None
         
-        # Обработка клика по слотам (1-9)
-        for i, button in enumerate(self.slot_buttons):
-            if self.is_open and button.collidepoint(position):
-                if i == 0:
-                    cards = self.collection_loader() if self.collection_loader else []
-                    self.collection_panel.open(cards)
-                    return "handled", None
-                return f"slot_{i+1}", None
+        if self.is_open and self.collection_button.collidepoint(position):
+            cards = self.collection_loader() if self.collection_loader else []
+            self.collection_panel.open(cards)
+            return "collection", None
+
         if self.is_open and self.deck_button.collidepoint(position):
             decks = self.deck_loader() if self.deck_loader else []
             character_type = self.profile.get("type", "warrior") if isinstance(self.profile, dict) else "warrior"
             self.deck_panel.open(decks, character_type=character_type)
-            return "handled", None
+            self.deck_requested = True
+            return "deck", None
         
         if not self.is_open:
             return None, None
@@ -207,24 +234,20 @@ class CharacterProfileOverlay:
         
         # Если show_player_only=True, показываем только левую панель (ТЕКУЩИЙ ИГРОК)
         if show_player_only:
-            # opponent приходит свежим каждый кадр (например, session.character) — используем его,
-            # чтобы бонусы от экипировки и другие изменения сразу отражались на карточке.
-            self.player_card.sync(opponent if opponent is not None else self.profile, title="ТЕКУЩИЙ ИГРОК", kind="player")
+            self.player_card.sync(self.profile, title="ТЕКУЩИЙ ИГРОК", kind="player")
             self._draw_card(
                 self.player_card,
                 screen,
                 self.player_frame,
                 border_color=(80, 180, 120),
                 editable=True,
+                opponent=None,
             )
-            draw_button(screen, self.close_button, "ЗАКРЫТЬ", self.action_font, color=(70, 75, 90))
-            # Кнопка рюкзака в верхнем правом углу
             draw_button(screen, self.backpack_button, "РЮКЗАК", self.action_font, color=(210, 100, 90))
-            # 9 слотов вертикально вниз
-            for i, button in enumerate(self.slot_buttons):
-                label = "КОЛЛЕКЦИЯ" if i == 0 else str(i + 1)
-                draw_button(screen, button, label, self.action_font, color=(210, 100, 90))
+            draw_button(screen, self.collection_button, "КОЛЛЕКЦИЯ", self.action_font, color=(210, 100, 90))
             draw_button(screen, self.deck_button, "КОЛОДА", self.action_font, color=(90, 120, 190))
+            draw_button(screen, self.settings_button, "⚙", self.action_font, color=(70, 80, 95))
+            self.backpack_panel.draw(screen)
             self.collection_panel.draw(screen)
             self.deck_panel.draw(screen)
             return
@@ -237,6 +260,7 @@ class CharacterProfileOverlay:
                 self.player_frame,
                 border_color=(80, 180, 120),
                 editable=True,
+                opponent=self.profile,
             )
         self.card.sync(self.profile, title="ПРОФИЛЬ ПЕРСОНАЖА", kind=self.profile.get("kind", "player"))
         self._draw_card(
@@ -245,14 +269,14 @@ class CharacterProfileOverlay:
             self.frame,
             border_color=(210, 100, 90),
             editable=False,
+            opponent=opponent,
         )
         draw_button(screen, self.close_button, "ЗАКРЫТЬ", self.action_font, color=(70, 75, 90))
-        # Кнопка рюкзака в верхнем правом углу (слева на левой карточке)
         draw_button(screen, self.backpack_button, "РЮКЗАК", self.action_font, color=(210, 100, 90))
-        # 9 слотов вертикально вниз
-        for i, button in enumerate(self.slot_buttons):
-            label = "КОЛЛЕКЦИЯ" if i == 0 else str(i + 1)
-            draw_button(screen, button, label, self.action_font, color=(210, 100, 90))
+        draw_button(screen, self.collection_button, "КОЛЛЕКЦИЯ", self.action_font, color=(210, 100, 90))
         draw_button(screen, self.deck_button, "КОЛОДА", self.action_font, color=(90, 120, 190))
+        draw_button(screen, self.settings_button, "⚙", self.action_font, color=(70, 80, 95))
+        # Рюкзак (над всем остальным)
+        self.backpack_panel.draw(screen)
         self.collection_panel.draw(screen)
         self.deck_panel.draw(screen)

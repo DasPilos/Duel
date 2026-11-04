@@ -7,9 +7,16 @@ from pathlib import Path
 
 from combat.card_battle import CardBattle
 from combat.battle_archive import record_battle
-from combat.character_stats import BASE_STAT_VALUE, minimum_endurance, total_stat_points
+from combat.card_database import cards_for_type
+from combat.character_stats import (
+    BASE_STAT_VALUE,
+    STAT_NAMES,
+    calculate_max_hp,
+    calculate_max_mana,
+    minimum_endurance,
+    total_stat_points,
+)
 from combat.fighter import Fighter
-from combat.card_database import cards_for_type, is_mage_profession
 
 # Вне таверны (задний двор) боты лечатся 10 минут до полного хп, в таверне — вдвое быстрее.
 BOT_FULL_REGEN_SECONDS = 600
@@ -32,186 +39,68 @@ BOT_STAT_WEIGHTS = {
 }
 
 
-def _bot(identifier, name, stats, role, level=1, locked_level=False):
-    max_hp = stats["endurance"] * 10
+def _bot(identifier, name, bot_type, stats, deck=None):
+    full_stats = {stat_name: BASE_STAT_VALUE for stat_name in STAT_NAMES}
+    full_stats.update(stats)
+    max_hp = calculate_max_hp(1, full_stats["endurance"], bot_type)
+    max_mp = calculate_max_mana(full_stats["intellect"], bot_type)
     return {
         "id": identifier,
         "name": name,
-        "level": level,
+        "type": bot_type,
+        "level": 1,
         "xp": 0,
         "hp": max_hp,
         "max_hp": max_hp,
-        "mp": 50,
-        "max_mp": 50,
-        "stats": stats,
+        "mp": max_mp,
+        "max_mp": max_mp,
+        "stats": full_stats,
         "stat_points": 0,
         "zone": "backyard",
         "kind": "bot",
-        "role": role,
-        "locked_level": locked_level,
+        "role": bot_type,
+        "locked_level": True,
+        "deck": deck if deck is not None else [card.key for card in cards_for_type(bot_type)],
     }
 
+
+# Зафиксированные боты 1 уровня: без набора опыта, каждый играет базовой колодой своего класса.
 BOT_OPPONENTS = (
-    # Зафиксированные боты 1 уровня: базовые статы 3/3/3/4 + 3 стартовых очка,
-    # каждый вложен в свою характеристику. Опыт отключён — уровень не растёт.
-    {
-        "id": "bot_brawler",
-        "name": "Забияка",
-        "level": 1,
-        "xp": 0,
-        "hp": 40,
-        "max_hp": 40,
-        "mp": 50,
-        "max_mp": 50,
-        "stats": {
-            "strength": 6,
-            "agility": 3,
-            "intuition": 3,
-            "endurance": 4,
-        },
-        "stat_points": 0,
-        "zone": "backyard",
-        "kind": "bot",
-        "locked_level": True,
-    },
-    {
-        "id": "bot_wireless_soul",
-        "name": "Безпроводной Душ",
-        "level": 1,
-        "xp": 0,
-        "hp": 40,
-        "max_hp": 40,
-        "mp": 50,
-        "max_mp": 50,
-        "stats": {
-            "strength": 3,
-            "agility": 3,
-            "intuition": 6,
-            "endurance": 4,
-        },
-        "stat_points": 0,
-        "zone": "backyard",
-        "kind": "bot",
-        "locked_level": True,
-    },
-    {
-        "id": "bot_konfu_padla",
-        "name": "Комфу Падла",
-        "level": 1,
-        "xp": 0,
-        "hp": 40,
-        "max_hp": 40,
-        "mp": 50,
-        "max_mp": 50,
-        "stats": {
-            "strength": 3,
-            "agility": 6,
-            "intuition": 3,
-            "endurance": 4,
-        },
-        "stat_points": 0,
-        "zone": "backyard",
-        "kind": "bot",
-        "locked_level": True,
-    },
-    {
-        "id": "bot_plowman",
-        "name": "Пахарь",
-        "level": 1,
-        "xp": 0,
-        "hp": 70,
-        "max_hp": 70,
-        "mp": 50,
-        "max_mp": 50,
-        "stats": {
-            "strength": 3,
-            "agility": 3,
-            "intuition": 3,
-            "endurance": 7,
-        },
-        "stat_points": 0,
-        "zone": "backyard",
-        "kind": "bot",
-        "locked_level": True,
-    },
-    # Зафиксированные боты 2 уровня: база 3/3/3/5 + 6 очков за уровень, у каждого
-    # своё распределение. Опыт отключён — уровень не растёт, первую четвёрку не трогаем.
-    _bot("bot_void_lightning", "Молния Пустоты", {"strength": 4, "agility": 5, "intuition": 6, "endurance": 5}, "critical", level=2, locked_level=True),
-    _bot("bot_fist_blade", "Клинок в Кулаке", {"strength": 5, "agility": 3, "intuition": 7, "endurance": 5}, "critical", level=2, locked_level=True),
-    _bot("bot_wasteland_fury", "Ярость Пустошей", {"strength": 7, "agility": 3, "intuition": 5, "endurance": 5}, "critical", level=2, locked_level=True),
-    _bot("bot_fist_destroyer", "Кулак-Разрушитель", {"strength": 6, "agility": 4, "intuition": 5, "endurance": 5}, "critical", level=2, locked_level=True),
-    _bot("bot_pit_demon", "Демон Ямы", {"strength": 4, "agility": 4, "intuition": 5, "endurance": 7}, "critical", level=2, locked_level=True),
-    _bot("bot_oathbreaker", "Разрушитель Клятв", {"strength": 5, "agility": 5, "intuition": 5, "endurance": 5}, "critical", level=2, locked_level=True),
-    _bot("bot_bloody_arena_shadow", "Тень Кровавой Арены", {"strength": 4, "agility": 11, "intuition": 7, "endurance": 4}, "agile"),
-    _bot("bot_wolf_grin", "Волчий Оскал", {"strength": 5, "agility": 10, "intuition": 7, "endurance": 4}, "agile"),
-    _bot("bot_raven_broken_jaw", "Ворон Разбитая Челюсть", {"strength": 6, "agility": 9, "intuition": 6, "endurance": 5}, "agile"),
-    _bot("bot_ash_fist", "Пепельный Кулак", {"strength": 7, "agility": 8, "intuition": 7, "endurance": 4}, "agile"),
-    _bot("bot_bonebreaker", "Костолом", {"strength": 8, "agility": 8, "intuition": 5, "endurance": 5}, "agile"),
-    _bot("bot_bear_grip", "Хват Медведя", {"strength": 7, "agility": 9, "intuition": 5, "endurance": 5}, "agile"),
-    _bot("bot_ironhand_thunder", "Гром Железнорук", {"strength": 7, "agility": 4, "intuition": 4, "endurance": 11}, "tank"),
-    _bot("bot_steel_fang", "Стальной Клык", {"strength": 8, "agility": 4, "intuition": 5, "endurance": 9}, "tank"),
-    _bot("bot_living_mountain", "Живая Гора", {"strength": 6, "agility": 4, "intuition": 4, "endurance": 12}, "tank"),
-    _bot("bot_northern_butcher", "Мясник Севера", {"strength": 9, "agility": 4, "intuition": 4, "endurance": 9}, "tank"),
-    _bot("bot_skullcrusher", "Дробитель Черепов", {"strength": 9, "agility": 5, "intuition": 4, "endurance": 8}, "tank"),
-    _bot("bot_giant_slayer", "Убийца Гигантов", {"strength": 8, "agility": 4, "intuition": 5, "endurance": 9}, "tank"),
-    _bot("bot_bloody_sand_king", "Король Кровавого Песка", {"strength": 7, "agility": 6, "intuition": 6, "endurance": 7}, "boss"),
+    _bot("bot_elpachino_fred", "Ельпачино Фред", "archer", {"strength": 3, "agility": 5, "intuition": 4, "endurance": 4}),
+    _bot("bot_stealth_joe", "Скрытный Джо", "assassin", {"agility": 6, "intuition": 5, "endurance": 3}),
+    _bot("bot_fierce_karlo", "Сверепый Карло", "warrior", {"strength": 5, "endurance": 7}),
+    _bot(
+        "bot_wise_victor",
+        "Мудрый Виктор",
+        "mage",
+        {"wisdom": 6, "intellect": 5, "endurance": 3},
+        deck=[
+            "mage_flash",
+            "mage_fireball",
+            "mage_crimson_blood",
+            "mage_burning_support",
+            "mage_fervent_service",
+            "mage_pyromania",
+            "mage_water_summon",
+            "mage_rising_flow",
+            "mage_flow_blessing",
+            "mage_water_guard",
+            "mage_waterfall",
+            "mage_gurgling_flow",
+            "mage_boulder_summon",
+            "mage_earth_spikes",
+            "mage_stone_barrages",
+            "mage_golem_summon",
+            "mage_mineral_armor",
+            "mage_stone_spikes",
+            "mage_lightning_strike",
+            "mage_thundercloud",
+            "mage_paralysis",
+            "mage_lightning_punishment",
+        ],
+    ),
 )
 
-MAGE_BOT_OPPONENTS = (
-    {
-        "id": "bot_mage_ember",
-        "name": "Искра Алтаря",
-        "type": "mage",
-        "level": 1,
-        "xp": 0,
-        "hp": 50,
-        "max_hp": 50,
-        "mp": 40,
-        "max_mp": 40,
-        "stats": {"wisdom": 3, "intellect": 2, "harmony": 2, "endurance": 2},
-        "stat_points": 0,
-        "zone": "backyard",
-        "kind": "bot",
-        "locked_level": True,
-        "deck": ["mage_flash", "mage_fireball", "mage_burning_support", "mage_fervent_service"],
-    },
-    {
-        "id": "bot_mage_tide",
-        "name": "Хранитель Потока",
-        "type": "mage",
-        "level": 1,
-        "xp": 0,
-        "hp": 50,
-        "max_hp": 50,
-        "mp": 40,
-        "max_mp": 40,
-        "stats": {"wisdom": 2, "intellect": 3, "harmony": 2, "endurance": 2},
-        "stat_points": 0,
-        "zone": "backyard",
-        "kind": "bot",
-        "locked_level": True,
-        "deck": ["mage_water_summon", "mage_rising_flow", "mage_flow_blessing", "mage_water_guard"],
-    },
-    {
-        "id": "bot_mage_storm",
-        "name": "Голос Бури",
-        "type": "mage",
-        "level": 1,
-        "xp": 0,
-        "hp": 50,
-        "max_hp": 50,
-        "mp": 40,
-        "max_mp": 40,
-        "stats": {"wisdom": 2, "intellect": 2, "harmony": 3, "endurance": 2},
-        "stat_points": 0,
-        "zone": "backyard",
-        "kind": "bot",
-        "locked_level": True,
-        "deck": ["mage_lightning_strike", "mage_thundercloud", "mage_paralysis", "mage_tailwind"],
-    },
-)
-
-BOT_OPPONENTS = BOT_OPPONENTS + MAGE_BOT_OPPONENTS
 
 BOT_STATE_PATH = Path(__file__).resolve().parent.parent / "bot_state.json"
 BOT_STATE = {opponent["id"]: copy.deepcopy(opponent) for opponent in BOT_OPPONENTS}
@@ -231,7 +120,11 @@ def _normalize_bot_stats(opponent):
     if opponent.get("locked_level"):
         # Зафиксированные боты не качают очки и не меняют статы — только пересчёт HP по актуальной формуле.
         opponent["stat_points"] = 0
-        opponent["max_hp"] = opponent["stats"]["endurance"] * 10
+        opponent["max_hp"] = calculate_max_hp(
+            level,
+            opponent["stats"]["endurance"],
+            opponent.get("type", "warrior"),
+        )
         opponent["hp"] = opponent["max_hp"] if old_hp >= old_max_hp else max(0, min(old_hp, opponent["max_hp"]))
         return
     stats = {
@@ -246,7 +139,11 @@ def _normalize_bot_stats(opponent):
         stats[weights[index % len(weights)]] += 1
     opponent["stats"] = stats
     opponent["stat_points"] = 0
-    opponent["max_hp"] = stats["endurance"] * 10
+    opponent["max_hp"] = calculate_max_hp(
+        level,
+        stats["endurance"],
+        opponent.get("type", "warrior"),
+    )
     opponent["hp"] = opponent["max_hp"] if old_hp >= old_max_hp else max(0, min(old_hp, opponent["max_hp"]))
 
 
@@ -269,7 +166,13 @@ def _load_bot_state():
         home = BOT_STATE[opponent_id]
         if home.get("locked_level"):
             # Сброс накопившегося уровня/опыта из старых боёв — берём из файла только HP/зону.
-            home["hp"] = max(0, min(int(opponent.get("hp", home["max_hp"])), home["max_hp"]))
+            saved_max_hp = int(opponent.get("max_hp", home["max_hp"]))
+            saved_hp = int(opponent.get("hp", saved_max_hp))
+            home["hp"] = (
+                home["max_hp"]
+                if saved_hp >= saved_max_hp
+                else max(0, min(saved_hp, home["max_hp"]))
+            )
             home["zone"] = opponent.get("zone", home["zone"])
             opponent = home
         else:
@@ -314,7 +217,11 @@ def update_bot(opponent_id, profile):
             if key in profile:
                 opponent[key] = copy.deepcopy(profile[key])
         _allocate_bot_stat_points(opponent)
-        opponent["max_hp"] = opponent["stats"]["endurance"] * 10
+        opponent["max_hp"] = calculate_max_hp(
+            opponent["level"],
+            opponent["stats"]["endurance"],
+            opponent.get("type", "warrior"),
+        )
         opponent["hp"] = max(0, min(opponent["max_hp"], int(opponent["hp"])))
         opponent["mp"] = max(0, min(opponent["max_mp"], int(opponent["mp"])))
         BOT_UPDATED_AT[opponent_id] = time.time()
@@ -479,28 +386,24 @@ def _resolve_bot_battle(attacker_id, defender_id, now):
     defender = BOT_STATE[defender_id]
     attacker_fighter = _fighter_from_profile(attacker)
     defender_fighter = _fighter_from_profile(defender)
-
-    # Каждый бот играет картами своего класса со своего стола
-    attacker_type = attacker.get("type", "warrior")
-    defender_type = defender.get("type", "warrior")
-    battle = CardBattle(
-        attacker_fighter,
-        defender_fighter,
-        cards=cards_for_type(attacker_type),
-        enemy_cards=cards_for_type(defender_type),
-    )
-    battle.mage_mode = is_mage_profession(attacker_type) or is_mage_profession(defender_type)
+    battle = CardBattle(attacker_fighter, defender_fighter)
     while len(battle.hands["player"]) < battle.STARTING_PICK_LIMIT:
         side = battle.draft_first_side()
-        table = battle.table_for(side)
-        battle.choose_starting_card(side, table[random.randrange(len(table))].key)
+        card = battle.table[random.randrange(len(battle.table))]
+        battle.choose_starting_card(side, card.key)
         side = "enemy" if side == "player" else "player"
-        table = battle.table_for(side)
-        battle.choose_starting_card(side, table[random.randrange(len(table))].key)
+        card = battle.table[random.randrange(len(battle.table))]
+        battle.choose_starting_card(side, card.key)
     battle.finish_starting_deal()
-    # Верхний предел ходов: без него бой без урона может зависнуть и заблокировать поток ботов.
+    # На каждый ход нужно давать бойцам новые карты и очки действий, иначе,
+    # когда у обеих сторон заканчиваются доступные по цене карты, ни одна из
+    # них не наносит урона и цикл проверки battle.is_over() зависает навсегда,
+    # блокируя фоновый поток планировщика ботов (бои на заднем дворе замирали).
     while not battle.is_over() and battle.turn < MAX_BOT_BATTLE_TURNS:
         for side in ("player", "enemy"):
+            for card in list(battle.hands[side]):
+                if card.effect_type.startswith("instant_"):
+                    battle.activate_instant_card(side, card.key)
             for card in list(battle.hands[side]):
                 battle.select_card(side, card.key)
             battle.confirm_selection(side)
@@ -565,17 +468,10 @@ def _regenerate_bots(now):
 
 
 def _fighter_from_profile(profile):
-    profession_type = profile.get("type", "warrior")
-    fighter = Fighter(profile["name"], profile["level"], profession_type=profession_type)
-    fighter.set_profession(profession_type)
+    fighter = Fighter(profile["name"], profile["level"], profession_type=profile.get("type", "warrior"))
     fighter.xp = profile["xp"]
     fighter.stats = copy.deepcopy(profile["stats"])
     fighter.stat_points = profile["stat_points"]
-
-    # Применить бонусы класса (это переопределит то что установлено в __init__)
-    if profession_type == "archer":
-        fighter.temporary_dodge_chance_modifier = 10  # +10% уворота для лучника
-
     fighter.recalculate_parameters()
     fighter.hp = min(int(profile["hp"]), fighter.max_hp)
     fighter.mp = profile["mp"]

@@ -1,9 +1,7 @@
 """
-Общая «кукла» экипировки для карточек всех персонажей (воин, маг и любые будущие классы).
+Общая «кукла» экипировки для карточек всех персонажей и окна рюкзака.
 
-Спрайт персонажа и две колонки слотов по бокам от него. Раскладка, отрисовка и поиск слота
-под курсором живут только здесь: любое изменение слотов сразу применяется ко всем персонажам.
-Рюкзак (InventoryWindow) использует те же функции, чтобы принимать перетаскивание в слоты.
+Раскладка, отрисовка слотов при наведении и поиск слота под курсором живут только здесь.
 """
 
 import pygame
@@ -13,13 +11,14 @@ from core import settings
 
 # (ключ, подпись, колонка, ряд) вокруг спрайта
 SLOT_LAYOUT = (
-    ("ears", "Серьги", 0, 0), ("head", "Голова", 2, 0), ("neck", "Шея", 4, 0),
-    ("back", "Плащ", 0, 1), ("body", "Доспех", 2, 1), ("ring", "Кольцо", 4, 1),
-    ("hands", "Руки", 0, 2), ("shield", "П рука", 1, 2), ("belt", "Пояс", 2, 2),
-    ("weapon", "Л рука", 3, 2), ("ring_2", "Кольцо", 4, 2),
-    ("legs", "Ноги", 2, 3), ("feet", "Обувь", 2, 4),
+    ("head", "Голова", 2, 0),
+    ("body", "Туловище", 2, 1),
+    ("hands", "Руки", 0, 2),
+    ("legs", "Ноги", 2, 3),
+    ("feet", "Ступни", 2, 4),
 )
 SLOT_LABELS = {slot: label for slot, label, _, _ in SLOT_LAYOUT}
+SLOT_LABELS["artifact"] = "Артефакт"
 
 SLOT_WIDTH = 66
 SLOT_HEIGHT = 62
@@ -67,6 +66,12 @@ def slot_rects(frame):
     rects = {}
     for slot, _, column, row in SLOT_LAYOUT:
         rects[slot] = pygame.Rect(column_x[column], row_top[row], SLOT_WIDTH, SLOT_HEIGHT)
+    rects["artifact"] = pygame.Rect(
+        frame.x + 20,
+        frame.bottom - 268,
+        SLOT_WIDTH,
+        SLOT_HEIGHT,
+    )
     return rects
 
 
@@ -94,13 +99,20 @@ def draw_slots(screen, frame, icons, font, equipment, highlight=None, dragged=No
     mouse = pygame.mouse.get_pos()
     for slot, rect in rects.items():
         item = equipment.get(slot)
-        color = SLOT_HOVER if rect.collidepoint(mouse) else SLOT_BG
-        background = pygame.Surface(rect.size, pygame.SRCALPHA)
-        background.fill((*color, round(255 * SLOT_OPACITY / 100)))
-        screen.blit(background, rect.topleft)
-        border = RARITY_COLORS.get(item.get("rarity"), SLOT_BORDER) if item else SLOT_BORDER
-        if slot == highlight:
-            border = SLOT_HIGHLIGHT
+        hovered = rect.collidepoint(mouse) or slot == highlight
+        if not hovered:
+            continue
+        if hovered:
+            background = pygame.Surface(rect.size, pygame.SRCALPHA)
+            background.fill((*SLOT_HOVER, round(255 * SLOT_OPACITY / 100)))
+            screen.blit(background, rect.topleft)
+        border = (
+            SLOT_HIGHLIGHT
+            if slot == highlight
+            else RARITY_COLORS.get(item.get("rarity"), SLOT_BORDER)
+            if item
+            else SLOT_BORDER
+        )
         pygame.draw.rect(screen, border, rect, 3 if slot == highlight else 2, border_radius=6)
         if item:
             icon = icons.get(item.get("icon"), min(rect.width, rect.height))
@@ -108,9 +120,3 @@ def draw_slots(screen, frame, icons, font, equipment, highlight=None, dragged=No
                 icon = icon.copy()
                 icon.set_alpha(70)
             screen.blit(icon, icon.get_rect(center=rect.center))
-        else:
-            label = font.render(SLOT_LABELS[slot], True, LABEL_COLOR)
-            if label.get_width() > rect.width - 6:
-                width = rect.width - 6
-                label = pygame.transform.smoothscale(label, (width, max(1, int(label.get_height() * width / label.get_width()))))
-            screen.blit(label, label.get_rect(center=rect.center))

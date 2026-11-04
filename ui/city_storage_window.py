@@ -75,8 +75,6 @@ class CityStorageWindow(ProductionBuildingWindow):
                         ("storage_withdraw", resource),
                         RESOURCES.get(resource, {}).get("label", resource),
                         quantity, withdrawable.get("max_withdraw", 0), mode="withdraw",
-                        weight_state=withdrawable,
-                        item_weight_kg=withdrawable.get("item_weight_kg", 0),
                     )
                     return
             for resource, button in self.storage_deposit_buttons.items():

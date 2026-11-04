@@ -9,6 +9,10 @@ from core import settings
 
 
 class DuelResolver:
+    FLOATING_TEXT_DURATION = settings.FPS * 10
+    FLOATING_TEXT_LINE_HEIGHT = 30
+    FLOATING_TEXT_PANEL_GAP = 18
+
     def __init__(self, scene):
         self.scene = scene
         self.critical_font = self._load_critical_font()
@@ -78,56 +82,116 @@ class DuelResolver:
 
     def _add_floating_damage(self):
         battle = self.scene.battle
-        next_y = {"player": settings.FLOATING_TEXT_Y, "enemy": settings.FLOATING_TEXT_Y}
+        stats_panel_top = self._floating_text_panel_top()
+        next_y = {
+            "player": stats_panel_top - self.FLOATING_TEXT_PANEL_GAP,
+            "enemy": stats_panel_top - self.FLOATING_TEXT_PANEL_GAP,
+        }
+
+        def stack_line(side):
+            x = self._floating_text_x(side)
+            y = next_y[side]
+            occupied = self.scene.active_floating_texts
+            while any(
+                text.duration > 0
+                and text.x == x
+                and abs(text.y - y) < self.FLOATING_TEXT_LINE_HEIGHT
+                for text in occupied
+            ):
+                y -= self.FLOATING_TEXT_LINE_HEIGHT
+            next_y[side] -= self.FLOATING_TEXT_LINE_HEIGHT
+            next_y[side] = min(next_y[side], y - self.FLOATING_TEXT_LINE_HEIGHT)
+            return y
+
         for event in battle.last_exchange:
             if event.get("effect_cards"):
-                x = settings.PLAYER_FLOATING_TEXT_X if event["side"] == "player" else settings.ENEMY_FLOATING_TEXT_X
+                x = self._floating_text_x(event["side"])
                 for card_name in event["effect_cards"]:
-                    self._add_floating_effect(x, card_name, next_y[event["side"]])
-                    next_y[event["side"]] += 30
+                    self._add_floating_effect(x, card_name, stack_line(event["side"]))
             if event.get("effect_text"):
-                x = settings.PLAYER_FLOATING_TEXT_X if event["side"] == "player" else settings.ENEMY_FLOATING_TEXT_X
-                self._add_floating_effect(x, event["effect_text"], next_y[event["side"]])
-                next_y[event["side"]] += 30
+                x = self._floating_text_x(event["side"])
+                self._add_floating_effect(x, event["effect_text"], stack_line(event["side"]))
             if event.get("dodge_bonus", 0) > 0:
-                x = settings.PLAYER_FLOATING_TEXT_X if event["side"] == "player" else settings.ENEMY_FLOATING_TEXT_X
-                self._add_floating_bonus(x, event["dodge_bonus"], next_y[event["side"]])
-                next_y[event["side"]] += 30
+                x = self._floating_text_x(event["side"])
+                self._add_floating_bonus(x, event["dodge_bonus"], stack_line(event["side"]))
             if event.get("healed", 0) > 0:
-                x = (
-                    settings.PLAYER_FLOATING_TEXT_X + 50
-                    if event["side"] == "player"
-                    else settings.ENEMY_FLOATING_TEXT_X - 50
-                )
-                self._add_floating_heal(x, event["healed"], next_y[event["side"]])
-                next_y[event["side"]] += 30
+                x = self._floating_text_x(event["side"])
+                self._add_floating_heal(x, event["healed"], stack_line(event["side"]))
+            hit_results = event.get("hit_results")
+            if hit_results:
+                target_side = "enemy" if event["side"] == "player" else "player"
+                x = self._floating_text_x(target_side)
+                if any(hit.get("dodged") for hit in hit_results):
+                    play_dodge_sound()
+                if any(int(hit.get("damage", 0)) > 0 for hit in hit_results):
+                    play_damage_sound()
+                if any(hit.get("critical") and int(hit.get("damage", 0)) > 0 for hit in hit_results):
+                    play_critical_hit_sound()
+                for hit in hit_results:
+                    if hit.get("dodged"):
+                        self._add_floating_text(x, 0, True, False, stack_line(target_side))
+                    elif hit.get("blocked"):
+                        self._add_combat_result(
+                            x,
+                            "БЛОК",
+                            stack_line(target_side),
+                            settings.DODGE_COLOR,
+                            None,
+                        )
+                    else:
+                        self._add_floating_text(
+                            x,
+                            int(hit.get("damage", 0)),
+                            False,
+                            bool(hit.get("critical")),
+                            stack_line(target_side),
+                        )
+                continue
             if event.get("attack_dodged"):
                 target_side = "enemy" if event["side"] == "player" else "player"
-                x = settings.ENEMY_FLOATING_TEXT_X if target_side == "enemy" else settings.PLAYER_FLOATING_TEXT_X
+                x = self._floating_text_x(target_side)
                 play_dodge_sound()
-                self._add_combat_result(x, "HP-0", next_y[target_side], settings.DODGE_COLOR, self.dodged_image)
-                next_y[target_side] += 30
+                self._add_combat_result(
+                    x, "HP-0", stack_line(target_side), settings.DODGE_COLOR, self.dodged_image
+                )
             if event["damage"] <= 0 and not event.get("critical_attack"):
                 continue
             target_side = "enemy" if event["side"] == "player" else "player"
-            x = settings.ENEMY_FLOATING_TEXT_X if target_side == "enemy" else settings.PLAYER_FLOATING_TEXT_X
+            x = self._floating_text_x(target_side)
             play_damage_sound()
             if event.get("critical"):
                 play_critical_hit_sound()
             if event.get("critical_attack"):
-                self._add_combat_result(x, f"HP-{event['damage']}", next_y[target_side], settings.DAMAGE_COLOR, self.damage_image)
+                self._add_combat_result(
+                    x, f"HP-{event['damage']}", stack_line(target_side), settings.DAMAGE_COLOR,
+                    self.damage_image,
+                )
             else:
-                self._add_floating_text(x, event["damage"], event["dodged"], event["critical"], next_y[target_side])
-            next_y[target_side] += 30
+                self._add_floating_text(
+                    x, event["damage"], event["dodged"], event["critical"], stack_line(target_side)
+                )
+
+    def _floating_text_x(self, side):
+        panel_x, panel_width = self.scene.renderer._stats_frame_geometry(side, settings.WIDTH)
+        return panel_x + panel_width // 2
+
+    def _floating_text_panel_top(self):
+        return settings.HEIGHT - self.scene.renderer.STATS_PANEL_HEIGHT - 30
 
     def _add_combat_result(self, x, text, y, color, image):
         if image is None:
             self.scene.active_floating_texts.append(
-                FloatingText(x, y, text, self.critical_font, color=color, duration=settings.FPS * 6, velocity=-1.5)
+                FloatingText(
+                    x, y, text, self.critical_font, color=color,
+                    duration=self.FLOATING_TEXT_DURATION, velocity=0, fade_out=False,
+                )
             )
             return
         self.scene.active_floating_texts.append(
-            FloatingImage(x, y, image, text, self.critical_font, color, duration=settings.FPS * 6, velocity=-1.5)
+            FloatingImage(
+                x, y, image, text, self.critical_font, color,
+                duration=self.FLOATING_TEXT_DURATION, velocity=0, fade_out=False,
+            )
         )
 
     def _add_floating_bonus(self, x, amount, y):
@@ -138,8 +202,9 @@ class DuelResolver:
                 f"+{amount}%",
                 self.scene.big,
                 color=settings.DODGE_COLOR,
-                duration=settings.FLOATING_TEXT_DURATION,
-                velocity=1.5,
+                duration=self.FLOATING_TEXT_DURATION,
+                velocity=0,
+                fade_out=False,
             )
         )
 
@@ -151,8 +216,9 @@ class DuelResolver:
                 text,
                 self.scene.big,
                 color=(255, 220, 120),
-                duration=settings.FLOATING_TEXT_DURATION,
-                velocity=1.5,
+                duration=self.FLOATING_TEXT_DURATION,
+                velocity=0,
+                fade_out=False,
             )
         )
 
@@ -164,8 +230,9 @@ class DuelResolver:
                 f"+{amount} HP",
                 self.scene.big,
                 color=(110, 235, 120),
-                duration=settings.FLOATING_TEXT_DURATION,
-                velocity=1.5,
+                duration=self.FLOATING_TEXT_DURATION,
+                velocity=0,
+                fade_out=False,
             )
         )
 
@@ -195,7 +262,8 @@ class DuelResolver:
                 text,
                 self.scene.big,
                 color=color,
-                duration=settings.FLOATING_TEXT_DURATION,
-                velocity=-1.5,
+                duration=self.FLOATING_TEXT_DURATION,
+                velocity=0,
+                fade_out=False,
             )
         )

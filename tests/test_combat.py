@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from combat.fighter import Fighter
 from combat.progression import apply_xp, battle_currency_reward, battle_xp, xp_to_next
 from combat.group_battle import is_afk_draw, split_balanced_teams, visible_group_targets
-from combat.mechanics import get_critical_chance, get_critical_damage_multiplier
+from combat.mechanics import get_critical_chance, get_critical_damage_multiplier, weapon_fixed_damage
 from scenes.duel_commentator import DuelCommentator
 
 
@@ -13,41 +13,67 @@ class TestFighter(unittest.TestCase):
         fighter = Fighter("Тест")
 
         self.assertEqual(fighter.stats, {
-            "strength": 3,
-            "agility": 3,
-            "intuition": 3,
-            "wisdom": 3,
-            "intellect": 3,
-            "harmony": 3,
-            "endurance": 3,
+            "strength": 2,
+            "agility": 2,
+            "intuition": 2,
+            "wisdom": 2,
+            "intellect": 2,
+            "harmony": 2,
+            "endurance": 2,
         })
-        self.assertEqual(fighter.stat_points, 5)
-        self.assertEqual(fighter.max_hp, 30)
+        self.assertEqual(fighter.stat_points, 6)
+        self.assertEqual(fighter.max_hp, 90)
         self.assertEqual(fighter.hp, fighter.max_hp)
+
+    def test_every_profession_starts_with_same_level_one_hp(self):
+        for profession in (
+            "warrior", "archer", "assassin", "mage", "necromancer",
+        ):
+            with self.subTest(profession=profession):
+                fighter = Fighter("Тест", profession_type=profession)
+                self.assertEqual(fighter.endurance, 2)
+                expected_hp = {
+                    "archer": 45,
+                    "assassin": 35,
+                    "mage": 30,
+                    "necromancer": 40,
+                }.get(profession, 90)
+                self.assertEqual(fighter.max_hp, expected_hp)
+
+    def test_necromancer_has_necrotism_resource(self):
+        fighter = Fighter("Некромант", profession_type="necromancer")
+
+        self.assertEqual(fighter.max_mp, 35)
+        self.assertEqual(fighter.unique_resource_type, "necrotism")
+        self.assertEqual(fighter.unique_resource_max, 50)
+        self.assertEqual(fighter.unique_resource_current, 50)
 
     def test_endurance_updates_max_and_current_hp(self):
         fighter = Fighter("Тест")
 
         self.assertFalse(fighter.add_stat("endurance"))
         self.assertTrue(fighter.add_stat("strength"))
-        self.assertEqual(fighter.strength, 4)
-        self.assertEqual(fighter.stat_points, 4)
+        self.assertEqual(fighter.strength, 3)
+        self.assertEqual(fighter.stat_points, 5)
 
     def test_stat_limits(self):
         fighter = Fighter("Тест")
 
         self.assertFalse(fighter.remove_stat("strength"))
         self.assertTrue(fighter.add_stat("strength"))
-        self.assertEqual(fighter.strength, 4)
-        self.assertTrue(fighter.remove_stat("strength"))
         self.assertEqual(fighter.strength, 3)
+        self.assertTrue(fighter.remove_stat("strength"))
+        self.assertEqual(fighter.strength, 2)
         self.assertFalse(fighter.remove_stat("strength"))
-        self.assertEqual(fighter.stat_points, 5)
+        self.assertEqual(fighter.stat_points, 6)
 
     def test_progression_thresholds_and_rewards(self):
-        self.assertEqual(xp_to_next(1), 185)
-        self.assertEqual(xp_to_next(20), 2940)
-        self.assertEqual(xp_to_next(30), 0)
+        self.assertEqual(
+            [xp_to_next(level) for level in range(1, 10)],
+            [20, 40, 120, 200, 350, 500, 750, 900, 1100],
+        )
+        self.assertEqual(xp_to_next(10), 0)
+        self.assertEqual(battle_xp(10, 10, "win"), 0)
         self.assertEqual(battle_xp(1, 1, "win"), 20)
         self.assertEqual(battle_xp(1, 4, "win"), 27)
         self.assertEqual(battle_xp(7, 1, "win"), 0)
@@ -67,6 +93,28 @@ class TestFighter(unittest.TestCase):
         self.assertEqual(apply_xp(fighter, 0), 1)
         self.assertEqual(fighter.hp, 15)
         self.assertEqual(fighter.level, 2)
+        self.assertEqual(fighter.stats["endurance"], 3)
+        self.assertEqual(fighter.stat_points, 10)
+
+    def test_multiple_level_ups_grant_one_endurance_each(self):
+        fighter = Fighter("Тест")
+
+        self.assertEqual(apply_xp(fighter, xp_to_next(1) + xp_to_next(2)), 2)
+
+        self.assertEqual(fighter.level, 3)
+        self.assertEqual(fighter.stats["endurance"], 4)
+        self.assertEqual(fighter.max_hp, 110)
+
+    def test_level_ten_is_the_cap_and_excess_xp_is_discarded(self):
+        fighter = Fighter("Тест")
+        fighter.level = 9
+        fighter.xp = xp_to_next(9) - 1
+
+        self.assertEqual(apply_xp(fighter, 1), 1)
+        self.assertEqual(fighter.level, 10)
+        self.assertEqual(fighter.xp, 0)
+        self.assertEqual(apply_xp(fighter, 1000), 0)
+        self.assertEqual(fighter.xp, 0)
 
     def test_intuition_boosts_critical_damage_not_chance(self):
         attacker = Fighter("Атакующий")
@@ -81,6 +129,16 @@ class TestFighter(unittest.TestCase):
 
         # А вот множитель урона крита растёт от своей интуиции на 5% за очко.
         self.assertEqual(get_critical_damage_multiplier(attacker), 1.5 + 6 * 0.05)
+
+    def test_assassin_base_critical_chance_is_thirteen_percent(self):
+        assassin = Fighter("Асасин", profession_type="assassin")
+        opponent = Fighter("Противник")
+
+        self.assertEqual(get_critical_chance(assassin, opponent), 13.0)
+        self.assertEqual(
+            get_critical_damage_multiplier(assassin),
+            1.5 + 0.3 + assassin.intuition * 0.05,
+        )
 
     def test_group_battle_splits_participants_into_balanced_teams(self):
         participants = [
@@ -114,6 +172,21 @@ class TestFighter(unittest.TestCase):
 
         self.assertTrue(is_afk_draw(teams, {"a1", "b1"}))
         self.assertFalse(is_afk_draw(teams, {"a1"}))
+
+    def test_weapon_damage_is_fixed_at_max_of_range(self):
+        equipment = {"weapon": {"effects": {"damage": [3, 7]}}}
+        fighter_stub = SimpleNamespace(equipment=equipment)
+        rolls = {Fighter.roll_weapon_damage(fighter_stub, rng=None) for _ in range(20)}
+
+        self.assertEqual(rolls, {7})
+        self.assertEqual(weapon_fixed_damage(equipment), 7)
+        self.assertEqual(weapon_fixed_damage({}), 0)
+
+    def test_weapon_damage_uses_unified_hands_slot(self):
+        fighter = Fighter("Воин")
+        fighter.equipment = {"hands": {"effects": {"damage": [3, 7]}}}
+
+        self.assertEqual(fighter.weapon_damage, (3, 7))
 
 
 class TestCommentator(unittest.TestCase):

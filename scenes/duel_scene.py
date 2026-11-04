@@ -4,7 +4,14 @@ import time
 from combat.fighter import Fighter
 from combat.character_stats import BASE_STAT_VALUE
 from combat.card_battle import CardBattle
-from combat.card_database import cards_for_type, is_mage_profession
+from combat.card_database import (
+    DECK_SIZE,
+    cards_for_type,
+    class_cards_for_type,
+    expand_deck_card_keys,
+    is_mage_profession,
+)
+from client.network import ServerError
 from core import settings
 from ui.layout import DuelLayout
 from ui.duel_renderer import DuelRenderer
@@ -26,7 +33,18 @@ from ui.music import (
     update_music_ducking,
 )
 from combat.battle_archive import build_battle_record, write_battle_record
-from client.network import ServerError
+
+
+def _side_deck(card_keys, character_type):
+    """Колода одной стороны: только карты её класса, с учётом копий. Недостающее добирается картами того же класса."""
+    class_cards = class_cards_for_type(character_type)
+    if not card_keys:
+        return class_cards
+    cards_by_key = {card.key: card for card in cards_for_type(character_type)}
+    deck = [cards_by_key[key] for key in expand_deck_card_keys(card_keys) if key in cards_by_key]
+    if len(deck) < DECK_SIZE:
+        deck.extend([card for card in class_cards if card not in deck][:DECK_SIZE - len(deck)])
+    return deck
 
 
 class DuelScene:
@@ -44,11 +62,6 @@ class DuelScene:
         self.small_font = pygame.font.SysFont(
             settings.FONT_NAME,
             settings.SMALL_FONT_SIZE,
-        )
-        self.gained_points_font = pygame.font.SysFont(
-            settings.FONT_NAME,
-            settings.GAINED_POINTS_FONT_SIZE,
-            bold=True,
         )
         self.big = pygame.font.SysFont(
             settings.FONT_NAME,
@@ -73,7 +86,7 @@ class DuelScene:
             else None
         )
         self.profile_overlay = CharacterProfileOverlay(
-            self.gained_points_font,
+            self.font,
             collection_loader=collection_loader,
             deck_loader=getattr(online_session, "get_decks", None),
             deck_creator=getattr(online_session, "create_deck", None),
@@ -97,41 +110,28 @@ class DuelScene:
 
     @staticmethod
     def _apply_fighter_profile(fighter, profile):
-        fighter.set_profession(profile.get("type"))
+        fighter.set_profession(profile.get("type", "warrior"))
         fighter.name = profile["name"]
         fighter.level = profile["level"]
         fighter.xp = profile.get("xp", 0)
         fighter.stats = dict(profile["stats"])
-        # Единый набор из 7 статов для всех персонажей — подстраховка для старых
-        # сохранений, где часть характеристик ещё не была сохранена.
         for stat_name in fighter.STAT_NAMES:
-            fighter.stats.setdefault(stat_name, BASE_STAT_VALUE)
+            default = 0 if stat_name in ("strength", "agility", "intuition") else BASE_STAT_VALUE
+            fighter.stats.setdefault(stat_name, default)
         fighter.stat_points = profile.get("stat_points", 0)
         fighter.character_id = profile.get("id", profile.get("character_id"))
-        fighter.equipment_stat_modifiers = {
-            stat_name: int(value)
-            for stat_name, value in profile.get("equipment_bonuses", {}).items()
-            if stat_name in fighter.STAT_NAMES or stat_name in ("hp", "mp", "dodge", "block")
-        }
+        fighter.set_talents(profile.get("talents", {}))
         fighter.equipment = dict(profile.get("equipment", {}))
+        fighter.equipment_stat_modifiers = dict(profile.get("equipment_bonuses", {}))
         fighter.recalculate_parameters()
-        # Бой начинается с полным ресурсом класса для текущего уровня
-        fighter.unique_resource_current = fighter.unique_resource_max
-        hp = profile.get("hp", fighter.max_hp)
-        if hp >= profile.get("max_hp", hp):
-            # Полное здоровье остаётся полным и с бонусом выносливости от экипировки
-            hp = fighter.max_hp
-        fighter.hp = min(hp, fighter.max_hp)
+        if profile.get("kind") == "bot" and profile.get("type") == "mage":
+            fighter.max_mp = 40 + fighter.stats["intellect"] * 5
+        fighter.hp = min(profile.get("hp", fighter.max_hp), fighter.max_hp)
         fighter.mp = min(profile.get("mp", fighter.max_mp), fighter.max_mp)
 
     def save_online_character(self):
-        # После конца боя прогресс сохраняет только finish_battle через сервер
-        if self.online_session is None or self.battle.is_over():
-            return
-        try:
+        if self.online_session is not None and not self.battle.is_over():
             self.online_session.save_fighter(self.player)
-        except ServerError as error:
-            print(f"Персонаж не сохранён: {error}")
 
     def close(self):
         stop_draft_music()
@@ -162,16 +162,6 @@ class DuelScene:
             if self.opponent_profile.get("kind") == "bot" or opponent_id.startswith("bot_"):
                 self.online_session.save_opponent(self.opponent_profile)
         
-        # Выдача награды за победу
-        if (
-            self.online_session is not None
-            and self.player.hp > 0
-            and self.enemy.hp <= 0
-        ):
-            self.card_reward = self.online_session.award_battle_card(
-                self.battle.reward_card_keys,
-            )
-
         outcome = self.battle.outcome()
         archive_record = build_battle_record(self.battle, source="duel_scene")
         if self.online_session is not None and outcome is not None:
@@ -184,14 +174,11 @@ class DuelScene:
                 self.currency_reward = dict(result.get("currency", self.currency_reward))
             except ServerError as error:
                 print(f"Результат боя не сохранён: {error}")
-                # Откатываем локально начисленный опыт, иначе сервер отклонит следующее сохранение
-                character = self.online_session.character or {}
-                for field in ("level", "xp", "stat_points"):
-                    if field in character:
-                        setattr(self.player, field, character[field])
-                if "stats" in character:
-                    self.player.stats = dict(character["stats"])
-                    self.player.recalculate_parameters()
+
+            if outcome == "win":
+                self.card_reward = self.online_session.award_battle_card(
+                    self.battle.reward_card_keys,
+                )
 
         write_battle_record(archive_record)
 
@@ -210,35 +197,20 @@ class DuelScene:
             self._apply_online_character()
         if self.opponent_profile is not None:
             self._apply_fighter_profile(self.enemy, self.opponent_profile)
-        battle_cards = None
+        self.player.hp = self.player.max_hp
+        self.enemy.hp = self.enemy.max_hp
         selected_deck = getattr(self.online_session, "selected_deck", None)
-        # Без онлайн-персонажа (офлайн) бой идёт на магических картах.
-        character_type = self.online_character.get("type") if self.online_character else "mage"
-        class_cards = cards_for_type(character_type)
-        if selected_deck:
-            card_keys = selected_deck.get("cards", {})
-            if isinstance(card_keys, dict):
-                card_keys = card_keys.keys()
-            allowed = set(card_keys or ())
-            # Старая или чужая колода не протащит в бой карты другого класса.
-            battle_cards = [card for card in class_cards if card.key in allowed]
-            if len(battle_cards) < CardBattle.STARTING_TABLE_SIZE:
-                battle_cards = None
-        if battle_cards is None:
-            battle_cards = class_cards
-        enemy_type = (self.opponent_profile or {}).get("type") or character_type
-        # Своя колода и свой стол у каждой стороны: противник другого класса не получит чужих карт.
-        enemy_cards = cards_for_type(enemy_type)
-        enemy_deck_keys = set((self.opponent_profile or {}).get("deck") or ())
-        if enemy_deck_keys:
-            enemy_deck = [card for card in enemy_cards if card.key in enemy_deck_keys]
-            if len(enemy_deck) >= CardBattle.STARTING_TABLE_SIZE:
-                enemy_cards = enemy_deck
-        if len(enemy_cards) < CardBattle.STARTING_TABLE_SIZE:
-            enemy_cards = battle_cards
-        self.battle = CardBattle(self.player, self.enemy, cards=battle_cards, enemy_cards=enemy_cards)
-        if is_mage_profession(character_type) or is_mage_profession(enemy_type):
-            self.battle.mage_mode = True
+        character_type = self.online_character.get("type") if self.online_character else "warrior"
+        battle_cards = _side_deck((selected_deck or {}).get("cards"), character_type)
+        enemy_keys = self.opponent_profile.get("deck") if self.opponent_profile is not None else None
+        enemy_cards = _side_deck(enemy_keys, self.enemy.profession_type)
+        self.battle = CardBattle(
+            self.player,
+            self.enemy,
+            cards=battle_cards,
+            enemy_cards=enemy_cards,
+            mage_mode=is_mage_profession(character_type) or is_mage_profession(self.enemy.profession_type),
+        )
         self.attack_zone = None
         self.defense_zones = set()
 
@@ -257,6 +229,9 @@ class DuelScene:
         self.deck_shuffle_started = None
         self.draw_queue = []
         self.draw_transfer = None
+        self.draw_choice_deadline = None
+        self.burn_mode = False
+        self.burn_card_key = None
         
         # Анимация карт при урон
         self.card_animation_started = None
@@ -331,6 +306,8 @@ class DuelScene:
 
         if self.profile_overlay.is_open:
             action, _ = self.profile_overlay.handle_click(event.pos)
+            if action == "backpack":
+                return True
             if action == "close":
                 return True
             if action is not None:
@@ -344,6 +321,9 @@ class DuelScene:
             return True
 
         action, _ = self.profile_overlay.handle_click(event.pos)
+        if action == "backpack":
+            # TODO: обработать клик по рюкзаку
+            return True
         return action is not None
 
     def update(self, dt):
@@ -363,9 +343,14 @@ class DuelScene:
             if not self.draft_deal_sound_played and elapsed >= settings.DRAFT_REVEAL_START_DELAY_SECONDS:
                 play_draft_cards_deal_sound()
                 self.draft_deal_sound_played = True
-            # Должно совпадать со временем прилёта последней карты в _draw_reveal_cards,
-            # иначе фаза сменится раньше, чем карты долетят, и они будут резко "телепортироваться".
-            reveal_duration = settings.DRAFT_REVEAL_START_DELAY_SECONDS + settings.DRAFT_CARD_DELAY_SECONDS * 9 + settings.CARD_MOVE_SECONDS + 0.05
+            # Keep the reveal phase active until every starting-draft card has landed.
+            last_card_delay = max(0, len(self.battle.table) - 1) * settings.DRAFT_CARD_DELAY_SECONDS
+            reveal_duration = (
+                settings.DRAFT_REVEAL_START_DELAY_SECONDS
+                + last_card_delay
+                + settings.CARD_MOVE_SECONDS
+                + 0.05
+            )
             if elapsed >= reveal_duration:
                 self.phase = "draft"
                 self.turn_deadline = now + settings.DRAFT_TIMEOUT_SECONDS
@@ -432,7 +417,7 @@ class DuelScene:
                     self._after_starting_pick()
                     return
                 self.battle.begin_next_turn()
-                self.turn_deadline = now + settings.TURN_DECISION_SECONDS
+                self.turn_deadline = None
                 if not self.player_card_manual_open:
                     self.player_card_hidden = True
                 if not self.enemy_card_manual_open:
@@ -448,13 +433,18 @@ class DuelScene:
                 self.draw_transfer = None
                 self._start_next_card_draw(now)
             return
+        if self.phase == "card_draw_choice":
+            if (
+                self.draw_choice_deadline is not None
+                and now >= self.draw_choice_deadline
+            ):
+                self._finish_card_draw_choices(now)
+            return
 
         if self.phase == "draft_cleanup":
             if time.monotonic() - self.draft_cleanup_started >= settings.DRAFT_CLEANUP_SECONDS:
                 if self.battle.draft_mode == "starting":
                     self.battle.finish_starting_deal()
-                    # Таймер драфта не переносится на первый размен: новый стартует после заставки
-                    self.turn_deadline = None
                     self.pending_phase_transition = "battle_start_transition"
                     self.pending_transition_target = "planning"
                     self.draft_cleanup_started = None
@@ -511,7 +501,6 @@ class DuelScene:
             new_phase = self.phase_transition.update(dt)
             if new_phase is not None:
                self.phase = new_phase
-               self.turn_deadline = time.monotonic() + settings.TURN_DECISION_SECONDS
                from ui.music import play_battle_music, _reset_music_volume
                import pygame
                # Явно останавливаем музыку и сбрасываем громкость перед новой музыкой
@@ -550,6 +539,10 @@ class DuelScene:
             stop_battle_music()
             return
 
+        self.submit_player_turn()
+
+    def submit_player_turn(self):
+        self.turn_deadline = None
         self.battle.confirm_selection("player")
         self._prepare_enemy_cards()
         self.enemy_wait_started = time.monotonic()
@@ -587,6 +580,9 @@ class DuelScene:
             return
         self.battle.selected["enemy"] = []
         for card in list(self.battle.hands["enemy"]):
+            if card.effect_type.startswith("instant_"):
+                self.battle.activate_instant_card("enemy", card.key)
+        for card in list(self.battle.hands["enemy"]):
             if self.battle.remaining_card_slots("enemy") <= 0:
                 break
             if self.battle.can_select("enemy", card):
@@ -594,26 +590,43 @@ class DuelScene:
         self.battle.confirm_selection("enemy")
 
     def _start_next_card_draw(self, now):
-        while self.draw_queue:
-            side = self.draw_queue.pop(0)
-            if not self.battle.can_draw_next_turn_card(side):
-                continue
-            card = self.battle.peek_card(side)
-            if card is None:
-                continue
-            self.draw_transfer = {"side": side, "started": now, "card": card}
-            self.phase = "card_draw"
-            play_card_move_sound()
-            return
+        self.draw_queue = []
         self.draw_transfer = None
+        for side in ("player", "enemy"):
+            self.battle.prepare_draw_choice(side)
+        if self.battle.draw_choices["player"]:
+            self.phase = "card_draw_choice"
+            self.draw_choice_deadline = now + settings.DRAW_CHOICE_SECONDS
+            self.turn_deadline = None
+            return
+
+        self._finish_card_draw_choices(now)
+
+    def choose_draw_choice(self, card_key):
+        if self.phase != "card_draw_choice":
+            return False
+        if not self.battle.choose_draw_card("player", card_key):
+            return False
+        self._finish_card_draw_choices(time.monotonic())
+        return True
+
+    def _finish_card_draw_choices(self, now):
+        player_choices = self.battle.draw_choices["player"]
+        if player_choices:
+            self.battle.choose_draw_card("player", player_choices[0].key)
+        enemy_choices = self.battle.draw_choices["enemy"]
+        if enemy_choices:
+            self.battle.choose_draw_card("enemy", enemy_choices[0].key)
+        self.draw_choice_deadline = None
         self.phase = "planning"
+        self.turn_deadline = now + settings.TURN_DECISION_SECONDS
 
     def _auto_starting_pick(self):
         if self.draft_next_side == "enemy":
             self._start_enemy_card_transfer()
 
     def _auto_starting_pick_one(self):
-        source = self.battle.table_for("enemy")
+        source = self.battle.table
         if not source:
             return
         card = source[self.battle.rng.randrange(len(source))]
@@ -643,9 +656,7 @@ class DuelScene:
             return
         index = self.battle.rng.randrange(len(source_cards))
         card = source_cards[index]
-        # Стол противника скрыт — его карта вылетает из верхнего края стола
-        source = pygame.Rect(0, 0, self.renderer.card_renderer.CARD_WIDTH, self.renderer.card_renderer.CARD_HEIGHT)
-        source.midtop = self.layout.card_table.midtop
+        source = self.layout.deck_rect.copy()
         if self.battle.draft_mode == "starting":
             self.battle.choose_starting_card("enemy", card.key)
         else:
@@ -665,7 +676,16 @@ class DuelScene:
                 self.card_transfer = {
                     "card": bonus_card,
                     "started": time.monotonic(),
-                    "source": self.renderer.card_renderer.draft_slot_rect(0),
+                    "source": self.renderer.card_renderer.card_rect(
+                        pygame.Rect(
+                            self.layout.card_table.x + 20,
+                            self.layout.card_table.y + 55,
+                            self.layout.card_table.width - 40,
+                            165,
+                        ),
+                        5,
+                        0,
+                    ),
                     "target_side": stronger,
                 }
                 self.phase = "draft_bonus_transfer"

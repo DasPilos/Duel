@@ -1,0 +1,1586 @@
+import math
+import random
+
+from kaloda.combat.card_database import DECK_SIZE, load_cards
+from kaloda.combat.character_stats import MAGE_MANA_REGEN_BASE, MAGE_START_MANA_PERCENT, is_mage_class
+from kaloda.combat.physical_effects import PHYSICAL_RESOURCES, PhysicalEffectsMixin
+from kaloda.combat.progression import apply_xp, battle_xp
+
+
+# Карты, наносящие урон; остальные типы считаются баффами и применяются до них.
+ATTACK_EFFECT_TYPES = ("damage", "damage_recoil")
+
+
+def card_deals_damage(card):
+    data = card.effect_data or {}
+    return any(key in data for key in ("dice", "damage", "poison_damage_multiplier", "removed_damage", "stun_damage"))
+
+
+def build_battle_deck(cards, player_level, enemy_level, rng=None):
+    if not cards:
+        return []
+    rng = random if rng is None else rng
+    deck = list(cards)
+    rng.shuffle(deck)
+    return deck
+
+
+class CardBattle(PhysicalEffectsMixin):
+    MAX_PLAYED_CARDS = 2
+    MAX_HAND_SIZE = 7
+    STARTING_TABLE_SIZE = DECK_SIZE
+    STARTING_PICK_LIMIT = 2
+    STARTING_RANDOM_CARDS = 3
+    REDRAFT_TABLE_SIZE = 6
+    REDRAFT_PICK_LIMIT = 2
+
+    def __init__(self, player, enemy, cards=None, rng=None, enemy_cards=None, mage_mode=False):
+        self.player = player
+        self.enemy = enemy
+        self.starting_random_limits = {
+            "player": self.STARTING_RANDOM_CARDS + int(
+                getattr(player, "_talent_effects", {}).get("starting_draft_cards", 0)
+            ),
+            "enemy": self.STARTING_RANDOM_CARDS + int(
+                getattr(enemy, "_talent_effects", {}).get("starting_draft_cards", 0)
+            ),
+        }
+        self.rng = random if rng is None else rng
+        self.cards = list(cards if cards is not None else load_cards())
+        # Each fighter draws from an independent 22-card deck, even for mirror matches.
+        self.dual_table = True
+        self.enemy_cards = list(enemy_cards if enemy_cards is not None else self.cards)
+        self.discard = []
+        self.enemy_discard = []
+        self.draw_choices = {"player": [], "enemy": []}
+        self.mage_mode = mage_mode
+        self.team_mode = False
+        self.mage_statuses = {"player": [], "enemy": []}
+        self.mage_clouds = {"player": [], "enemy": []}
+        self.mage_golems = {"player": [] , "enemy": []}
+        self.mage_stuns = {"player": 0, "enemy": 0}
+        self.mage_damage_bonuses = {"player": [], "enemy": []}
+        self.mage_shields = {"player": 0, "enemy": 0}
+        self.mage_shield_effects = {"player": [], "enemy": []}
+        self.mage_freeze = {"player": 0, "enemy": 0}
+        self.mage_reactive_blessings = {"player": [], "enemy": []}
+        self.mage_pending_effects = {"player": [], "enemy": []}
+        self.mage_delayed_statuses = {"player": [], "enemy": []}
+        self._init_physical_effects()
+        self.table = []
+        self.enemy_table = []
+        self.hands = {"player": [], "enemy": []}
+        self.selected = {"player": [], "enemy": []}
+        self.burned_this_turn = {"player": False, "enemy": False}
+        self.ultimate_played = {"player": False, "enemy": False}
+        self.confirmed = {"player": False, "enemy": False}
+        self.turn = 0
+        self.turn_order = ("player", "enemy")
+        self.active_side = "player"
+        self.acted_this_round = {"player": False, "enemy": False}
+        self.history = []
+        self.last_exchange = []
+        self.last_played_cards = {"player": [], "enemy": []}
+        self.starting_reserved_keys = set()
+        self.starting_bonus_awarded = False
+        self.starting_bonus_side = None
+        self.draft_mode = "starting"
+        self.redraft_picks = {"player": 0, "enemy": 0}
+        self.redraft_pick_limits = {
+            "player": self.REDRAFT_PICK_LIMIT,
+            "enemy": self.REDRAFT_PICK_LIMIT,
+        }
+        self.draft_bonus_awarded = False
+        self.reward_card_keys = ()
+        self.stats = {
+            "player": {"cards_played": 0, "damage": 0, "healed": 0, "critical": 0, "dodges": 0, "hits": 0, "cards": [], "card_damage": {}, "card_healing": {}},
+            "enemy": {"cards_played": 0, "damage": 0, "healed": 0, "critical": 0, "dodges": 0, "hits": 0, "cards": [], "card_damage": {}, "card_healing": {}},
+        }
+        self._xp_awarded_applied = False
+        self.enemy_deck = []
+        if not self.cards:
+            self.deck = []
+            return
+        if len(self.cards) < self.STARTING_TABLE_SIZE:
+            self.deck = []
+            return
+
+        self.deck = build_battle_deck(self.cards, player.level, enemy.level, self.rng)[:self.STARTING_TABLE_SIZE]
+        if len(self.deck) < self.STARTING_TABLE_SIZE:
+            self.deck = []
+            return
+        if self.dual_table:
+            if not self.enemy_cards or len(self.enemy_cards) < self.STARTING_TABLE_SIZE:
+                self.deck = []
+                return
+            self.enemy_deck = build_battle_deck(self.enemy_cards, enemy.level, player.level, self.rng)[:self.STARTING_TABLE_SIZE]
+            if len(self.enemy_deck) < self.STARTING_TABLE_SIZE:
+                self.deck = []
+                return
+        self.reward_card_keys = tuple(dict.fromkeys(card.key for card in self.deck))
+        self._prepare_starting_table()
+
+    def _prepare_starting_table(self):
+        if not self.deck:
+            self.table = []
+        else:
+            self.rng.shuffle(self.deck)
+            self.table = [self._draw_card("player") for _ in range(self.STARTING_TABLE_SIZE)]
+            self.table.sort(key=lambda card: card.resource_cost)
+        if self.dual_table:
+            if not self.enemy_deck:
+                self.enemy_table = []
+            else:
+                self.rng.shuffle(self.enemy_deck)
+                self.enemy_table = [self._draw_card("enemy") for _ in range(self.STARTING_TABLE_SIZE)]
+                self.enemy_table.sort(key=lambda card: card.resource_cost)
+        else:
+            self.enemy_table = self.table
+
+    def _deck_for(self, side):
+        if side == "enemy" and self.dual_table:
+            return self.enemy_deck
+        return self.deck
+
+    def _discard_for(self, side):
+        if side == "enemy" and self.dual_table:
+            return self.enemy_discard
+        return self.discard
+
+    def table_for(self, side):
+        if side == "enemy" and self.dual_table:
+            return self.enemy_table
+        return self.table
+
+    def _draw_card(self, side="player"):
+        deck = self._deck_for(side)
+        if not deck:
+            return None
+        return deck.pop()
+
+    def _shuffle_discard_into_deck(self, side="player"):
+        deck = self._deck_for(side)
+        discard = self._discard_for(side)
+        deck.extend(discard)
+        discard.clear()
+        self.rng.shuffle(deck)
+
+    def choose_starting_card(self, side, card_key):
+        self._validate_side(side)
+        if self.turn or len(self.hands[side]) >= self.STARTING_PICK_LIMIT:
+            raise ValueError("Стартовая раздача уже завершена")
+        table = self.table_for(side)
+        card = next((item for item in table if item.key == card_key), None)
+        if card is None:
+            raise ValueError("Карты нет на столе")
+        if side == "enemy" and not self.dual_table:
+            self.starting_reserved_keys.add(card.key)
+        table.remove(card)
+        self.hands[side].append(card)
+
+    def finish_starting_deal(self):
+        if self.turn or any(len(self.hands[side]) < self.STARTING_PICK_LIMIT for side in self.hands):
+            raise ValueError("Каждый боец должен выбрать две карты")
+        for side in ("player", "enemy"):
+            table = self.table_for(side)
+            self.rng.shuffle(table)
+            random_cards = table[:self.starting_random_limits[side]]
+            del table[:len(random_cards)]
+            self.hands[side].extend(random_cards)
+            self._deck_for(side).extend(table)
+            table.clear()
+        self.starting_reserved_keys.clear()
+        self.draft_mode = None
+        self._start_turn(draw_cards=False)
+
+    def starting_deal_complete(self):
+        return all(len(self.hands[side]) >= self.STARTING_PICK_LIMIT for side in self.hands)
+
+    def finish_afk_starting_deal(self):
+        if self.turn:
+            raise ValueError("Стартовая раздача уже завершена")
+        for side in ("player", "enemy"):
+            table = self.table_for(side)
+            while len(self.hands[side]) < self.STARTING_PICK_LIMIT and table:
+                card = table[self.rng.randrange(len(table))]
+                self.choose_starting_card(side, card.key)
+        self.finish_starting_deal()
+
+    def can_prepare_redraft(self):
+        if self.dual_table:
+            # Колоды сторон разного размера (22/36 карт): ждать, пока опустеют обе,
+            # значит оставить одну сторону без добора. Повторный драфт — когда кончилась любая.
+            return (
+                self.draft_mode is None
+                and (not self.deck or not self.enemy_deck)
+                and len(self.deck) + len(self.discard) >= self.REDRAFT_TABLE_SIZE
+                and len(self.enemy_deck) + len(self.enemy_discard) >= self.REDRAFT_TABLE_SIZE
+            )
+        return (
+            self.draft_mode is None
+            and not self.deck
+            and len(self.discard) >= self.REDRAFT_TABLE_SIZE
+        )
+
+    def draft_first_side(self):
+        return self._stronger_side("intuition") or "player"
+
+    def prepare_redraft(self):
+        if not self.can_prepare_redraft():
+            return False
+        self._shuffle_discard_into_deck("player")
+        self.table = [
+            self._draw_card("player")
+            for _ in range(self.REDRAFT_TABLE_SIZE)
+        ]
+        if self.dual_table:
+            self._shuffle_discard_into_deck("enemy")
+            self.enemy_table = [
+                self._draw_card("enemy")
+                for _ in range(self.REDRAFT_TABLE_SIZE)
+            ]
+        else:
+            self.enemy_table = self.table
+        self.redraft_picks = {"player": 0, "enemy": 0}
+        self.redraft_pick_limits = {
+            side: min(
+                self.REDRAFT_PICK_LIMIT,
+                self.hand_limit_for(side) - len(self.hands[side]),
+            )
+            for side in ("player", "enemy")
+        }
+        self.draft_bonus_awarded = False
+        self.draft_mode = "redraft"
+        return True
+
+    def choose_redraft_card(self, side, card_key):
+        self._validate_side(side)
+        if self.draft_mode != "redraft":
+            raise ValueError("Повторный драфт сейчас не проводится")
+        if self.redraft_picks[side] >= self.redraft_pick_limits[side]:
+            raise ValueError("Рука заполнена или игрок уже выбрал доступные карты")
+        table = self.table_for(side)
+        card = next((item for item in table if item.key == card_key), None)
+        if card is None:
+            raise ValueError("Карты нет на столе")
+        table.remove(card)
+        self.hands[side].append(card)
+        self.redraft_picks[side] += 1
+
+    def current_draft_complete(self):
+        if self.draft_mode == "starting":
+            return self.starting_deal_complete()
+        if self.draft_mode == "redraft":
+            return all(
+                self.redraft_picks[side] >= self.redraft_pick_limits[side]
+                for side in ("player", "enemy")
+            )
+        return False
+
+    def take_draft_bonus_card(self):
+        # Стартовый бонус за более высокую характеристику убран — обе стороны получают
+        # одинаковые карты без сравнения статов друг с другом.
+        self.draft_bonus_awarded = True
+        return None
+
+    def finish_redraft(self):
+        if self.draft_mode != "redraft" or not self.current_draft_complete():
+            raise ValueError("Повторный драфт ещё не завершён")
+        self.deck.extend(self.table)
+        self.table.clear()
+        if self.dual_table:
+            self.enemy_deck.extend(self.enemy_table)
+            self.enemy_table.clear()
+        self.draft_mode = None
+        return self._start_turn(draw_cards=False)
+
+    def finish_afk_redraft(self):
+        if self.draft_mode != "redraft":
+            raise ValueError("Повторный драфт сейчас не проводится")
+        side = self.draft_first_side()
+        while not self.current_draft_complete():
+            if self.redraft_picks[side] < self.redraft_pick_limits[side]:
+                table = self.table_for(side)
+                card = table[self.rng.randrange(len(table))]
+                self.choose_redraft_card(side, card.key)
+            side = "enemy" if side == "player" else "player"
+        bonus = self.take_draft_bonus_card()
+        if bonus is not None:
+            side, card = bonus
+            self.hands[side].append(card)
+        self.finish_redraft()
+
+    def _start_turn(self, draw_cards=True):
+        first_combat_turn = self.turn == 0
+        if first_combat_turn:
+            for fighter in (self.player, self.enemy):
+                resource_type = getattr(fighter, "unique_resource_type", None)
+                if resource_type in PHYSICAL_RESOURCES or resource_type == "necrotism":
+                    fighter.unique_resource_current = int(fighter.unique_resource_max * 0.15)
+                if is_mage_class(fighter.profession_type):
+                    fighter.mp = int(fighter.max_mp * MAGE_START_MANA_PERCENT / 100)
+        self.turn += 1
+        self.burned_this_turn = {"player": False, "enemy": False}
+
+        # Восстановить ману и уникальные ресурсы в начале хода
+        for side, fighter in (("player", self.player), ("enemy", self.enemy)):
+            # Восстановить ману: маг — 8 + уровень, остальные классы — по мудрости
+            if is_mage_class(fighter.profession_type):
+                regen = 0 if first_combat_turn else MAGE_MANA_REGEN_BASE + int(fighter.level)
+            else:
+                wisdom = int(fighter.stats.get("wisdom", 0))
+                regen = 8 + wisdom // 2
+            regen += self._buff(side, "mana_regen_bonus")
+            regen = int(regen * self._mana_regen_ratio(side))
+            fighter.mp = min(fighter.max_mp, fighter.mp + regen)
+
+            # Восстановить уникальный ресурс (ярость, меткость, концентрация) для не-магов
+            if not first_combat_turn and hasattr(fighter, "recover_unique_resource"):
+                if hasattr(fighter, "unique_resource_type") and fighter.unique_resource_type != "mana":
+                    fighter.recover_unique_resource(fighter.level)
+
+        # Обработать эффекты статусов в конце хода
+        self._tick_physical_effects()
+        self._process_status_turn_effects()
+        self._remove_expired_statuses()
+        self._resolve_mage_end_turn_effects()
+        for side, delayed in self.mage_delayed_statuses.items():
+            for entry in delayed:
+                entry["turns"] -= 1
+            due = [entry for entry in delayed if entry["turns"] <= 0]
+            self.mage_delayed_statuses[side] = [entry for entry in delayed if entry["turns"] > 0]
+            for entry in due:
+                self._add_mage_status(side, entry["name"], entry["duration"], entry["stacks"])
+        self.mage_stuns = {side: max(0, turns - 1) for side, turns in self.mage_stuns.items()}
+        self.mage_freeze = {side: max(0, turns - 1) for side, turns in self.mage_freeze.items()}
+        for side, bonuses in self.mage_damage_bonuses.items():
+            for bonus in bonuses:
+                bonus["remaining"] -= 1
+            self.mage_damage_bonuses[side] = [bonus for bonus in bonuses if bonus["remaining"] > 0]
+        if draw_cards:
+            self.draw_next_turn_card("player")
+            self.draw_next_turn_card("enemy")
+        for side, effects in self.mage_shield_effects.items():
+            for effect in effects:
+                effect["remaining"] -= 1
+            self.mage_shield_effects[side] = [effect for effect in effects if effect["remaining"] > 0]
+            self.mage_shields[side] = sum(effect["amount"] for effect in self.mage_shield_effects[side])
+        for side, fighter in (("player", self.player), ("enemy", self.enemy)):
+            fighter.mage_damage_bonus_ratio = 1 + sum(bonus["percent"] for bonus in self.mage_damage_bonuses[side]) / 100
+        self.selected = {"player": [], "enemy": []}
+        self.draw_choices = {"player": [], "enemy": []}
+        self.ultimate_played = {"player": False, "enemy": False}
+        self.confirmed = {"player": False, "enemy": False}
+        self.turn_order = (
+            ("player", "enemy")
+            if self.player.agility >= self.enemy.agility
+            else ("enemy", "player")
+        )
+        self.active_side = self.turn_order[0]
+        self.acted_this_round = {"player": False, "enemy": False}
+
+    def _resolve_mage_end_turn_effects(self):
+        for side, statuses in self.mage_statuses.items():
+            target = self.player if side == "player" else self.enemy
+            for status in statuses:
+                status["remaining"] -= 1
+            self.mage_statuses[side] = [status for status in statuses if status["remaining"] > 0]
+        for side, clouds in self.mage_clouds.items():
+            target_side = "enemy" if side == "player" else "player"
+            for cloud in clouds:
+                self._mage_take_damage(target_side, cloud["damage"], source_side=side)
+                self._add_mage_status(target_side, "электро", 1)
+                self._apply_mage_status_reaction(
+                    target_side,
+                    "электро",
+                    {"damage": cloud["damage"], "effect_text": ""},
+                )
+                cloud["remaining"] -= 1
+            self.mage_clouds[side] = [cloud for cloud in clouds if cloud["remaining"] > 0]
+        for side, golems in self.mage_golems.items():
+            defender = self.enemy if side == "player" else self.player
+            for golem in golems:
+                if golem["hp"] <= 0:
+                    continue
+                golem["attacks"] += 1
+                self._mage_take_damage("enemy" if side == "player" else "player", golem["damage"], source_side=side)
+                if golem["attacks"] % 3 == 0:
+                    self._mage_take_damage("enemy" if side == "player" else "player", golem.get("stun_damage", 8), source_side=side)
+
+    def _mage_take_damage(self, target_side, amount, reflected=False, source_side=None):
+        original_amount = max(0, int(amount))
+        if self.invulnerable.get(target_side):
+            return
+        fighter = self.player if target_side == "player" else self.enemy
+        if source_side is not None:
+            outgoing_reduction = min(100, max(0, self._buff(source_side, "outgoing_damage_percent")))
+            source_fighter = self.player if source_side == "player" else self.enemy
+            outgoing_bonus = int(getattr(source_fighter, "outgoing_damage_bonus_percent", 0))
+            original_amount = math.floor(
+                original_amount * max(0, 100 - outgoing_reduction + outgoing_bonus) / 100
+            )
+        amount = max(0, original_amount - self._buff(target_side, "incoming_damage_flat"))
+        incoming_reduction = min(
+            100,
+            max(
+                0,
+                self._buff(target_side, "incoming_damage_percent")
+                + int(getattr(fighter, "incoming_damage_reduction_percent", 0)),
+            ),
+        )
+        amount = math.floor(amount * (100 - incoming_reduction) / 100)
+        incoming_bonus = max(0, int(getattr(fighter, "incoming_damage_bonus_percent", 0)))
+        amount = math.floor(amount * (100 + incoming_bonus) / 100)
+        next_reduction = min(100, max(0, int(getattr(fighter, "next_damage_reduction_percent", 0))))
+        if amount > 0 and next_reduction:
+            amount = math.floor(amount * (100 - next_reduction) / 100)
+            fighter.next_damage_reduction_percent = 0
+        damage_bonus = max(0, int(getattr(fighter, "next_damage_taken_bonus_percent", 0)))
+        if amount > 0 and damage_bonus:
+            amount = math.floor(amount * (100 + damage_bonus) / 100)
+            fighter.next_damage_taken_bonus_percent = 0
+        shield = int(self.mage_shields.get(target_side, 0))
+        if shield:
+            absorbed = min(shield, max(0, int(amount)))
+            self.mage_shields[target_side] -= absorbed
+            amount -= absorbed
+            if amount <= 0:
+                return
+        amount = self._absorb_forest_spirit_damage(target_side, amount)
+        if amount <= 0:
+            return
+        physical_shield = int(self.phys_shields.get(target_side, 0))
+        if physical_shield:
+            absorbed = min(physical_shield, max(0, int(amount)))
+            self.phys_shields[target_side] -= absorbed
+            amount -= absorbed
+            if amount <= 0:
+                return
+        golems = self.mage_golems[target_side]
+        golem = next((item for item in golems if int(item.get("hp", 0)) > 0), None)
+        if golem is not None:
+            golem["hp"] = max(0, int(golem["hp"]) - max(0, int(amount)))
+            self.mage_golems[target_side] = [item for item in golems if int(item.get("hp", 0)) > 0]
+            return
+        actual_damage = max(0, int(amount))
+        fighter.take_damage(actual_damage)
+
+        # Защитник получает урон - получает ярость (для бойца)
+        if actual_damage > 0:
+            self._fighter_took_damage(target_side, actual_damage)
+
+        # Отражённый урон не отражается повторно, иначе два благословения зацикливаются.
+        if original_amount and amount > 0 and not reflected:
+            attacker_side = "enemy" if target_side == "player" else "player"
+            for blessing in self.mage_reactive_blessings.get(target_side, []):
+                if blessing.get("remaining", 0) > 0:
+                    self._mage_take_damage(attacker_side, blessing.get("damage", 2), reflected=True)
+                    self._add_mage_status(attacker_side, "огонь", blessing.get("status_duration", 1))
+
+    def _queue_mage_effect(self, target_side, effect_type, **data):
+        self.mage_pending_effects[target_side].append({"type": effect_type, **data})
+
+    def _apply_pending_mage_effects(self):
+        pending = self.mage_pending_effects
+        self.mage_pending_effects = {"player": [], "enemy": []}
+        for target_side, effects in pending.items():
+            for effect in effects:
+                effect_type = effect["type"]
+                if effect_type == "status":
+                    self._add_mage_status(
+                        target_side,
+                        effect["name"],
+                        effect["duration"],
+                        effect.get("stacks", 1),
+                    )
+                    reaction_event = effect.get("reaction_event") or {
+                        "damage": int(effect.get("reaction_damage", 0)),
+                        "effect_text": "",
+                    }
+                    previous_damage = int(reaction_event.get("damage", 0))
+                    self._apply_mage_status_reaction(target_side, effect["name"], reaction_event)
+                    extra_damage = int(reaction_event.get("damage", 0)) - previous_damage
+                    if extra_damage > 0:
+                        source_side = reaction_event.get("side", "enemy" if target_side == "player" else "player")
+                        source_stats = self.stats[source_side]
+                        source_stats["damage"] += extra_damage
+                        card_name = reaction_event.get("card")
+                        if card_name:
+                            source_stats["card_damage"][card_name] = (
+                                source_stats["card_damage"].get(card_name, 0) + extra_damage
+                            )
+                elif effect_type == "shield":
+                    self._add_mage_shield(target_side, effect["amount"], effect["duration"])
+                elif effect_type == "stun":
+                    self.mage_stuns[target_side] = max(
+                        self.mage_stuns.get(target_side, 0),
+                        effect["duration"],
+                    )
+                elif effect_type == "freeze":
+                    self.mage_freeze[target_side] = max(
+                        self.mage_freeze.get(target_side, 0),
+                        effect["duration"],
+                    )
+                elif effect_type == "cloud":
+                    self.mage_clouds[target_side].append(effect["cloud"])
+                elif effect_type == "golem":
+                    self.mage_golems[target_side].append(effect["golem"])
+                elif effect_type == "reactive_blessing":
+                    self.mage_reactive_blessings[target_side].append(effect["blessing"])
+                elif effect_type == "damage_bonus":
+                    self.mage_damage_bonuses[target_side].append({
+                        "percent": effect["percent"],
+                        "remaining": effect["duration"] + 1,
+                    })
+
+    def _add_mage_shield(self, side, amount, duration):
+        amount = max(0, int(amount))
+        if amount <= 0:
+            return
+        self.mage_shield_effects[side].append({"amount": amount, "remaining": max(1, int(duration)) + 1})
+        self.mage_shields[side] = sum(effect["amount"] for effect in self.mage_shield_effects[side])
+
+    def _shorten_mage_statuses(self, target_side, turns):
+        """Сократить статусы цели на указанное число ходов; вернуть количество закончившихся статусов."""
+        ended = 0
+        kept = []
+        for status in self.mage_statuses[target_side]:
+            if status["name"].endswith("_immunity"):
+                kept.append(status)
+                continue
+            status["remaining"] -= turns
+            if status["remaining"] <= 0:
+                ended += 1
+            else:
+                kept.append(status)
+        self.mage_statuses[target_side] = kept
+        return ended
+
+    def _dispel_mage_side(self, target_side, remove_statuses=False, remove_positive=False):
+        """Снять статусы и положительные эффекты цели; вернуть количество снятых."""
+        removed = 0
+        if remove_statuses:
+            kept = [status for status in self.mage_statuses[target_side] if status["name"].endswith("_immunity")]
+            removed += len(self.mage_statuses[target_side]) - len(kept)
+            self.mage_statuses[target_side] = kept
+        if remove_positive:
+            removed += len(self.mage_shield_effects[target_side])
+            self.mage_shield_effects[target_side] = []
+            self.mage_shields[target_side] = 0
+            fighter = self._fighter_for(target_side)
+            kept_bonuses = []
+            for bonus in self.mage_damage_bonuses[target_side]:
+                if bonus["percent"] > 0:
+                    removed += 1
+                    fighter.mage_damage_bonus_ratio = max(
+                        0, getattr(fighter, "mage_damage_bonus_ratio", 1) - bonus["percent"] / 100
+                    )
+                else:
+                    kept_bonuses.append(bonus)
+            self.mage_damage_bonuses[target_side] = kept_bonuses
+            kept_buffs = []
+            for buff in self.phys_buffs[target_side]:
+                if buff.get("incoming_damage_percent", 0) > 0:
+                    removed += 1
+                else:
+                    kept_buffs.append(buff)
+            self.phys_buffs[target_side] = kept_buffs
+        return removed
+
+    @staticmethod
+    def _mage_stat(fighter, name):
+        # Базовое значение + бонус надетых предметов (как показывает карточка)
+        return (
+            int(getattr(fighter, "stats", {}).get(name, 0))
+            + int(getattr(fighter, "equipment_stat_modifiers", {}).get(name, 0))
+        )
+
+    def _weapon_roll(self, fighter):
+        """Урон надетого оружия для одного удара/заклинания (0 без оружия)"""
+        roll = getattr(fighter, "roll_weapon_damage", None)
+        return roll(self.rng) if roll else 0
+
+    def _add_mage_status(self, side, name, duration, stacks=1):
+        statuses = self.mage_statuses[side]
+        remaining = max(1, int(duration))
+        if name == "электро":
+            existing = next((status for status in statuses if status["name"] == name), None)
+            if existing is not None:
+                existing["remaining"] = max(existing["remaining"], remaining)
+                return
+        statuses.append({
+            "name": name,
+            "remaining": remaining,
+            "stacks": max(1, int(stacks)),
+            "applied_turn": self.turn,
+        })
+
+    def _apply_mage_status_reaction(self, target_side, element, event):
+        """Применить реакцию элементов и обновить эффект события."""
+        if self._apply_poison_reaction(target_side, element, event):
+            return
+        statuses = self.mage_statuses[target_side]
+        names = {status["name"] for status in statuses}
+
+        # Проверить какая реакция произойдет
+        reaction_type, affected = self._check_element_reaction(target_side, element)
+
+        if reaction_type is None:
+            return
+
+        # Получить базовый урон для расчетов реакции
+        base_damage = event.get("damage", 0)
+
+        # Применить эффект реакции
+        reaction_damage = self._apply_reaction_effect(
+            target_side,
+            reaction_type,
+            base_damage,
+            source_side=event.get("side"),
+        )
+
+        # В событии учитываются и прямой урон карты, и отдельный урон реакции.
+        event["damage"] += reaction_damage
+
+        # Снять статусы согласно реакции
+        for status in statuses[:]:
+            if status["name"] in affected:
+                statuses.remove(status)
+
+        # Добавить текст реакции в событие
+        reaction_names = {
+            "fire_water": "ОГОНЬ + ВОДА",
+            "fire_cold": "ОГОНЬ + ХОЛОД",
+            "fire_electric": "ОГОНЬ + ЭЛЕКТРО",
+            "water_electric": "ВОДА + ЭЛЕКТРО",
+            "water_cold": "ВОДА + ХОЛОД",
+            "electric_cold": "ЭЛЕКТРО + ХОЛОД",
+            "air_any": "ВОЗДУХ",
+        }
+        event["effect_text"] = f"РЕАКЦИЯ: {reaction_names.get(reaction_type, 'РЕАКЦИЯ')}"
+
+    def select_card(self, side, card_key):
+        self._validate_side(side)
+        if (
+            self.confirmed[side]
+            or self._cards_used_this_exchange(side) >= self.MAX_PLAYED_CARDS
+        ):
+            return False
+        card = next((item for item in self.hands[side] if item.key == card_key), None)
+        if card is None or card in self.selected[side] or not self.can_select(side, card):
+            return False
+        self.selected[side].append(card)
+        return True
+
+    def deselect_card(self, side, card_key):
+        self._validate_side(side)
+        for card in self.selected[side]:
+            if card.key == card_key:
+                self.selected[side].remove(card)
+                return True
+        return False
+
+    def can_select(self, side, card):
+        """Проверить может ли персонаж выбрать и применить эту карту."""
+        self._validate_side(side)
+        fighter = self.player if side == "player" else self.enemy
+
+        if self._buff(side, "forbid_damage_cards") and card_deals_damage(card):
+            return False
+        if self._buff(side, "entangled") and self._cards_used_this_exchange(side) >= 1:
+            return False
+        if self.skip_next_turn[side] or (card.effect_data.get("team_only") and not self.team_mode):
+            return False
+        if card.effect_data.get("skip_next_turn") and self.selected[side]:
+            return False
+        if any(item.effect_data.get("skip_next_turn") for item in self.selected[side]):
+            return False
+
+        # Проверить статусы: стан (от магии и от карт бойца/лучника) и заморозка
+        if self.mage_stuns.get(side, 0) > 0:
+            return False
+        if self.mage_mode and self.mage_freeze.get(side, 0) > 0:
+            used_cards = self._cards_used_this_exchange(side)
+            if used_cards >= 1:
+                return False
+
+        # Проверить ульт-карты
+        is_ultimate = bool(card.effect_data.get("ultimate"))
+        selected_ultimate = any(item.effect_data.get("ultimate") for item in self.selected[side])
+        if self.mage_mode and is_ultimate and (self._cards_used_this_exchange(side) > 0 or self.ultimate_played[side]):
+            return False
+        if self.mage_mode and selected_ultimate:
+            return False
+
+        # Проверить количество карт
+        if self._cards_used_this_exchange(side) >= self.MAX_PLAYED_CARDS:
+            return False
+
+        # Уникальный ресурс класса (ярость, меткость, концентрация)
+        if card.resource_type in PHYSICAL_RESOURCES:
+            if getattr(fighter, "unique_resource_type", None) != card.resource_type:
+                return False
+            if fighter.unique_resource_current < card.resource_cost + self._selected_cost(side, card):
+                return False
+
+        elif card.resource_type == "unique":
+            resource_type = getattr(fighter, "unique_resource_type", None)
+            if resource_type == "mana":
+                if int(getattr(fighter, "mp", 0)) < card.resource_cost + self._selected_cost(side, card):
+                    return False
+            elif (
+                resource_type is None
+                or fighter.unique_resource_current < card.resource_cost + self._selected_cost(side, card)
+            ):
+                return False
+
+        # Если карта использует ман
+        elif card.resource_type == "mana":
+            if int(getattr(fighter, "mp", 0)) < card.resource_cost + self._selected_cost(side, card):
+                return False
+
+        return True
+
+    def _selected_cost(self, side, card):
+        """Ресурс, уже зарезервированный другими выбранными в этот размен картами."""
+        fighter = self.player if side == "player" else self.enemy
+        resource_type = getattr(fighter, "unique_resource_type", None)
+        card_resource = resource_type if card.resource_type == "unique" else card.resource_type
+        return sum(
+            item.resource_cost
+            for item in self.selected[side]
+            if item is not card
+            and (resource_type if item.resource_type == "unique" else item.resource_type) == card_resource
+        )
+
+    def _can_pay(self, side, card):
+        fighter = self.player if side == "player" else self.enemy
+        if card.resource_type in PHYSICAL_RESOURCES:
+            return (
+                getattr(fighter, "unique_resource_type", None) == card.resource_type
+                and fighter.unique_resource_current >= card.resource_cost
+            )
+        if card.resource_type == "unique":
+            resource_type = getattr(fighter, "unique_resource_type", None)
+            if resource_type == "mana":
+                return int(getattr(fighter, "mp", 0)) >= card.resource_cost
+            return (
+                resource_type not in (None, "mana")
+                and fighter.unique_resource_current >= card.resource_cost
+            )
+        if card.resource_type == "mana":
+            return int(getattr(fighter, "mp", 0)) >= card.resource_cost
+        return True
+
+    def _cards_used_this_exchange(self, side):
+        return len(self.selected[side])
+
+    def remaining_card_slots(self, side):
+        self._validate_side(side)
+        return max(
+            0,
+            self.MAX_PLAYED_CARDS - self._cards_used_this_exchange(side),
+        )
+
+    def confirm_selection(self, side):
+        self._validate_side(side)
+        self.confirmed[side] = True
+        return True
+
+    def resolve_turn(self):
+        if self.is_over() or not all(self.confirmed.values()):
+            return []
+        order = self.turn_order
+        self.last_exchange = []
+        self.last_played_cards = {"player": [], "enemy": []}
+        for side in order:
+            self.last_played_cards[side] = list(self.selected[side])
+            if not self.selected[side]:
+                self.last_exchange.append({
+                    "side": side,
+                    "card": None,
+                    "damage": 0,
+                    "healed": 0,
+                    "critical": False,
+                    "dodged": False,
+                    "skipped": True,
+                })
+        for side in order:
+            defender_side = "enemy" if side == "player" else "player"
+            played_cards = list(self.selected[side])
+            side_events = []
+            for card in played_cards:
+                event = self._resolve_card(side, card)
+                if self.mage_mode and card.group_name == "Магия: Воздух":
+                    self._apply_poison_reaction(defender_side, "воздух", event)
+                event["critical_attack"] = bool(event.get("attack") and event["critical"])
+                event["attack_dodged"] = bool(event.get("attack") and event["dodged"])
+                event["effect_cards"] = [event["card"]] if event.get("effect_text") or event.get("dodge_bonus", 0) else []
+                event["cards"] = [event["card"]]
+                side_events.append(event)
+                stats = self.stats[side]
+                stats["cards_played"] += 1
+                stats["damage"] += event["damage"]
+                stats["healed"] += event["healed"]
+                stats["critical"] += int(event["critical"])
+                if event["dodged"]:
+                    self.stats[defender_side]["dodges"] += 1
+                stats["hits"] += event.get("hits", 0)
+                card_name = event["card"]
+                stats["cards"].append(card_name)
+                stats["card_damage"][card_name] = stats["card_damage"].get(card_name, 0) + event["damage"]
+                stats["card_healing"][card_name] = stats["card_healing"].get(card_name, 0) + event["healed"]
+                if card in self.hands[side]:
+                    self.hands[side].remove(card)
+                self._discard_for(side).append(card)
+            self.last_exchange.extend(side_events)
+            if any(card.effect_data.get("ultimate") for card in played_cards):
+                self.ultimate_played[side] = True
+        for side in ("player", "enemy"):
+            for card in self.last_played_cards[side]:
+                if card in self.hands[side]:
+                    self.hands[side].remove(card)
+                    self._discard_for(side).append(card)
+        if self.mage_mode:
+            self._apply_pending_mage_effects()
+        self.history.append({"turn": self.turn, "events": list(self.last_exchange)})
+        if self.is_over():
+            self.outcome()
+        return self.last_exchange
+
+    def complete_side_turn(self):
+        """Finish the active fighter's action and pass control to the next one."""
+        if self.is_over():
+            return False
+        side = self.active_side
+        poison_events = self._tick_poison(side)
+        if poison_events:
+            self.history.append({"turn": self.turn, "events": poison_events})
+        self.acted_this_round[side] = True
+        self.selected[side] = []
+        self.confirmed[side] = False
+        self.phys_buffs[side] = [buff for buff in self.phys_buffs[side] if not buff.get("expire_after_turn")]
+        if self.skip_turn_armed[side]:
+            self.skip_turn_armed[side] = False
+        elif self.skip_next_turn[side]:
+            self.skip_next_turn[side] = False
+        for owner, target in self.invulnerability_targets.items():
+            if target == side:
+                self.invulnerable[owner] = False
+                self.invulnerability_targets[owner] = None
+        if all(self.acted_this_round.values()):
+            return True
+        self.active_side = next(side for side in self.turn_order if not self.acted_this_round[side])
+        return False
+
+    def start_next_turn(self):
+        if self.is_over():
+            return
+        if self.prepare_redraft():
+            self.finish_afk_redraft()
+            return
+        self._start_turn(draw_cards=True)
+
+    def begin_next_turn(self):
+        if not self.is_over():
+            self._start_turn(draw_cards=False)
+
+    def draw_next_turn_card(self, side):
+        self._validate_side(side)
+        card = self._draw_card(side)
+        if card is not None:
+            if len(self.hands[side]) >= self.hand_limit_for(side):
+                self._discard_for(side).insert(0, card)
+                return None
+            self.hands[side].append(card)
+        return card
+
+    def prepare_draw_choice(self, side):
+        self._validate_side(side)
+        deck = self._deck_for(side)
+        discard = self._discard_for(side)
+        if len(deck) < 2 and discard:
+            self._shuffle_discard_into_deck(side)
+        self.draw_choices[side] = [card for _ in range(2) if (card := self._draw_card(side)) is not None]
+        return list(self.draw_choices[side])
+
+    def choose_draw_card(self, side, card_key):
+        self._validate_side(side)
+        card = next((item for item in self.draw_choices[side] if item.key == card_key), None)
+        if card is None:
+            return False
+        if len(self.hands[side]) >= self.hand_limit_for(side):
+            self._discard_for(side).insert(0, card)
+        else:
+            self.hands[side].append(card)
+        other_card = next((item for item in self.draw_choices[side] if item is not card), None)
+        if other_card is not None:
+            self._deck_for(side).insert(0, other_card)
+        self.draw_choices[side] = []
+        return True
+
+    def burn_card(self, side, card_key):
+        self._validate_side(side)
+        if self.burned_this_turn[side] or self.confirmed[side]:
+            return False
+        card = next((item for item in self.hands[side] if item.key == card_key), None)
+        if card is None:
+            return False
+        self.hands[side].remove(card)
+        self.selected[side] = [item for item in self.selected[side] if item is not card]
+        fighter = self.player if side == "player" else self.enemy
+        max_mana = int(getattr(fighter, "max_mp", 0))
+        burn_bonus = int(
+            getattr(fighter, "_talent_effects", {}).get("burn_percent", 0)
+        )
+        mana_percent = 15 + burn_bonus if fighter.unique_resource_type == "mana" else 15
+        mana_gain = max(0, int(max_mana * mana_percent / 100))
+        fighter.mp = min(max_mana, int(fighter.mp) + mana_gain)
+        unique_gain = 0
+        if getattr(fighter, "unique_resource_type", None) in (*PHYSICAL_RESOURCES, "necrotism"):
+            unique_gain = max(
+                0,
+                int(fighter.unique_resource_max * (15 + burn_bonus) / 100),
+            )
+            fighter.gain_unique_resource(unique_gain)
+        elif fighter.unique_resource_type == "mana":
+            unique_gain = mana_gain
+        self.burned_this_turn[side] = True
+        self.history.append({"turn": self.turn, "events": [{"side": side, "card": card.name, "burned": True, "mana": mana_gain, "unique_resource": unique_gain}]})
+        return True
+
+    def can_draw_next_turn_card(self, side):
+        self._validate_side(side)
+        return bool(self._deck_for(side) or self._discard_for(side))
+
+    def redraft_pick_limit(self, side):
+        self._validate_side(side)
+        return self.redraft_pick_limits[side]
+
+    def peek_card(self, side="player"):
+        deck = self._deck_for(side)
+        return deck[-1] if deck else None
+
+    def _resolve_card(self, side, card):
+        attacker = self.player if side == "player" else self.enemy
+        data = card.effect_data
+        event = {"side": side, "card": card.name, "damage": 0, "healed": 0, "dodge_bonus": 0, "effect_text": "", "critical": False, "dodged": False, "hits": 0, "attack": card.effect_type in ATTACK_EFFECT_TYPES}
+        if not self._can_pay(side, card):
+            # Ресурс мог упасть между выбором карты и розыгрышем (выжигание маны и т.п.)
+            event["attack"] = False
+            event["effect_text"] = "НЕДОСТАТОЧНО МАНЫ" if card.resource_type == "mana" else "НЕДОСТАТОЧНО РЕСУРСА"
+            return event
+        self._spend_points(side, card)
+        if card.resource_type in PHYSICAL_RESOURCES:
+            event = self._resolve_physical_card(side, card, event)
+            healing_percent = int(
+                getattr(attacker, "_talent_effects", {}).get(
+                    "critical_healing_percent", 0
+                )
+            )
+            if event.get("critical") and healing_percent:
+                healed = max(0, int(event.get("damage", 0)) * healing_percent // 100)
+                attacker.hp = min(attacker.max_hp, attacker.hp + healed)
+                event["healed"] = int(event.get("healed", 0)) + healed
+                if healed:
+                    event["effect_text"] = (
+                        f"{event.get('effect_text', '')} • критическое лечение +{healed} HP"
+                    ).strip()
+            return event
+
+        if card.effect_type.startswith("mage_"):
+            # Мана уже списана в _spend_points (resource_type == "mana")
+            mana_cost = card.resource_cost if card.resource_type == "mana" else 0
+            wisdom = self._mage_stat(attacker, "wisdom")
+            intellect = self._mage_stat(attacker, "intellect")
+            talent_magic_damage = (
+                int(getattr(attacker, "_talent_effects", {}).get(
+                    "intellect_magic_damage_per_3", 0
+                ))
+                * intellect // 3
+            )
+            harmony = self._mage_stat(attacker, "harmony")
+            if card.effect_type == "mage_restore_mana":
+                if attacker.mp > int(attacker.max_mp * data.get("max_mana_percent", 30) / 100):
+                    event["effect_text"] = "МАНА СЛИШКОМ ВЫСОКА"
+                    return event
+                restored = int((attacker.max_mp - attacker.mp) * data.get("missing_mana_percent", 25) / 100)
+                restored += int((attacker.max_mp - attacker.mp) * harmony * data.get("harmony_percent", 0) / 100)
+                attacker.mp = min(attacker.max_mp, attacker.mp + restored)
+                event["effect_text"] = f"МАНА +{restored}"
+                return event
+            if card.effect_type == "mage_golem":
+                golem_hp = int(data.get("hp", 16)) + wisdom
+                golem = {
+                    "name": "Голем земли",
+                    "hp": golem_hp,
+                    "max_hp": golem_hp,
+                    "mana": 0,
+                    "max_mana": 0,
+                    "damage": int(data.get("damage", 2)) + wisdom,
+                    "stun_damage": int(data.get("stun_damage", 8)) + wisdom,
+                    "attacks": 0,
+                }
+                self._queue_mage_effect(side, "golem", golem=golem)
+                event["effect_text"] = "ПРИЗВАН ГОЛЕМ"
+                return event
+            if card.effect_type == "mage_draw":
+                drawn = 0
+                for _ in range(int(data.get("cards", 1))):
+                    if self.draw_next_turn_card(side):
+                        drawn += 1
+                event["effect_text"] = f"ДОБОР +{drawn}"
+                return event
+            if card.effect_type == "mage_damage_resistance":
+                reduction = int(float(data.get("reduction_percent", 0)) + intellect * float(data.get("intellect_percent", 0)))
+                self._add_buff(side, card.effect_duration or 1, incoming_damage_percent=reduction)
+                event["effect_text"] = f"ВХОДЯЩИЙ УРОН -{reduction}%"
+                return event
+            if card.effect_type == "mage_damage_debuff":
+                target_side = "enemy" if side == "player" else "player"
+                reduction = int(float(data.get("damage_percent", 0)) + intellect * float(data.get("intellect_percent", 0)))
+                self._add_buff(target_side, card.effect_duration or 1, outgoing_damage_percent=reduction)
+                event["effect_text"] = f"ИСХОДЯЩИЙ УРОН ВРАГА -{reduction}%"
+                return event
+            if card.effect_type == "mage_wind_gust":
+                target_side = "enemy" if side == "player" else "player"
+                ratio = getattr(attacker, "mage_damage_bonus_ratio", 1)
+                direct = (
+                    int(data.get("damage", 0))
+                    + wisdom
+                    + self._weapon_roll(attacker)
+                    + talent_magic_damage
+                )
+                ended = self._shorten_mage_statuses(target_side, int(data.get("status_reduction", 1)))
+                damage = math.floor((direct + ended * (int(data.get("removed_damage", 0)) + wisdom)) * ratio)
+                self._mage_take_damage(target_side, damage, source_side=side)
+                event["damage"] = damage
+                event["hits"] = 1
+                event["attack"] = True
+                event["effect_text"] = f"СТАТУСОВ ЗАКОНЧИЛОСЬ: {ended}"
+                return event
+            if card.effect_type in ("mage_cleanse_area", "mage_dispel"):
+                target_side = "enemy" if side == "player" else "player"
+                ratio = getattr(attacker, "mage_damage_bonus_ratio", 1)
+                direct = int(data.get("damage", 0))
+                if direct:
+                    direct += wisdom + self._weapon_roll(attacker) + talent_magic_damage
+                removed = self._dispel_mage_side(
+                    target_side,
+                    remove_statuses=bool(data.get("remove_statuses")),
+                    remove_positive=bool(data.get("remove_positive")),
+                )
+                damage = math.floor((direct + removed * (int(data.get("removed_damage", 0)) + wisdom)) * ratio)
+                if damage:
+                    self._mage_take_damage(target_side, damage, source_side=side)
+                event["damage"] = damage
+                event["hits"] = int(bool(damage))
+                event["attack"] = bool(damage)
+                event["effect_text"] = f"СНЯТО ЭФФЕКТОВ: {removed}"
+                return event
+            if card.effect_type == "mage_cloud":
+                duration = int(data.get("duration", 2)) + harmony // int(data.get("harmony_duration", 6))
+                self._queue_mage_effect(
+                    side,
+                    "cloud",
+                    cloud={"remaining": duration, "damage": int(data.get("damage", 3))},
+                )
+                event["effect_text"] = "ПРИЗВАНА ГРОМОВАЯ ТУЧА"
+                return event
+            if card.effect_type == "mage_hp_for_mana":
+                hp_loss = max(1, int(attacker.max_hp * data.get("hp_percent", 7) / 100))
+                if attacker.hp - hp_loss <= 0:
+                    attacker.mp += mana_cost
+                    event["effect_text"] = "НЕЛЬЗЯ ПРИМЕНИТЬ: СМЕРТЕЛЬНЫЙ УРОН"
+                    return event
+                attacker.hp -= hp_loss
+                restored = int(attacker.max_mp * data.get("mana_percent", 21) / 100)
+                attacker.mp = min(attacker.max_mp, attacker.mp + restored)
+                event["effect_text"] = f"МАНА +{restored}"
+                return event
+            if card.effect_type == "mage_mana_regen_buff":
+                hp_loss = max(1, int(attacker.max_hp * data.get("hp_percent", 10) / 100))
+                if attacker.hp - hp_loss <= 0:
+                    attacker.mp += mana_cost
+                    event["effect_text"] = "НЕЛЬЗЯ ПРИМЕНИТЬ: СМЕРТЕЛЬНЫЙ УРОН"
+                    return event
+                attacker.hp -= hp_loss
+                self._queue_mage_effect(
+                    side,
+                    "status",
+                    name=data.get("status", "холод"),
+                    duration=int(data.get("status_duration", 4)),
+                )
+                self._add_buff(side, card.effect_duration or 1, mana_regen_bonus=int(data.get("mana_regen_bonus", 0)))
+                event["effect_text"] = f"HP -{hp_loss}, ВОССТ. МАНЫ +{data.get('mana_regen_bonus', 0)}"
+                return event
+            if card.effect_type == "mage_damage_status":
+                status = data.get("status")
+                if status:
+                    target_side = "enemy" if side == "player" else "player"
+                    damage = int(data.get("damage", 0)) + wisdom + self._weapon_roll(attacker)
+                    event["damage"] = damage
+                    event["hits"] = int(bool(damage))
+                    self._queue_mage_effect(
+                        target_side,
+                        "status",
+                        name=status,
+                        duration=data.get("status_duration", card.effect_duration or 1),
+                        stacks=data.get("stacks", 1),
+                        reaction_damage=event["damage"],
+                        reaction_event=event,
+                    )
+                    self._mage_take_damage(target_side, event["damage"], source_side=side)
+                    if "damage_percent" in data:
+                        outgoing_reduction = int(-data["damage_percent"] + intellect * data.get("intellect_percent", 0))
+                        self._add_buff(target_side, int(data.get("status_duration", 1)), outgoing_damage_percent=outgoing_reduction)
+                        event["effect_text"] = f"ИСХОДЯЩИЙ УРОН ВРАГА -{outgoing_reduction}%"
+                    event["attack"] = bool(damage)
+                    return event
+            if card.effect_type == "mage_reactive_blessing":
+                status_duration = int(data.get("status_duration", 2))
+                self._queue_mage_effect(side, "status", name=data.get("status", "огонь"), duration=status_duration)
+                self._queue_mage_effect(side, "reactive_blessing", blessing={
+                    "damage": int(data.get("retaliation_damage", 2)),
+                    "status_duration": int(data.get("retaliation_status_duration", 1)),
+                    "remaining": status_duration + 1,
+                })
+                event["effect_text"] = "БАГРОВАЯ КРОВЬ"
+                return event
+            if card.effect_type == "mage_stun_status":
+                target_side = "enemy" if side == "player" else "player"
+                direct_damage = int(data.get("damage", 0))
+                if direct_damage:
+                    direct_damage += wisdom + self._weapon_roll(attacker)
+                    self._mage_take_damage(target_side, direct_damage, source_side=side)
+                    event["damage"] = direct_damage
+                    event["hits"] = 1
+                # The counter is consumed at the next turn boundary, so one
+                # turn of paralysis must survive the boundary itself.
+                self._queue_mage_effect(target_side, "stun", duration=int(data.get("stun_duration", 1)))
+                status = data.get("status")
+                if status:
+                    self._queue_mage_effect(
+                        target_side,
+                        "status",
+                        name=status,
+                        duration=data.get("status_duration", 3),
+                        reaction_damage=event["damage"],
+                        reaction_event=event,
+                    )
+                event["effect_text"] = "ОГЛУШЕНИЕ"
+                return event
+            if card.effect_type == "mage_team_health_buff":
+                bonus_hp = int(data.get("bonus_hp", 0)) + wisdom * int(data.get("wisdom_hp", 0))
+                self._queue_mage_effect(side, "shield", amount=bonus_hp, duration=2)
+                event["effect_text"] = f"ЩИТ +{bonus_hp} HP"
+                return event
+            if card.effect_type in ("mage_area_damage", "mage_area_damage_status"):
+                target_side = "enemy" if side == "player" else "player"
+                damage = int(data.get("damage", 0))
+                damage += wisdom * int(data.get("wisdom_damage", 1)) + self._weapon_roll(attacker)
+                damage += (
+                    intellect * int(data.get("intellect_damage", 0))
+                    + int(data.get("enemy_damage", 0))
+                    + talent_magic_damage
+                )
+                self._mage_take_damage(target_side, damage, source_side=side)
+                event["damage"] = damage
+                event["hits"] = 1
+                if data.get("status"):
+                    self._queue_mage_effect(
+                        target_side,
+                        "status",
+                        name=data["status"],
+                        duration=data.get("status_duration", 1),
+                        stacks=data.get("stacks", 1),
+                        reaction_damage=event["damage"],
+                        reaction_event=event,
+                    )
+                if data.get("delayed_stacks") and data.get("status"):
+                    self.mage_delayed_statuses[target_side].append({
+                        "name": data["status"],
+                        "turns": 1,
+                        "stacks": int(data["delayed_stacks"]),
+                        "duration": int(data.get("status_duration", 1)),
+                    })
+                if data.get("stun_duration"):
+                    self._queue_mage_effect(target_side, "stun", duration=int(data["stun_duration"]))
+                event["effect_text"] = "МАССОВЫЙ ЭФФЕКТ"
+                return event
+            if card.effect_type in ("mage_damage_buff", "mage_team_damage_buff"):
+                percent = float(data.get("damage_percent", 0)) + intellect * float(data.get("intellect_percent", 0))
+                attacker.mage_damage_bonus_ratio = max(0, getattr(attacker, "mage_damage_bonus_ratio", 1) + percent / 100)
+                self._queue_mage_effect(
+                    side,
+                    "damage_bonus",
+                    percent=percent,
+                    duration=int(data.get("duration", card.effect_duration or 1)),
+                )
+                event["effect_text"] = f"ДОП. УРОН {percent:+g}%"
+                return event
+            if card.effect_type == "mage_heal_missing_hp":
+                missing_hp = max(0, attacker.max_hp - attacker.hp)
+                healed = int(missing_hp * int(data.get("missing_hp_percent", 0)) / 100)
+                healed += intellect * int(data.get("intellect_hp", 0))
+                attacker.hp = min(attacker.max_hp, attacker.hp + healed)
+                event["healed"] = healed
+                shield = int(data.get("shield_hp", 0)) + intellect * int(data.get("intellect_shield", 0))
+                self._queue_mage_effect(side, "shield", amount=shield, duration=4)
+                if data.get("damage_percent"):
+                    percent = float(data["damage_percent"]) + intellect * float(data.get("intellect_percent", 1))
+                    self._queue_mage_effect(side, "damage_bonus", percent=percent, duration=1)
+                event["effect_text"] = f"ВОССТАНОВЛЕНО HP: {healed}"
+                return event
+            if card.effect_type == "mage_health_buff":
+                if data.get("shield_hp") or data.get("bonus_hp") or data.get("status") in ("вода", "холод"):
+                    self._queue_mage_effect(side, "status", name=data.get("status", "вода"), duration=data.get("status_duration", 2))
+                    duration = 4 if card.key == "mage_gurgling_flow" else 2
+                    self._queue_mage_effect(
+                        side,
+                        "shield",
+                        amount=int(data.get("shield_hp", data.get("bonus_hp", 0))) + intellect * int(data.get("intellect_shield", data.get("intellect_hp", 0))),
+                        duration=duration,
+                    )
+                    event["effect_text"] = f"ЩИТ +{self.mage_shields[side]}"
+                    return event
+                bonus_hp = int(data.get("bonus_hp", 0))
+                bonus_hp += intellect * int(data.get("intellect_hp", 0))
+                attacker.max_hp += bonus_hp
+                attacker.hp += bonus_hp
+                event["healed"] = bonus_hp
+                event["effect_text"] = f"МАКСИМАЛЬНОЕ HP +{bonus_hp}"
+                return event
+            direct_damage = int(data.get("damage", 0))
+            if direct_damage:
+                wisdom_multiplier = 1 + wisdom * float(data.get("wisdom_percent", 0)) / 100
+                damage = math.floor(
+                    (
+                        direct_damage
+                        + wisdom
+                        + self._weapon_roll(attacker)
+                        + talent_magic_damage
+                    )
+                    * getattr(attacker, "mage_damage_bonus_ratio", 1)
+                    * wisdom_multiplier
+                )
+                self._mage_take_damage("enemy" if side == "player" else "player", damage, source_side=side)
+                event["damage"] = damage
+                event["hits"] = 1
+                event["attack"] = True
+            if data.get("status"):
+                event["effect_text"] = f"СТАТУС: {data['status']}"
+            elif not direct_damage:
+                event["effect_text"] = "МАГИЧЕСКИЙ ЭФФЕКТ"
+            return event
+
+        event["effect_text"] = card.name.upper()
+        return event
+
+    def _spend_points(self, side, card):
+        """Потратить ресурсы для применения карты (зависит от типа карты)."""
+        fighter = self.player if side == "player" else self.enemy
+
+        if card.resource_type in PHYSICAL_RESOURCES:
+            if hasattr(fighter, "spend_unique_resource"):
+                fighter.spend_unique_resource(card.resource_cost)
+
+        elif card.resource_type == "unique":
+            if getattr(fighter, "unique_resource_type", None) == "mana":
+                fighter.mp = max(0, int(fighter.mp) - card.resource_cost)
+            elif hasattr(fighter, "spend_unique_resource"):
+                fighter.spend_unique_resource(card.resource_cost)
+
+        # Новая система: мана
+        elif card.resource_type == "mana":
+            fighter.mp = max(0, fighter.mp - card.resource_cost)
+
+    def _gain_unique_resource(self, side, resource_type, amount):
+        """Дать персонажу уникальный ресурс (ярость, меткость, концентрация)."""
+        fighter = self.player if side == "player" else self.enemy
+        if hasattr(fighter, "gain_unique_resource") and hasattr(fighter, "unique_resource_type"):
+            if fighter.unique_resource_type == resource_type:
+                if resource_type == "accuracy":
+                    amount += self._buff(side, "accuracy_gain")
+                fighter.gain_unique_resource(amount)
+
+    def _fighter_took_damage(self, side, damage_amount):
+        """Вызвать когда персонаж получает урон (увеличивает ярость для бойца)."""
+        from kaloda.combat.character_stats import UNIQUE_RESOURCE_GAIN
+
+        fighter = self.player if side == "player" else self.enemy
+        if not hasattr(fighter, "unique_resource_type"):
+            return
+
+        # При получении 10+ урона боец получает ярость
+        if fighter.unique_resource_type == "rage" and damage_amount >= 10:
+            gain_info = UNIQUE_RESOURCE_GAIN.get("rage", {}).get("on_damage_taken")
+            if gain_info:
+                base, level_bonus = gain_info
+                amount = base + (level_bonus * fighter.level)
+                self._gain_unique_resource(side, "rage", amount)
+
+    def _fighter_dodged(self, side):
+        """Вызвать когда персонаж успешно уворачивается (увеличивает меткость для лучника)."""
+        from kaloda.combat.character_stats import UNIQUE_RESOURCE_GAIN
+
+        fighter = self.player if side == "player" else self.enemy
+        if not hasattr(fighter, "unique_resource_type"):
+            return
+
+        # При уворотеьь лучник получает меткость
+        if fighter.unique_resource_type == "accuracy":
+            gain_info = UNIQUE_RESOURCE_GAIN.get("accuracy", {}).get("on_dodge")
+            if gain_info:
+                base, level_bonus = gain_info
+                amount = base + (level_bonus * fighter.level)
+                self._gain_unique_resource(side, "accuracy", amount)
+
+    def _fighter_landed_critical(self, side):
+        """Начислить концентрацию ассасину за критический удар."""
+        from kaloda.combat.character_stats import UNIQUE_RESOURCE_GAIN
+
+        fighter = self.player if side == "player" else self.enemy
+        if fighter.unique_resource_type != "concentration":
+            return
+        base, level_bonus = UNIQUE_RESOURCE_GAIN["concentration"]["on_critical"]
+        self._gain_unique_resource(
+            side,
+            "concentration",
+            base + level_bonus * fighter.level,
+        )
+
+    # ===== НОВАЯ СИСТЕМА ЭЛЕМЕНТОВ И РЕАКЦИЙ =====
+
+    def _check_element_reaction(self, side, new_element):
+        """
+        Проверить возможные реакции элементов и вернуть тип реакции.
+
+        Returns: (reaction_type, affected_elements) или (None, None)
+        """
+        if not self.mage_mode:
+            return None, None
+
+        # Получить существующие элементы
+        statuses = self.mage_statuses.get(side, [])
+        existing_elements = {s["name"] for s in statuses if s["name"] in ("огонь", "вода", "холод", "электро")}
+
+        # Проверить реакции (7 типов)
+        # 1. Огонь + Вода
+        if ("огонь" in existing_elements and new_element == "вода") or ("вода" in existing_elements and new_element == "огонь"):
+            return "fire_water", ["огонь", "вода"]
+
+        # 2. Огонь + Холод
+        if ("огонь" in existing_elements and new_element == "холод") or ("холод" in existing_elements and new_element == "огонь"):
+            return "fire_cold", ["огонь", "холод"]
+
+        # 3. Огонь + Электро
+        if ("огонь" in existing_elements and new_element == "электро") or ("электро" in existing_elements and new_element == "огонь"):
+            return "fire_electric", ["огонь", "электро"]
+
+        # 4. Вода + Электро
+        if ("вода" in existing_elements and new_element == "электро") or ("электро" in existing_elements and new_element == "вода"):
+            return "water_electric", ["электро"]  # Только электро снимается!
+
+        # 5. Вода + Холод
+        if ("вода" in existing_elements and new_element == "холод") or ("холод" in existing_elements and new_element == "вода"):
+            return "water_cold", ["вода", "холод"]
+
+        # 6. Электро + Холод
+        if ("электро" in existing_elements and new_element == "холод") or ("холод" in existing_elements and new_element == "электро"):
+            return "electric_cold", ["электро", "холод"]
+
+        # 7. Воздух + Любой элемент
+        if new_element == "воздух" or any(e == "воздух" for e in existing_elements):
+            return "air_any", []
+
+        return None, None
+
+    def _apply_status_effect(self, side, element, duration=1):
+        """
+        Применить постоянный статус (огонь, вода, холод, электро).
+        """
+        if not self.mage_mode:
+            return
+
+        # Электро заменяет электро (только 1 одновременно)
+        if element == "электро":
+            self.mage_statuses[side] = [s for s in self.mage_statuses.get(side, []) if s["name"] != "электро"]
+
+        # Добавить новый статус
+        new_status = {
+            "name": element,
+            "remaining": duration,
+            "stacks": 1 if element == "огонь" else 0,  # Только огонь может иметь стеки
+            "applied_turn": self.turn,
+        }
+
+        if side not in self.mage_statuses:
+            self.mage_statuses[side] = []
+
+        self.mage_statuses[side].append(new_status)
+
+    def _apply_reaction_effect(self, side, reaction_type, damage, source_side=None):
+        """Применить эффект реакции элементов."""
+        if not self.mage_mode:
+            return 0
+
+        opposite_side = "enemy" if side == "player" else "player"
+        attacker_side = source_side or opposite_side
+        attacker = self.player if attacker_side == "player" else self.enemy
+        reaction_damage = 0
+
+        # 1. Огонь + Вода → × 0.5 урона
+        if reaction_type == "fire_water":
+            reaction_damage = int(damage * 0.5)
+            self._mage_take_damage(opposite_side, reaction_damage)
+
+        # 2. Огонь + Холод → × 0.2 урона
+        elif reaction_type == "fire_cold":
+            reaction_damage = int(damage * 0.2)
+            self._mage_take_damage(opposite_side, reaction_damage)
+
+        # 3. Огонь + Электро → × (1.3 + гармония×1%) + ослепление
+        elif reaction_type == "fire_electric":
+            harmony = int(getattr(attacker, "harmony", 0))
+            multiplier = 1.3 + (harmony * 0.01)
+            reaction_damage = int(damage * multiplier) + harmony
+            self._mage_take_damage(side, reaction_damage, source_side=attacker_side)
+            if "blinding" not in [s["name"] for s in self.mage_statuses.get(side, [])]:
+                self.mage_statuses[side].append({
+                    "name": "blinding",
+                    "remaining": 1,
+                    "miss_chance": 20,
+                    "applied_turn": self.turn,
+                })
+
+        # 4. Вода + Электро → × (1.1 + гармония×1%) + 40% урона всем
+        elif reaction_type == "water_electric":
+            harmony = int(getattr(attacker, "harmony", 0))
+            multiplier = 1.1 + (harmony * 0.01)
+            reaction_damage = int(damage * multiplier)
+            self._mage_take_damage(opposite_side, reaction_damage)
+            aoe_damage = int(reaction_damage * 0.4)
+            if aoe_damage > 0:
+                self._mage_take_damage(opposite_side, aoe_damage)
+
+        # 5. Вода + Холод → заморозка (1 карта/ход) на 1 ход
+        elif reaction_type == "water_cold":
+            self.mage_freeze[opposite_side] = max(self.mage_freeze[opposite_side], 1)
+
+        # 6. Электро + Холод → 30% урона → щит + иммунитет
+        elif reaction_type == "electric_cold":
+            shield_amount = int(damage * 0.3)
+            self.mage_shields[opposite_side] += shield_amount
+            if "electric_cold_immunity" not in [s["name"] for s in self.mage_statuses.get(opposite_side, [])]:
+                self.mage_statuses[opposite_side].append({
+                    "name": "electric_cold_immunity",
+                    "remaining": 1,
+                    "applied_turn": self.turn,
+                })
+
+        # 7. Воздух + Любой → снять 1 ход статуса
+        elif reaction_type == "air_any":
+            if opposite_side in self.mage_statuses:
+                for status in self.mage_statuses[opposite_side]:
+                    if status["name"] not in ("воздух",):
+                        status["remaining"] = max(0, status["remaining"] - 1)
+
+        return reaction_damage
+
+    def _process_status_turn_effects(self):
+        """Обработать эффекты статусов в конце хода (урон от огня, стан от электро)."""
+        if not self.mage_mode:
+            return
+
+        for side in ("player", "enemy"):
+            statuses = self.mage_statuses.get(side, [])
+
+            for status in statuses[:]:
+                name = status["name"]
+
+                # Огонь: 2 урона за стек, затем стеки сбрасываются до 1; при 1 стеке огонь гаснет
+                if name == "огонь" and status.get("stacks", 0) > 0:
+                    self._mage_take_damage(side, status["stacks"] * 2)
+                    if status["stacks"] > 1:
+                        status["stacks"] = 1
+                    else:
+                        statuses.remove(status)
+
+                # Электро: стан после 3 ходов
+                elif name == "электро":
+                    applied_turn = status.get("applied_turn", 0)
+                    turns_active = self.turn - applied_turn
+                    if turns_active >= 3 and self.mage_stuns.get(side, 0) == 0:
+                        self.mage_stuns[side] = 1
+                        # Добавить иммунитет на 2 хода
+                        if "stun_immunity" not in [s["name"] for s in self.mage_statuses.get(side, [])]:
+                            self.mage_statuses[side].append({
+                                "name": "stun_immunity",
+                                "remaining": 2,
+                                "applied_turn": self.turn,
+                            })
+
+    def _remove_expired_statuses(self):
+        """Удалить статусы которые закончили свою длительность."""
+        if not self.mage_mode:
+            return
+
+        for side in ("player", "enemy"):
+            if side not in self.mage_statuses:
+                continue
+
+            # Уменьшить длительность и удалить если закончилась
+            expired = []
+            for i, status in enumerate(self.mage_statuses[side]):
+                status["remaining"] -= 1
+                if status["remaining"] <= 0:
+                    expired.append(i)
+
+            # Удалить в обратном порядке чтобы не нарушить индексы
+            for i in reversed(expired):
+                self.mage_statuses[side].pop(i)
+
+    def _stronger_side(self, stat):
+        player_value = getattr(self.player, stat)
+        enemy_value = getattr(self.enemy, stat)
+        if player_value == enemy_value:
+            return None
+        return "player" if player_value > enemy_value else "enemy"
+
+    @staticmethod
+    def _validate_side(side):
+        if side not in ("player", "enemy"):
+            raise ValueError(f"Неизвестная сторона: {side}")
+
+    def hand_limit_for(self, side):
+        self._validate_side(side)
+        fighter = self.player if side == "player" else self.enemy
+        bonus = int(
+            getattr(fighter, "_talent_effects", {}).get("hand_size", 0)
+        )
+        return max(0, int(self.MAX_HAND_SIZE) + bonus)
+
+    def is_over(self):
+        return self.player.is_dead() or self.enemy.is_dead()
+
+    def outcome(self):
+        if self.player.is_dead() and self.enemy.is_dead():
+            outcome = "draw"
+        elif self.enemy.is_dead():
+            outcome = "win"
+        elif self.player.is_dead():
+            outcome = "loss"
+        else:
+            return None
+        if not self._xp_awarded_applied:
+            self.xp_awarded = battle_xp(self.player.level, self.enemy.level, outcome)
+            apply_xp(self.player, self.xp_awarded, restore_hp=False)
+            enemy_outcome = {"win": "loss", "loss": "win", "draw": "draw"}[outcome]
+            self.enemy_xp_awarded = battle_xp(self.enemy.level, self.player.level, enemy_outcome)
+            apply_xp(self.enemy, self.enemy_xp_awarded, restore_hp=False)
+            self._xp_awarded_applied = True
+        return outcome
+
+    def winner_name(self):
+        return {"draw": "Ничья", "win": self.player.name, "loss": self.enemy.name}.get(self.outcome())

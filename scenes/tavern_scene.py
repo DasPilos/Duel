@@ -1,6 +1,7 @@
 import pygame
 from pathlib import Path
 
+from client.network import ServerError
 from core import settings
 from ui.chat import ChatPanel
 from ui.character_profile_overlay import CharacterProfileOverlay
@@ -19,7 +20,6 @@ class TavernScene:
         self.title_font = pygame.font.SysFont(settings.FONT_NAME, 36)
         self.battle_button = pygame.Rect(780, 850, 360, 55)
         self.inventory_button = pygame.Rect(settings.WIDTH - 70, 10, 50, 50)
-        self.map_button = pygame.Rect(settings.WIDTH - 190, 10, 110, 50)
         self.profile_overlay = CharacterProfileOverlay(
             self.small_font,
             collection_loader=getattr(self.session, "get_card_collection", None),
@@ -73,6 +73,12 @@ class TavernScene:
         return pygame.Rect(x, y, width, height)
 
     def handle_event(self, event):
+        if self.profile_overlay.collection_panel.is_open:
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                self.profile_overlay.handle_click(event.pos)
+            elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                self.profile_overlay.collection_panel.close()
+            return
         self.profile_overlay.handle_event(event)
         if self.profile_overlay.deck_panel.is_open and event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             action, profile = self.profile_overlay.handle_click(event.pos)
@@ -82,15 +88,10 @@ class TavernScene:
                     self.profile_overlay.deck_panel.open(self.session.get_decks())
                 except ServerError as error:
                     self.tavern_shop.show_error(str(error))
+            elif action == "deck_selected":
+                self.session.selected_deck = profile
             return
-        if self.profile_overlay.collection_panel.is_open:
-            # Коллекция модальная: клики (включая «ЗАКРЫТЬ») идут только в неё
-            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                self.profile_overlay.handle_click(event.pos)
-            elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
-                self.profile_overlay.collection_panel.close()
-            return
-        if self.profile_overlay.deck_panel.is_open:
+        if self.profile_overlay.collection_panel.is_open or self.profile_overlay.deck_panel.is_open:
             return
         if self.chat.handle_event(event):
             return
@@ -133,6 +134,9 @@ class TavernScene:
             if action == "stat_change":
                 self._save_profile_card(profile)
                 return
+            if action == "backpack":
+                # TODO: обработать клик по рюкзаку
+                return
             if action in ("handled", "close"):
                 return
             for name, x, y, width, height, action in self.tavern_hotspots:
@@ -150,7 +154,9 @@ class TavernScene:
                 self.finished = True
                 return
         if event.type == pygame.KEYDOWN:
-            if event.key == pygame.K_ESCAPE:
+            if event.key in (pygame.K_RETURN, pygame.K_b):
+                self.finished = True
+            elif event.key == pygame.K_ESCAPE:
                 self.cancelled = True
                 self.finished = True
 
@@ -228,7 +234,7 @@ class TavernScene:
             gold=int(character.get("gold", 0))
         )
         
-        if not currency.has_enough_copper(drink["price"]):
+        if not currency.has_enough(copper=drink["price"]):
             self.tavern_shop.show_error("ХАЛЯВЫ НЕТ! хочешь выпить иди на задний двор!")
             return
         
@@ -259,11 +265,7 @@ class TavernScene:
             self.tavern_shop.show_error(f"Ошибка покупки: {error_msg}")
 
     def _save_profile_card(self, profile):
-        try:
-            saved_profile = self.session.save_character_profile(profile)
-        except ServerError as error:
-            self.tavern_shop.show_error(str(error))
-            return
+        saved_profile = self.session.save_character_profile(profile)
         if saved_profile is not None:
             self.profile_overlay.update_counterpart(saved_profile)
 
@@ -283,7 +285,7 @@ class TavernScene:
                 {
                     "id": drink.get("id", 1),
                     "name": drink.get("name", "Неизвестный напиток"),
-                    "price": int(drink.get("price_copper", 0)),
+                    "price": drink.get("price_copper", 0),
                     "effect": drink.get("effect", "recovery"),
                     "description": drink.get("description", "")
                 }
