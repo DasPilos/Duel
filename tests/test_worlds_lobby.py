@@ -25,6 +25,8 @@ class WorldsAndLobbyTests(unittest.TestCase):
         now = time.time()
         first, second, third = self.world_ids[:3]
         self._set_world(first, opens_at=now - 60, closes_at=now + 3600, server_url="http://127.0.0.1:9001")
+        with self.database.connection() as connection:
+            connection.execute("UPDATE worlds SET mode = %s WHERE id = %s", ("deck", first))
         self._set_world(second, status="closed")
         self._set_world(third, closes_at=now - 1)
 
@@ -32,6 +34,7 @@ class WorldsAndLobbyTests(unittest.TestCase):
 
         self.assertTrue(worlds[first]["is_open"])
         self.assertEqual(worlds[first]["server_url"], "http://127.0.0.1:9001")
+        self.assertEqual(worlds[first]["mode"], "deck")
         self.assertFalse(worlds[second]["is_open"])
         self.assertFalse(worlds[third]["is_open"])
 
@@ -85,6 +88,7 @@ class WorldsAndLobbyTests(unittest.TestCase):
         world = next(item for item in worlds if item["id"] == first)
         self.assertTrue(world["is_open"])
         self.assertEqual(world["server_url"], "http://127.0.0.1:9002")
+        self.assertEqual(world["mode"], "tower")
         self.assertIn("route-player", [player["username"] for player in lobby])
 
 

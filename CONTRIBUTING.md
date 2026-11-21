@@ -24,6 +24,8 @@ python -m unittest discover -s tests -q
 
 ## Rules
 
+- Treat every game mode as a separate game with its own rules. In map creation and editing, the selected mode determines the available mob and character settings, stats, controls, layouts, and other features. Do not copy or assume that a setting, stat, UI branch, placement rule, or feature in one mode applies to another. Share behavior only when it is intentionally mode-agnostic.
+- Palette sprites are reusable visual assets, not shared gameplay definitions. Each mode may use the same sprite for a different role or behavior; keep sprite interpretation and gameplay configuration mode-specific.
 - The server is authoritative for shared state: economy, population, production, and combat results.
 - Every world-owned database read or write includes `world_id`.
 - Check character ownership through the authenticated user before accepting a character-scoped request.

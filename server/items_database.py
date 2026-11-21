@@ -47,6 +47,7 @@ CATALOG = (
     (11, "Листья травы", "material", "common", 0.05, 15, "Используется для зелий", 0, None, None, "herb", None),
     (12, "Кость дракона", "material", "epic", 1.0, 5000000, "Редкий материал для крафта", 0, None, None, "bone", None),
     (13, "Кристалл маны", "material", "rare", 0.2, 3000000, "Источник магической энергии", 0, None, None, "crystal", None),
+    (14, "Кристалл", "material", "common", 0.2, 100000, "Добыт из кристалла в мире", 0, None, None, "crystal", None),
 
     # Базовые материалы мира
     (60, "Древесина", "material", "common", 4.0, 20, "Добывается в поселении лесовиков и в лесу", 0, None, None, "material_wood", None),
@@ -127,6 +128,19 @@ def _item_payload(row) -> Dict:
     return item
 
 
+# Стартовый набор инструментов выдаётся экономикой. Во Front Line такие предметы не показываются
+# (в базе они остаются): у героя Front Line этих инструментов быть не должно.
+HIDDEN_ITEMS_BY_MODE = {"front_line": BASE_STARTER_EQUIPMENT}
+
+
+def hidden_items_for_mode(mode):
+    return frozenset(HIDDEN_ITEMS_BY_MODE.get(str(mode), ()))
+
+
+def _item_id_of(item):
+    return int(item.get("item_id", item.get("id", -1)) or -1)
+
+
 def is_two_handed(item):
     return bool((item or {}).get("effects", {}).get("two_handed"))
 
@@ -151,6 +165,7 @@ class ItemsDatabase:
             database: Экземпляр Database для работы с БД
         """
         self.db = database
+        self.hidden_item_ids = frozenset()
         self._initialize_items_catalog()
 
     def _initialize_items_catalog(self):
@@ -228,6 +243,14 @@ class ItemsDatabase:
             ).fetchall()
         return {str(row["id"]): _item_payload(row) for row in rows}
 
+    def get_all_catalog_items(self) -> list:
+        """Return the complete catalog for the map editor's equipment inventory."""
+        with self.db.connection() as connection:
+            rows = connection.execute(
+                f"SELECT c.id, {_ITEM_COLUMNS} FROM items_catalog c ORDER BY c.id",
+            ).fetchall()
+        return [_item_payload(row) for row in rows]
+
     def create_item(self, moderator_id, form) -> Dict:
         """Новый предмет экипировки из формы редактора карт. Только модератор; id от CUSTOM_ITEM_FIRST_ID."""
         if not self.db.is_moderator(moderator_id):
@@ -251,6 +274,53 @@ class ItemsDatabase:
             )
         return record
 
+    def update_item(self, moderator_id, item_id, form) -> Dict:
+        """Update an editor-created equipment item without changing its id or type."""
+        if not self.db.is_moderator(moderator_id):
+            raise ValueError("Недостаточно прав модератора")
+        try:
+            item_id = int(item_id)
+        except (TypeError, ValueError):
+            raise ValueError("Некорректный id предмета") from None
+        if item_id < item_form.CUSTOM_ITEM_FIRST_ID:
+            raise ValueError("Можно редактировать только предметы, созданные в редакторе")
+        with self.db.connection() as connection:
+            existing = connection.execute(
+                "SELECT id, item_type, icon FROM items_catalog WHERE id = %s FOR UPDATE",
+                (item_id,),
+            ).fetchone()
+            if existing is None or existing["item_type"] != "equipment":
+                raise ValueError("Пользовательский предмет экипировки не найден")
+            clean_form = dict(form) if isinstance(form, dict) else form
+            previous_icon = existing["icon"]
+            if (
+                isinstance(clean_form, dict)
+                and clean_form.get("icon") == previous_icon
+                and previous_icon
+                and not item_form.item_icons.is_known_icon(previous_icon)
+            ):
+                clean_form["icon"] = None
+                preserve_icon = True
+            else:
+                preserve_icon = False
+            record = item_form.build_item(clean_form, item_id)
+            if preserve_icon:
+                record["icon"] = previous_icon
+            connection.execute(
+                """UPDATE items_catalog
+                   SET name = %s, rarity = %s, weight = %s, price = %s, description = %s,
+                       can_use = %s, effects_json = %s, bonuses_json = %s, icon = %s, equip_slot = %s
+                   WHERE id = %s AND item_type = 'equipment'""",
+                (
+                    record["name"], record["rarity"], record["weight"], record["price"],
+                    record["description"], record["can_use"],
+                    json.dumps(record["effects"], ensure_ascii=False) if record["effects"] else None,
+                    json.dumps(record["bonuses"], ensure_ascii=False) if record["bonuses"] else None,
+                    record["icon"], record["equip_slot"], item_id,
+                ),
+            )
+        return record
+
     def get_equipment_items(self, slots) -> list:
         """Экипировка каталога по слотам (например weapon, shield) для выбора в редакторе карт, по id."""
         slots = sorted({str(slot) for slot in slots if slot in EQUIPMENT_SLOTS})
@@ -260,6 +330,14 @@ class ItemsDatabase:
             rows = connection.execute(
                 f"SELECT c.id, {_ITEM_COLUMNS} FROM items_catalog c WHERE c.item_type = 'equipment' AND c.equip_slot = ANY(%s) ORDER BY c.id",
                 (slots,),
+            ).fetchall()
+        return [_item_payload(row) for row in rows]
+
+    def get_material_items(self) -> list:
+        """Материалы каталога для выбора предмета добычи кристаллов в редакторе карт, по id."""
+        with self.db.connection() as connection:
+            rows = connection.execute(
+                f"SELECT c.id, {_ITEM_COLUMNS} FROM items_catalog c WHERE c.item_type = 'material' ORDER BY c.id",
             ).fetchall()
         return [_item_payload(row) for row in rows]
 
@@ -513,10 +591,10 @@ class ItemsDatabase:
                 SELECT i.id, i.item_id, i.quantity, i.slot_index, {_ITEM_COLUMNS}
                 FROM character_items i
                 JOIN items_catalog c ON i.item_id = c.id
-                WHERE i.character_id = %s
+                WHERE i.character_id = %s AND NOT (i.item_id = ANY(%s::integer[]))
                 ORDER BY i.slot_index
                 """,
-                (character_id,)
+                (character_id, sorted(self.hidden_item_ids)),
             ).fetchall()
             return [_item_payload(row) for row in rows]
 
@@ -707,7 +785,11 @@ class ItemsDatabase:
     def get_equipment(self, character_id: int) -> Dict[str, Dict]:
         """Получает экипировку персонажа: {slot: предмет}"""
         with self.db.connection() as connection:
-            return self.db.equipped_items(connection, character_id)
+            equipment = self.db.equipped_items(connection, character_id)
+        return {
+            slot: item for slot, item in equipment.items()
+            if _item_id_of(item) not in self.hidden_item_ids
+        }
 
     def get_stat_bonuses(self, character_id: int) -> Dict[str, int]:
         """Получает все бонусы к статам от экипировки"""
@@ -732,3 +814,104 @@ class ItemsDatabase:
             ).fetchall()
 
             return [dict(row) for row in rows]
+
+    def transfer_storage(
+        self,
+        character_id: int,
+        storage_type: str,
+        direction: str,
+        quantity: int,
+        slot_index: Optional[int] = None,
+        storage_item_id: Optional[int] = None,
+    ) -> None:
+        """Перемещает указанное количество предметов между рюкзаком и сундуком."""
+        storage_type = str(storage_type)
+        direction = str(direction)
+        try:
+            quantity = int(quantity)
+        except (TypeError, ValueError) as error:
+            raise ValueError("Некорректное количество предметов") from error
+        storage_capacities = {"chest1": 80, "chest2": 100}
+        if storage_type not in storage_capacities:
+            raise ValueError("Неизвестный сундук")
+        if direction not in ("deposit", "withdraw") or quantity <= 0:
+            raise ValueError("Некорректное направление или количество предметов")
+
+        with self.db.connection() as connection:
+            lock_character(connection, int(character_id))
+            if direction == "deposit":
+                if slot_index is None:
+                    raise ValueError("Не указана ячейка рюкзака")
+                source = self._slot_row(connection, int(character_id), self._check_slot(slot_index))
+                if source is None or int(source["quantity"]) < quantity:
+                    raise ValueError("В выбранной ячейке недостаточно предметов")
+                item_id = int(source["item_id"])
+                item = self._catalog_item(connection, item_id)
+                stack_limit = self._stack_limit(item)
+                stacks = connection.execute(
+                    """SELECT id, quantity FROM character_storage
+                       WHERE character_id = %s AND storage_type = %s AND item_id = %s
+                       ORDER BY slot_index FOR UPDATE""",
+                    (int(character_id), storage_type, item_id),
+                ).fetchall()
+                room_in_stacks = sum(stack_limit - int(row["quantity"]) for row in stacks)
+                occupied_rows = connection.execute(
+                    """SELECT slot_index FROM character_storage
+                       WHERE character_id = %s AND storage_type = %s""",
+                    (int(character_id), storage_type),
+                ).fetchall()
+                used_slots = {
+                    int(row["slot_index"]) for row in occupied_rows
+                    if row["slot_index"] is not None
+                }
+                free_slots = [
+                    index for index in range(storage_capacities[storage_type])
+                    if index not in used_slots
+                ]
+                slots_needed = max(0, quantity - room_in_stacks + stack_limit - 1) // stack_limit
+                if len(occupied_rows) + slots_needed > storage_capacities[storage_type] or slots_needed > len(free_slots):
+                    raise ValueError("В сундуке недостаточно свободных ячеек")
+
+                remaining = quantity
+                for row in stacks:
+                    added = min(stack_limit - int(row["quantity"]), remaining)
+                    if added > 0:
+                        connection.execute(
+                            "UPDATE character_storage SET quantity = quantity + %s WHERE id = %s",
+                            (added, row["id"]),
+                        )
+                        remaining -= added
+                    if remaining <= 0:
+                        break
+                now = time.time()
+                for storage_slot in free_slots[:slots_needed]:
+                    added = min(stack_limit, remaining)
+                    connection.execute(
+                        """INSERT INTO character_storage
+                           (character_id, storage_type, item_id, quantity, slot_index, created_at)
+                           VALUES (%s, %s, %s, %s, %s, %s)""",
+                        (int(character_id), storage_type, item_id, added, storage_slot, now),
+                    )
+                    remaining -= added
+                self._take_from_row(connection, source, quantity)
+                return
+
+            if storage_item_id is None:
+                raise ValueError("Не указана ячейка сундука")
+            source = connection.execute(
+                """SELECT * FROM character_storage
+                   WHERE id = %s AND character_id = %s AND storage_type = %s
+                   FOR UPDATE""",
+                (int(storage_item_id), int(character_id), storage_type),
+            ).fetchone()
+            if source is None or int(source["quantity"]) < quantity:
+                raise ValueError("В выбранной ячейке сундука недостаточно предметов")
+            if not self._add_items(connection, int(character_id), int(source["item_id"]), quantity):
+                raise ValueError("В рюкзаке недостаточно места или превышен лимит переносимого веса")
+            if int(source["quantity"]) == quantity:
+                connection.execute("DELETE FROM character_storage WHERE id = %s", (source["id"],))
+            else:
+                connection.execute(
+                    "UPDATE character_storage SET quantity = quantity - %s WHERE id = %s",
+                    (quantity, source["id"]),
+                )

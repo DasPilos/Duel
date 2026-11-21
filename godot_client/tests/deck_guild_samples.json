@@ -1,0 +1,52 @@
+{
+ "quests": [
+  {
+   "id": "kill_kobold",
+   "title": "Убить кобольда",
+   "description": "Кобольды тревожат путников. Победите одного кобольда на арене.",
+   "target": "kobold",
+   "count": 1,
+   "reward_coins": 10
+  },
+  {
+   "id": "kill_3_kobolds",
+   "title": "Убить 3 кобольдов",
+   "description": "Кобольды собрались в лагерь. Победите трёх кобольдов — в лагере или поодиночке.",
+   "target": "kobold",
+   "count": 3,
+   "reward_coins": 40
+  },
+  {
+   "id": "kill_ancient_ent",
+   "title": "Убить Древнего энта",
+   "description": "Найдите Древнего энта и победите его.",
+   "target": "ancient_ent",
+   "count": 1,
+   "reward_coins": 160
+  },
+  {
+   "id": "kill_skeleton",
+   "title": "Убить скелета",
+   "description": "Очистите кладбище от скелета.",
+   "target": "skeleton",
+   "count": 1,
+   "reward_coins": 45
+  },
+  {
+   "id": "kill_necromancer",
+   "title": "Убить некромансера",
+   "description": "Победите некромансера, обосновавшегося на кладбище.",
+   "target": "necromancer",
+   "count": 1,
+   "reward_coins": 100
+  },
+  {
+   "id": "clear_dungeon",
+   "title": "Зачистить подземелье",
+   "description": "Пройдите все комнаты подземелья, победите Короля скелетов и заберите сокровища.",
+   "target": "dungeon_clear",
+   "count": 1,
+   "reward_coins": 780
+  }
+ ]
+}

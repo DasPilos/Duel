@@ -230,7 +230,7 @@ class ServerMonitor:
         rx, tx = data["network_rates"]
         online = "unknown" if data["online"] is None else str(data["online"])
         api_status = "OK" if data["api_healthy"] else "DOWN"
-        title = f"DUEL SERVER MONITOR  {data['host']}  {data['time']:%Y-%m-%d %H:%M:%S %Z}"
+        title = f"MULTIVERSE SERVER MONITOR  {data['host']}  {data['time']:%Y-%m-%d %H:%M:%S %Z}"
         lines = [
             title[:width], separator,
             f"GAME       {data['game_status'].upper():<10}   API {api_status:<8}   ONLINE {online}",

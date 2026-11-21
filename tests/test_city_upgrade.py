@@ -3,13 +3,13 @@ import time
 import unittest
 
 from core.production_buildings import building_level_info
-from server.city_population import CityPopulation
+from economy.server.city_population import CityPopulation
 from core.city_progression import (
     CITY_UPGRADE_RESOURCE_UNLOCK_LEVELS,
     city_population_capacity,
     city_upgrade_resources,
 )
-from server.city_upgrade import (
+from economy.server.city_upgrade import (
     UPGRADE_TICK_SECONDS,
     city_upgrade_cycle_cost,
     city_upgrade_drain_per_tick,
@@ -17,7 +17,7 @@ from server.city_upgrade import (
     city_upgrade_payload,
     process_city_upgrade,
 )
-from server.production_buildings import ProductionBuildings
+from economy.server.production_buildings import ProductionBuildings
 from tests.fixtures import create_test_database, drop_test_database
 
 

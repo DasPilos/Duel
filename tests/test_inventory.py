@@ -231,6 +231,46 @@ class InventoryTests(unittest.TestCase):
         wood = [item for item in self.items.get_inventory(self.character_id) if item["item_id"] == 60]
         self.assertEqual(sum(item["quantity"] for item in wood), 2)
 
+    def test_editor_item_update_endpoint_keeps_id_and_rejects_builtin_items(self):
+        form = {
+            "name": "Клинок редактора",
+            "slot": "weapon",
+            "damage_min": 2,
+            "damage_max": 5,
+            "bonuses": {"strength": 1},
+        }
+        with patch.object(self.database, "is_moderator", return_value=True):
+            item = self.items.create_item(self.user_id, form)
+            with self.database.connection() as connection:
+                connection.execute(
+                    "UPDATE items_catalog SET icon = %s WHERE id = %s",
+                    ("retired_custom_icon", item["id"]),
+                )
+            with running_server(self.database) as client:
+                client.login("tester", "password")
+                updated = client._request(
+                    "PUT",
+                    f"/api/items/catalog/{item['id']}",
+                    {"form": {
+                        **form,
+                        "name": "Клинок усиленный",
+                        "bonuses": {"strength": 4},
+                        "icon": "retired_custom_icon",
+                    }},
+                    authenticated=True,
+                )["item"]
+                self.assertEqual(updated["id"], item["id"])
+                self.assertEqual(updated["name"], "Клинок усиленный")
+                self.assertEqual(updated["bonuses"]["strength"], 4)
+                self.assertEqual(updated["icon"], "retired_custom_icon")
+                with self.assertRaisesRegex(ServerError, "только предметы"):
+                    client._request(
+                        "PUT",
+                        "/api/items/catalog/20",
+                        {"form": form},
+                        authenticated=True,
+                    )
+
     def test_partial_inventory_add_fills_only_available_stack_capacity(self):
         self.set_strength(100)
         self.items.add_to_inventory(self.character_id, 60, 8)

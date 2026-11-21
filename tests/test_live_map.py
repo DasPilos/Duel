@@ -2,9 +2,11 @@ import random
 import unittest
 from unittest import mock
 
-from server import structures, world_map, world_mobs, world_roads
+from server import structures, world_map
+from economy.server import world_roads
+from tower.server import world_mobs
 from server.map_editor import terrain_from_cells
-from server.world_mobs import WorldService
+from tower.server.world_mobs import WorldService
 from tests.test_world_mobs import FakeClock, FakeDatabase, FakeItems
 
 
@@ -16,6 +18,8 @@ CATALOG = [
     {"item_key": "object:rock_01", "kind": "object", "category": "rock", "asset": "", "footprint_w": 1, "footprint_h": 1, "blocks": True},
     {"item_key": "object:log_1", "kind": "object", "category": "log", "asset": "", "footprint_w": 2, "footprint_h": 1, "blocks": True},
     {"item_key": "object:bridge_horizontal", "kind": "object", "category": "bridge", "asset": "", "footprint_w": 6, "footprint_h": 4, "blocks": False},
+    {"item_key": "animal_duck_water", "kind": "object", "category": "animal", "asset": "", "footprint_w": 1, "footprint_h": 1, "blocks": True},
+    {"item_key": "animal_buffalo", "kind": "object", "category": "animal", "asset": "", "footprint_w": 1, "footprint_h": 1, "blocks": True},
 ]
 
 
@@ -58,6 +62,22 @@ class TerrainFromCellsTest(unittest.TestCase):
         self.assertIn([13, 13], terrain["bridges"][0]["tiles"])
         self.assertEqual(len(terrain["bridges"][0]["tiles"]), 24)
 
+    def test_map_animals_are_separate_from_static_obstacles(self):
+        terrain = terrain_from_cells([
+            cell("object", 5, 5, "animal_duck_water"),
+            cell("object", 7, 7, "animal_buffalo"),
+            cell("object", 9, 9, "object:tree1"),
+        ], CATALOG)
+        self.assertEqual(
+            terrain["animals"],
+            [
+                {"key": "animal_duck_water", "x": 5, "y": 5, "id": "animal_0_animal_duck_water"},
+                {"key": "animal_buffalo", "x": 7, "y": 7, "id": "animal_1_animal_buffalo"},
+            ],
+        )
+        self.assertNotIn((5, 5), terrain["impassable"])
+        self.assertIn((9, 9), terrain["wildlife_blocked"])
+
     def test_unknown_keys_are_ignored(self):
         terrain = terrain_from_cells([cell("object", 1, 1, "object:missing")], CATALOG)
         self.assertEqual(terrain["forest"], frozenset())
@@ -86,6 +106,17 @@ class LiveTerrainTest(unittest.TestCase):
         payload = world_map.terrain_payload()
         self.assertEqual(payload["map"]["version"], before + 1)
         self.assertEqual(payload["tiles"]["water"], [[2, 2, 2]])
+
+    def test_published_animal_positions_are_exposed_to_the_live_world(self):
+        terrain = terrain_from_cells([
+            cell("object", 5, 5, "animal_duck_water"),
+        ], CATALOG)
+        world_map.apply_live_terrain(terrain, PUBLISHED)
+        payload = world_map.terrain_payload()
+        self.assertEqual(world_map.TOWER_ANIMALS[0]["key"], "animal_duck_water")
+        self.assertEqual(payload["animals"], [world_map.TOWER_ANIMALS[0]])
+        self.assertNotIn((5, 5), world_map.TOWER_BLOCKED_TILES)
+        self.assertNotIn((5, 5), world_map.TOWER_IMPASSABLE_TILES)
 
     def test_empty_map_restores_procedural_terrain(self):
         original_water = world_map.TOWER_WATER_TILES
@@ -130,6 +161,37 @@ class LiveRelocationTest(unittest.TestCase):
         player = next(iter(self.service._players.values()))
         snapshot = self.service._snapshot(player, 0, True)
         self.assertEqual(snapshot["terrain_version"], world_map.TERRAIN_VERSION)
+
+    def test_animals_wander_without_leaving_their_terrain_or_fifty_tile_radius(self):
+        cells = [
+            cell("ground", x, y, "ground:water_1")
+            for x in range(10, 25) for y in range(10, 25)
+        ]
+        cells.extend([
+            cell("object", 12, 12, "animal_duck_water"),
+            cell("object", 30, 30, "animal_buffalo"),
+            cell("object", 31, 30, "object:tree1"),
+        ])
+        world_map.apply_live_terrain(terrain_from_cells(cells, CATALOG), PUBLISHED)
+        service = WorldService(FakeDatabase({1: 7}), FakeItems(), clock=FakeClock(), rng=random.Random(3))
+        duck = next(animal for animal in service._wildlife.values() if animal.aquatic)
+        land = next(animal for animal in service._wildlife.values() if not animal.aquatic)
+        initial = (duck.x, duck.y)
+        self.assertTrue(service._wildlife_position_blocked(duck, 30 * 32 + 16, 30 * 32 + 16))
+        self.assertTrue(service._wildlife_position_blocked(land, 12 * 32 + 16, 12 * 32 + 16))
+        self.assertFalse(service._wildlife_within_radius(duck, duck.home_x + 50 * 32 + 1, duck.home_y))
+
+        for _ in range(1200):
+            service._update_wildlife(0.25)
+            for animal in service._wildlife.values():
+                self.assertTrue(service._wildlife_within_radius(animal, animal.x, animal.y))
+                self.assertFalse(service._wildlife_position_blocked(animal, animal.x, animal.y))
+                if animal.aquatic:
+                    tile = (int(animal.x // 32), int(animal.y // 32))
+                    self.assertIn(tile, world_map.TOWER_WATER_TILES)
+        self.assertNotEqual((duck.x, duck.y), initial)
+        snapshot = service.sync(7, 1, {"x": 40 * 32 + 16, "y": 40 * 32 + 16})
+        self.assertEqual({animal["id"] for animal in snapshot["animals"]}, set(service._wildlife))
 
 
 class LivePublishTest(unittest.TestCase):

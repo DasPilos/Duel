@@ -1,14 +1,19 @@
 import atexit
+import base64
+import binascii
 import hashlib
 import hmac
 import json
 import secrets
+import struct
 import threading
 import time
+import uuid
 from urllib.parse import urlparse
 from contextlib import contextmanager
 from datetime import datetime
 from zoneinfo import ZoneInfo
+import zlib
 
 from psycopg import errors as pg_errors
 from psycopg.rows import dict_row
@@ -25,10 +30,83 @@ from combat.character_stats import (
 )
 from core.currency import Currency
 from core.game_modes import is_mode
+from core.map_editor_assets import read_catalog_asset
 from server import config, map_editor
+from server import map_palette
 from server.migrations import apply_migrations
+from server.mode_registry import get_mode
 
 SYSTEM_USER_ID = 0
+CUSTOM_TILE_CATEGORIES = frozenset({"grass", "mountain", "water", "road", "forest"})
+CUSTOM_TILE_SIZE = 16
+CUSTOM_TILE_MAX_BYTES = 64 * 1024
+CUSTOM_TILE_GROUP_MAX_BYTES = 256 * 1024
+
+
+def _decode_custom_tile_png(encoded):
+    if not isinstance(encoded, str):
+        raise ValueError("Каждый тайл группы должен быть PNG-изображением")
+    try:
+        image = base64.b64decode(encoded, validate=True)
+    except (ValueError, binascii.Error):
+        raise ValueError("Некорректное кодирование PNG тайла") from None
+    if len(image) > CUSTOM_TILE_MAX_BYTES or not image.startswith(b"\x89PNG\r\n\x1a\n"):
+        raise ValueError("PNG тайла повреждён или слишком велик")
+
+    offset = 8
+    image_data = bytearray()
+    width = height = color_type = 0
+    seen_header = seen_end = False
+    while offset + 12 <= len(image):
+        chunk_size = struct.unpack_from(">I", image, offset)[0]
+        chunk_end = offset + 12 + chunk_size
+        if chunk_end > len(image):
+            raise ValueError("PNG тайла содержит неполный блок")
+        chunk_type = image[offset + 4:offset + 8]
+        chunk_data = image[offset + 8:offset + 8 + chunk_size]
+        expected_crc = struct.unpack_from(">I", image, offset + 8 + chunk_size)[0]
+        if zlib.crc32(chunk_type + chunk_data) & 0xFFFFFFFF != expected_crc:
+            raise ValueError("PNG тайла содержит неверную контрольную сумму")
+        if chunk_type == b"IHDR":
+            if seen_header or chunk_size != 13:
+                raise ValueError("PNG тайла содержит неверный заголовок")
+            width, height, bit_depth, color_type, compression, filtering, interlace = struct.unpack(
+                ">IIBBBBB", chunk_data
+            )
+            if (
+                width != CUSTOM_TILE_SIZE or height != CUSTOM_TILE_SIZE
+                or bit_depth != 8 or color_type not in (2, 6)
+                or compression != 0 or filtering != 0 or interlace != 0
+            ):
+                raise ValueError("Каждый тайл группы должен быть PNG 16×16 с 8-битным цветом")
+            seen_header = True
+        elif chunk_type == b"IDAT":
+            if not seen_header or seen_end:
+                raise ValueError("PNG тайла содержит неверный порядок блоков")
+            image_data.extend(chunk_data)
+        elif chunk_type == b"IEND":
+            if chunk_size != 0 or not seen_header:
+                raise ValueError("PNG тайла содержит неверный конец")
+            seen_end = True
+            offset = chunk_end
+            break
+        elif chunk_type[0] & 0x20 == 0:
+            raise ValueError("PNG тайла содержит неподдерживаемый блок")
+        elif not seen_header or seen_end:
+            raise ValueError("PNG тайла содержит неверный порядок блоков")
+        offset = chunk_end
+    if not seen_end or offset != len(image) or not image_data:
+        raise ValueError("PNG тайла не завершён")
+
+    expected_size = height * (1 + width * (4 if color_type == 6 else 3))
+    decompressor = zlib.decompressobj()
+    decoded = decompressor.decompress(bytes(image_data), expected_size + 1)
+    if len(decoded) > expected_size or decompressor.unconsumed_tail:
+        raise ValueError("Содержимое PNG тайла имеет неверный размер")
+    decoded += decompressor.flush()
+    if not decompressor.eof or len(decoded) != expected_size:
+        raise ValueError("PNG тайла содержит неверные пиксельные данные")
+    return image
 
 # One pool per (dsn, schema) for the whole process: bot chat, bot battles and HTTP handlers share it.
 _POOLS = {}
@@ -43,7 +121,7 @@ def _shared_pool(dsn, schema):
             return entry
         kwargs = {"row_factory": dict_row}
         if schema:
-            kwargs["options"] = f"-c search_path={schema}"
+            kwargs["options"] = f"-c search_path={schema},public"
         pool = ConnectionPool(
             dsn,
             min_size=config.DB_POOL_MIN_SIZE,
@@ -82,12 +160,21 @@ def close_all_pools():
 atexit.register(close_all_pools)
 
 
+# Правило только экономического сервера (Economy): монеты нового персонажа при создании.
+# Другие режимы (Front Line и далее) этим значением не управляют: их стартовый кошелёк задаётся в своём коде.
+STARTING_CHARACTER_COPPER = 1000
+
+
 class Database:
-    def __init__(self, dsn=None, *, schema=None, world_id=None):
+    def __init__(self, dsn=None, *, schema=None, world_id=None, central=False):
         self.dsn = dsn or config.DATABASE_URL
-        self.schema = schema
-        self.world_id = config.WORLD_ID if world_id is None else int(world_id)
-        self._entry = _shared_pool(self.dsn, schema)
+        self.central = bool(central)
+        self.schema = schema if schema is not None else (None if self.central else config.GAME_SCHEMA)
+        if central and world_id is not None:
+            raise ValueError("A central database connection cannot be bound to a gameplay world")
+        configured_world = None if central else (config.WORLD_ID if world_id is None else world_id)
+        self.world_id = None if configured_world is None else int(configured_world)
+        self._entry = _shared_pool(self.dsn, self.schema)
         self.initialize()
 
     @contextmanager
@@ -108,15 +195,18 @@ class Database:
                 self._initialize_schema()
                 self._entry["initialized"] = True
         with self.connection() as connection:
-            if connection.execute("SELECT 1 FROM worlds WHERE id = %s", (self.world_id,)).fetchone() is None:
+            if self.world_id is not None and connection.execute(
+                "SELECT 1 FROM worlds WHERE id = %s", (self.world_id,)
+            ).fetchone() is None:
                 raise RuntimeError(f"Мир WORLD_ID={self.world_id} не найден в таблице worlds")
 
     def _initialize_schema(self):
         with self.connection() as connection:
-            apply_migrations(connection)
-            self._initialize_drinks(connection)
+            apply_migrations(connection, schema=None if self.central else self.schema)
             self._initialize_map_catalog(connection)
-            self._normalize_character_stats(connection)
+            if not self.central:
+                self._initialize_drinks(connection)
+                self._normalize_character_stats(connection)
 
     @staticmethod
     def _initialize_map_catalog(connection):
@@ -125,13 +215,14 @@ class Database:
         for item in items:
             connection.execute(
                 """INSERT INTO map_catalog
-                   (item_key, kind, category, asset, footprint_w, footprint_h, blocks, sort_order)
+                   (item_key, kind, category, asset, footprint_w, footprint_h, blocks, sort_order, editor_layer)
                    VALUES (%(item_key)s, %(kind)s, %(category)s, %(asset)s,
-                           %(footprint_w)s, %(footprint_h)s, %(blocks)s, %(sort_order)s)
+                           %(footprint_w)s, %(footprint_h)s, %(blocks)s, %(sort_order)s, %(editor_layer)s)
                    ON CONFLICT (item_key) DO UPDATE SET
                        kind = EXCLUDED.kind, category = EXCLUDED.category, asset = EXCLUDED.asset,
                        footprint_w = EXCLUDED.footprint_w, footprint_h = EXCLUDED.footprint_h,
-                       blocks = EXCLUDED.blocks, sort_order = EXCLUDED.sort_order""",
+                       blocks = EXCLUDED.blocks, sort_order = EXCLUDED.sort_order,
+                       editor_layer = EXCLUDED.editor_layer""",
                 item,
             )
         connection.execute(
@@ -208,14 +299,20 @@ class Database:
 
     @staticmethod
     def _user_payload(row):
-        return {"id": row["id"], "username": row["username"], "role": row["role"] if "role" in row.keys() else "user"}
+        return {
+            "id": row["id"],
+            "username": row["username"],
+            "role": row["role"] if "role" in row.keys() else "user",
+            "game_nickname": row["game_nickname"] if "game_nickname" in row.keys() else "",
+        }
 
     def register(self, username, password):
         now = time.time()
         try:
             with self.connection() as connection:
                 row = connection.execute(
-                    "INSERT INTO users (username, password_hash, created_at) VALUES (%s, %s, %s) RETURNING id, username",
+                    """INSERT INTO users (username, password_hash, created_at)
+                       VALUES (%s, %s, %s) RETURNING id, username, game_nickname""",
                     (username, self._password_hash(password), now),
                 ).fetchone()
         except pg_errors.UniqueViolation as error:
@@ -226,7 +323,8 @@ class Database:
         now = time.time()
         with self.connection() as connection:
             row = connection.execute(
-                "SELECT id, username, password_hash FROM users WHERE username = %s AND id <> %s",
+                """SELECT id, username, password_hash, role, game_nickname
+                   FROM users WHERE username = %s AND id <> %s""",
                 (username, SYSTEM_USER_ID),
             ).fetchone()
             if row is None or not self._check_password(password, row["password_hash"]):
@@ -242,13 +340,106 @@ class Database:
             )
         return {"token": token, "user": self._user_payload(row)}
 
+    def change_password(self, user_id, token, current_password, new_password):
+        if not 6 <= len(new_password) <= 128:
+            raise ValueError("Новый пароль должен содержать 6-128 символов")
+        with self.connection() as connection:
+            session = connection.execute(
+                "SELECT 1 FROM sessions WHERE token = %s AND user_id = %s AND world_id IS NULL",
+                (token, user_id),
+            ).fetchone()
+            if session is None:
+                raise ValueError("Сессия аккаунта недействительна")
+            row = connection.execute(
+                "SELECT password_hash FROM users WHERE id = %s AND id <> %s",
+                (user_id, SYSTEM_USER_ID),
+            ).fetchone()
+            if row is None or not self._check_password(current_password, row["password_hash"]):
+                raise ValueError("Текущий пароль указан неверно")
+            connection.execute(
+                "UPDATE users SET password_hash = %s WHERE id = %s",
+                (self._password_hash(new_password), user_id),
+            )
+            connection.execute(
+                "DELETE FROM sessions WHERE user_id = %s AND token <> %s",
+                (user_id, token),
+            )
+            user = connection.execute(
+                "SELECT id, username, role, game_nickname FROM users WHERE id = %s",
+                (user_id,),
+            ).fetchone()
+        return self._user_payload(user)
+
+    def change_game_nickname(self, user_id, token, game_nickname):
+        if not self.central:
+            raise RuntimeError("Game nicknames are changed only in the central database")
+        nickname = str(game_nickname).strip()
+        if not 2 <= len(nickname) <= 24 or any(ord(char) < 32 or ord(char) == 127 for char in nickname):
+            raise ValueError("Игровой псевдоним должен содержать 2-24 символа")
+        with self.connection() as connection:
+            session = connection.execute(
+                "SELECT 1 FROM sessions WHERE token = %s AND user_id = %s AND world_id IS NULL",
+                (token, user_id),
+            ).fetchone()
+            if session is None:
+                raise ValueError("Сессия аккаунта недействительна")
+            user = connection.execute(
+                """UPDATE users SET game_nickname = %s WHERE id = %s
+                   RETURNING id, username, role, game_nickname""",
+                (nickname, user_id),
+            ).fetchone()
+        if user is None:
+            raise ValueError("Пользователь не найден")
+        return self._user_payload(user)
+
+    def connect_to_world(self, central_token, world_id):
+        if not self.central:
+            raise RuntimeError("Only the central server can create a world session")
+        user_id = self.user_id_by_token(central_token)
+        now = time.time()
+        with self.connection() as connection:
+            world = connection.execute(
+                """SELECT id, code, name, status, mode, server_url, test_only, opens_at, closes_at
+                   FROM worlds WHERE id = %s""",
+                (int(world_id),),
+            ).fetchone()
+            if world is None or world["code"] == "lobby":
+                raise ValueError("Игровой мир не найден")
+            if not self._world_payload(world, now)["is_open"]:
+                raise ValueError("Мир закрыт")
+            if not world["server_url"]:
+                raise ValueError("Сервер мира еще не запущен")
+            if world["test_only"] and not self.is_moderator(user_id):
+                raise ValueError("Этот мир пока тестовый: вход открыт модераторам и админам")
+            token = secrets.token_urlsafe(32)
+            connection.execute(
+                """INSERT INTO sessions (token, user_id, world_id, created_at, last_seen_at)
+                   VALUES (%s, %s, %s, %s, %s)""",
+                (token, user_id, int(world_id), now, now),
+            )
+            account = connection.execute(
+                "SELECT id, username, role, game_nickname FROM users WHERE id = %s", (user_id,)
+            ).fetchone()
+        return {"token": token, "user": self._user_payload(account)}
+
+    def game_nicknames(self, user_ids):
+        ids = sorted({int(user_id) for user_id in user_ids if int(user_id) > 0})
+        if not ids:
+            return {}
+        with self.connection() as connection:
+            rows = connection.execute(
+                "SELECT id, game_nickname FROM users WHERE id = ANY(%s)",
+                (ids,),
+            ).fetchall()
+        return {int(row["id"]): row["game_nickname"] for row in rows}
+
     def user_id_by_token(self, token):
         if not token:
             raise ValueError("Требуется авторизация")
         now = time.time()
         with self.connection() as connection:
             row = connection.execute(
-                "SELECT user_id FROM sessions WHERE token = %s AND world_id = %s AND last_seen_at > %s",
+                "SELECT user_id FROM sessions WHERE token = %s AND world_id IS NOT DISTINCT FROM %s AND last_seen_at > %s",
                 (token, self.world_id, now - config.TOKEN_TTL_SECONDS),
             ).fetchone()
             if row is None:
@@ -275,11 +466,29 @@ class Database:
         now = time.time() if now is None else float(now)
         with self.connection() as connection:
             rows = connection.execute(
-                "SELECT id, code, name, status, opens_at, closes_at, server_url, test_only FROM worlds ORDER BY id"
+                "SELECT id, code, name, mode, status, opens_at, closes_at, server_url, test_only, started_at "
+                "FROM worlds ORDER BY id"
             ).fetchall()
+            online_rows = connection.execute(
+                """SELECT world_id, COUNT(DISTINCT user_id) AS amount FROM sessions
+                   WHERE world_id IS NOT NULL AND user_id <> %s AND last_seen_at > %s
+                   GROUP BY world_id""",
+                (SYSTEM_USER_ID, now - config.ONLINE_PLAYER_TTL_SECONDS),
+            ).fetchall()
+        online = {row["world_id"]: int(row["amount"]) for row in online_rows}
         if viewer_id is None or not self.is_moderator(viewer_id):
             rows = [row for row in rows if not row["test_only"]]
-        return [self._world_payload(row, now) for row in rows]
+        return [self._world_list_payload(row, now, online.get(row["id"], 0)) for row in rows]
+
+    def _world_list_payload(self, row, now, online_players):
+        payload = self._world_payload(row, now)
+        payload.update({
+            "test_only": bool(row["test_only"]),
+            "started_at": row["started_at"],
+            "online_players": online_players,
+        })
+        return payload
+
 
     def _world_payload(self, row, now):
         is_open = (
@@ -291,6 +500,7 @@ class Database:
             "id": row["id"],
             "code": row["code"],
             "name": row["name"],
+            "mode": row["mode"],
             "is_open": is_open,
             "opens_at": row["opens_at"],
             "closes_at": row["closes_at"],
@@ -310,6 +520,118 @@ class Database:
                 (SYSTEM_USER_ID, now - config.ONLINE_PLAYER_TTL_SECONDS),
             ).fetchall()
         return [{"user_id": row["user_id"], "username": row["username"]} for row in rows]
+
+    def lobby_chat_history(self, limit=50, viewer_id=None):
+        """Общие сообщения лобби и личные сообщения, в которых участвует viewer_id."""
+        if not self.central:
+            raise RuntimeError("Lobby chat is available only in the central database")
+        limit = max(1, min(100, int(limit)))
+        cutoff = time.time() - config.CHAT_HISTORY_TTL_SECONDS
+        with self.connection() as connection:
+            connection.execute(
+                "DELETE FROM lobby_chat_messages WHERE created_at < %s",
+                (cutoff,),
+            )
+            rows = connection.execute(
+                """SELECT lobby_chat_messages.id, lobby_chat_messages.sender_user_id,
+                          sender.username, lobby_chat_messages.recipient_user_id,
+                          recipient.username AS recipient_username,
+                          lobby_chat_messages.text, lobby_chat_messages.created_at
+                   FROM lobby_chat_messages
+                   JOIN users sender ON sender.id = lobby_chat_messages.sender_user_id
+                   LEFT JOIN users recipient ON recipient.id = lobby_chat_messages.recipient_user_id
+                   WHERE lobby_chat_messages.created_at >= %s
+                     AND (lobby_chat_messages.recipient_user_id IS NULL
+                          OR lobby_chat_messages.sender_user_id = %s
+                          OR lobby_chat_messages.recipient_user_id = %s)
+                   ORDER BY lobby_chat_messages.id DESC
+                   LIMIT %s""",
+                (cutoff, viewer_id, viewer_id, limit),
+            ).fetchall()
+        return [self._lobby_chat_payload(row) for row in reversed(rows)]
+
+    def add_lobby_chat_message(self, user_id, text, recipient_user_id=None):
+        if not self.central:
+            raise RuntimeError("Lobby chat is available only in the central database")
+        message = str(text or "").strip()
+        if not message or len(message) > config.CHAT_MAX_LENGTH:
+            raise ValueError(f"Сообщение должно содержать от 1 до {config.CHAT_MAX_LENGTH} символов")
+        recipient = None
+        if recipient_user_id not in (None, ""):
+            try:
+                recipient = int(recipient_user_id)
+            except (TypeError, ValueError) as error:
+                raise ValueError("Некорректный получатель личного сообщения") from error
+            if recipient == user_id:
+                raise ValueError("Нельзя отправить личное сообщение самому себе")
+        now = time.time()
+        cutoff = now - config.CHAT_HISTORY_TTL_SECONDS
+        rate_cutoff = now - config.CHAT_RATE_LIMIT_WINDOW
+        with self.connection() as connection:
+            connection.execute(
+                "DELETE FROM lobby_chat_messages WHERE created_at < %s",
+                (cutoff,),
+            )
+            if recipient is not None and connection.execute(
+                "SELECT id FROM users WHERE id = %s AND id <> %s", (recipient, SYSTEM_USER_ID)
+            ).fetchone() is None:
+                raise ValueError("Получатель личного сообщения не найден")
+            recent = connection.execute(
+                """SELECT COUNT(*) AS amount FROM lobby_chat_messages
+                   WHERE sender_user_id = %s AND created_at >= %s""",
+                (user_id, rate_cutoff),
+            ).fetchone()["amount"]
+            if recent >= config.CHAT_RATE_LIMIT_COUNT:
+                raise ValueError("Слишком много сообщений. Попробуйте позже.")
+            message_id = connection.execute(
+                """INSERT INTO lobby_chat_messages (sender_user_id, recipient_user_id, text, created_at)
+                   VALUES (%s, %s, %s, %s) RETURNING id""",
+                (user_id, recipient, message, now),
+            ).fetchone()["id"]
+            row = connection.execute(
+                """SELECT lobby_chat_messages.id, lobby_chat_messages.sender_user_id,
+                          sender.username, lobby_chat_messages.recipient_user_id,
+                          recipient.username AS recipient_username,
+                          lobby_chat_messages.text, lobby_chat_messages.created_at
+                   FROM lobby_chat_messages
+                   JOIN users sender ON sender.id = lobby_chat_messages.sender_user_id
+                   LEFT JOIN users recipient ON recipient.id = lobby_chat_messages.recipient_user_id
+                   WHERE lobby_chat_messages.id = %s""",
+                (message_id,),
+            ).fetchone()
+        return self._lobby_chat_payload(row)
+
+    def save_avatar(self, user_id, png):
+        if not self.central:
+            raise RuntimeError("Account avatars are stored only in the central database")
+        with self.connection() as connection:
+            connection.execute(
+                """INSERT INTO user_avatars (user_id, png, updated_at) VALUES (%s, %s, %s)
+                   ON CONFLICT (user_id) DO UPDATE SET png = EXCLUDED.png, updated_at = EXCLUDED.updated_at""",
+                (user_id, bytes(png), time.time()),
+            )
+
+    def get_avatar(self, user_id):
+        if not self.central:
+            raise RuntimeError("Account avatars are stored only in the central database")
+        with self.connection() as connection:
+            row = connection.execute(
+                "SELECT png FROM user_avatars WHERE user_id = %s", (user_id,)
+            ).fetchone()
+        return None if row is None else bytes(row["png"])
+
+    @staticmethod
+    def _lobby_chat_payload(row):
+        return {
+            "id": row["id"],
+
+            "sender_user_id": row["sender_user_id"],
+            "username": row["username"],
+            "recipient_user_id": row["recipient_user_id"],
+            "recipient_username": row["recipient_username"],
+            "text": row["text"],
+            "created_at": row["created_at"],
+        }
     
     def get_user(self, user_id):
         """Get user by ID with password hash"""
@@ -342,7 +664,7 @@ class Database:
                     RETURNING id
                     """,
                     (user_id, self.world_id, name, profession_type, max_hp, max_hp, max_mp, max_mp,
-                     json.dumps(stats), stat_points, 1000, now),
+                     json.dumps(stats), stat_points, STARTING_CHARACTER_COPPER, now),
                 ).fetchone()["id"]
         except pg_errors.UniqueViolation as error:
             if error.diag.constraint_name == "uq_characters_user_world":
@@ -402,6 +724,36 @@ class Database:
                 (profession_type, character_id),
             )
         
+        return self.get_character(user_id, character_id)
+
+    def apply_front_line_draft(self, user_id, character_id, profession_type, allocation):
+        """Apply the Front Line class and starting-stat draft to a character in this world."""
+        valid_professions = ("warrior", "archer", "assassin", "mage")
+        if profession_type not in valid_professions:
+            raise ValueError(f"Профессия должна быть одной из: {', '.join(valid_professions)}")
+        stats, free_points = creation_stats(allocation)
+        with self.connection() as connection:
+            row = connection.execute(
+                """SELECT level FROM characters
+                   WHERE id = %s AND user_id = %s AND world_id = %s""",
+                (int(character_id), int(user_id), self.world_id),
+            ).fetchone()
+            if row is None:
+                raise ValueError("Персонаж не найден")
+            level = int(row["level"])
+            stats["endurance"] = max(stats["endurance"], minimum_endurance(level))
+            max_hp = calculate_max_hp(level, stats["endurance"])
+            max_mp = calculate_max_mana(stats["intellect"])
+            connection.execute(
+                """UPDATE characters
+                   SET type = %s, stats_json = %s, stat_points = %s, hp = %s, max_hp = %s,
+                       mp = %s, max_mp = %s, updated_at = %s
+                   WHERE id = %s AND user_id = %s AND world_id = %s""",
+                (
+                    profession_type, json.dumps(stats), free_points, max_hp, max_hp, max_mp, max_mp,
+                    time.time(), int(character_id), int(user_id), self.world_id,
+                ),
+            )
         return self.get_character(user_id, character_id)
     
     @staticmethod
@@ -594,10 +946,430 @@ class Database:
     def map_catalog(self):
         with self.connection() as connection:
             rows = connection.execute(
-                """                SELECT item_key, kind, category, asset, footprint_w, footprint_h, blocks, sort_order
+                """                SELECT item_key, kind, category, asset, footprint_w, footprint_h, blocks, sort_order,
+                          editor_layer
                    FROM map_catalog ORDER BY sort_order, item_key"""
             ).fetchall()
-        return [dict(row) for row in rows]
+            custom_rows = connection.execute(
+                """
+                SELECT asset.item_key, asset.group_id, asset.tile_x, asset.tile_y,
+                       tile_group.name AS group_name, tile_group.category, tile_group.tile_rows
+                FROM map_custom_tile_assets AS asset
+                JOIN map_custom_tile_groups AS tile_group USING (group_id)
+                ORDER BY tile_group.created_at, asset.tile_y, asset.tile_x
+                """
+            ).fetchall()
+        catalog = [dict(row) for row in rows]
+        catalog.extend({
+            "item_key": row["item_key"],
+            "kind": "ground",
+            "category": row["category"],
+            "asset": f"custom_tiles/{row['item_key']}.png",
+            "footprint_w": 1,
+            "footprint_h": 1,
+            "blocks": False,
+            "sort_order": 100_000,
+            "editor_layer": 1,
+            "tile_group_id": row["group_id"],
+            "tile_x": int(row["tile_x"]),
+            "tile_y": int(row["tile_y"]),
+            "tile_rows": int(row["tile_rows"]),
+            "tile_group_name": row["group_name"],
+        } for row in custom_rows)
+        overrides = self.map_palette_state()["overrides"]
+        by_key = {item["item_key"]: item for item in catalog}
+        for key, values in overrides.items():
+            item = by_key.get(key)
+            if item is not None:
+                item.update(values)
+        return catalog
+
+    def custom_tile_groups(self):
+        with self.connection() as connection:
+            groups = connection.execute(
+                """
+                SELECT group_id, name, category, tile_rows
+                FROM map_custom_tile_groups
+                ORDER BY created_at, group_id
+                """
+            ).fetchall()
+            tile_rows = connection.execute(
+                """
+                SELECT group_id, tile_x, tile_y, item_key
+                FROM map_custom_tile_assets
+                ORDER BY group_id, tile_y, tile_x
+                """
+            ).fetchall()
+        tiles_by_group = {}
+        for tile in tile_rows:
+            tiles_by_group.setdefault(tile["group_id"], []).append(tile)
+        result = []
+        for group in groups:
+            rows = int(group["tile_rows"])
+            tile_keys = [["" for _ in range(3)] for _ in range(rows)]
+            for tile in tiles_by_group.get(group["group_id"], []):
+                tile_keys[int(tile["tile_y"])][int(tile["tile_x"])] = tile["item_key"]
+            result.append({
+                "group_id": group["group_id"],
+                "name": group["name"],
+                "category": group["category"],
+                "tile_rows": rows,
+                "tile_keys": tile_keys,
+            })
+        return result
+
+    def map_asset(self, item_key):
+        with self.connection() as connection:
+            row = connection.execute(
+                "SELECT png_bytes FROM map_custom_tile_assets WHERE item_key = %s",
+                (str(item_key),),
+            ).fetchone()
+        if row is not None:
+            return bytes(row["png_bytes"])
+        return read_catalog_asset(self.map_catalog(), item_key)
+
+    def save_custom_tile_group(self, user_id, payload):
+        if not self.is_moderator(user_id):
+            raise ValueError("Недостаточно прав модератора для публикации группы тайлов")
+        if not isinstance(payload, dict):
+            raise ValueError("Данные группы тайлов должны быть объектом")
+        name = str(payload.get("name", "")).strip()
+        category = str(payload.get("category", ""))
+        rows = payload.get("tile_rows")
+        tiles = payload.get("tiles")
+        if not name or len(name) > 48:
+            raise ValueError("Название группы должно содержать от 1 до 48 символов")
+        if category not in CUSTOM_TILE_CATEGORIES:
+            raise ValueError("Выберите допустимую категорию поверхности")
+        if not isinstance(rows, int) or isinstance(rows, bool) or rows not in (3, 4, 5):
+            raise ValueError("Группа должна иметь формат 3×3, 3×4 или 3×5")
+        if not isinstance(tiles, list) or len(tiles) != 3 * rows:
+            raise ValueError("Для публикации нужны все тайлы выбранной группы")
+
+        decoded_tiles = {}
+        for tile in tiles:
+            if not isinstance(tile, dict):
+                raise ValueError("Данные каждого тайла должны быть объектом")
+            tile_x, tile_y = tile.get("x"), tile.get("y")
+            if (
+                not isinstance(tile_x, int) or isinstance(tile_x, bool)
+                or not isinstance(tile_y, int) or isinstance(tile_y, bool)
+                or not 0 <= tile_x < 3 or not 0 <= tile_y < rows
+            ):
+                raise ValueError("Координата тайла выходит за пределы группы")
+            tile_position = (tile_x, tile_y)
+            if tile_position in decoded_tiles:
+                raise ValueError("Группа содержит повторяющиеся координаты тайлов")
+            decoded_tiles[tile_position] = _decode_custom_tile_png(tile.get("png"))
+        if sum(len(image) for image in decoded_tiles.values()) > CUSTOM_TILE_GROUP_MAX_BYTES:
+            raise ValueError("Суммарный размер группы тайлов слишком велик")
+
+        group_id = uuid.uuid4().hex
+        item_rows = []
+        for tile_y in range(rows):
+            for tile_x in range(3):
+                item_rows.append((
+                    f"custom_tile_{group_id}_{tile_x}_{tile_y}",
+                    tile_x,
+                    tile_y,
+                    decoded_tiles[(tile_x, tile_y)],
+                ))
+        with self.connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO map_custom_tile_groups
+                    (group_id, name, category, tile_rows, created_by, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                """,
+                (group_id, name, category, rows, int(user_id), time.time()),
+            )
+            for item_key, tile_x, tile_y, png_bytes in item_rows:
+                connection.execute(
+                    """
+                    INSERT INTO map_custom_tile_assets
+                        (item_key, group_id, tile_x, tile_y, png_bytes)
+                    VALUES (%s, %s, %s, %s, %s)
+                    """,
+                    (item_key, group_id, tile_x, tile_y, png_bytes),
+                )
+        return {
+            "group": {
+                "group_id": group_id,
+                "name": name,
+                "category": category,
+                "tile_rows": rows,
+                "tile_keys": [
+                    [f"custom_tile_{group_id}_{x}_{y}" for x in range(3)]
+                    for y in range(rows)
+                ],
+            },
+            "items": [
+                {
+                    "item_key": item_key,
+                    "kind": "ground",
+                    "category": category,
+                    "asset": f"custom_tiles/{item_key}.png",
+                    "footprint_w": 1,
+                    "footprint_h": 1,
+                    "blocks": False,
+                    "sort_order": 100_000,
+                    "editor_layer": 1,
+                    "tile_group_id": group_id,
+                    "tile_x": tile_x,
+                    "tile_y": tile_y,
+                    "tile_rows": rows,
+                    "tile_group_name": name,
+                }
+                for item_key, tile_x, tile_y, _png_bytes in item_rows
+            ],
+        }
+
+    def map_palette_state(self):
+        with self.connection() as connection:
+            row = connection.execute(
+                "SELECT version, overrides_json FROM map_palette_settings WHERE singleton = TRUE"
+            ).fetchone()
+        if row is None:
+            raise RuntimeError("Настройки палитры не инициализированы")
+        return {
+            "version": int(row["version"]),
+            "overrides": json.loads(row["overrides_json"]),
+        }
+
+    def _verify_palette_publisher(self, user_id, username, password):
+        if not self.is_moderator(user_id):
+            raise ValueError("Недостаточно прав модератора для изменения общей палитры")
+        with self.connection() as connection:
+            row = connection.execute(
+                "SELECT id, password_hash FROM users WHERE username = %s",
+                (str(username).strip(),),
+            ).fetchone()
+        if row is None or row["id"] != user_id or not self._check_password(str(password), row["password_hash"]):
+            raise ValueError("Неверный логин или пароль для подтверждения палитры")
+
+    def preview_map_palette(self, user_id, username, password, overrides):
+        self._verify_palette_publisher(user_id, username, password)
+        catalog = self.map_catalog()
+        normalized = map_palette.validate_overrides(overrides, catalog)
+        current = self.map_palette_state()
+        conflicts = []
+        with self.connection() as connection:
+            saved_maps = connection.execute(
+                "SELECT id, name, cells_json FROM map_saved ORDER BY id"
+            ).fetchall()
+            for saved in saved_maps:
+                cells = json.loads(saved["cells_json"])
+                _remapped, found, _removed = map_palette.remap_cells(
+                    cells, catalog, current["overrides"], normalized, context=f"saved:{saved['id']}",
+                )
+                for conflict in found:
+                    conflict["map_name"] = saved["name"]
+                conflicts.extend(found)
+            live = connection.execute(
+                """SELECT c.world_id, w.name, c.layer, c.x, c.y, c.item_key AS key
+                   FROM map_live_cells c JOIN worlds w ON w.id = c.world_id
+                   ORDER BY c.world_id, c.layer, c.y, c.x"""
+            ).fetchall()
+        by_world = {}
+        world_names = {}
+        for row in live:
+            world_id = int(row["world_id"])
+            by_world.setdefault(world_id, []).append({
+                "layer": row["layer"], "x": row["x"], "y": row["y"], "key": row["key"],
+            })
+            world_names[world_id] = row["name"]
+        for world_id, cells in by_world.items():
+            _remapped, found, _removed = map_palette.remap_cells(
+                cells, catalog, current["overrides"], normalized, context=f"world:{world_id}",
+            )
+            for conflict in found:
+                conflict["map_name"] = world_names[world_id]
+            conflicts.extend(found)
+        return {
+            "version": current["version"],
+            "conflicts": conflicts,
+            "affected_saved_maps": len(saved_maps),
+            "affected_worlds": len(by_world),
+        }
+
+    def apply_map_palette(self, user_id, username, password, overrides, expected_version, resolutions):
+        self._verify_palette_publisher(user_id, username, password)
+        catalog = self.map_catalog()
+        normalized = map_palette.validate_overrides(overrides, catalog)
+        if not isinstance(resolutions, dict):
+            raise ValueError("Решения конфликтов должны быть объектом")
+        world_ids = []
+        updated_saved = 0
+        removed_cells = []
+        world_names = {}
+        with self.connection() as connection:
+            state = connection.execute(
+                "SELECT version, overrides_json FROM map_palette_settings WHERE singleton = TRUE FOR UPDATE"
+            ).fetchone()
+            if int(state["version"]) != int(expected_version):
+                raise ValueError("Палитра уже изменена другим пользователем; обновите настройки и повторите")
+            current_overrides = json.loads(state["overrides_json"])
+            saved_maps = connection.execute(
+                "SELECT id, name, map_w, map_h, cells_json FROM map_saved ORDER BY id FOR UPDATE"
+            ).fetchall()
+            live_catalog = [
+                {**item, **normalized.get(item["item_key"], {})}
+                for item in catalog
+            ]
+            saved_updates = []
+            conflicts = []
+            for saved in saved_maps:
+                cells = json.loads(saved["cells_json"])
+                remapped, found, removed = map_palette.remap_cells(
+                    cells, catalog, current_overrides, normalized, resolutions,
+                    context=f"saved:{saved['id']}",
+                )
+                conflicts.extend(found)
+                for cell in removed:
+                    cell["map_name"] = saved["name"]
+                removed_cells.extend(removed)
+                saved_updates.append((saved, cells, remapped))
+            live_rows = connection.execute(
+                """SELECT c.world_id, w.name AS map_name, c.layer, c.x, c.y, c.item_key AS key
+                   FROM map_live_cells c JOIN worlds w ON w.id = c.world_id
+                   ORDER BY c.world_id, c.layer, c.y, c.x FOR UPDATE"""
+            ).fetchall()
+            live_by_world = {}
+            for row in live_rows:
+                world_id = int(row["world_id"])
+                live_by_world.setdefault(world_id, []).append({
+                    "layer": row["layer"], "x": row["x"], "y": row["y"], "key": row["key"],
+                })
+                world_names[world_id] = row["map_name"]
+            live_updates = {}
+            for world_id, cells in live_by_world.items():
+                remapped, found, removed = map_palette.remap_cells(
+                    cells, catalog, current_overrides, normalized, resolutions,
+                    context=f"world:{world_id}",
+                )
+                conflicts.extend(found)
+                for cell in removed:
+                    cell["map_name"] = world_names[world_id]
+                removed_cells.extend(removed)
+                live_updates[world_id] = remapped
+            if conflicts:
+                return {"applied": False, "conflicts": conflicts}
+            for saved, original_cells, cells in saved_updates:
+                if not map_palette.same_cells(original_cells, cells):
+                    map_editor.validate_cells(
+                        cells,
+                        live_catalog,
+                        saved["map_w"],
+                        saved["map_h"],
+                    )
+            for saved, _original_cells, cells in saved_updates:
+                connection.execute(
+                    "UPDATE map_saved SET cells_json = %s, updated_at = %s WHERE id = %s",
+                    (json.dumps(cells, ensure_ascii=False), time.time(), saved["id"]),
+                )
+                updated_saved += 1
+            for world_id, cells in live_updates.items():
+                published = connection.execute(
+                    "SELECT map_w, map_h FROM map_world_publish WHERE world_id = %s",
+                    (world_id,),
+                ).fetchone()
+                if published is None:
+                    raise ValueError(f"У мира {world_id} отсутствуют данные опубликованной карты")
+                original_cells = live_by_world[world_id]
+                if not map_palette.same_cells(original_cells, cells):
+                    map_editor.validate_cells(
+                        cells,
+                        live_catalog,
+                        published["map_w"],
+                        published["map_h"],
+                    )
+                connection.execute("DELETE FROM map_live_cells WHERE world_id = %s", (world_id,))
+                for cell in cells:
+                    connection.execute(
+                        """INSERT INTO map_live_cells (world_id, layer, x, y, item_key)
+                           VALUES (%s, %s, %s, %s, %s)""",
+                        (world_id, cell["layer"], cell["x"], cell["y"], cell["key"]),
+                    )
+                world_ids.append(world_id)
+                connection.execute(
+                    "UPDATE map_world_publish SET published_at = %s WHERE world_id = %s",
+                    (time.time(), world_id),
+                )
+            connection.execute(
+                """UPDATE map_palette_settings
+                   SET version = version + 1, overrides_json = %s
+                   WHERE singleton = TRUE""",
+                (json.dumps(normalized, ensure_ascii=False),),
+            )
+        return {
+            "applied": True,
+            "version": int(expected_version) + 1,
+            "updated_saved_maps": updated_saved,
+            "updated_world_ids": world_ids,
+            "removed_cells": removed_cells,
+        }
+
+    def material_item_ids(self, mode=None):
+        """Id материалов каталога предметов: допустимый лут кристаллов."""
+        if self.central:
+            if mode is None:
+                raise ValueError("Для центральной базы нужно указать режим карты")
+            schema_mode = "deck" if mode == "deck" else mode
+            if schema_mode == "deck":
+                raise ValueError("Карты Deck обрабатываются отдельным сервером режима")
+            schema = get_mode(schema_mode)["schema"]
+            if schema is None:
+                return set()
+            query = f'SELECT id FROM "{schema}".items_catalog WHERE item_type = %s'
+        else:
+            query = "SELECT id FROM items_catalog WHERE item_type = %s"
+        with self.connection() as connection:
+            rows = connection.execute(query, ("material",)).fetchall()
+        return {int(row["id"]) for row in rows}
+
+    def load_world_crystal_states(self, published_at):
+        """Состояние кристаллов мира для публикации published_at; записи старых публикаций удаляются.
+
+        Возвращает {(x, y): {color, stage, elapsed, harvested}}.
+        """
+        with self.connection() as connection:
+            connection.execute(
+                "DELETE FROM world_crystal_state WHERE world_id = %s AND published_at <> %s",
+                (self.world_id, published_at),
+            )
+            rows = connection.execute(
+                """SELECT tile_x, tile_y, color, stage, elapsed, harvested FROM world_crystal_state
+                   WHERE world_id = %s AND published_at = %s""",
+                (self.world_id, published_at),
+            ).fetchall()
+        return {
+            (int(row["tile_x"]), int(row["tile_y"])): {
+                "color": row["color"],
+                "stage": int(row["stage"]),
+                "elapsed": float(row["elapsed"]),
+                "harvested": bool(row["harvested"]),
+            }
+            for row in rows
+        }
+
+    def save_world_crystal_state(self, published_at, tile, color, stage, elapsed):
+        with self.connection() as connection:
+            connection.execute(
+                """INSERT INTO world_crystal_state (world_id, tile_x, tile_y, published_at, color, stage, elapsed)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s)
+                   ON CONFLICT (world_id, tile_x, tile_y) DO UPDATE SET
+                       published_at = EXCLUDED.published_at, color = EXCLUDED.color,
+                       stage = EXCLUDED.stage, elapsed = EXCLUDED.elapsed""",
+                (self.world_id, int(tile[0]), int(tile[1]), published_at, color, int(stage), float(elapsed)),
+            )
+
+    def mark_world_crystal_harvested(self, published_at, tile):
+        with self.connection() as connection:
+            connection.execute(
+                """UPDATE world_crystal_state SET harvested = TRUE
+                   WHERE world_id = %s AND tile_x = %s AND tile_y = %s AND published_at = %s""",
+                (self.world_id, int(tile[0]), int(tile[1]), published_at),
+            )
 
     def map_live_mobs(self):
         """NPC опубликованной карты текущего мира; пустой список, если карта без NPC или не публиковалась."""
@@ -632,7 +1404,8 @@ class Database:
             ).fetchall()
         return [dict(row) for row in rows]
 
-    def save_saved_map(self, saved_id, name, mode, map_w, map_h, cells, mobs, moderator_id, spawns=None):
+    def save_saved_map(self, saved_id, name, mode, map_w, map_h, cells, mobs, moderator_id, spawns=None,
+                       crystals=None, harvest_enabled=False, editor_layers=None):
         """Сохраняет карту на сервере как заготовку для мира: мир не создаётся и сервер не запускается."""
         if not self.is_moderator(moderator_id):
             raise ValueError("Недостаточно прав модератора")
@@ -642,34 +1415,53 @@ class Database:
         if not is_mode(mode):
             raise ValueError("Неизвестный режим игры")
         map_editor.check_map_size(map_w, map_h)
-        cell_rows = map_editor.validate_cells(cells, self.map_catalog(), map_w, map_h)
+        catalog = self.map_catalog()
+        cell_rows = map_editor.validate_cells(cells, catalog, map_w, map_h)
         mob_rows = map_editor.validate_mobs(mobs, map_w, map_h)
-        spawn_rows = map_editor.validate_spawns(spawns, map_w, map_h)
+        spawn_rows = map_editor.validate_spawns(
+            spawns, map_w, map_h, include_settings=True, mode=mode,
+        )
+        crystal_settings = map_editor.validate_crystals(crystals, catalog, self.material_item_ids(mode))
         cells_json = json.dumps([{"layer": l, "x": x, "y": y, "key": k} for l, x, y, k in cell_rows], ensure_ascii=False)
         mobs_json = json.dumps([{"kind": k, "x": x, "y": y} for k, x, y in mob_rows], ensure_ascii=False)
-        spawns_json = json.dumps([{"x": x, "y": y} for x, y in spawn_rows], ensure_ascii=False)
+        spawns_json = json.dumps(spawn_rows, ensure_ascii=False, allow_nan=False)
+        crystals_json = json.dumps(crystal_settings, ensure_ascii=False)
+        editor_layers_json = json.dumps(editor_layers or [], ensure_ascii=False, allow_nan=False)
+        harvest = bool(harvest_enabled)
         now = time.time()
         with self.connection() as connection:
             if saved_id:
                 row = connection.execute(
                     """UPDATE map_saved SET name = %s, mode = %s, map_w = %s, map_h = %s,
-                       cells_json = %s, mobs_json = %s, spawns_json = %s, updated_at = %s WHERE id = %s RETURNING id""",
-                    (name, mode, map_w, map_h, cells_json, mobs_json, spawns_json, now, saved_id),
+                       cells_json = %s, mobs_json = %s, spawns_json = %s, crystal_settings_json = %s,
+                       editor_layers_json = %s, harvest_enabled = %s, updated_at = %s
+                       WHERE id = %s RETURNING id""",
+                    (
+                        name, mode, map_w, map_h, cells_json, mobs_json, spawns_json,
+                        crystals_json, editor_layers_json, harvest, now, saved_id,
+                    ),
                 ).fetchone()
                 if row is None:
                     raise ValueError("Карта на сервере не найдена")
                 return row["id"]
             row = connection.execute(
-                """INSERT INTO map_saved (name, mode, map_w, map_h, cells_json, mobs_json, spawns_json, created_by, created_at, updated_at)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id""",
-                (name, mode, map_w, map_h, cells_json, mobs_json, spawns_json, moderator_id, now, now),
+                """INSERT INTO map_saved (name, mode, map_w, map_h, cells_json, mobs_json, spawns_json,
+                   crystal_settings_json, editor_layers_json, harvest_enabled, created_by, created_at, updated_at)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id""",
+                (
+                    name, mode, map_w, map_h, cells_json, mobs_json, spawns_json,
+                    crystals_json, editor_layers_json, harvest, moderator_id, now, now,
+                ),
             ).fetchone()
         return row["id"]
 
     def get_saved_map(self, saved_id):
         with self.connection() as connection:
             row = connection.execute(
-                "SELECT id, name, mode, map_w, map_h, cells_json, mobs_json, spawns_json FROM map_saved WHERE id = %s", (saved_id,)
+                """SELECT id, name, mode, map_w, map_h, cells_json, mobs_json, spawns_json,
+                   crystal_settings_json, editor_layers_json, harvest_enabled
+                   FROM map_saved WHERE id = %s""",
+                (saved_id,),
             ).fetchone()
         if row is None:
             raise ValueError("Карта на сервере не найдена")
@@ -677,22 +1469,49 @@ class Database:
         data["cells"] = json.loads(data.pop("cells_json"))
         data["mobs"] = json.loads(data.pop("mobs_json"))
         data["spawns"] = json.loads(data.pop("spawns_json"))
+        data["crystals"] = json.loads(data.pop("crystal_settings_json"))
+        data["editor_layers"] = json.loads(data.pop("editor_layers_json"))
+        data["harvest_enabled"] = bool(data["harvest_enabled"])
         return data
 
     def create_map_world(self, name, mode, moderator_id, test_only=False):
-        """Новый мир карты: id по порядку, код map<id>, режим карты. Тестовый мир создаёт только админ."""
+        """Create a world with a code namespace accepted by its mode runtime."""
         if not self.is_moderator(moderator_id):
             raise ValueError("Недостаточно прав модератора")
-        if test_only and not self.is_admin(moderator_id):
-            raise ValueError("Тестовый мир создаёт только админ")
+        if not test_only and not self.is_admin(moderator_id):
+            raise ValueError("Публичный мир создаёт только админ")
+        if not is_mode(mode):
+            raise ValueError("Неизвестный режим игры")
         with self.connection() as connection:
             next_id = connection.execute("SELECT COALESCE(MAX(id), 0) + 1 AS next_id FROM worlds").fetchone()["next_id"]
+            code = f"deck_map{next_id}" if mode == "deck" else f"map{next_id}"
             connection.execute(
                 """INSERT INTO worlds (id, code, name, status, created_at, mode, test_only)
                    VALUES (%s, %s, %s, 'open', %s, %s, %s)""",
-                (next_id, f"map{next_id}", name, time.time(), mode, bool(test_only)),
+                (next_id, code, name, time.time(), mode, bool(test_only)),
             )
-        return {"id": next_id, "code": f"map{next_id}", "name": name, "mode": mode}
+        return {"id": next_id, "code": code, "name": name, "mode": mode}
+
+    def ensure_front_line_world(self):
+        """Return the single persistent public world used by automatic Front Line matchmaking."""
+        with self.connection() as connection:
+            connection.execute("SELECT pg_advisory_xact_lock(%s)", (7_421_000_02,))
+            row = connection.execute(
+                "SELECT id, code, name, status, mode, server_url, test_only "
+                "FROM worlds WHERE code = %s",
+                ("front_line_matchmaking",),
+            ).fetchone()
+            if row is None:
+                world_id = connection.execute(
+                    "SELECT COALESCE(MAX(id), 0) + 1 AS next_id FROM worlds"
+                ).fetchone()["next_id"]
+                row = connection.execute(
+                    """INSERT INTO worlds (id, code, name, status, created_at, mode, test_only)
+                       VALUES (%s, %s, %s, 'open', %s, 'front_line', FALSE)
+                       RETURNING id, code, name, status, mode, server_url, test_only""",
+                    (world_id, "front_line_matchmaking", "Front Line", time.time()),
+                ).fetchone()
+        return dict(row)
 
     def is_admin(self, user_id):
         with self.connection() as connection:
@@ -709,7 +1528,9 @@ class Database:
 
     def user_role(self, user_id):
         with self.connection() as connection:
-            row = connection.execute("SELECT id, username, role FROM users WHERE id = %s", (user_id,)).fetchone()
+            row = connection.execute(
+                "SELECT id, username, role, game_nickname FROM users WHERE id = %s", (user_id,)
+            ).fetchone()
         return None if row is None else dict(row)
 
     def list_saved_maps(self, mode=None):
@@ -725,6 +1546,24 @@ class Database:
                     "SELECT id, name, mode, map_w, map_h, updated_at FROM map_saved ORDER BY updated_at DESC"
                 ).fetchall()
         return [dict(row) for row in rows]
+
+    def first_saved_map(self, mode):
+        """Load the earliest saved map in a mode until explicit map ordering is available."""
+        with self.connection() as connection:
+            row = connection.execute(
+                """SELECT id, name, mode, map_w, map_h, cells_json, mobs_json, spawns_json,
+                          crystal_settings_json, editor_layers_json, harvest_enabled
+                   FROM map_saved WHERE mode = %s ORDER BY id ASC LIMIT 1""",
+                (mode,),
+            ).fetchone()
+        if row is None:
+            return None
+        data = dict(row)
+        for field in ("cells", "mobs", "spawns", "crystals", "editor_layers"):
+            json_field = "crystal_settings_json" if field == "crystals" else f"{field}_json"
+            data[field] = json.loads(data.pop(json_field))
+        data["harvest_enabled"] = bool(data["harvest_enabled"])
+        return data
 
     def update_map_world(self, world_id, name, mode, moderator_id):
         """Обновляет название и режим мира карты; обычные миры этим не меняются."""
@@ -745,8 +1584,12 @@ class Database:
         return dict(row)
 
     def set_world_server(self, world_id, server_url):
+        started_at = time.time() if server_url else None
         with self.connection() as connection:
-            connection.execute("UPDATE worlds SET server_url = %s WHERE id = %s", (server_url, world_id))
+            connection.execute(
+                "UPDATE worlds SET server_url = %s, started_at = %s WHERE id = %s",
+                (server_url, started_at, world_id),
+            )
 
     def delete_map_world(self, world_id):
         """Удаляет только миры карт: откат, если карта не прошла проверку."""
@@ -763,10 +1606,16 @@ class Database:
         """Сведения о карте, опубликованной в текущий мир; None, если мир играет процедурным рельефом."""
         with self.connection() as connection:
             row = connection.execute(
-                """SELECT name, map_w, map_h, published_at, mode FROM map_world_publish WHERE world_id = %s""",
+                """SELECT name, map_w, map_h, published_at, mode, crystal_settings_json, harvest_enabled
+                   FROM map_world_publish WHERE world_id = %s""",
                 (self.world_id,),
             ).fetchone()
-        return None if row is None else dict(row)
+        if row is None:
+            return None
+        data = dict(row)
+        data["crystals"] = json.loads(data.pop("crystal_settings_json"))
+        data["harvest_enabled"] = bool(data["harvest_enabled"])
+        return data
 
     def linked_world_ids(self, saved_id):
         """Миры, в которых сейчас опубликована заготовка saved_id (их обновляют при сохранении заготовки)."""
@@ -776,7 +1625,8 @@ class Database:
             ).fetchall()
         return [row["world_id"] for row in rows]
 
-    def publish_map(self, cells, world_id, name, map_w, map_h, moderator_id, mobs=None, mode="tower", spawns=None, saved_id=None):
+    def publish_map(self, cells, world_id, name, map_w, map_h, moderator_id, mobs=None, mode="tower", spawns=None,
+                    saved_id=None, crystals=None, harvest_enabled=False):
         """Размещает карту редактора в мире world_id: клетки, NPC и режим. Заменяет живую карту этого мира."""
         if not self.is_moderator(moderator_id):
             raise ValueError("Недостаточно прав модератора")
@@ -784,13 +1634,18 @@ class Database:
         if not 1 <= len(name) <= 64:
             raise ValueError("Название карты: от 1 до 64 символов")
         map_editor.check_map_size(map_w, map_h)
-        rows = map_editor.validate_cells(cells, self.map_catalog(), map_w, map_h)
+        catalog = self.map_catalog()
+        rows = map_editor.validate_cells(cells, catalog, map_w, map_h)
         if not rows:
             raise ValueError("Карта пустая, нечего размещать")
         mob_rows = map_editor.validate_mobs(mobs, map_w, map_h)
-        spawn_rows = map_editor.validate_spawns(spawns, map_w, map_h)
+        spawn_rows = map_editor.validate_spawns(
+            spawns, map_w, map_h, include_settings=mode == "front_line", mode=mode,
+        )
         if not is_mode(mode):
             raise ValueError("Неизвестный режим игры")
+        crystal_settings = map_editor.validate_crystals(crystals, catalog, self.material_item_ids(mode))
+        harvest = bool(harvest_enabled)
         published_at = time.time()
         with self.connection() as connection:
             target = connection.execute("SELECT id, name FROM worlds WHERE id = %s", (world_id,)).fetchone()
@@ -804,10 +1659,12 @@ class Database:
                     (target["id"], layer, x, y, key),
                 )
             connection.execute("DELETE FROM map_live_spawns WHERE world_id = %s", (target["id"],))
-            for x, y in spawn_rows:
+            for spawn in spawn_rows:
+                if spawn.get("type") == "mob":
+                    continue
                 connection.execute(
                     """INSERT INTO map_live_spawns (world_id, x, y) VALUES (%s, %s, %s)""",
-                    (target["id"], x, y),
+                    (target["id"], spawn["x"], spawn["y"]),
                 )
             connection.execute("DELETE FROM map_live_mobs WHERE world_id = %s", (target["id"],))
             for kind, x, y in mob_rows:
@@ -816,13 +1673,15 @@ class Database:
                     (target["id"], kind, x, y),
                 )
             connection.execute(
-                """INSERT INTO map_world_publish (world_id, name, map_w, map_h, published_at, mode, saved_id)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s)
+                """INSERT INTO map_world_publish (world_id, name, map_w, map_h, published_at, mode, saved_id,
+                   crystal_settings_json, harvest_enabled)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                    ON CONFLICT (world_id) DO UPDATE SET
                        name = EXCLUDED.name, map_w = EXCLUDED.map_w,
                        map_h = EXCLUDED.map_h, published_at = EXCLUDED.published_at,
                        mode = EXCLUDED.mode, saved_id = EXCLUDED.saved_id""",
-                (target["id"], name, map_w, map_h, published_at, mode, saved_id),
+                (target["id"], name, map_w, map_h, published_at, mode, saved_id,
+                 json.dumps(crystal_settings, ensure_ascii=False), harvest),
             )
         return {
             "world_id": target["id"],
@@ -1097,6 +1956,12 @@ class Database:
             )
         return currency.to_dict()
 
+    def set_world_currency(self, user_id, character_id, copper, silver, gold):
+        """Устанавливает кошелёк персонажа (стартовый кошелёк Front Line на входе и на выходе из игры)."""
+        with self.connection() as connection:
+            self._store_character_currency(
+                connection, user_id, character_id, Currency(copper=int(copper), silver=int(silver), gold=int(gold)))
+
     def save_world_progression(self, user_id, character_id, level, xp, stats, stat_points, max_hp):
         """Уровень, опыт и характеристики после награды за моба. updated_at не трогает: это метка регенерации."""
         with self.connection() as connection:
@@ -1352,3 +2217,12 @@ class Database:
             )
             
             return self.get_character(user_id, character_id)
+
+
+# Замеры: медленные запросы к базе видны в логе мира (см. server/perf_probe.py).
+from server.perf_probe import timed as _timed  # noqa: E402
+
+Database.save_world_vitals = _timed("БД: сохранение HP и MP")(Database.save_world_vitals)
+Database.add_world_currency = _timed("БД: начисление монет")(Database.add_world_currency)
+Database.get_character = _timed("БД: чтение персонажа")(Database.get_character)
+Database.save_world_crystal_state = _timed("БД: сохранение кристаллов")(Database.save_world_crystal_state)

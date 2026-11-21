@@ -1,0 +1,35 @@
+{
+  "source": "economy/server/city_population.py get_traveling_citizens() items (lines 512-524), wrapped by economy/server/api.py /api/world/traveling-citizens as {\"citizens\": [...]}",
+  "citizens": [
+    {
+      "id": 11,
+      "faction": "light",
+      "name": "Аня",
+      "job_building": "lumber_camp",
+      "travel_direction": "outbound",
+      "travel_total_seconds": 600,
+      "travel_seconds_left": 125,
+      "eta_seconds": 125,
+      "position_x": 1632.71,
+      "position_y": 2495.29,
+      "position_direction": "sw",
+      "route_name": "Лагерь лесорубов",
+      "movement_text": "Идёт на работу"
+    },
+    {
+      "id": 12,
+      "faction": "light",
+      "name": "Бор",
+      "job_building": "farm",
+      "travel_direction": "returning",
+      "travel_total_seconds": 300,
+      "travel_seconds_left": 65,
+      "eta_seconds": 65,
+      "position_x": 1667.1,
+      "position_y": 1539.1,
+      "position_direction": "nw",
+      "route_name": "Крестьянское поселение",
+      "movement_text": "Возвращается в город"
+    }
+  ]
+}

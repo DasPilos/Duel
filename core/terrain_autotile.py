@@ -18,6 +18,7 @@ HOLE_RADIUS = 0.5
 EDGE_SOFTNESS = 1 / SUBDIV
 OPAQUE_FROM = 127
 FULL_COVERAGE = 0.97
+WATER_TEAL = 40
 COLOR_DISTANCE_MAX = 14
 TIE_MARGIN = 0.3
 
@@ -66,6 +67,12 @@ def desired_coverage(x, y, road, radius=HOLE_RADIUS):
 
 def is_full(coverage):
     return all(value >= FULL_COVERAGE for value in coverage)
+
+
+def is_teal(colour):
+    """Чистая вода: зелёный и синий каналы заметно выше красного (без камней и берега)."""
+    red, green, blue = colour
+    return green - red > WATER_TEAL and blue - red > WATER_TEAL
 
 
 def small_tiles(group, assets):

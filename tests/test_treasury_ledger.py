@@ -1,6 +1,6 @@
 import unittest
 
-from server.treasury_ledger import distribute_income
+from economy.server.treasury_ledger import distribute_income
 
 
 class _Result:

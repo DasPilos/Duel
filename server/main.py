@@ -1,47 +1,34 @@
 import json
 import os
+import re
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import threading
 import traceback
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 import time
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from server import config
 from server.database import Database
-from server.items_database import ItemsDatabase
-from server.forge import Forge
+from server.items_database import ItemsDatabase, hidden_items_for_mode
 from server import build_info, maintenance, social, world_map
-from core.production_buildings import BUILDINGS
-from server.production_buildings import DEFAULT_FACTION, ProductionBuildings
-from server.city_population import CityPopulation
-from server.city_upgrade import city_upgrade_payload
-from server.world_events import run_world_event_watcher
-from server.transport import TransportService
-from server.world_map import terrain_payload
 from server import map_worlds
 from server.map_editor import DEFAULT_MAP_SIZE, load_published_map
-from server.structures import city_structures
-from server.world_roads import roads_payload
-from server.world_mobs import WorldService
-
-
-def current_city_level(database):
-    with database.connection() as connection:
-        state = connection.execute(
-            "SELECT city_level FROM city_population_state WHERE world_id=%s AND faction=%s",
-            (database.world_id, DEFAULT_FACTION),
-        ).fetchone()
-    return 1 if state is None else int(state["city_level"])
 
 
 MAP_BODY_LIMIT = 16 * 1024 * 1024
 
 
 class GameRequestHandler(BaseHTTPRequestHandler):
+    # Постоянное соединение (keep-alive): клиент мира шлёт снимки частыми запросами, новый TCP на каждый — лишняя задержка.
+    protocol_version = "HTTP/1.1"
+    # Простаивающее соединение закрывается, иначе поток обработчика висит бесконечно.
+    timeout = 30
     CHAT_LOCATIONS = ("tavern", "city", "world_map", "character_room")
-    database = Database()
-    items_database = ItemsDatabase(database)
+    database = None
+    items_database = None
     world = None
     chat_send_times = {}
 
@@ -66,11 +53,25 @@ class GameRequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _send_map_asset(self, item_key):
+        user_id = self.database.user_id_by_token(self._token())
+        if not self.database.is_moderator(user_id):
+            raise ValueError("Недостаточно прав модератора")
+        data = self.database.map_asset(item_key)
+        self.send_response(200)
+        self.send_header("Content-Type", "image/png")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "public, max-age=86400")
+        self.end_headers()
+        self.wfile.write(data)
+
     def _body(self):
         length = int(self.headers.get("Content-Length", 0))
         # Карта 64×64 с тайлами весит сотни килобайт, поэтому маршруты карт получают больший лимит
         limit = MAP_BODY_LIMIT if urlparse(self.path).path.startswith("/api/map/") else 64 * 1024
         if length > limit:
+            # Тело не прочитано: соединение нельзя переиспользовать, закрываем его после ответа.
+            self.close_connection = True
             raise ValueError("Слишком большой запрос")
         raw = self.rfile.read(length)
         return json.loads(raw.decode("utf-8")) if raw else {}
@@ -91,6 +92,9 @@ class GameRequestHandler(BaseHTTPRequestHandler):
 
     def _query(self):
         return parse_qs(urlparse(self.path).query)
+
+    def _dispatch_mode_api(self, method, path, body=None):
+        return False
 
     def _chat_actor(self, token, character_id):
         user_id = self.database.user_id_by_token(token)
@@ -192,14 +196,24 @@ class GameRequestHandler(BaseHTTPRequestHandler):
             } else "s"
         if social.update_presence(token, user_id, character, location):
             self._announce_player_status(character, "присоединился к игре")
+        occupants = social.occupants(user_id, location)
+        if config.GAME_SCHEMA == "front_line":
+            nicknames = self.database.game_nicknames(
+                occupant.get("user_id", 0) for occupant in occupants
+            )
+            for occupant in occupants:
+                nickname = nicknames.get(int(occupant.get("user_id", 0)), "")
+                if nickname:
+                    occupant["name"] = nickname
         self._send(200, {
-            "occupants": social.occupants(user_id, location),
+            "occupants": occupants,
             "messages": self.database.get_chat_history(character_id, location),
         })
 
     def _handle_server_status(self):
         self.database.user_id_by_token(self._token())
         server_time = time.time()
+        server_offset = datetime.fromtimestamp(server_time, ZoneInfo(config.SERVER_TIMEZONE)).utcoffset()
         self._send(200, {
             "online_players": self.database.online_player_count(),
             "build_id": build_info.SERVER_BUILD_ID,
@@ -207,6 +221,7 @@ class GameRequestHandler(BaseHTTPRequestHandler):
             "client_reload": maintenance.public_client_reload(),
             "server_time": server_time,
             "server_timezone": config.SERVER_TIMEZONE,
+            "server_utc_offset_seconds": int(server_offset.total_seconds()),
         })
 
 
@@ -232,8 +247,22 @@ class GameRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         try:
             path = urlparse(self.path).path.rstrip("/")
+            if self._dispatch_mode_api("GET", path):
+                return
             if path == "/health":
                 self._send(200, {"status": "ok"})
+                return
+            if path == "/api/version":
+                query = self._query()
+                try:
+                    protocol_version = int(query["protocol"][0]) if "protocol" in query else None
+                except ValueError as error:
+                    raise ValueError("Некорректная версия API-протокола") from error
+                self._send(200, build_info.public_version_info(
+                    query.get("app", [""])[0],
+                    query.get("version", [""])[0],
+                    protocol_version,
+                ))
                 return
             if path == "/api/server/status":
                 self._handle_server_status()
@@ -253,6 +282,47 @@ class GameRequestHandler(BaseHTTPRequestHandler):
             if path == "/api/worlds":
                 viewer_id = self.database.user_id_by_token(self._token())
                 self._send(200, {"worlds": self.database.list_worlds(viewer_id=viewer_id)})
+                return
+            if path == "/api/map/palette":
+                self.database.user_id_by_token(self._token())
+                self._send(200, self.database.map_palette_state())
+                return
+            if path == "/api/map/catalog":
+                user_id = self.database.user_id_by_token(self._token())
+                if not self.database.is_moderator(user_id):
+                    raise ValueError("Недостаточно прав модератора")
+                self._send(200, {
+                    "items": self.database.map_catalog(),
+                    "tile_groups": self.database.custom_tile_groups(),
+                })
+                return
+            if path == "/api/map/mob-settings":
+                user_id = self.database.user_id_by_token(self._token())
+                if not self.database.is_moderator(user_id):
+                    raise ValueError("Недостаточно прав модератора")
+                query = self._query()
+                settings = map_worlds.load_mob_settings(
+                    query.get("mode", [""])[0],
+                    query.get("kind", [""])[0],
+                )
+                self._send(200, {"settings": settings})
+                return
+            asset_prefix = "/api/map/assets/"
+            if path.startswith(asset_prefix):
+                item_key = path[len(asset_prefix):]
+                if not item_key or "/" in item_key:
+                    raise ValueError("Некорректный ключ ресурса карты")
+                self._send_map_asset(item_key)
+                return
+            saved_map_prefix = "/api/map/editor/saved/"
+            if path.startswith(saved_map_prefix):
+                user_id = self.database.user_id_by_token(self._token())
+                if not self.database.is_moderator(user_id):
+                    raise ValueError("Недостаточно прав модератора")
+                saved_id = path[len(saved_map_prefix):]
+                if not saved_id.isdigit():
+                    raise ValueError("Некорректный id карты")
+                self._send(200, {"map": self.database.get_saved_map(int(saved_id))})
                 return
             if path == "/api/map/saved":
                 viewer_id = self.database.user_id_by_token(self._token())
@@ -277,7 +347,12 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                 except ValueError:
                     self._send(400, {"error": "Некорректные id предметов"})
                     return
-                self._send(200, {"items": self.items_database.get_catalog_items(item_ids)})
+                items = (
+                    self.items_database.get_all_catalog_items()
+                    if not raw_ids.strip()
+                    else self.items_database.get_catalog_items(item_ids)
+                )
+                self._send(200, {"items": items})
                 return
             if path == "/api/items/equipment":
                 self.database.user_id_by_token(self._token())
@@ -285,83 +360,9 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                 slots = [part.strip() for part in raw_slots.split(",") if part.strip()]
                 self._send(200, {"items": self.items_database.get_equipment_items(slots)})
                 return
-            if path == "/api/map/terrain":
+            if path == "/api/items/materials":
                 self.database.user_id_by_token(self._token())
-                city_level = current_city_level(self.database)
-                with self.database.connection() as connection:
-                    city_visual_state = city_upgrade_payload(
-                        connection, (self.database.world_id, DEFAULT_FACTION), time.time()
-                    )
-                terrain = terrain_payload(city_level)
-                terrain["city_visual_state"] = city_visual_state
-                self._send(200, {"terrain": terrain})
-                return
-            if path == "/api/city/structures":
-                self.database.user_id_by_token(self._token())
-                self._send(200, {"city": city_structures()})
-                return
-            if path.startswith("/api/buildings/player-work/"):
-                parts = path.split("/")
-                if len(parts) != 5:
-                    raise ValueError("Некорректный путь производственной работы")
-                user_id = self.database.user_id_by_token(self._token())
-                character_id = int(parts[4])
-                if not self.database.character_belongs_to_user(user_id, character_id):
-                    raise ValueError("Персонаж не найден")
-                work = ProductionBuildings(self.database).active_player_work(character_id)
-                self._send(200, {"work": work})
-                return
-            if path.startswith("/api/forge/"):
-                parts = path.split("/")
-                if len(parts) != 4 or parts[3] == "orders":
-                    raise ValueError("Некорректный путь кузницы")
-                user_id = self.database.user_id_by_token(self._token())
-                character_id = int(parts[3])
-                if not self.database.character_belongs_to_user(user_id, character_id):
-                    raise ValueError("Персонаж не найден")
-                forge = Forge(self.database, self.items_database)
-                self._send(200, forge.get_state(character_id))
-                return
-            if path.startswith("/api/buildings/"):
-                parts = path.split("/")
-                if len(parts) != 5 or parts[3] not in BUILDINGS:
-                    self._send(404, {"error": "Здание не найдено"})
-                    return
-                building, character_id = parts[3], int(parts[4])
-                user_id = self.database.user_id_by_token(self._token())
-                if not self.database.character_belongs_to_user(user_id, character_id):
-                    self._send(404, {"error": "Персонаж не найден"})
-                else:
-                    state = ProductionBuildings(self.database).get_state(character_id, building)
-                    self._send(200, {"building": state})
-                return
-            if path.startswith("/api/castle/"):
-                parts = path.split("/")
-                if len(parts) != 5 or parts[4] != "population":
-                    self._send(404, {"error": "Путь замка не найден"})
-                    return
-                user_id = self.database.user_id_by_token(self._token())
-                character_id = int(parts[3])
-                if not self.database.character_belongs_to_user(user_id, character_id):
-                    raise ValueError("Персонаж не найден")
-                state = CityPopulation(self.database).get_state(character_id)
-                self._send(200, {"population": state})
-                return
-            if path == "/api/world/traveling-citizens":
-                user_id = self.database.user_id_by_token(self._token())
-                character_id = int(self._query().get("character_id", [0])[0])
-                if not self.database.character_belongs_to_user(user_id, character_id):
-                    raise ValueError("Персонаж не найден")
-                travelers = CityPopulation(self.database).get_traveling_citizens(character_id)
-                self._send(200, {"citizens": travelers})
-                return
-            if path == "/api/world/traveling-convoys":
-                user_id = self.database.user_id_by_token(self._token())
-                character_id = int(self._query().get("character_id", [0])[0])
-                if not self.database.character_belongs_to_user(user_id, character_id):
-                    raise ValueError("Персонаж не найден")
-                convoys = TransportService(self.database).get_world_convoys(character_id)
-                self._send(200, {"convoys": convoys})
+                self._send(200, {"items": self.items_database.get_material_items()})
                 return
             if path == "/api/social/occupants":
                 self._handle_social_occupants()
@@ -386,12 +387,6 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                     self._send(404, {"error": "Персонаж не найден"})
                 else:
                     self._send(200, {"character": character})
-                return
-            
-            if path == "/api/drinks":
-                self._token()
-                drinks = self.database.get_drinks_list()
-                self._send(200, {"drinks": drinks})
                 return
             
             # ============= GET API ИНВЕНТАРЯ =============
@@ -438,52 +433,26 @@ class GameRequestHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         try:
             path = urlparse(self.path).path.rstrip("/")
-            body = self._body()
-            if path.startswith("/api/castle/"):
-                parts = path.split("/")
-                if len(parts) == 5 and parts[4] == "treasury":
-                    user_id = self.database.user_id_by_token(self._token())
-                    character_id = int(parts[3])
-                    if not self.database.character_belongs_to_user(user_id, character_id):
-                        raise ValueError("Персонаж не найден")
-                    state = CityPopulation(self.database).transfer_treasury(
-                        character_id, body.get("direction"), body.get("amount_copper")
-                    )
-                    self._send(200, {"population": state})
-                    return
-                if len(parts) == 5 and parts[4] == "treasury-edict":
-                    user_id = self.database.user_id_by_token(self._token())
-                    character_id = int(parts[3])
-                    if not self.database.character_belongs_to_user(user_id, character_id):
-                        raise ValueError("Персонаж не найден")
-                    state = CityPopulation(self.database).start_treasury_edict(character_id)
-                    self._send(200, {"population": state})
-                    return
-                if len(parts) == 6 and parts[4] == "upgrades":
-                    user_id = self.database.user_id_by_token(self._token())
-                    character_id = int(parts[3])
-                    if not self.database.character_belongs_to_user(user_id, character_id):
-                        raise ValueError("Персонаж не найден")
-                    state = CityPopulation(self.database).start_castle_upgrade(
-                        character_id, parts[5]
-                    )
-                    self._send(200, {"population": state})
-                    return
 
-                    self._send(404, {"error": "Путь замка не найден"})
-                    return
+            body = self._body()
+            if self._dispatch_mode_api("POST", path, body):
+                return
+            if path == "/api/map/mob-settings":
                 user_id = self.database.user_id_by_token(self._token())
-                character_id, citizen_id = int(parts[3]), int(parts[5])
-                if not self.database.character_belongs_to_user(user_id, character_id):
-                    raise ValueError("Персонаж не найден")
-                population = CityPopulation(self.database)
-                if parts[6] == "assign":
-                    state = population.assign_citizen(
-                        character_id, citizen_id, body.get("building"), body.get("slot_index")
-                    )
-                else:
-                    state = population.recall_citizen(character_id, citizen_id)
-                self._send(200, {"population": state})
+                if not self.database.is_moderator(user_id):
+                    raise ValueError("Недостаточно прав модератора")
+                if not isinstance(body, dict):
+                    raise ValueError("Настройки моба должны быть объектом")
+                settings = map_worlds.save_mob_settings(
+                    body.get("mode", ""),
+                    body.get("kind", ""),
+                    body.get("settings", {}),
+                )
+                self._send(200, {"settings": settings})
+                return
+            if path == "/api/map/tile-groups":
+                user_id = self.database.user_id_by_token(self._token())
+                self._send(201, self.database.save_custom_tile_group(user_id, body))
                 return
             if path == "/api/register":
                 username = str(body.get("username", "")).strip()
@@ -508,13 +477,36 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                 user_id = self.database.user_id_by_token(self._token())
                 self._send(200, map_worlds.save_map(self.database, user_id, body))
                 return
+            if path == "/api/map/palette/preview":
+                user_id = self.database.user_id_by_token(self._token())
+                result = self.database.preview_map_palette(
+                    user_id, body.get("username", ""), body.get("password", ""),
+                    body.get("overrides", {}),
+                )
+                self._send(200, result)
+                return
+            if path == "/api/map/palette/apply":
+                user_id = self.database.user_id_by_token(self._token())
+                result = self.database.apply_map_palette(
+                    user_id, body.get("username", ""), body.get("password", ""),
+                    body.get("overrides", {}), body.get("expected_version", 0),
+                    body.get("resolutions", {}),
+                )
+                self._send(200, result)
+                return
             if path == "/api/map/editor/publish":
                 user_id = self.database.user_id_by_token(self._token())
+                target_world_id = int(body.get("world_id") or 0)
+                target_world = self.database.world_info(target_world_id)
+                requested_mode = str(body.get("mode", "tower"))
+                if requested_mode != config.GAME_SCHEMA or target_world["mode"] != config.GAME_SCHEMA:
+                    raise ValueError("Карту можно публиковать только в мир текущего режима")
                 published = self.database.publish_map(
-                    body.get("cells", []), int(body.get("world_id") or 0), body.get("name", ""),
+                    body.get("cells", []), target_world_id, body.get("name", ""),
                     body.get("map_w", DEFAULT_MAP_SIZE), body.get("map_h", DEFAULT_MAP_SIZE), user_id,
-                    body.get("mobs", []), str(body.get("mode", "tower")), spawns=body.get("spawns", []),
+                    body.get("mobs", []), requested_mode, spawns=body.get("spawns", []),
                     saved_id=int(body.get("saved_id") or 0) or None,
+                    crystals=body.get("crystals", {}), harvest_enabled=bool(body.get("harvest_enabled", False)),
                 )
                 if published["world_id"] == self.database.world_id:
                     apply_published_map(self.database, GameRequestHandler.world)
@@ -570,131 +562,6 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                 self.items_database.grant_base_equipment(character["id"])
                 self._send(201, {"character": character})
                 return
-            if path.startswith("/api/forge/"):
-                parts = path.split("/")
-                if not ((len(parts) == 5 and parts[4] == "orders")
-                        or (len(parts) == 7 and parts[4] == "orders" and parts[6] == "collect")):
-                    raise ValueError("Некорректный путь кузницы")
-                user_id = self.database.user_id_by_token(self._token())
-                character_id = int(parts[3])
-                if not self.database.character_belongs_to_user(user_id, character_id):
-                    raise ValueError("Персонаж не найден")
-                forge = Forge(self.database, self.items_database)
-                if len(parts) == 5:
-                    order_id = forge.create_order(character_id, body.get("item_id"))
-                    self._send(201, {"order_id": order_id, **forge.get_state(character_id)})
-                    return
-                forge.collect_order(character_id, int(parts[5]))
-                self._send(200, forge.get_state(character_id))
-                return
-            if path.startswith("/api/buildings/"):
-                parts = path.split("/")
-                if len(parts) < 6 or parts[3] not in BUILDINGS:
-                    raise ValueError("Некорректный путь здания")
-                building, character_id = parts[3], int(parts[4])
-                user_id = self.database.user_id_by_token(self._token())
-                if not self.database.character_belongs_to_user(user_id, character_id):
-                    raise ValueError("Персонаж не найден")
-                buildings = ProductionBuildings(self.database)
-                action = "/".join(parts[5:])
-                if action == "workers/hire":
-                    state = buildings.hire_worker(character_id, building, body.get("slot_index"), body.get("worker_id"))
-                elif action == "workers/fire":
-                    state = buildings.fire_worker(character_id, building, body.get("slot_index"))
-                elif action == "workers/player/toggle":
-                    state = buildings.toggle_player_worker(character_id, building, body.get("slot_index"))
-                elif action == "storage/deposit":
-                    state = buildings.deposit_to_storage(
-                        character_id, building, body.get("resource"), body.get("quantity", 0)
-                    )
-                elif action == "storage/withdraw":
-                    state = buildings.withdraw_from_storage(
-                        character_id, building, body.get("resource"), body.get("quantity", 0)
-                    )
-                elif action == "upgrade/deposit":
-                    state = buildings.deposit_material(
-                        character_id, building, body.get("item_id", 0),
-                        body.get("quantity", 0), source=body.get("source", "warehouse"),
-                    )
-                elif action == "upgrade/start":
-                    state = buildings.start_upgrade(character_id, building)
-                elif action == "farm/upgrade" and building == "farm":
-                    state = buildings.purchase_farm_upgrade(
-                        character_id, body.get("upgrade_id"),
-                    )
-                elif action == "lumber-camp/upgrade" and building == "lumber_camp":
-                    state = buildings.purchase_lumber_camp_upgrade(
-                        character_id, body.get("upgrade_id"),
-                    )
-                elif action == "stall-upgrade/contribute" and building == "stable":
-                    state = buildings.contribute_stall_upgrade(
-                        character_id, body.get("upgrade_id"), body.get("resource"),
-                        body.get("quantity", 0), source=body.get("source"),
-                    )
-                elif action == "stall-upgrade/purchase" and building == "stable":
-                    state = buildings.purchase_stall_upgrade(character_id, body.get("upgrade_id"))
-                elif action == "cart/contribute" and building == "stable":
-                    state = buildings.contribute_cart(
-                        character_id, body.get("resource"), body.get("quantity", 0),
-                        source=body.get("source"),
-                    )
-                elif action == "cart/purchase" and building == "stable":
-                    state = buildings.purchase_cart(character_id, body.get("grade", 1))
-                elif action == "cart/repair" and building == "stable":
-                    state = buildings.repair_cart(character_id, body.get("cart_id", ""))
-                elif action == "cart/rename" and building == "stable":
-                    state = buildings.rename_cart(
-                        character_id, body.get("cart_id", ""), body.get("name", "")
-                    )
-                elif action == "cart/auto_repair" and building == "stable":
-                    state = buildings.set_cart_auto_repair(
-                        character_id, body.get("cart_id", ""), body.get("mode")
-                    )
-                elif action == "transport/dispatch" and building == "stable":
-                    convoy = TransportService(self.database).dispatch(character_id, body)
-                    state = ProductionBuildings(self.database).get_state(character_id, "stable")
-                    self._send(201, {"building": state, "convoy": convoy})
-                    return
-                elif action == "transport/pin" and building == "stable":
-                    TransportService(self.database).set_pinned(
-                        character_id, body.get("convoy_id"), body.get("pinned", False),
-                    )
-                    state = ProductionBuildings(self.database).get_state(character_id, "stable")
-                elif action == "horse/purchase" and building == "stable":
-                    state = buildings.purchase_horse(character_id, body.get("slot_index"))
-                else:
-                    raise ValueError("Неизвестное действие здания")
-                self._send(200, {"building": state})
-                return
-            if path == "/api/world/sync":
-                user_id = self.database.user_id_by_token(self._token())
-                character_id = int(body.get("character_id", 0))
-                if not self.database.character_belongs_to_user(user_id, character_id):
-                    raise ValueError("Персонаж не найден")
-                self._send(200, self.world.sync(user_id, character_id, body))
-                return
-            if path == "/api/world/leave":
-                user_id = self.database.user_id_by_token(self._token())
-                character_id = int(body.get("character_id", 0))
-                if not self.database.character_belongs_to_user(user_id, character_id):
-                    raise ValueError("Персонаж не найден")
-                self.world.leave(user_id, character_id)
-                self._send(200, {"ok": True})
-                return
-            if path == "/api/world/corpse/loot":
-                user_id = self.database.user_id_by_token(self._token())
-                character_id = int(body.get("character_id", 0))
-                if not self.database.character_belongs_to_user(user_id, character_id):
-                    raise ValueError("Персонаж не найден")
-                self._send(200, self.world.loot_corpse(user_id, character_id, int(body.get("corpse_id", 0))))
-                return
-            if path.startswith("/api/characters/") and path.endswith("/rest"):
-                character_id = int(path.split("/")[3])
-                user_id = self.database.user_id_by_token(self._token())
-                if not self.database.character_belongs_to_user(user_id, character_id):
-                    raise ValueError("Персонаж не найден")
-                self._send(200, {"vitals": self.world.rest(user_id, character_id)})
-                return
             if path.startswith("/api/characters/") and path.endswith("/delete"):
                 character_id = int(path.rsplit("/", 2)[1])
                 user_id = self.database.user_id_by_token(self._token())
@@ -713,7 +580,7 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                 character_id = body.get("character_id")
                 user_id = self.database.user_id_by_token(token)
                 character_id = int(character_id) if character_id is not None else None
-                if character_id is not None:
+                if character_id is not None and self.world is not None:
                     # Выход из мира сохраняет HP и MP до записи чекпоинта
                     self.world.leave(user_id, character_id)
                 result = self.database.disconnect(token, character_id, body.get("character"))
@@ -791,26 +658,63 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                character_id = int(body.get("character_id", 0))
                if not self.database.character_belongs_to_user(user_id, character_id):
                    raise ValueError("Персонаж не найден")
-               response = {}
-               if path == "/api/inventory/move":
-                   self.items_database.move_item(character_id, body["from_slot"], body["to_slot"])
-               elif path == "/api/inventory/use":
-                   response["character"] = self.items_database.use_item(user_id, character_id, body["slot_index"])
-               elif path == "/api/inventory/drop":
-                   self.items_database.drop_from_slot(character_id, body["slot_index"])
-               elif path == "/api/inventory/remove":
-                   quantity = int(body.get("quantity", 0))
-                   if quantity <= 0:
-                       raise ValueError("Некорректное количество предметов")
-                   if not self.items_database.remove_from_inventory(
-                       character_id, int(body["item_id"]), quantity
-                   ):
-                       raise ValueError("В рюкзаке недостаточно предметов")
-               elif path == "/api/equipment/equip":
-                   self.items_database.equip_item(character_id, body["slot_index"], body.get("slot"))
+               def perform_inventory_action():
+                   response = {}
+                   if path == "/api/inventory/move":
+                       self.items_database.move_item(character_id, body["from_slot"], body["to_slot"])
+                   elif path == "/api/inventory/use":
+                       response["character"] = self.items_database.use_item(user_id, character_id, body["slot_index"])
+                   elif path == "/api/inventory/drop":
+                       self.items_database.drop_from_slot(character_id, body["slot_index"])
+                   elif path == "/api/inventory/remove":
+                       quantity = int(body.get("quantity", 0))
+                       if quantity <= 0:
+                           raise ValueError("Некорректное количество предметов")
+                       if not self.items_database.remove_from_inventory(
+                           character_id, int(body["item_id"]), quantity
+                       ):
+                           raise ValueError("В рюкзаке недостаточно предметов")
+                   elif path == "/api/equipment/equip":
+                       self.items_database.equip_item(character_id, body["slot_index"], body.get("slot"))
+                   else:
+                       self.items_database.unequip_item(character_id, str(body["slot"]), body.get("target_slot"))
+                   response.update(self.items_database.get_inventory_state(character_id))
+                   return response
+
+               if self.world is None:
+                   response = perform_inventory_action()
                else:
-                   self.items_database.unequip_item(character_id, str(body["slot"]), body.get("target_slot"))
-               response.update(self.items_database.get_inventory_state(character_id))
+                   response = self.world.run_inventory_action(user_id, character_id, perform_inventory_action)
+               self._send(200, response)
+               return
+
+            if path == "/api/storage/transfer":
+               user_id = self.database.user_id_by_token(self._token())
+               character_id = int(body.get("character_id", 0))
+               if not self.database.character_belongs_to_user(user_id, character_id):
+                   raise ValueError("Персонаж не найден")
+               def perform_storage_transfer():
+                   self.items_database.transfer_storage(
+                       character_id,
+                       body.get("storage_type", ""),
+                       body.get("direction", ""),
+                       body.get("quantity", 0),
+                       slot_index=body.get("slot_index"),
+                       storage_item_id=body.get("storage_item_id"),
+                   )
+                   return {
+                       **self.items_database.get_inventory_state(character_id),
+                       "storage": self.items_database.get_storage(
+                           character_id, str(body.get("storage_type", ""))
+                       ),
+                   }
+
+               if self.world is None:
+                   response = perform_storage_transfer()
+               else:
+                   response = self.world.run_inventory_action(
+                       user_id, character_id, perform_storage_transfer
+                   )
                self._send(200, response)
                return
             
@@ -841,6 +745,21 @@ class GameRequestHandler(BaseHTTPRequestHandler):
     def do_PUT(self):
         try:
             path = urlparse(self.path).path.rstrip("/")
+
+            item_match = re.fullmatch(r"/api/items/catalog/(\d+)", path)
+            if item_match:
+                body = self._body()
+                if not isinstance(body, dict):
+                    raise ValueError("Тело запроса должно быть объектом")
+                user_id = self.database.user_id_by_token(self._token())
+                item = self.items_database.update_item(
+                    user_id,
+                    int(item_match.group(1)),
+                    body.get("form") or {},
+                )
+                self._send(200, {"item": item})
+                return
+
             if path.startswith("/api/characters/"):
                 character_id = int(path.rsplit("/", 1)[1])
                 user_id = self.database.user_id_by_token(self._token())
@@ -868,6 +787,13 @@ class GameRequestHandler(BaseHTTPRequestHandler):
         except Exception as error:
             self._handle_server_error(error)
 
+    def do_DELETE(self):
+        try:
+            path = urlparse(self.path).path.rstrip("/")
+            self._send(404, {"error": "Маршрут не найден"})
+        except Exception as error:
+            self._handle_server_error(error)
+
     def log_message(self, format_string, *args):
         print(f"[server] {self.address_string()} - {format_string % args}")
 
@@ -886,18 +812,37 @@ def apply_published_map(database, world=None):
         world_map.apply_live_terrain(terrain, published)
 
 
-def run():
-    apply_published_map(GameRequestHandler.database)
-    print("Подготавливаю дороги к загородным постройкам...")
-    roads_payload()
-    server = GameHTTPServer((config.HOST, config.PORT), GameRequestHandler)
-    database = GameRequestHandler.database
-    GameRequestHandler.world = WorldService(
-        database,
-        GameRequestHandler.items_database,
-        city_level_provider=lambda: current_city_level(database),
-    )
-    GameRequestHandler.world.start()
+def run_mode_server(mode, request_handler, *, world_factory=None, startup=None, background_workers=()):
+    from server.mode_registry import get_mode
+
+    mode_config = get_mode(mode)
+    if not mode_config.get("runtime_ready", True) or not mode_config.get("entrypoint"):
+        raise ValueError(f"No runtime is registered for game mode {mode!r}")
+    if config.GAME_SCHEMA != mode_config["schema"]:
+        raise RuntimeError(
+            f"Set GAME_SCHEMA={mode_config['schema']!r} before starting this mode's world process"
+        )
+    database = Database()
+    world = database.world_info(config.WORLD_ID)
+    if world["code"] == "lobby":
+        raise RuntimeError("The lobby has no gameplay runtime; use python -m server.central_main")
+    if world["mode"] != mode:
+        raise RuntimeError(
+            f"World mode {world['mode']!r} cannot start in the {mode!r} runtime"
+        )
+    GameRequestHandler.database = database
+    GameRequestHandler.items_database = ItemsDatabase(database)
+    GameRequestHandler.items_database.hidden_item_ids = hidden_items_for_mode(mode)
+    GameRequestHandler.world = None
+    request_handler.database = database
+    request_handler.items_database = GameRequestHandler.items_database
+    apply_published_map(database)
+    if startup is not None:
+        startup(database)
+    server = GameHTTPServer((config.HOST, config.PORT), request_handler)
+    if world_factory is not None:
+        GameRequestHandler.world = world_factory(database, GameRequestHandler.items_database)
+        GameRequestHandler.world.start()
     stop_event = threading.Event()
     restart_requested = threading.Event()
     restart_thread = threading.Thread(
@@ -907,32 +852,33 @@ def run():
         daemon=True,
     )
     restart_thread.start()
-    population_thread = threading.Thread(
-        target=_run_city_population,
-        args=(stop_event,),
-        name="city-population-ticks",
-        daemon=True,
-    )
-    population_thread.start()
-    world_event_thread = threading.Thread(
-        target=run_world_event_watcher,
-        args=(GameRequestHandler.database, stop_event),
-        name="world-event-watcher",
-        daemon=True,
-    )
-    world_event_thread.start()
+    worker_threads = []
+    for name, worker in background_workers:
+        thread = threading.Thread(
+            target=worker,
+            args=(database, stop_event),
+            name=name,
+            daemon=True,
+        )
+        thread.start()
+        worker_threads.append(thread)
     print(f"Game server: http://{config.HOST}:{config.PORT}")
     try:
+        database.set_world_server(config.WORLD_ID, config.PUBLIC_URL.rstrip("/"))
         server.serve_forever()
     except KeyboardInterrupt:
         print("\nGame server stopped")
     finally:
         stop_event.set()
         restart_thread.join(timeout=2)
-        population_thread.join(timeout=2)
-        world_event_thread.join(timeout=2)
-        GameRequestHandler.world.stop()
-        server.server_close()
+        for thread in worker_threads:
+            thread.join(timeout=2)
+        if GameRequestHandler.world is not None:
+            GameRequestHandler.world.stop()
+        try:
+            database.set_world_server(config.WORLD_ID, None)
+        finally:
+            server.server_close()
     if restart_requested.is_set():
         raise SystemExit(1)
 
@@ -945,15 +891,15 @@ def _run_scheduled_restart(server, stop_event, restart_requested):
             return
 
 
-def _run_city_population(stop_event):
-    population = CityPopulation(GameRequestHandler.database)
-    while not stop_event.is_set():
-        try:
-            population.tick_all()
-        except Exception:
-            traceback.print_exc()
-        if stop_event.wait(config.CITY_TICK_INTERVAL_SECONDS):
-            break
+def run():
+    mode = config.GAME_SCHEMA
+    if mode == "tower":
+        from tower.server.main import run as run_tower
+        return run_tower()
+    if mode == "economy":
+        from economy.server.main import run as run_economy
+        return run_economy()
+    raise RuntimeError("Set GAME_SCHEMA to 'tower' or 'economy' before starting a world process")
 
 
 if __name__ == "__main__":

@@ -10,7 +10,7 @@ from core import settings
 from core.cart_progress import CART_GRADES, DEFAULT_CART_PROGRESS
 from core.production_buildings import building_resources, upgrade_requirements
 from server.items_database import ItemsDatabase
-from server.production_buildings import ProductionBuildings, STORAGE_RESOURCES_BY_ITEM_ID
+from economy.server.production_buildings import ProductionBuildings, STORAGE_RESOURCES_BY_ITEM_ID
 from server.structures import city_structures
 from tests.fixtures import create_test_database, drop_test_database, seed_city_treasury
 
@@ -370,7 +370,7 @@ class CityStorageServerTests(unittest.TestCase):
         self.assertEqual(ration_done["max_workers"], 3)
         ration_slot = next(slot for slot in ration_done["worker_slots"] if slot["slot_index"] == 1000)
         self.assertEqual(ration_slot["resources"], ["wheat"])
-        from server.city_population import CityPopulation
+        from economy.server.city_population import CityPopulation
 
         governor = CityPopulation(self.database).get_state(self.character_id, now=11801)
         farm_worksite = next(site for site in governor["worksites"] if site["building"] == "farm")

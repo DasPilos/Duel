@@ -1,0 +1,163 @@
+{
+ "design": [
+  1920,
+  1080
+ ],
+ "tavern_button": [
+  1640,
+  35,
+  220,
+  45
+ ],
+ "inventory_button": [
+  1850,
+  10,
+  50,
+  50
+ ],
+ "application_frame": [
+  560,
+  40,
+  800,
+  560
+ ],
+ "duel_list": [
+  585,
+  115,
+  750,
+  145
+ ],
+ "group_list": [
+  585,
+  365,
+  750,
+  200
+ ],
+ "duel_button": [
+  560,
+  620,
+  220,
+  40
+ ],
+ "group_button": [
+  800,
+  620,
+  220,
+  40
+ ],
+ "accept_button": [
+  1040,
+  620,
+  220,
+  40
+ ],
+ "title_pos": [
+  585,
+  60
+ ],
+ "group_label_pos": [
+  585,
+  305
+ ],
+ "error_pos": [
+  600,
+  690
+ ],
+ "timer_centers_x": [
+  670,
+  910
+ ],
+ "timer_top": 665,
+ "row_step": 42,
+ "row_height": 34,
+ "chat_panel": [
+  451,
+  790,
+  1018,
+  285
+ ],
+ "chat_toggle": [
+  1389,
+  1045,
+  70,
+  25
+ ],
+ "chat_collapsed_toggle": [
+  1840,
+  1055,
+  70,
+  25
+ ],
+ "chat_divider": [
+  1295,
+  848,
+  8,
+  182
+ ],
+ "chat_people": [
+  1311,
+  848,
+  150,
+  182
+ ],
+ "chat_messages": [
+  463,
+  848,
+  824,
+  182
+ ],
+ "chat_input": [
+  456,
+  1040,
+  831,
+  25
+ ],
+ "chat_send": [
+  1217,
+  1040,
+  70,
+  25
+ ],
+ "chat_channels": [
+  {
+   "name": "Общий",
+   "rect": [
+    463,
+    800,
+    70,
+    25
+   ]
+  },
+  {
+   "name": "Личные",
+   "rect": [
+    538,
+    800,
+    70,
+    25
+   ]
+  }
+ ],
+ "chat_room_name_pos": [
+  1311,
+  804
+ ],
+ "chat_error_pos": [
+  463,
+  1055
+ ],
+ "chat_people_row_height": 28,
+ "chat_people_text_pad": 10,
+ "chat_people_button": [
+  1392,
+  1,
+  58,
+  23
+ ],
+ "chat_message_line_height": 20,
+ "chat_message_top_pad": 4,
+ "chat_message_gap": 4,
+ "chat_send_text": "ОТПРАВИТЬ",
+ "chat_divider_x_min": 771,
+ "chat_divider_x_max": 1295
+}

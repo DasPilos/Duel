@@ -3,10 +3,10 @@ import math
 import time
 import unittest
 
-from server.city_population import CityPopulation, wheat_reserve_zone
+from economy.server.city_population import CityPopulation, wheat_reserve_zone
 from server.database import SYSTEM_USER_ID
 from server.items_database import ItemsDatabase
-from server.production_buildings import ProductionBuildings
+from economy.server.production_buildings import ProductionBuildings
 from tests.fixtures import create_test_database, drop_test_database, running_server, seed_city_treasury
 
 
@@ -180,7 +180,7 @@ class CityPopulationTests(unittest.TestCase):
         self.assertEqual(state["city_resource_trend"]["wood"], "deficit")
 
     def test_citizens_eat_only_wheat(self):
-        from server.city_population import food_consumption_per_hour
+        from economy.server.city_population import food_consumption_per_hour
 
         citizens = [{"work_status": "Свободен"}, {"work_status": "Занят"}]
         consumption = food_consumption_per_hour(citizens, ["wheat", "berries", "meat"])
@@ -1036,9 +1036,9 @@ class CityPopulationTests(unittest.TestCase):
         )
 
     def test_authenticated_api_loads_assigns_and_recalls_citizen(self):
-        with running_server(self.database) as client:
+        with running_server(self.database, mode="economy") as client:
             client.timeout = 15
-            client.login("city-overseer", "password")
+            client.token = self.database.login("city-overseer", "password")["token"]
             state = client.get_city_population(self.character_id)
             self.assertEqual(state["population"], 4)
 
@@ -1069,9 +1069,9 @@ class CityPopulationTests(unittest.TestCase):
             )
             observers.append((f"city-map-{profession}", observer_character["id"]))
 
-        with running_server(self.database) as owner_client:
+        with running_server(self.database, mode="economy") as owner_client:
             owner_client.timeout = 15
-            owner_client.login("city-overseer", "password")
+            owner_client.token = self.database.login("city-overseer", "password")["token"]
             state = owner_client.get_city_population(self.character_id)
             citizen_id = state["citizens"][0]["id"]
             owner_client.assign_city_citizen(self.character_id, citizen_id, "farm", 0)
@@ -1080,7 +1080,7 @@ class CityPopulationTests(unittest.TestCase):
             snapshots = [owner_travelers]
             for username, observer_id in observers:
                 observer_client = type(owner_client)(owner_client.base_url)
-                observer_client.login(username, "password")
+                observer_client.token = self.database.login(username, "password")["token"]
                 snapshots.append(
                     observer_client.get_world_traveling_citizens(observer_id)
                 )

@@ -4,6 +4,7 @@ import time
 import pygame
 
 from core import mob_modes
+from core.crystal_growth import format_duration, parse_duration, validate_settings
 from core.game_modes import DEFAULT_MODE, mode_name
 from core.tile_mask import BLOCKED, FREE, MASK_CELLS, MASK_SIDE
 
@@ -30,12 +31,17 @@ SAVE_BUTTON_W = 120
 CONFIRM_W = 460
 CONFIRM_H = 124
 CONFIRM_BUTTON_W = 180
+EXIT_W = 620
+EXIT_H = 150
+EXIT_BUTTON_H = 36
+EXIT_BUTTON_GAP = 10
 SIZE_W = 440
 SIZE_HEAD_H = 52
-SIZE_ROW_H = 36
 SIZE_FOOT_H = 36
-SIZE_MODE_H = 44
+SIZE_MODE_H = 156
 SIZE_MODE_W = 140
+SIZE_OPTIONS = (64, 128, 256, 512, 1024, 1600)
+SIZE_DIMENSION_H = 34
 WORLD_W = 460
 WORLD_HEAD_H = 52
 WORLD_ROW_H = 32
@@ -224,27 +230,59 @@ class ToolBar:
 
 
 class Minimap:
+    DISPLAY_SIZE = 400
+
     def __init__(self):
         self.surface = None
+        self.display_surface = None
         self.version = None
 
-    def refresh(self, state):
-        if self.surface is not None and self.version == state.version:
+    def refresh(self, state, layers=None, visible=None, opacity=None):
+        layers = list(layers or (state,))
+        visible = list(visible or (True,) * len(layers))
+        opacity = list(opacity or (255,) * len(layers))
+        version = (tuple(layer.version for layer in layers), tuple(visible), tuple(opacity))
+        if self.surface is not None and self.version == version:
             return
         self.surface = pygame.Surface((state.map_w, state.map_h))
         self.surface.fill(MINI_EMPTY)
-        for layer in (state.ground, state.overlay, state.objects):
-            for (x, y), key in layer.items():
-                category = state.items[key]["category"]
-                self.surface.set_at((x, y), CATEGORY_COLORS.get(category, MINI_UNKNOWN))
-        self.version = state.version
+        for index, editor_layer in enumerate(layers):
+            if not visible[index]:
+                continue
+            for tiles in (
+                editor_layer.ground, editor_layer.overlay, editor_layer.elevation,
+                editor_layer.relief, editor_layer.infra, editor_layer.objects,
+            ):
+                for (x, y), key in tiles.items():
+                    category = editor_layer.items[key]["category"]
+                    color = CATEGORY_COLORS.get(category, MINI_UNKNOWN)
+                    if opacity[index] < 255:
+                        below = self.surface.get_at((x, y))
+                        alpha = opacity[index] / 255
+                        color = tuple(
+                            round(color[channel] * alpha + below[channel] * (1 - alpha))
+                            for channel in range(3)
+                        )
+                    self.surface.set_at((x, y), color)
+        self.display_surface = pygame.transform.scale(
+            self.surface,
+            (self.DISPLAY_SIZE, self.DISPLAY_SIZE),
+        )
+        self.version = version
 
-    def draw(self, screen, rect, view):
+    def draw(self, screen, rect, view, map_size):
         """view = (x, y, w, h) в клетках карты: видимая часть сетки."""
-        screen.blit(self.surface, rect)
+        screen.blit(self.display_surface, rect)
         pygame.draw.rect(screen, BORDER, rect, 1)
         x, y, w, h = view
-        pygame.draw.rect(screen, VIEW_COLOR, (rect.x + x, rect.y + y, w, h), 1)
+        map_w, map_h = map_size
+        view_rect = pygame.Rect(
+            rect.x + round(x * rect.w / map_w),
+            rect.y + round(y * rect.h / map_h),
+            max(1, round(w * rect.w / map_w)),
+            max(1, round(h * rect.h / map_h)),
+        )
+        pygame.draw.rect(screen, VIEW_COLOR, view_rect, 1)
 
 
 class LoginPrompt:
@@ -519,35 +557,141 @@ class DraftList:
             screen.blit(text, text.get_rect(center=rect.center))
 
 
-class SizePicker:
-    """Окно выбора размера новой карты: клик по строке создаёт пустую карту выбранного размера, Esc закрывает."""
+class ExitDialog:
+    """Выход с несохранёнными изменениями: сохранить и выйти, выйти без сохранения (после подтверждения) или отмена."""
 
-    def __init__(self, font, small, presets, modes=None, mode=None):
+    def __init__(self, font, small):
         self.font = font
         self.small = small
-        self.presets = presets
-        self.modes = list(modes or [])
-        self.mode = mode or (self.modes[0]["key"] if self.modes else None)
-
-    def _top(self):
-        return SIZE_HEAD_H + (SIZE_MODE_H if self.modes else 0)
+        self.confirming = False
 
     def box(self):
-        height = self._top() + len(self.presets) * SIZE_ROW_H + SIZE_FOOT_H
+        rect = pygame.Rect(0, 0, EXIT_W, EXIT_H)
+        rect.center = pygame.display.get_surface().get_rect().center
+        return rect
+
+    def choices(self):
+        """Кнопки текущего шага: (код, прямоугольник, подпись)."""
+        box = self.box()
+        if self.confirming:
+            options = [("discard", "Да, выйти без сохранения"), ("back", "Назад")]
+        else:
+            options = [("save", "Сохранить и выйти"), ("discard", "Выйти без сохранения"), ("cancel", "Отмена")]
+        width = (box.w - 36 - EXIT_BUTTON_GAP * (len(options) - 1)) // len(options)
+        y = box.bottom - EXIT_BUTTON_H - 18
+        return [
+            (code, pygame.Rect(box.x + 18 + index * (width + EXIT_BUTTON_GAP), y, width, EXIT_BUTTON_H), label)
+            for index, (code, label) in enumerate(options)
+        ]
+
+    def handle_event(self, event):
+        """Возвращает 'save', 'discard' (уже подтверждённый), 'cancel' или None."""
+        if event.type == pygame.KEYDOWN:
+            if event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+                return "discard" if self.confirming else "save"
+            if event.key == pygame.K_ESCAPE:
+                if self.confirming:
+                    self.confirming = False
+                    return None
+                return "cancel"
+        elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            for code, rect, _label in self.choices():
+                if rect.collidepoint(event.pos):
+                    return self._choose(code)
+            if not self.confirming and not self.box().collidepoint(event.pos):
+                return "cancel"
+        return None
+
+    def _choose(self, code):
+        if code == "discard" and not self.confirming:
+            self.confirming = True
+            return None
+        if code == "back":
+            self.confirming = False
+            return None
+        return code
+
+    def draw(self, screen):
+        _shade(screen)
+        box = self.box()
+        _panel(screen, box)
+        if self.confirming:
+            title = "Вы уверены?"
+            text = "Несохранённые изменения карты будут потеряны."
+            hint = "Enter — выйти без сохранения · Esc — назад"
+        else:
+            title = "Выйти из редактора?"
+            text = "Есть несохранённые изменения карты."
+            hint = "Enter — сохранить и выйти · Esc — остаться в редакторе"
+        screen.blit(self.font.render(title, True, TEXT), (box.x + 18, box.y + 14))
+        screen.blit(self.small.render(text, True, TEXT_DIM), (box.x + 18, box.y + 48))
+        screen.blit(self.small.render(hint, True, TEXT_DIM), (box.x + 18, box.y + 70))
+        mouse = pygame.mouse.get_pos()
+        for _code, rect, label in self.choices():
+            active = rect.collidepoint(mouse)
+            pygame.draw.rect(screen, BUTTON_ON if active else BUTTON_BG, rect, border_radius=4)
+            text_surface = self.small.render(label, True, TEXT)
+            screen.blit(text_surface, text_surface.get_rect(center=rect.center))
+
+
+class SizePicker:
+    """Выбор режима, ширины и высоты новой карты; размеры меняются независимо."""
+
+    def __init__(self, font, small, modes=None, mode=None):
+        self.font = font
+        self.small = small
+        self.modes = list(modes or [])
+        self.mode = mode or (self.modes[0]["key"] if self.modes else None)
+        self.width = SIZE_OPTIONS[0]
+        self.height = SIZE_OPTIONS[0]
+
+    def _top(self):
+        return SIZE_HEAD_H + (SIZE_MODE_H if self.modes else SIZE_DIMENSION_H * 2 + 8)
+
+    def box(self):
+        height = self._top() + SIZE_FOOT_H
         rect = pygame.Rect(0, 0, SIZE_W, height)
         rect.center = pygame.display.get_surface().get_rect().center
         return rect
 
-    def _row(self, index):
+    def _dimension_rect(self, index):
         box = self.box()
-        return pygame.Rect(box.x + 18, box.y + self._top() + index * SIZE_ROW_H, box.w - 36, SIZE_ROW_H - 6)
+        top = (
+            box.y + SIZE_HEAD_H + 62 + index * 40
+            if self.modes
+            else box.y + SIZE_HEAD_H + index * 40
+        )
+        return pygame.Rect(box.x + 18, top, box.w - 36, SIZE_DIMENSION_H)
+
+    def _dimension_button_rect(self, dimension, direction):
+        row = self._dimension_rect(0 if dimension == "width" else 1)
+        x = row.x + 132 if direction < 0 else row.right - 42
+        return pygame.Rect(x, row.y + 2, 38, row.h - 4)
 
     def _mode_rect(self, index):
         box = self.box()
-        return pygame.Rect(box.x + 96 + index * (SIZE_MODE_W + 6), box.y + SIZE_HEAD_H + 2, SIZE_MODE_W, 32)
+        gap = 6
+        start_x = box.x + 96
+        available_width = box.right - 18 - start_x
+        mode_width = min(
+            SIZE_MODE_W,
+            (available_width - gap * (len(self.modes) - 1)) // len(self.modes),
+        )
+        return pygame.Rect(
+            start_x + index * (mode_width + gap),
+            box.y + SIZE_HEAD_H + 2,
+            mode_width,
+            32,
+        )
+
+    def _change_dimension(self, dimension, direction):
+        value = getattr(self, dimension)
+        index = SIZE_OPTIONS.index(value)
+        index = max(0, min(len(SIZE_OPTIONS) - 1, index + direction))
+        setattr(self, dimension, SIZE_OPTIONS[index])
 
     def handle_event(self, event):
-        """Возвращает (ширина, высота) или (ширина, высота, режим), если режимы заданы; 'cancel' или None."""
+        """Возвращает (ширина, высота, режим), 'cancel' либо None."""
         if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
             return "cancel"
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
@@ -555,19 +699,41 @@ class SizePicker:
                 if self._mode_rect(index).collidepoint(event.pos):
                     self.mode = mode["key"]
                     return None
-            for index, (map_w, map_h, _) in enumerate(self.presets):
-                if self._row(index).collidepoint(event.pos):
-                    return (map_w, map_h, self.mode) if self.modes else (map_w, map_h)
+            for dimension in ("width", "height"):
+                for direction in (-1, 1):
+                    if self._dimension_button_rect(dimension, direction).collidepoint(event.pos):
+                        self._change_dimension(dimension, direction)
+                        return None
+            if self._create_rect().collidepoint(event.pos):
+                if self.modes:
+                    return self.width, self.height, self.mode
+                return self.width, self.height
             if not self.box().collidepoint(event.pos):
                 return "cancel"
         return None
+
+    def _create_rect(self):
+        box = self.box()
+        return pygame.Rect(
+            box.x + 18,
+            box.y + self._top(),
+            box.w - 36,
+            SIZE_FOOT_H,
+        )
 
     def draw(self, screen):
         _shade(screen)
         box = self.box()
         _panel(screen, box)
-        screen.blit(self.font.render("Новая карта: режим и размер" if self.modes else "Размер новой карты", True, TEXT), (box.x + 18, box.y + 14))
-        mouse = pygame.mouse.get_pos()
+        screen.blit(
+            self.font.render(
+                "Новая карта: режим, ширина и высота"
+                if self.modes else "Размер новой карты",
+                True,
+                TEXT,
+            ),
+            (box.x + 18, box.y + 14),
+        )
         if self.modes:
             screen.blit(self.small.render("Режим:", True, TEXT_DIM), (box.x + 18, box.y + SIZE_HEAD_H + 10))
             for index, mode in enumerate(self.modes):
@@ -577,13 +743,38 @@ class SizePicker:
                 pygame.draw.rect(screen, ACTIVE_TEXT if chosen else BORDER, chip, 2 if chosen else 1, border_radius=4)
                 label = self.font.render(mode["name"], True, TEXT)
                 screen.blit(label, label.get_rect(center=chip.center))
-        for index, (map_w, map_h, label) in enumerate(self.presets):
-            row = self._row(index)
-            pygame.draw.rect(screen, BUTTON_ON if row.collidepoint(mouse) else BUTTON_BG, row, border_radius=4)
-            text = self.font.render(f"{map_w} × {map_h}  ·  {label}", True, TEXT)
-            screen.blit(text, text.get_rect(midleft=(row.x + 12, row.centery)))
-        foot = self.small.render("Клик по размеру — создать карту · Esc — отмена", True, TEXT_DIM)
-        screen.blit(foot, (box.x + 18, box.bottom - SIZE_FOOT_H + 12))
+            selected_mode = next(
+                (mode for mode in self.modes if mode["key"] == self.mode),
+                None,
+            )
+            description = (selected_mode or {}).get("description")
+            if description:
+                screen.blit(
+                    self.small.render(description, True, TEXT_DIM),
+                    (box.x + 96, box.y + SIZE_HEAD_H + 42),
+                )
+        for index, (dimension, label) in enumerate((
+            ("width", "Ширина"),
+            ("height", "Высота"),
+        )):
+            row = self._dimension_rect(index)
+            pygame.draw.rect(screen, BUTTON_BG, row, border_radius=4)
+            screen.blit(self.small.render(label, True, TEXT_DIM), (row.x + 10, row.y + 9))
+            for direction, symbol in ((-1, "−"), (1, "+")):
+                button = self._dimension_button_rect(dimension, direction)
+                pygame.draw.rect(screen, BUTTON_ON, button, border_radius=3)
+                button_text = self.font.render(symbol, True, TEXT)
+                screen.blit(button_text, button_text.get_rect(center=button.center))
+            value = self.font.render(f"{getattr(self, dimension)} тайлов", True, TEXT)
+            screen.blit(value, value.get_rect(center=(row.centerx + 5, row.centery)))
+        create = self._create_rect()
+        pygame.draw.rect(screen, BUTTON_ON, create, border_radius=4)
+        create_label = self.small.render(
+            "Создать карту · Esc — отмена",
+            True,
+            TEXT,
+        )
+        screen.blit(create_label, create_label.get_rect(center=create.center))
 
 
 class WorldPicker:
@@ -1003,9 +1194,16 @@ class EquipmentDialog:
         box = self.box()
         return pygame.Rect(box.right - 164, box.bottom - 56, 140, 40)
 
+    def _slot_items(self, slot):
+        return self.by_slot[mob_modes.item_slot(slot)]
+
     def _eligible(self, slot):
-        """Варианты для слота: None («пусто») и предметы, которые подходят виду."""
-        fitting = [item for item in self.by_slot[slot] if mob_modes.item_fits_mob(item, self.stats, self.level)]
+        """Варианты для слота: None («пусто») и предметы, которые подходят виду и не надеты в другом слоте."""
+        worn_elsewhere = {item_id for other, item_id in self.equipment.items() if other != slot}
+        fitting = [
+            item for item in self._slot_items(slot)
+            if int(item["id"]) not in worn_elsewhere and mob_modes.item_fits_mob(item, self.stats, self.level)
+        ]
         return [None] + fitting
 
     def _picker_rect(self):
@@ -1107,7 +1305,7 @@ class EquipmentDialog:
         slot_label = EQUIP_SLOT_CELLS[self.picker_slot][2]
         screen.blit(self.font.render(f"Слот: {slot_label}", True, TEXT), (picker.x + 12, picker.y + 10))
         options = self._eligible(self.picker_slot)
-        hidden = len(self.by_slot[self.picker_slot]) - (len(options) - 1)
+        hidden = sum(1 for item in self._slot_items(self.picker_slot) if not mob_modes.item_fits_mob(item, self.stats, self.level))
         if hidden:
             note = self.small.render(f"скрыто по требованиям: {hidden}", True, TEXT_DIM)
             screen.blit(note, (picker.right - note.get_width() - 12, picker.y + 14))
@@ -1129,6 +1327,205 @@ class EquipmentDialog:
             requirements = _fit(self.small, self._requirement_text(item), rect.w * 0.5)
             width = self.small.size(requirements)[0]
             screen.blit(self.small.render(requirements, True, TEXT_DIM), (rect.right - width - 8, rect.y + 9))
+
+
+CRYSTAL_W = 480
+CRYSTAL_H = 370
+CRYSTAL_FIELD_W = 150
+CRYSTAL_TEXT_MAX = 9
+CRYSTAL_FIELDS = [
+    ("grow_seconds", "Время созревания", "time"),
+    ("loot_start", "Лут при появлении", "int"),
+    ("loot_next", "Лут на последней стадии", "int"),
+    ("harvest_seconds", "Время добычи", "time"),
+    ("loot_item_id", "Предмет (все стадии)", "item"),
+]
+LOOT_ROW_H = 24
+LOOT_PICKER_ROWS = 8
+
+
+class CrystalSettingsDialog:
+    """Настройки роста и добычи цвета кристалла. Поля редактируются с клавиатуры: клик выбирает поле, Tab и стрелки переключают поля.
+
+    settings — полные настройки цвета (см. core.crystal_growth.settings_for). loot_items — материалы каталога для предмета добычи.
+    handle_event возвращает ("save", настройки цвета), "cancel" или None.
+    """
+
+    def __init__(self, font, small, color, title, settings, loot_items=()):
+        self.font = font
+        self.small = small
+        self.color = color
+        self.title = title
+        self.texts = [
+            format_duration(settings[key]) if kind == "time" else "" if kind == "item" else str(settings[key])
+            for key, _label, kind in CRYSTAL_FIELDS
+        ]
+        self.loot_item_id = int(settings["loot_item_id"])
+        self.loot_items = list(loot_items)
+        self.loot_picker = False
+        self.loot_scroll = 0
+        self.focus = 0
+        self.message = ""
+
+    def box(self):
+        rect = pygame.Rect(0, 0, CRYSTAL_W, CRYSTAL_H)
+        rect.center = pygame.display.get_surface().get_rect().center
+        return rect
+
+    def _field_rect(self, index):
+        box = self.box()
+        return pygame.Rect(box.x + 300, box.y + 60 + index * 40, CRYSTAL_FIELD_W, 30)
+
+    def _save_rect(self):
+        box = self.box()
+        return pygame.Rect(box.x + 24, box.bottom - 56, 200, 36)
+
+    def _cancel_rect(self):
+        box = self.box()
+        return pygame.Rect(box.x + 236, box.bottom - 56, 200, 36)
+
+    def handle_event(self, event):
+        if self.loot_picker:
+            return self._loot_picker_event(event)
+        if event.type == pygame.KEYDOWN:
+            return self._key(event)
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            return self._press(event.pos)
+        return None
+
+    def _key(self, event):
+        if event.key == pygame.K_ESCAPE:
+            return "cancel"
+        kind = CRYSTAL_FIELDS[self.focus][2]
+        if kind == "item" and event.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE):
+            self._open_loot_picker()
+            return None
+        if event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+            return self._save()
+        if event.key in (pygame.K_TAB, pygame.K_DOWN):
+            self.focus = (self.focus + 1) % len(CRYSTAL_FIELDS)
+        elif event.key == pygame.K_UP:
+            self.focus = (self.focus - 1) % len(CRYSTAL_FIELDS)
+        elif kind == "item":
+            return None
+        elif event.key == pygame.K_BACKSPACE:
+            self.texts[self.focus] = self.texts[self.focus][:-1]
+        elif event.unicode and len(self.texts[self.focus]) < CRYSTAL_TEXT_MAX:
+            allowed = "0123456789:" if kind == "time" else "0123456789"
+            if event.unicode in allowed:
+                self.texts[self.focus] += event.unicode
+        return None
+
+    def _press(self, pos):
+        if self._save_rect().collidepoint(pos):
+            return self._save()
+        if self._cancel_rect().collidepoint(pos):
+            return "cancel"
+        for index in range(len(CRYSTAL_FIELDS)):
+            if self._field_rect(index).collidepoint(pos):
+                self.focus = index
+                if CRYSTAL_FIELDS[index][2] == "item":
+                    self._open_loot_picker()
+        return None
+
+    def _loot_name(self):
+        item = next((item for item in self.loot_items if int(item["id"]) == self.loot_item_id), None)
+        return item["name"] if item else f"Предмет #{self.loot_item_id}"
+
+    def _open_loot_picker(self):
+        self.loot_picker = True
+        current = next((i for i, item in enumerate(self.loot_items) if int(item["id"]) == self.loot_item_id), 0)
+        self.loot_scroll = max(0, min(current, len(self.loot_items) - LOOT_PICKER_ROWS))
+
+    def _loot_picker_rect(self):
+        box = self.box()
+        return pygame.Rect(box.x + 24, box.y + 52, box.w - 48, 44 + LOOT_PICKER_ROWS * LOOT_ROW_H)
+
+    def _loot_row(self, picker, row):
+        return pygame.Rect(picker.x + 8, picker.y + 40 + row * LOOT_ROW_H, picker.w - 16, LOOT_ROW_H - 2)
+
+    def _loot_picker_event(self, event):
+        picker = self._loot_picker_rect()
+        if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+            self.loot_picker = False
+        elif event.type == pygame.MOUSEWHEEL:
+            self.loot_scroll = max(0, min(self.loot_scroll - event.y, max(0, len(self.loot_items) - LOOT_PICKER_ROWS)))
+        elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            if not picker.collidepoint(event.pos):
+                self.loot_picker = False
+                return None
+            for row in range(LOOT_PICKER_ROWS):
+                index = self.loot_scroll + row
+                if index < len(self.loot_items) and self._loot_row(picker, row).collidepoint(event.pos):
+                    self.loot_item_id = int(self.loot_items[index]["id"])
+                    self.loot_picker = False
+                    break
+        return None
+
+    def _save(self):
+        values = {}
+        try:
+            for (key, label, kind), text in zip(CRYSTAL_FIELDS, self.texts):
+                if kind == "time":
+                    values[key] = parse_duration(text)
+                elif kind == "item":
+                    values[key] = self.loot_item_id
+                elif text.isdigit():
+                    values[key] = int(text)
+                else:
+                    raise ValueError(f"{label}: целое число")
+            return "save", validate_settings({self.color: values}, [self.color])[self.color]
+        except ValueError as error:
+            self.message = str(error)
+            return None
+
+    def draw(self, screen):
+        _shade(screen)
+        box = self.box()
+        _panel(screen, box)
+        screen.blit(self.font.render(self.title, True, TEXT), (box.x + 24, box.y + 18))
+        mouse = pygame.mouse.get_pos()
+        for index, (_key, label, kind) in enumerate(CRYSTAL_FIELDS):
+            rect = self._field_rect(index)
+            chosen = index == self.focus
+            screen.blit(self.font.render(label, True, TEXT), (box.x + 24, rect.y + 5))
+            pygame.draw.rect(screen, MENU_BG, rect, border_radius=4)
+            pygame.draw.rect(screen, ACTIVE_TEXT if chosen else BORDER, rect, 2 if chosen else 1, border_radius=4)
+            if kind == "item":
+                text = _fit(self.font, self._loot_name(), CRYSTAL_FIELD_W - 16)
+            else:
+                text = self.texts[index] + ("|" if chosen else "")
+            screen.blit(self.font.render(text, True, TEXT), (rect.x + 8, rect.y + 6))
+        hint_y = box.y + 60 + len(CRYSTAL_FIELDS) * 40 + 2
+        screen.blit(self.small.render("Время — ч:мм:сс (например 0:10:00). Лут — от 1 до 99.", True, TEXT_DIM), (box.x + 24, hint_y))
+        if self.message:
+            screen.blit(self.small.render(self.message, True, WARN_TEXT), (box.x + 24, hint_y + 22))
+        for rect, label in ((self._save_rect(), "Сохранить"), (self._cancel_rect(), "Отмена")):
+            hovered = rect.collidepoint(mouse)
+            pygame.draw.rect(screen, BUTTON_ON if hovered else BUTTON_BG, rect, border_radius=4)
+            text = self.font.render(label, True, TEXT)
+            screen.blit(text, text.get_rect(center=rect.center))
+        if self.loot_picker:
+            self._draw_loot_picker(screen, mouse)
+
+    def _draw_loot_picker(self, screen, mouse):
+        picker = self._loot_picker_rect()
+        pygame.draw.rect(screen, MENU_BG, picker, border_radius=8)
+        pygame.draw.rect(screen, ACTIVE_TEXT, picker, 2, border_radius=8)
+        screen.blit(self.font.render("Предмет добычи (все стадии цвета)", True, TEXT), (picker.x + 12, picker.y + 10))
+        if not self.loot_items:
+            screen.blit(self.small.render("Материалы не загружены: сервер недоступен", True, TEXT_DIM), (picker.x + 12, picker.y + 40))
+            return
+        for row in range(LOOT_PICKER_ROWS):
+            index = self.loot_scroll + row
+            if index >= len(self.loot_items):
+                break
+            item = self.loot_items[index]
+            rect = self._loot_row(picker, row)
+            chosen = int(item["id"]) == self.loot_item_id
+            if chosen or rect.collidepoint(mouse):
+                pygame.draw.rect(screen, BUTTON_ON if rect.collidepoint(mouse) else BUTTON_BG, rect, border_radius=4)
+            screen.blit(self.small.render(item["name"], True, TEXT), (rect.x + 8, rect.y + 4))
 
 
 class MobParamsDialog:
@@ -1326,6 +1723,7 @@ class MobParamsDialog:
                 self._paint(pos)
             return None
         if self._save_rect().collidepoint(pos):
+            self.equipment = mob_modes.drop_unfit_equipment(self.equipment, self.equipment_items, self.stats, self.level)
             try:
                 return "save", mob_modes.validate_settings(self.settings())
             except ValueError as error:
@@ -1509,3 +1907,156 @@ class MobParamsDialog:
             else:
                 current = candidate
         return lines + ([current] if current else [])
+
+
+class PaletteCredentialDialog:
+    def __init__(self, font, small, username=""):
+        self.font = font
+        self.small = small
+        self.username = username
+        self.password = ""
+        self.active_field = 0
+        self.message = ""
+        self.message_color = WARN_TEXT
+
+    def handle_event(self, event):
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_ESCAPE:
+                return "cancel"
+            if event.key == pygame.K_TAB:
+                self.active_field = 1 - self.active_field
+            elif event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+                if self.active_field == 0:
+                    self.active_field = 1
+                elif self.username.strip() and self.password:
+                    return "submit", self.username.strip(), self.password
+                else:
+                    self.message = "Введите логин и пароль"
+                    self.message_color = WARN_TEXT
+            elif event.key == pygame.K_BACKSPACE:
+                self.message = ""
+                if self.active_field:
+                    self.password = self.password[:-1]
+                else:
+                    self.username = self.username[:-1]
+            elif event.unicode and event.unicode.isprintable():
+                self.message = ""
+                if self.active_field and len(self.password) < 128:
+                    self.password += event.unicode
+                elif not self.active_field and len(self.username) < 32:
+                    self.username += event.unicode
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            box = self.box()
+            fields = (
+                pygame.Rect(box.x + 20, box.y + 64, box.w - 40, 34),
+                pygame.Rect(box.x + 20, box.y + 116, box.w - 40, 34),
+            )
+            for index, rect in enumerate(fields):
+                if rect.collidepoint(event.pos):
+                    self.active_field = index
+                    return None
+            if self.submit_rect().collidepoint(event.pos):
+                if self.username.strip() and self.password:
+                    return "submit", self.username.strip(), self.password
+                self.message = "Введите логин и пароль"
+                self.message_color = WARN_TEXT
+        return None
+
+    def box(self):
+        rect = pygame.Rect(0, 0, 480, 300)
+        rect.center = pygame.display.get_surface().get_rect().center
+        return rect
+
+    def submit_rect(self):
+        box = self.box()
+        return pygame.Rect(box.centerx - 90, box.bottom - 48, 180, 34)
+
+    def draw(self, screen):
+        _shade(screen)
+        box = self.box()
+        _panel(screen, box)
+        screen.blit(self.font.render("Подтверждение общей палитры", True, TEXT), (box.x + 20, box.y + 16))
+        screen.blit(self.small.render("Введите учётные данные для размещения карт на сервере", True, TEXT_DIM), (box.x + 20, box.y + 42))
+        values = (self.username, "*" * len(self.password))
+        labels = ("Логин", "Пароль")
+        for index, (label, value) in enumerate(zip(labels, values)):
+            field = pygame.Rect(box.x + 20, box.y + 64 + index * 52, box.w - 40, 34)
+            pygame.draw.rect(screen, BUTTON_ON if self.active_field == index else BUTTON_BG, field, border_radius=4)
+            screen.blit(self.small.render(label, True, TEXT_DIM), (field.x + 8, field.y + 3))
+            screen.blit(self.font.render(value + ("|" if self.active_field == index else ""), True, TEXT), (field.x + 90, field.y + 7))
+        button = self.submit_rect()
+        pygame.draw.rect(screen, BUTTON_ON, button, border_radius=4)
+        screen.blit(self.font.render("Проверить и продолжить", True, TEXT), self.font.render("Проверить и продолжить", True, TEXT).get_rect(center=button.center))
+        if self.message:
+            lines, current = [], ""
+            for word in self.message.split():
+                candidate = f"{current} {word}".strip()
+                if current and self.small.size(candidate)[0] > box.w - 40:
+                    lines.append(current)
+                    current = word
+                else:
+                    current = candidate
+            if current:
+                lines.append(current)
+            for index, line in enumerate(lines[-4:]):
+                screen.blit(
+                    self.small.render(line, True, self.message_color),
+                    (box.x + 20, box.y + 166 + index * 18),
+                )
+
+
+class PaletteConflictDialog:
+    def __init__(self, font, small, conflicts, index=0):
+        self.font = font
+        self.small = small
+        self.conflicts = conflicts
+        self.index = index
+
+    def box(self):
+        choice_count = len(self.conflicts[self.index]["keys"])
+        rect = pygame.Rect(0, 0, 680, 132 + choice_count * 40)
+        rect.center = pygame.display.get_surface().get_rect().center
+        return rect
+
+    def choice_rects(self):
+        box = self.box()
+        return [
+            pygame.Rect(box.x + 20, box.y + 118 + index * 38, box.w - 40, 32)
+            for index in range(len(self.conflicts[self.index]["keys"]))
+        ]
+
+    def handle_event(self, event):
+        if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+            return "cancel"
+        if event.type != pygame.MOUSEBUTTONDOWN or event.button != 1:
+            return None
+        for index, rect in enumerate(self.choice_rects()):
+            if rect.collidepoint(event.pos):
+                conflict = self.conflicts[self.index]
+                return conflict["id"], conflict["keys"][index]
+        return None
+
+    def draw(self, screen):
+        _shade(screen)
+        box = self.box()
+        _panel(screen, box)
+        conflict = self.conflicts[self.index]
+        screen.blit(
+            self.font.render(f"Конфликт {self.index + 1} из {len(self.conflicts)}", True, TEXT),
+            (box.x + 20, box.y + 16),
+        )
+        screen.blit(
+            self.small.render(
+                f"Карта «{conflict.get('map_name', conflict['context'])}», "
+                f"слой {conflict['layer']}, клетка ({conflict['x']}, {conflict['y']})",
+                True,
+                TEXT_DIM,
+            ),
+            (box.x + 20, box.y + 48),
+        )
+        screen.blit(self.small.render("Выберите, какой тайл оставить в целевом слое:", True, TEXT), (box.x + 20, box.y + 82))
+        for rect, key in zip(self.choice_rects(), conflict["keys"]):
+            pygame.draw.rect(screen, BUTTON_BG, rect, border_radius=4)
+            pygame.draw.rect(screen, BORDER, rect, 1, border_radius=4)
+            label = self.font.render(key, True, TEXT)
+            screen.blit(label, label.get_rect(midleft=(rect.x + 12, rect.centery)))

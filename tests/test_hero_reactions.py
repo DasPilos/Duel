@@ -81,7 +81,7 @@ class HeroReactionSceneTests(unittest.TestCase):
         self.hit_seconds, self.death_seconds = HERO_HIT_SECONDS, HERO_DEATH_SECONDS
         self.server_hp = 50
 
-        def world_sync(*args):
+        def world_sync(*args, **kwargs):
             snap = make_snapshot()
             snap["player"]["hp"] = self.server_hp
             return snap

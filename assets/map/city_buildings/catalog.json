@@ -1,0 +1,108 @@
+{
+  "items": [
+    {
+      "key": "city_building_market",
+      "kind": "object",
+      "category": "building",
+      "asset": "city_buildings/market.png",
+      "display_name": "Городской рынок",
+      "title": "Городской рынок",
+      "representation": "sprite",
+      "footprint_w": 23,
+      "footprint_h": 16,
+      "blocks": true,
+      "editor_layer": 6
+    },
+    {
+      "key": "city_building_tavern",
+      "kind": "object",
+      "category": "building",
+      "asset": "city_buildings/tavern.png",
+      "display_name": "Таверна",
+      "title": "Таверна",
+      "representation": "sprite",
+      "footprint_w": 13,
+      "footprint_h": 13,
+      "blocks": true,
+      "editor_layer": 6
+    },
+    {
+      "key": "city_building_smithy",
+      "kind": "object",
+      "category": "building",
+      "asset": "city_buildings/smithy.png",
+      "display_name": "Кузница",
+      "title": "Кузница",
+      "representation": "sprite",
+      "footprint_w": 13,
+      "footprint_h": 13,
+      "blocks": true,
+      "editor_layer": 6
+    },
+    {
+      "key": "city_building_glassblower",
+      "kind": "object",
+      "category": "building",
+      "asset": "city_buildings/glassblower.png",
+      "display_name": "Мастерская стеклодува",
+      "title": "Мастерская стеклодува",
+      "representation": "sprite",
+      "footprint_w": 12,
+      "footprint_h": 12,
+      "blocks": true,
+      "editor_layer": 6
+    },
+    {
+      "key": "city_building_herbalist",
+      "kind": "object",
+      "category": "building",
+      "asset": "city_buildings/herbalist.png",
+      "display_name": "Лавка травника",
+      "title": "Лавка травника",
+      "representation": "sprite",
+      "footprint_w": 12,
+      "footprint_h": 8,
+      "blocks": true,
+      "editor_layer": 6
+    },
+    {
+      "key": "city_building_library",
+      "kind": "object",
+      "category": "building",
+      "asset": "city_buildings/library.png",
+      "display_name": "Библиотека",
+      "title": "Библиотека",
+      "representation": "sprite",
+      "footprint_w": 8,
+      "footprint_h": 10,
+      "blocks": true,
+      "editor_layer": 6
+    },
+    {
+      "key": "city_building_mage_tower",
+      "kind": "object",
+      "category": "building",
+      "asset": "city_buildings/mage_tower.png",
+      "display_name": "Башня мага",
+      "title": "Башня мага",
+      "representation": "sprite",
+      "footprint_w": 7,
+      "footprint_h": 15,
+      "blocks": true,
+      "editor_layer": 6
+    },
+    {
+      "key": "city_building_guild",
+      "kind": "object",
+      "category": "building",
+      "asset": "city_buildings/guild.png",
+      "display_name": "Гильдия",
+      "title": "Гильдия",
+      "representation": "sprite",
+      "footprint_w": 10,
+      "footprint_h": 9,
+      "blocks": true,
+      "editor_layer": 6
+    }
+  ]
+}

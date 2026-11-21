@@ -1,0 +1,1925 @@
+{
+  "source": "deck/ui/player_presence.py, deck/ui/character_profile.py (Python, pygame 2.6.1, .venv_313); камера на собственном персонаже, zoom 1.0",
+  "own_id": "42",
+  "location": "world_map",
+  "viewport": {
+    "width": 1920,
+    "height": 1080
+  },
+  "camera": {
+    "x": 2232.0,
+    "y": 4584.0,
+    "zoom": 1.0
+  },
+  "occupants": [
+    {
+      "kind": "player",
+      "name": "Тень",
+      "type": "mage",
+      "level": 4,
+      "xp": 28,
+      "hp": 24,
+      "max_hp": 60,
+      "mp": 4,
+      "max_mp": 9,
+      "stats": {
+        "strength": 9,
+        "agility": 2,
+        "intuition": 2,
+        "wisdom": 2,
+        "intellect": 2,
+        "harmony": 2,
+        "endurance": 2
+      },
+      "talents": {},
+      "unique_resource_max": 0,
+      "stat_points": 3,
+      "zone": "world_map",
+      "position_x": 2332,
+      "position_y": 4584,
+      "position_direction": "nw",
+      "deck": [],
+      "character_id": 9,
+      "location": "world_map",
+      "afk": false
+    },
+    {
+      "kind": "player",
+      "name": "Ветер",
+      "type": "archer",
+      "level": 3,
+      "xp": 21,
+      "hp": 23,
+      "max_hp": 55,
+      "mp": 4,
+      "max_mp": 9,
+      "stats": {
+        "strength": 8,
+        "agility": 2,
+        "intuition": 2,
+        "wisdom": 2,
+        "intellect": 2,
+        "harmony": 2,
+        "endurance": 2
+      },
+      "talents": {},
+      "unique_resource_max": 0,
+      "stat_points": 2,
+      "zone": "world_map",
+      "position_x": 2328,
+      "position_y": 4584,
+      "position_direction": "e",
+      "deck": [],
+      "character_id": 7,
+      "location": "world_map",
+      "afk": false
+    },
+    {
+      "kind": "player",
+      "name": "Сонный",
+      "type": "necromancer",
+      "level": 2,
+      "xp": 14,
+      "hp": 22,
+      "max_hp": 50,
+      "mp": 4,
+      "max_mp": 9,
+      "stats": {
+        "strength": 7,
+        "agility": 2,
+        "intuition": 2,
+        "wisdom": 2,
+        "intellect": 2,
+        "harmony": 2,
+        "endurance": 2
+      },
+      "talents": {},
+      "unique_resource_max": 0,
+      "stat_points": 1,
+      "zone": "world_map",
+      "position_x": 2088,
+      "position_y": 4608,
+      "position_direction": "s",
+      "deck": [],
+      "character_id": 11,
+      "location": "world_map",
+      "afk": true
+    },
+    {
+      "kind": "player",
+      "name": "Тест",
+      "type": "warrior",
+      "level": 6,
+      "xp": 42,
+      "hp": 26,
+      "max_hp": 70,
+      "mp": 4,
+      "max_mp": 9,
+      "stats": {
+        "strength": 11,
+        "agility": 2,
+        "intuition": 2,
+        "wisdom": 2,
+        "intellect": 2,
+        "harmony": 2,
+        "endurance": 2
+      },
+      "talents": {},
+      "unique_resource_max": 0,
+      "stat_points": 5,
+      "zone": "world_map",
+      "position_x": 2232,
+      "position_y": 4584,
+      "position_direction": "s",
+      "deck": [],
+      "character_id": 42,
+      "location": "world_map",
+      "afk": false
+    },
+    {
+      "kind": "player",
+      "name": "Таверна",
+      "type": "warrior",
+      "level": 3,
+      "xp": 21,
+      "hp": 23,
+      "max_hp": 55,
+      "mp": 4,
+      "max_mp": 9,
+      "stats": {
+        "strength": 8,
+        "agility": 2,
+        "intuition": 2,
+        "wisdom": 2,
+        "intellect": 2,
+        "harmony": 2,
+        "endurance": 2
+      },
+      "talents": {},
+      "unique_resource_max": 0,
+      "stat_points": 2,
+      "zone": "tavern",
+      "position_x": 2184,
+      "position_y": 4584,
+      "position_direction": "s",
+      "deck": [],
+      "character_id": 13,
+      "location": "tavern",
+      "afk": false
+    },
+    {
+      "kind": "player",
+      "name": "Без позиции",
+      "type": "warrior",
+      "level": 3,
+      "xp": 21,
+      "hp": 23,
+      "max_hp": 55,
+      "mp": 4,
+      "max_mp": 9,
+      "stats": {
+        "strength": 8,
+        "agility": 2,
+        "intuition": 2,
+        "wisdom": 2,
+        "intellect": 2,
+        "harmony": 2,
+        "endurance": 2
+      },
+      "talents": {},
+      "unique_resource_max": 0,
+      "stat_points": 2,
+      "zone": "world_map",
+      "position_x": null,
+      "position_y": 4584,
+      "position_direction": "s",
+      "deck": [],
+      "character_id": 14,
+      "location": "world_map",
+      "afk": false
+    },
+    {
+      "kind": "player",
+      "name": "Далеко",
+      "type": "warrior",
+      "level": 5,
+      "xp": 35,
+      "hp": 25,
+      "max_hp": 65,
+      "mp": 4,
+      "max_mp": 9,
+      "stats": {
+        "strength": 10,
+        "agility": 2,
+        "intuition": 2,
+        "wisdom": 2,
+        "intellect": 2,
+        "harmony": 2,
+        "endurance": 2
+      },
+      "talents": {},
+      "unique_resource_max": 0,
+      "stat_points": 4,
+      "zone": "world_map",
+      "position_x": 4232,
+      "position_y": 4584,
+      "position_direction": "s",
+      "deck": [],
+      "character_id": 15,
+      "location": "world_map",
+      "afk": false
+    },
+    {
+      "kind": "player",
+      "name": "Правый край",
+      "type": "assassin",
+      "level": 3,
+      "xp": 21,
+      "hp": 23,
+      "max_hp": 55,
+      "mp": 4,
+      "max_mp": 9,
+      "stats": {
+        "strength": 8,
+        "agility": 2,
+        "intuition": 2,
+        "wisdom": 2,
+        "intellect": 2,
+        "harmony": 2,
+        "endurance": 2
+      },
+      "talents": {},
+      "unique_resource_max": 0,
+      "stat_points": 2,
+      "zone": "world_map",
+      "position_x": 3272,
+      "position_y": 4584,
+      "position_direction": "w",
+      "deck": [],
+      "character_id": 16,
+      "location": "world_map",
+      "afk": false
+    },
+    {
+      "kind": "player",
+      "name": "Левый край",
+      "type": "warrior",
+      "level": 3,
+      "xp": 21,
+      "hp": 23,
+      "max_hp": 55,
+      "mp": 4,
+      "max_mp": 9,
+      "stats": {
+        "strength": 8,
+        "agility": 2,
+        "intuition": 2,
+        "wisdom": 2,
+        "intellect": 2,
+        "harmony": 2,
+        "endurance": 2
+      },
+      "talents": {},
+      "unique_resource_max": 0,
+      "stat_points": 2,
+      "zone": "world_map",
+      "position_x": 1192,
+      "position_y": 4584,
+      "position_direction": "e",
+      "deck": [],
+      "character_id": 25,
+      "location": "world_map",
+      "afk": false
+    },
+    {
+      "kind": "player",
+      "name": "За левым краем",
+      "type": "warrior",
+      "level": 3,
+      "xp": 21,
+      "hp": 23,
+      "max_hp": 55,
+      "mp": 4,
+      "max_mp": 9,
+      "stats": {
+        "strength": 8,
+        "agility": 2,
+        "intuition": 2,
+        "wisdom": 2,
+        "intellect": 2,
+        "harmony": 2,
+        "endurance": 2
+      },
+      "talents": {},
+      "unique_resource_max": 0,
+      "stat_points": 2,
+      "zone": "world_map",
+      "position_x": 1191,
+      "position_y": 4584,
+      "position_direction": "e",
+      "deck": [],
+      "character_id": 26,
+      "location": "world_map",
+      "afk": false
+    },
+    {
+      "kind": "player",
+      "name": "Верхний край",
+      "type": "warrior",
+      "level": 3,
+      "xp": 21,
+      "hp": 23,
+      "max_hp": 55,
+      "mp": 4,
+      "max_mp": 9,
+      "stats": {
+        "strength": 8,
+        "agility": 2,
+        "intuition": 2,
+        "wisdom": 2,
+        "intellect": 2,
+        "harmony": 2,
+        "endurance": 2
+      },
+      "talents": {},
+      "unique_resource_max": 0,
+      "stat_points": 2,
+      "zone": "world_map",
+      "position_x": 2232,
+      "position_y": 3944,
+      "position_direction": "s",
+      "deck": [],
+      "character_id": 17,
+      "location": "world_map",
+      "afk": false
+    },
+    {
+      "kind": "player",
+      "name": "За верхним краем",
+      "type": "warrior",
+      "level": 3,
+      "xp": 21,
+      "hp": 23,
+      "max_hp": 55,
+      "mp": 4,
+      "max_mp": 9,
+      "stats": {
+        "strength": 8,
+        "agility": 2,
+        "intuition": 2,
+        "wisdom": 2,
+        "intellect": 2,
+        "harmony": 2,
+        "endurance": 2
+      },
+      "talents": {},
+      "unique_resource_max": 0,
+      "stat_points": 2,
+      "zone": "world_map",
+      "position_x": 2232,
+      "position_y": 3943,
+      "position_direction": "s",
+      "deck": [],
+      "character_id": 18,
+      "location": "world_map",
+      "afk": false
+    },
+    {
+      "kind": "player",
+      "name": "Нижний край",
+      "type": "warrior",
+      "level": 3,
+      "xp": 21,
+      "hp": 23,
+      "max_hp": 55,
+      "mp": 4,
+      "max_mp": 9,
+      "stats": {
+        "strength": 8,
+        "agility": 2,
+        "intuition": 2,
+        "wisdom": 2,
+        "intellect": 2,
+        "harmony": 2,
+        "endurance": 2
+      },
+      "talents": {},
+      "unique_resource_max": 0,
+      "stat_points": 2,
+      "zone": "world_map",
+      "position_x": 2232,
+      "position_y": 5144,
+      "position_direction": "s",
+      "deck": [],
+      "character_id": 23,
+      "location": "world_map",
+      "afk": false
+    },
+    {
+      "kind": "player",
+      "name": "За нижним краем",
+      "type": "warrior",
+      "level": 3,
+      "xp": 21,
+      "hp": 23,
+      "max_hp": 55,
+      "mp": 4,
+      "max_mp": 9,
+      "stats": {
+        "strength": 8,
+        "agility": 2,
+        "intuition": 2,
+        "wisdom": 2,
+        "intellect": 2,
+        "harmony": 2,
+        "endurance": 2
+      },
+      "talents": {},
+      "unique_resource_max": 0,
+      "stat_points": 2,
+      "zone": "world_map",
+      "position_x": 2232,
+      "position_y": 5145,
+      "position_direction": "s",
+      "deck": [],
+      "character_id": 24,
+      "location": "world_map",
+      "afk": false
+    },
+    {
+      "kind": "player",
+      "name": "Афк далеко",
+      "type": "warrior",
+      "level": 3,
+      "xp": 21,
+      "hp": 23,
+      "max_hp": 55,
+      "mp": 4,
+      "max_mp": 9,
+      "stats": {
+        "strength": 8,
+        "agility": 2,
+        "intuition": 2,
+        "wisdom": 2,
+        "intellect": 2,
+        "harmony": 2,
+        "endurance": 2
+      },
+      "talents": {},
+      "unique_resource_max": 0,
+      "stat_points": 2,
+      "zone": "world_map",
+      "position_x": 232,
+      "position_y": 4584,
+      "position_direction": "n",
+      "deck": [],
+      "character_id": 19,
+      "location": "world_map",
+      "afk": true
+    },
+    {
+      "kind": "player",
+      "name": "Неизвестный вид",
+      "type": "dragon",
+      "level": 3,
+      "xp": 21,
+      "hp": 23,
+      "max_hp": 55,
+      "mp": 4,
+      "max_mp": 9,
+      "stats": {
+        "strength": 8,
+        "agility": 2,
+        "intuition": 2,
+        "wisdom": 2,
+        "intellect": 2,
+        "harmony": 2,
+        "endurance": 2
+      },
+      "talents": {},
+      "unique_resource_max": 0,
+      "stat_points": 2,
+      "zone": "world_map",
+      "position_x": 2032,
+      "position_y": 4434,
+      "position_direction": "zz",
+      "deck": [],
+      "character_id": 20,
+      "location": "world_map",
+      "afk": false
+    },
+    {
+      "character_id": 21,
+      "location": "world_map",
+      "afk": false,
+      "position_x": 1932,
+      "position_y": 4644,
+      "position_direction": ""
+    },
+    {
+      "kind": "player",
+      "name": "Афк без вида",
+      "type": "warrior",
+      "level": 3,
+      "xp": 21,
+      "hp": 23,
+      "max_hp": 55,
+      "mp": 4,
+      "max_mp": 9,
+      "stats": {
+        "strength": 8,
+        "agility": 2,
+        "intuition": 2,
+        "wisdom": 2,
+        "intellect": 2,
+        "harmony": 2,
+        "endurance": 2
+      },
+      "talents": {},
+      "unique_resource_max": 0,
+      "stat_points": 2,
+      "zone": "world_map",
+      "position_x": 2432,
+      "position_y": 4704,
+      "position_direction": "s",
+      "deck": [],
+      "character_id": 22,
+      "location": "world_map",
+      "afk": true
+    }
+  ],
+  "screen": {
+    "0": [
+      1060,
+      540
+    ],
+    "1": [
+      1056,
+      540
+    ],
+    "2": [
+      816,
+      564
+    ],
+    "3": [
+      960,
+      540
+    ],
+    "4": [
+      912,
+      540
+    ],
+    "6": [
+      2960,
+      540
+    ],
+    "7": [
+      2000,
+      540
+    ],
+    "8": [
+      -80,
+      540
+    ],
+    "9": [
+      -81,
+      540
+    ],
+    "10": [
+      960,
+      -100
+    ],
+    "11": [
+      960,
+      -101
+    ],
+    "12": [
+      960,
+      1100
+    ],
+    "13": [
+      960,
+      1101
+    ],
+    "14": [
+      -1040,
+      540
+    ],
+    "15": [
+      760,
+      390
+    ],
+    "16": [
+      660,
+      600
+    ],
+    "17": [
+      1160,
+      660
+    ]
+  },
+  "active": [
+    0,
+    1,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    15,
+    16
+  ],
+  "afk": [
+    2,
+    14,
+    17
+  ],
+  "drawn_active": [
+    0,
+    1,
+    7,
+    8,
+    10,
+    12,
+    15,
+    16
+  ],
+  "drawn_afk": [
+    2,
+    17
+  ],
+  "hits": [
+    {
+      "point": [
+        1060,
+        520
+      ],
+      "index": 0
+    },
+    {
+      "point": [
+        1038,
+        510
+      ],
+      "index": 0
+    },
+    {
+      "point": [
+        1081,
+        482
+      ],
+      "index": 0
+    },
+    {
+      "point": [
+        1082,
+        510
+      ],
+      "index": -1
+    },
+    {
+      "point": [
+        1037,
+        510
+      ],
+      "index": 1
+    },
+    {
+      "point": [
+        1060,
+        543
+      ],
+      "index": 0
+    },
+    {
+      "point": [
+        1060,
+        544
+      ],
+      "index": -1
+    },
+    {
+      "point": [
+        1060,
+        481
+      ],
+      "index": -1
+    },
+    {
+      "point": [
+        1056,
+        520
+      ],
+      "index": 0
+    },
+    {
+      "point": [
+        1034,
+        510
+      ],
+      "index": 1
+    },
+    {
+      "point": [
+        1077,
+        482
+      ],
+      "index": 0
+    },
+    {
+      "point": [
+        1078,
+        510
+      ],
+      "index": 0
+    },
+    {
+      "point": [
+        1033,
+        510
+      ],
+      "index": -1
+    },
+    {
+      "point": [
+        1056,
+        543
+      ],
+      "index": 0
+    },
+    {
+      "point": [
+        1056,
+        544
+      ],
+      "index": -1
+    },
+    {
+      "point": [
+        1056,
+        481
+      ],
+      "index": -1
+    },
+    {
+      "point": [
+        2960,
+        520
+      ],
+      "index": 6
+    },
+    {
+      "point": [
+        2938,
+        510
+      ],
+      "index": 6
+    },
+    {
+      "point": [
+        2981,
+        482
+      ],
+      "index": 6
+    },
+    {
+      "point": [
+        2982,
+        510
+      ],
+      "index": -1
+    },
+    {
+      "point": [
+        2937,
+        510
+      ],
+      "index": -1
+    },
+    {
+      "point": [
+        2960,
+        543
+      ],
+      "index": 6
+    },
+    {
+      "point": [
+        2960,
+        544
+      ],
+      "index": -1
+    },
+    {
+      "point": [
+        2960,
+        481
+      ],
+      "index": -1
+    },
+    {
+      "point": [
+        2000,
+        520
+      ],
+      "index": 7
+    },
+    {
+      "point": [
+        1978,
+        510
+      ],
+      "index": 7
+    },
+    {
+      "point": [
+        2021,
+        482
+      ],
+      "index": 7
+    },
+    {
+      "point": [
+        2022,
+        510
+      ],
+      "index": -1
+    },
+    {
+      "point": [
+        1977,
+        510
+      ],
+      "index": -1
+    },
+    {
+      "point": [
+        2000,
+        543
+      ],
+      "index": 7
+    },
+    {
+      "point": [
+        2000,
+        544
+      ],
+      "index": -1
+    },
+    {
+      "point": [
+        2000,
+        481
+      ],
+      "index": -1
+    },
+    {
+      "point": [
+        -80,
+        520
+      ],
+      "index": 8
+    },
+    {
+      "point": [
+        -102,
+        510
+      ],
+      "index": 8
+    },
+    {
+      "point": [
+        -59,
+        482
+      ],
+      "index": 8
+    },
+    {
+      "point": [
+        -58,
+        510
+      ],
+      "index": -1
+    },
+    {
+      "point": [
+        -103,
+        510
+      ],
+      "index": 9
+    },
+    {
+      "point": [
+        -80,
+        543
+      ],
+      "index": 8
+    },
+    {
+      "point": [
+        -80,
+        544
+      ],
+      "index": -1
+    },
+    {
+      "point": [
+        -80,
+        481
+      ],
+      "index": -1
+    },
+    {
+      "point": [
+        -81,
+        520
+      ],
+      "index": 8
+    },
+    {
+      "point": [
+        -103,
+        510
+      ],
+      "index": 9
+    },
+    {
+      "point": [
+        -60,
+        482
+      ],
+      "index": 8
+    },
+    {
+      "point": [
+        -59,
+        510
+      ],
+      "index": 8
+    },
+    {
+      "point": [
+        -104,
+        510
+      ],
+      "index": -1
+    },
+    {
+      "point": [
+        -81,
+        543
+      ],
+      "index": 8
+    },
+    {
+      "point": [
+        -81,
+        544
+      ],
+      "index": -1
+    },
+    {
+      "point": [
+        -81,
+        481
+      ],
+      "index": -1
+    },
+    {
+      "point": [
+        960,
+        -120
+      ],
+      "index": 10
+    },
+    {
+      "point": [
+        938,
+        -130
+      ],
+      "index": 10
+    },
+    {
+      "point": [
+        981,
+        -158
+      ],
+      "index": 10
+    },
+    {
+      "point": [
+        982,
+        -130
+      ],
+      "index": -1
+    },
+    {
+      "point": [
+        937,
+        -130
+      ],
+      "index": -1
+    },
+    {
+      "point": [
+        960,
+        -97
+      ],
+      "index": 10
+    },
+    {
+      "point": [
+        960,
+        -96
+      ],
+      "index": -1
+    },
+    {
+      "point": [
+        960,
+        -159
+      ],
+      "index": 11
+    },
+    {
+      "point": [
+        960,
+        -121
+      ],
+      "index": 10
+    },
+    {
+      "point": [
+        938,
+        -131
+      ],
+      "index": 10
+    },
+    {
+      "point": [
+        981,
+        -159
+      ],
+      "index": 11
+    },
+    {
+      "point": [
+        982,
+        -131
+      ],
+      "index": -1
+    },
+    {
+      "point": [
+        937,
+        -131
+      ],
+      "index": -1
+    },
+    {
+      "point": [
+        960,
+        -98
+      ],
+      "index": 10
+    },
+    {
+      "point": [
+        960,
+        -97
+      ],
+      "index": 10
+    },
+    {
+      "point": [
+        960,
+        -160
+      ],
+      "index": -1
+    },
+    {
+      "point": [
+        960,
+        1080
+      ],
+      "index": 12
+    },
+    {
+      "point": [
+        938,
+        1070
+      ],
+      "index": 12
+    },
+    {
+      "point": [
+        981,
+        1042
+      ],
+      "index": 12
+    },
+    {
+      "point": [
+        982,
+        1070
+      ],
+      "index": -1
+    },
+    {
+      "point": [
+        937,
+        1070
+      ],
+      "index": -1
+    },
+    {
+      "point": [
+        960,
+        1103
+      ],
+      "index": 12
+    },
+    {
+      "point": [
+        960,
+        1104
+      ],
+      "index": 13
+    },
+    {
+      "point": [
+        960,
+        1041
+      ],
+      "index": -1
+    },
+    {
+      "point": [
+        960,
+        1081
+      ],
+      "index": 12
+    },
+    {
+      "point": [
+        938,
+        1071
+      ],
+      "index": 12
+    },
+    {
+      "point": [
+        981,
+        1043
+      ],
+      "index": 12
+    },
+    {
+      "point": [
+        982,
+        1071
+      ],
+      "index": -1
+    },
+    {
+      "point": [
+        937,
+        1071
+      ],
+      "index": -1
+    },
+    {
+      "point": [
+        960,
+        1104
+      ],
+      "index": 13
+    },
+    {
+      "point": [
+        960,
+        1105
+      ],
+      "index": -1
+    },
+    {
+      "point": [
+        960,
+        1042
+      ],
+      "index": 12
+    },
+    {
+      "point": [
+        760,
+        370
+      ],
+      "index": 15
+    },
+    {
+      "point": [
+        738,
+        360
+      ],
+      "index": 15
+    },
+    {
+      "point": [
+        781,
+        332
+      ],
+      "index": 15
+    },
+    {
+      "point": [
+        782,
+        360
+      ],
+      "index": -1
+    },
+    {
+      "point": [
+        737,
+        360
+      ],
+      "index": -1
+    },
+    {
+      "point": [
+        760,
+        393
+      ],
+      "index": 15
+    },
+    {
+      "point": [
+        760,
+        394
+      ],
+      "index": -1
+    },
+    {
+      "point": [
+        760,
+        331
+      ],
+      "index": -1
+    },
+    {
+      "point": [
+        660,
+        580
+      ],
+      "index": 16
+    },
+    {
+      "point": [
+        638,
+        570
+      ],
+      "index": 16
+    },
+    {
+      "point": [
+        681,
+        542
+      ],
+      "index": 16
+    },
+    {
+      "point": [
+        682,
+        570
+      ],
+      "index": -1
+    },
+    {
+      "point": [
+        637,
+        570
+      ],
+      "index": -1
+    },
+    {
+      "point": [
+        660,
+        603
+      ],
+      "index": 16
+    },
+    {
+      "point": [
+        660,
+        604
+      ],
+      "index": -1
+    },
+    {
+      "point": [
+        660,
+        541
+      ],
+      "index": -1
+    },
+    {
+      "point": [
+        816,
+        544
+      ],
+      "index": -1
+    },
+    {
+      "point": [
+        -1040,
+        520
+      ],
+      "index": -1
+    },
+    {
+      "point": [
+        1160,
+        640
+      ],
+      "index": -1
+    },
+    {
+      "point": [
+        960,
+        520
+      ],
+      "index": -1
+    },
+    {
+      "point": [
+        10,
+        10
+      ],
+      "index": -1
+    }
+  ],
+  "cards": [
+    {
+      "index": 0,
+      "name": "Тень",
+      "type": "mage",
+      "profession_type": "mage",
+      "character_id": "9",
+      "level": 4,
+      "xp": 28,
+      "xp_to_next": 200,
+      "hp": 24,
+      "max_hp": 60,
+      "mp": 4,
+      "max_mp": 9,
+      "stat_points": 3,
+      "coins": 0,
+      "effective_stats": {
+        "strength": 9,
+        "agility": 2,
+        "intuition": 2,
+        "wisdom": 2,
+        "intellect": 2,
+        "harmony": 2,
+        "endurance": 2
+      },
+      "derived": {
+        "Урон": "9",
+        "Уворот": "4%",
+        "Крит": "5% × 160%",
+        "HP": "60",
+        "Маг Урон": "2"
+      }
+    },
+    {
+      "index": 1,
+      "name": "Ветер",
+      "type": "archer",
+      "profession_type": "archer",
+      "character_id": "7",
+      "level": 3,
+      "xp": 21,
+      "xp_to_next": 120,
+      "hp": 23,
+      "max_hp": 55,
+      "mp": 4,
+      "max_mp": 9,
+      "stat_points": 2,
+      "coins": 0,
+      "effective_stats": {
+        "strength": 8,
+        "agility": 2,
+        "intuition": 2,
+        "wisdom": 2,
+        "intellect": 2,
+        "harmony": 2,
+        "endurance": 2
+      },
+      "derived": {
+        "Урон": "8",
+        "Уворот": "14%",
+        "Крит": "5% × 160%",
+        "HP": "55"
+      }
+    },
+    {
+      "index": 2,
+      "name": "Сонный",
+      "type": "necromancer",
+      "profession_type": "necromancer",
+      "character_id": "11",
+      "level": 2,
+      "xp": 14,
+      "xp_to_next": 40,
+      "hp": 22,
+      "max_hp": 50,
+      "mp": 4,
+      "max_mp": 9,
+      "stat_points": 1,
+      "coins": 0,
+      "effective_stats": {
+        "strength": 7,
+        "agility": 2,
+        "intuition": 2,
+        "wisdom": 2,
+        "intellect": 2,
+        "harmony": 2,
+        "endurance": 2
+      },
+      "derived": {
+        "Урон": "7",
+        "Уворот": "4%",
+        "Крит": "5% × 160%",
+        "HP": "50",
+        "Маг Урон": "2"
+      }
+    },
+    {
+      "index": 3,
+      "name": "Тест",
+      "type": "warrior",
+      "profession_type": "warrior",
+      "character_id": "42",
+      "level": 6,
+      "xp": 42,
+      "xp_to_next": 500,
+      "hp": 26,
+      "max_hp": 70,
+      "mp": 4,
+      "max_mp": 9,
+      "stat_points": 5,
+      "coins": 0,
+      "effective_stats": {
+        "strength": 11,
+        "agility": 2,
+        "intuition": 2,
+        "wisdom": 2,
+        "intellect": 2,
+        "harmony": 2,
+        "endurance": 2
+      },
+      "derived": {
+        "Урон": "11",
+        "Уворот": "4%",
+        "Крит": "5% × 160%",
+        "HP": "70"
+      }
+    },
+    {
+      "index": 4,
+      "name": "Таверна",
+      "type": "warrior",
+      "profession_type": "warrior",
+      "character_id": "13",
+      "level": 3,
+      "xp": 21,
+      "xp_to_next": 120,
+      "hp": 23,
+      "max_hp": 55,
+      "mp": 4,
+      "max_mp": 9,
+      "stat_points": 2,
+      "coins": 0,
+      "effective_stats": {
+        "strength": 8,
+        "agility": 2,
+        "intuition": 2,
+        "wisdom": 2,
+        "intellect": 2,
+        "harmony": 2,
+        "endurance": 2
+      },
+      "derived": {
+        "Урон": "8",
+        "Уворот": "4%",
+        "Крит": "5% × 160%",
+        "HP": "55"
+      }
+    },
+    {
+      "index": 5,
+      "name": "Без позиции",
+      "type": "warrior",
+      "profession_type": "warrior",
+      "character_id": "14",
+      "level": 3,
+      "xp": 21,
+      "xp_to_next": 120,
+      "hp": 23,
+      "max_hp": 55,
+      "mp": 4,
+      "max_mp": 9,
+      "stat_points": 2,
+      "coins": 0,
+      "effective_stats": {
+        "strength": 8,
+        "agility": 2,
+        "intuition": 2,
+        "wisdom": 2,
+        "intellect": 2,
+        "harmony": 2,
+        "endurance": 2
+      },
+      "derived": {
+        "Урон": "8",
+        "Уворот": "4%",
+        "Крит": "5% × 160%",
+        "HP": "55"
+      }
+    },
+    {
+      "index": 6,
+      "name": "Далеко",
+      "type": "warrior",
+      "profession_type": "warrior",
+      "character_id": "15",
+      "level": 5,
+      "xp": 35,
+      "xp_to_next": 350,
+      "hp": 25,
+      "max_hp": 65,
+      "mp": 4,
+      "max_mp": 9,
+      "stat_points": 4,
+      "coins": 0,
+      "effective_stats": {
+        "strength": 10,
+        "agility": 2,
+        "intuition": 2,
+        "wisdom": 2,
+        "intellect": 2,
+        "harmony": 2,
+        "endurance": 2
+      },
+      "derived": {
+        "Урон": "10",
+        "Уворот": "4%",
+        "Крит": "5% × 160%",
+        "HP": "65"
+      }
+    },
+    {
+      "index": 7,
+      "name": "Правый край",
+      "type": "assassin",
+      "profession_type": "assassin",
+      "character_id": "16",
+      "level": 3,
+      "xp": 21,
+      "xp_to_next": 120,
+      "hp": 14,
+      "max_hp": 35,
+      "mp": 4,
+      "max_mp": 9,
+      "stat_points": 2,
+      "coins": 0,
+      "effective_stats": {
+        "strength": 8,
+        "agility": 2,
+        "intuition": 2,
+        "wisdom": 2,
+        "intellect": 2,
+        "harmony": 2,
+        "endurance": 2
+      },
+      "derived": {
+        "Урон": "8",
+        "Уворот": "4%",
+        "Крит": "13% × 190%",
+        "HP": "35"
+      }
+    },
+    {
+      "index": 8,
+      "name": "Левый край",
+      "type": "warrior",
+      "profession_type": "warrior",
+      "character_id": "25",
+      "level": 3,
+      "xp": 21,
+      "xp_to_next": 120,
+      "hp": 23,
+      "max_hp": 55,
+      "mp": 4,
+      "max_mp": 9,
+      "stat_points": 2,
+      "coins": 0,
+      "effective_stats": {
+        "strength": 8,
+        "agility": 2,
+        "intuition": 2,
+        "wisdom": 2,
+        "intellect": 2,
+        "harmony": 2,
+        "endurance": 2
+      },
+      "derived": {
+        "Урон": "8",
+        "Уворот": "4%",
+        "Крит": "5% × 160%",
+        "HP": "55"
+      }
+    },
+    {
+      "index": 9,
+      "name": "За левым краем",
+      "type": "warrior",
+      "profession_type": "warrior",
+      "character_id": "26",
+      "level": 3,
+      "xp": 21,
+      "xp_to_next": 120,
+      "hp": 23,
+      "max_hp": 55,
+      "mp": 4,
+      "max_mp": 9,
+      "stat_points": 2,
+      "coins": 0,
+      "effective_stats": {
+        "strength": 8,
+        "agility": 2,
+        "intuition": 2,
+        "wisdom": 2,
+        "intellect": 2,
+        "harmony": 2,
+        "endurance": 2
+      },
+      "derived": {
+        "Урон": "8",
+        "Уворот": "4%",
+        "Крит": "5% × 160%",
+        "HP": "55"
+      }
+    },
+    {
+      "index": 10,
+      "name": "Верхний край",
+      "type": "warrior",
+      "profession_type": "warrior",
+      "character_id": "17",
+      "level": 3,
+      "xp": 21,
+      "xp_to_next": 120,
+      "hp": 23,
+      "max_hp": 55,
+      "mp": 4,
+      "max_mp": 9,
+      "stat_points": 2,
+      "coins": 0,
+      "effective_stats": {
+        "strength": 8,
+        "agility": 2,
+        "intuition": 2,
+        "wisdom": 2,
+        "intellect": 2,
+        "harmony": 2,
+        "endurance": 2
+      },
+      "derived": {
+        "Урон": "8",
+        "Уворот": "4%",
+        "Крит": "5% × 160%",
+        "HP": "55"
+      }
+    },
+    {
+      "index": 11,
+      "name": "За верхним краем",
+      "type": "warrior",
+      "profession_type": "warrior",
+      "character_id": "18",
+      "level": 3,
+      "xp": 21,
+      "xp_to_next": 120,
+      "hp": 23,
+      "max_hp": 55,
+      "mp": 4,
+      "max_mp": 9,
+      "stat_points": 2,
+      "coins": 0,
+      "effective_stats": {
+        "strength": 8,
+        "agility": 2,
+        "intuition": 2,
+        "wisdom": 2,
+        "intellect": 2,
+        "harmony": 2,
+        "endurance": 2
+      },
+      "derived": {
+        "Урон": "8",
+        "Уворот": "4%",
+        "Крит": "5% × 160%",
+        "HP": "55"
+      }
+    },
+    {
+      "index": 12,
+      "name": "Нижний край",
+      "type": "warrior",
+      "profession_type": "warrior",
+      "character_id": "23",
+      "level": 3,
+      "xp": 21,
+      "xp_to_next": 120,
+      "hp": 23,
+      "max_hp": 55,
+      "mp": 4,
+      "max_mp": 9,
+      "stat_points": 2,
+      "coins": 0,
+      "effective_stats": {
+        "strength": 8,
+        "agility": 2,
+        "intuition": 2,
+        "wisdom": 2,
+        "intellect": 2,
+        "harmony": 2,
+        "endurance": 2
+      },
+      "derived": {
+        "Урон": "8",
+        "Уворот": "4%",
+        "Крит": "5% × 160%",
+        "HP": "55"
+      }
+    },
+    {
+      "index": 13,
+      "name": "За нижним краем",
+      "type": "warrior",
+      "profession_type": "warrior",
+      "character_id": "24",
+      "level": 3,
+      "xp": 21,
+      "xp_to_next": 120,
+      "hp": 23,
+      "max_hp": 55,
+      "mp": 4,
+      "max_mp": 9,
+      "stat_points": 2,
+      "coins": 0,
+      "effective_stats": {
+        "strength": 8,
+        "agility": 2,
+        "intuition": 2,
+        "wisdom": 2,
+        "intellect": 2,
+        "harmony": 2,
+        "endurance": 2
+      },
+      "derived": {
+        "Урон": "8",
+        "Уворот": "4%",
+        "Крит": "5% × 160%",
+        "HP": "55"
+      }
+    },
+    {
+      "index": 14,
+      "name": "Афк далеко",
+      "type": "warrior",
+      "profession_type": "warrior",
+      "character_id": "19",
+      "level": 3,
+      "xp": 21,
+      "xp_to_next": 120,
+      "hp": 23,
+      "max_hp": 55,
+      "mp": 4,
+      "max_mp": 9,
+      "stat_points": 2,
+      "coins": 0,
+      "effective_stats": {
+        "strength": 8,
+        "agility": 2,
+        "intuition": 2,
+        "wisdom": 2,
+        "intellect": 2,
+        "harmony": 2,
+        "endurance": 2
+      },
+      "derived": {
+        "Урон": "8",
+        "Уворот": "4%",
+        "Крит": "5% × 160%",
+        "HP": "55"
+      }
+    },
+    {
+      "index": 15,
+      "name": "Неизвестный вид",
+      "type": "dragon",
+      "profession_type": "dragon",
+      "character_id": "20",
+      "level": 3,
+      "xp": 21,
+      "xp_to_next": 120,
+      "hp": 23,
+      "max_hp": 55,
+      "mp": 4,
+      "max_mp": 9,
+      "stat_points": 2,
+      "coins": 0,
+      "effective_stats": {
+        "strength": 8,
+        "agility": 2,
+        "intuition": 2,
+        "wisdom": 2,
+        "intellect": 2,
+        "harmony": 2,
+        "endurance": 2
+      },
+      "derived": {
+        "Урон": "8",
+        "Уворот": "4%",
+        "Крит": "5% × 160%",
+        "HP": "55"
+      }
+    },
+    {
+      "index": 16,
+      "name": "Персонаж",
+      "type": "warrior",
+      "profession_type": "warrior",
+      "character_id": "21",
+      "level": 1,
+      "xp": 0,
+      "xp_to_next": 20,
+      "hp": 0,
+      "max_hp": 1,
+      "mp": 0,
+      "max_mp": 1,
+      "stat_points": 0,
+      "coins": 0,
+      "effective_stats": {
+        "strength": 2,
+        "agility": 2,
+        "intuition": 2,
+        "wisdom": 2,
+        "intellect": 2,
+        "harmony": 2,
+        "endurance": 2
+      },
+      "derived": {
+        "Урон": "2",
+        "Уворот": "4%",
+        "Крит": "5% × 160%",
+        "HP": "1"
+      }
+    },
+    {
+      "index": 17,
+      "name": "Афк без вида",
+      "type": "warrior",
+      "profession_type": "warrior",
+      "character_id": "22",
+      "level": 3,
+      "xp": 21,
+      "xp_to_next": 120,
+      "hp": 23,
+      "max_hp": 55,
+      "mp": 4,
+      "max_mp": 9,
+      "stat_points": 2,
+      "coins": 0,
+      "effective_stats": {
+        "strength": 8,
+        "agility": 2,
+        "intuition": 2,
+        "wisdom": 2,
+        "intellect": 2,
+        "harmony": 2,
+        "endurance": 2
+      },
+      "derived": {
+        "Урон": "8",
+        "Уворот": "4%",
+        "Крит": "5% × 160%",
+        "HP": "55"
+      }
+    }
+  ]
+}

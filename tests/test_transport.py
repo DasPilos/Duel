@@ -2,10 +2,10 @@ import unittest
 import time
 import math
 
-from server.city_population import CityPopulation
+from economy.server.city_population import CityPopulation
 from server.items_database import ItemsDatabase
-from server.production_buildings import ProductionBuildings
-from server.transport import TransportService
+from economy.server.production_buildings import ProductionBuildings
+from economy.server.transport import TransportService
 from tests.fixtures import create_test_database, drop_test_database, running_server, seed_city_treasury
 
 
@@ -203,11 +203,11 @@ class TransportServiceTests(unittest.TestCase):
     def test_dispatch_http_and_world_convoy_snapshot(self):
         observer_user = self.database.register("hauler-observer", "password")
         observer_id = self.database.create_character(observer_user["id"], "Observer")["id"]
-        with running_server(self.database) as owner_client:
+        with running_server(self.database, mode="economy") as owner_client:
             owner_client.timeout = 15
-            owner_client.login("hauler", "password")
+            owner_client.token = self.database.login("hauler", "password")["token"]
             observer_client = type(owner_client)(owner_client.base_url)
-            observer_client.login("hauler-observer", "password")
+            observer_client.token = self.database.login("hauler-observer", "password")["token"]
 
             stable = owner_client.get_building("stable", self.character_id)
             self.assertEqual(len(stable["available_cart_drivers"]), 4)
@@ -338,9 +338,9 @@ class TransportServiceTests(unittest.TestCase):
         payload["destination_building_id"] = "wheat_farm"
         payload["resource_ids"] = ["wheat"]
 
-        with running_server(self.database) as client:
+        with running_server(self.database, mode="economy") as client:
             client.timeout = 15
-            client.login("hauler", "password")
+            client.token = self.database.login("hauler", "password")["token"]
             response = client.dispatch_transport(self.character_id, payload)
 
         self.assertEqual(response["convoy"]["cargo"][0]["resource_id"], "wheat")

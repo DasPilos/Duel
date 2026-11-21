@@ -8,6 +8,15 @@ import argparse
 import os
 import sys
 
+DISABLED_MESSAGE = (
+    "Python-клиент отключён. Используйте Godot-клиент (godot_client/): "
+    "редактор карт и параметры мобов работают там."
+)
+
+if __name__ == "__main__":
+    print(DISABLED_MESSAGE, file=sys.stderr)
+    sys.exit(2)
+
 import pygame
 
 from client.network import GameClient, ServerError
@@ -21,7 +30,7 @@ DEFAULT_SERVER = "http://127.0.0.1:8765"
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Редактор карт Мир Duel")
+    parser = argparse.ArgumentParser(description="Редактор карт Multiverse of Games")
     parser.add_argument("--server", default=os.getenv("GAME_SERVER", DEFAULT_SERVER))
     parser.add_argument("--username", default=os.getenv("GAME_USERNAME"))
     parser.add_argument("--password", default=os.getenv("GAME_PASSWORD"))

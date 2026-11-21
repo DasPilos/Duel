@@ -3,6 +3,7 @@
 import math
 import random
 
+from core import crystal_growth
 from core.tile_mask import mask_blocks_rect, mask_free_point
 from server import config
 
@@ -10,7 +11,8 @@ from server import config
 TILE = 32
 # Мир «Башня» (WORLD_ID=2): карта 125x125 тайлов, башня в центре и дороги к ней
 TOWER_WORLD_ID = 2
-IS_TOWER_WORLD = config.WORLD_ID == TOWER_WORLD_ID
+# Тестовый мир из карты редактора может получить id 2: он не главная Башня
+IS_TOWER_WORLD = config.WORLD_ID == TOWER_WORLD_ID and not config.WORLD_IS_TEST
 TOWER_TILES = 125
 TOWER_CENTER_TILE = TOWER_TILES // 2
 TOWER_HP = 1000
@@ -469,11 +471,18 @@ else:
     TOWER_PATH_TILES = frozenset()
     TOWER_DRY_TILES = frozenset()
     TOWER_PROPS = ()
+TOWER_PROP_TILES = frozenset(tuple(tile) for prop in TOWER_PROPS for tile in prop["tiles"])
 TOWER_BERRY_TILES = frozenset()
 TOWER_FLOOR_TILES = frozenset()
 TOWER_IMPASSABLE_TILES = frozenset()
 TOWER_PARTIAL_MASKS = {}
-TOWER_PROP_TILES = frozenset(tuple(tile) for prop in TOWER_PROPS for tile in prop["tiles"])
+TOWER_WILDLIFE_BLOCKED_TILES = frozenset()
+TOWER_ANIMALS = ()
+# Кристаллы карты: {(x, y): {"color", "stage"}}; настройки роста и добычи по цвету; добыча включена сценарием карты
+TOWER_CRYSTALS = {}
+CRYSTAL_SETTINGS = {}
+HARVEST_ENABLED = False
+
 TOWER_BLOCKED_TILES = TOWER_FOREST_TILES | TOWER_WATER_TILES | TOWER_DRY_TILES | TOWER_PROP_TILES | TOWER_MOUNTAIN_TILES
 
 
@@ -699,6 +708,8 @@ PUBLISHED_AT = None
 _TERRAIN_NAMES = (
     "TOWER_FOREST_TILES", "TOWER_WATER_TILES", "TOWER_DRY_TILES", "TOWER_PATH_TILES", "TOWER_MOUNTAIN_TILES",
     "TOWER_BERRY_TILES", "TOWER_FLOOR_TILES", "TOWER_PROPS", "TOWER_BRIDGES", "TOWER_PROP_TILES", "TOWER_BLOCKED_TILES", "TOWER_IMPASSABLE_TILES", "TOWER_PARTIAL_MASKS", "TOWER_MOUNTAIN_OBSTACLES", "OBSTACLES",
+    "TOWER_WILDLIFE_BLOCKED_TILES", "TOWER_ANIMALS",
+    "TOWER_CRYSTALS", "CRYSTAL_SETTINGS", "HARVEST_ENABLED",
     "MAP_TILES_W", "MAP_TILES_H", "MAP_SPAWN_PX", "LIVE_MAP", "PUBLISHED_AT",
 )
 _PROCEDURAL_TERRAIN = {name: globals()[name] for name in _TERRAIN_NAMES}
@@ -716,16 +727,25 @@ def _live_terrain_values(terrain, published):
     mountain = frozenset(terrain["mountain"])
     impassable = frozenset(terrain["impassable"])
     partial_masks = dict(terrain.get("partial", {}))
+    crystals = dict(terrain.get("crystals", {}))
     partial_tiles = frozenset(partial_masks)
     props = tuple(terrain["props"])
     bridges = tuple(terrain["bridges"])
+    animals = tuple(dict(animal) for animal in terrain.get("animals", ()))
+    animal_tiles = frozenset((animal["x"], animal["y"]) for animal in animals)
     prop_tiles = frozenset(tuple(tile) for prop in props for tile in prop["tiles"])
     mountain_obstacles = tuple(
         _mountain_obstacle(index, rect) for index, rect in enumerate(_tile_rects(mountain - partial_tiles))
     )
     # Здание башни остаётся на её карте; на остальных опубликованных картах препятствия только горы из клеток
     obstacles = (tower_obstacle(), *mountain_obstacles) if IS_TOWER_WORLD else mountain_obstacles
-    blocked = (forest | dry | water | prop_tiles | mountain | impassable) - partial_tiles
+    wildlife_blocked = frozenset(terrain.get(
+        "wildlife_blocked",
+        (forest | dry | prop_tiles | mountain | impassable) - water - animal_tiles,
+    )) | ((forest | dry | prop_tiles | mountain | impassable) - water - animal_tiles - partial_tiles)
+    mobile_animal_tiles = animal_tiles - wildlife_blocked - water - partial_tiles
+    impassable -= mobile_animal_tiles
+    blocked = (forest | dry | water | prop_tiles | mountain | impassable) - partial_tiles - mobile_animal_tiles
     map_w, map_h = published["map_w"], published["map_h"]
     return {
         "TOWER_FOREST_TILES": forest,
@@ -735,6 +755,13 @@ def _live_terrain_values(terrain, published):
         "TOWER_MOUNTAIN_TILES": mountain,
         "TOWER_IMPASSABLE_TILES": impassable,
         "TOWER_PARTIAL_MASKS": partial_masks,
+        "TOWER_WILDLIFE_BLOCKED_TILES": wildlife_blocked,
+        "TOWER_ANIMALS": animals,
+        "TOWER_CRYSTALS": crystals,
+        "CRYSTAL_SETTINGS": crystal_growth.validate_settings(
+            published.get("crystals"),
+            sorted(set(published.get("crystals") or {}) | {value["color"] for value in crystals.values()})),
+        "HARVEST_ENABLED": bool(published.get("harvest_enabled")),
         "TOWER_BERRY_TILES": berry,
         "TOWER_FLOOR_TILES": floor,
         "TOWER_PROPS": props,
@@ -759,6 +786,15 @@ def apply_live_terrain(terrain=None, published=None):
     else:
         values = _live_terrain_values(terrain, published)
     globals().update(values)
+    TERRAIN_VERSION += 1
+
+
+def remove_live_crystal(tile):
+    """Убирает добытый кристалл: тайл становится свободным, клиент получает новую версию рельефа."""
+    global TOWER_CRYSTALS, TOWER_IMPASSABLE_TILES, TOWER_BLOCKED_TILES, TERRAIN_VERSION
+    TOWER_CRYSTALS = {key: value for key, value in TOWER_CRYSTALS.items() if key != tile}
+    TOWER_IMPASSABLE_TILES = TOWER_IMPASSABLE_TILES - {tile}
+    TOWER_BLOCKED_TILES = TOWER_BLOCKED_TILES - {tile}
     TERRAIN_VERSION += 1
 
 
@@ -794,7 +830,15 @@ def _live_spawn_px(map_w, map_h, blocked, obstacles, partial_masks=None):
 
 def terrain_payload(city_level=1):
     from server.structures import world_structures
-    from server.world_roads import roads_payload
+
+    if IS_TOWER_WORLD:
+        structures = {"objects": []}
+        roads = {}
+    else:
+        from economy.server.world_roads import roads_payload
+
+        structures = world_structures(city_level)
+        roads = roads_payload(city_level)
 
     return {"map": {"tiles_w": MAP_TILES_W, "tiles_h": MAP_TILES_H, "uniform_grass": IS_TOWER_WORLD or LIVE_MAP,
                     "spawn": list(MAP_SPAWN_PX), "version": TERRAIN_VERSION},
@@ -803,7 +847,10 @@ def terrain_payload(city_level=1):
                       "mountain": _tile_rows(TOWER_MOUNTAIN_TILES), "impassable": _tile_rows(TOWER_IMPASSABLE_TILES),
                       "berry": _tile_rows(TOWER_BERRY_TILES), "floor": _tile_rows(TOWER_FLOOR_TILES),
                       "partial": [[x, y, mask] for (x, y), mask in sorted(TOWER_PARTIAL_MASKS.items())]},
+            "animals": [dict(animal) for animal in TOWER_ANIMALS],
             "props": [dict(prop) for prop in TOWER_PROPS],
             "bridges": [dict(bridge) for bridge in TOWER_BRIDGES],
             "obstacles": [dict(obstacle) for obstacle in OBSTACLES],
-            **world_structures(city_level), "roads": roads_payload(city_level)}
+            "crystals": [[x, y, crystal["color"], crystal["stage"]]
+                         for (x, y), crystal in sorted(TOWER_CRYSTALS.items())],
+            **structures, "roads": roads}

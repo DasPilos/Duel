@@ -21,17 +21,17 @@ import pygame
 
 from client import map_drafts
 from core.map_catalog import (
+    bridge_stamps,
     catalog_definitions,
     decor_spaced,
     overlay_keys,
     palette_group_layers,
-    palette_groups,
     palette_landscape,
     pick_decor,
     tile_allows_objects,
 )
 from core.relief_tiling import ReliefTiles, assemble, wall_below
-from core.terrain_autotile import desired_coverage, is_full, pick_border_tile, tile_shape
+from core.terrain_autotile import desired_coverage, is_full, is_teal, pick_border_tile, tile_shape
 from scripts.generate_forest_map import (
     BIG_STUMPS,
     GIANT_ALIVE,
@@ -58,7 +58,6 @@ SEED = 3
 DEFAULT_NAME = "Три дороги 96"
 FOREST = "Лесной ландшафт"
 MOUNTAINS = "Горный ландшафт"
-INFRASTRUCTURE = "Инфраструктура"
 ROAD_RADIUS = 1.3
 PLAZA_RADIUS = 2.0
 RIVER_WIDTH = 1  # Правило: река всегда 1 клетка; шире только на горной вершине ml_r33_c35.
@@ -73,14 +72,7 @@ MASSIF_ROAD_RANGE = (3, 8)
 DRY_THRESHOLD = 0.62
 GIANT_DENSITY = 0.38
 SMALL_DENSITY = 0.18
-WATER_TEAL = 40
 GIANT_DEAD_SHARE = 0.3
-
-
-def _is_teal(colour):
-    """Чистая вода: зелёный и синий каналы заметно выше красного (без камней и берега)."""
-    red, green, blue = colour
-    return green - red > WATER_TEAL and blue - red > WATER_TEAL
 
 
 def _smooth(t):
@@ -178,15 +170,6 @@ def _vertical_river(size, left, start, straight, noise, salt):
     return _river_line(size, left, offsets, start, False)
 
 
-def _bridge_stamps(group):
-    """Вертикальный (настил 2 клетки по x, 4×7) и горизонтальный (настил 2 клетки по y, 5×4) мосты из раздела «Инфраструктура»."""
-    grid = {(cell["x"], cell["y"]): cell["key"] for cell in group["cells"]}
-    vertical = {(x, y): grid[(x, y)] for x in range(4) for y in range(7) if (x, y) in grid}
-    horizontal = {(x - 2, y - 7): grid[(x, y)] for x in range(2, 7) for y in range(7, 11) if (x, y) in grid}
-    horizontal.setdefault((4, 1), horizontal[(3, 1)])
-    return vertical, horizontal
-
-
 def _place_hills(size, centre, stamp, road_distance, water_distance, taken):
     """Три возвышенности вокруг центра между дорогами: [(x, y)] левого верхнего угла каждой."""
     placed = []
@@ -252,13 +235,12 @@ def generate(size=SIZE, seed=SEED):
     dry_template, live_template = _Template(forest["dry"], assets), _Template(forest["live"], assets)
     mountain_group = palette_landscape(MOUNTAINS)["main"]
     mountain_layers = {layer["role"]: layer for layer in palette_group_layers(mountain_group)}
-    infrastructure = next(group for group in palette_groups() if group["title"] == INFRASTRUCTURE)
-    vertical_bridge, horizontal_bridge = _bridge_stamps(infrastructure)
+    vertical_bridge, horizontal_bridge = bridge_stamps()
     plateau_stamp = _hill_stamps(live_template.layers)[0]
     green, berry, dry_bushes = _bush_groups(items)
     water_tiles = sorted({
         key for key in mountain_layers["river"]["cells"].values()
-        if items[key]["category"] == "water" and is_full(tile_shape(assets[key])[0]) and _is_teal(tile_shape(assets[key])[1])
+        if items[key]["category"] == "water" and is_full(tile_shape(assets[key])[0]) and is_teal(tile_shape(assets[key])[1])
     })
 
     spec = _layout(size)
@@ -423,9 +405,10 @@ def generate(size=SIZE, seed=SEED):
         stamp_cells({(x + dx, y + dy): key for (dx, dy), key in plateau_stamp.items()})
     for state in massifs:
         stamp_cells(state)
+    infra_map = {}
     for stamp in bridges:
         for cell, key in stamp.items():
-            overlay_map[cell] = key
+            infra_map[cell] = key
             if items[key]["blocks"]:
                 solid.add(cell)
             else:
@@ -433,6 +416,7 @@ def generate(size=SIZE, seed=SEED):
 
     cells = [{"layer": "ground", "x": x, "y": y, "key": key} for (x, y), key in sorted(ground_map.items(), key=lambda e: (e[0][1], e[0][0]))]
     cells += [{"layer": "overlay", "x": x, "y": y, "key": key} for (x, y), key in sorted(overlay_map.items(), key=lambda e: (e[0][1], e[0][0]))]
+    cells += [{"layer": "infra", "x": x, "y": y, "key": key} for (x, y), key in sorted(infra_map.items(), key=lambda e: (e[0][1], e[0][0]))]
     top = {(c["x"], c["y"]): c["key"] for c in cells if c["layer"] != "object"}
     for cell in [cell for cell, key in objects.items() if not tile_allows_objects(top[cell], items[top[cell]]["category"])]:
         del objects[cell]

@@ -1,0 +1,47 @@
+{
+  "source": "economy/server/city_population.py _payload() (lines 949-1211), wrapped by economy/server/api.py /api/castle/{id}/population as {\"population\": {...}}; only keys used by economy_world.gd _render_city() and the city map are kept",
+  "population": {
+    "castle_name": "Замок Радбурка",
+    "castle_level": 1,
+    "city_level": 1,
+    "population": 2,
+    "population_capacity": 6,
+    "citizens": [
+      {
+        "id": 11,
+        "name": "Аня",
+        "satiety": 80,
+        "strong_hunger": 0,
+        "satisfaction": 1.0,
+        "work_status": "В пути",
+        "job_building": "lumber_camp",
+        "job_slot": 0,
+        "death_eta_seconds": null,
+        "travel_seconds_left": 125,
+        "travel_direction": "outbound"
+      },
+      {
+        "id": 12,
+        "name": "Бор",
+        "satiety": 6,
+        "strong_hunger": 0,
+        "satisfaction": 0.5,
+        "work_status": "Свободен",
+        "job_building": "",
+        "job_slot": null,
+        "death_eta_seconds": 7200,
+        "travel_seconds_left": 0,
+        "travel_direction": null
+      }
+    ],
+    "worksites": [
+      {"building": "farm", "name": "Крестьянское поселение", "free_slots": [0, 1], "capacity": 4, "travel_seconds": 300}
+    ],
+    "food_status": "в городе достаточно еды для роста",
+    "treasury_text": "12 з. 3 с.",
+    "city_resource_storage": {"wheat": 40, "wood": 10},
+    "upgrades": [
+      {"id": "wall", "name": "Стена", "is_complete": false, "is_active": false, "effect": "Укрепляет стены", "wood_cost": 10, "silver_cost": 5, "time_seconds": 600}
+    ]
+  }
+}

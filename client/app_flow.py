@@ -183,7 +183,7 @@ def leave_to_lobby(scene):
     close_scene_ui(scene)
     try:
         session.disconnect(character=checkpoint)
-        # disconnect сбрасывает токен, для лобби нужен новый
+        session.client.base_url = session.lobby_server_url
         session.user = session.client.login(session.username, session.password)
     except ServerError as error:
         return None, str(error)

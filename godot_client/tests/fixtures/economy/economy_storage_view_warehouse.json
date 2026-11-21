@@ -1,0 +1,60 @@
+{
+  "source": "economy/server/production_buildings.py _payload() (storage, storage_depositable, city_upgrade, upgrade) and _upgrade_payload(), wrapped by api.py as {\"building\": {...}}; only keys read by economy_storage_view.gd; amounts copied from the Python render storage_warehouse.png (level 2, limit 3000); goods are shuffled on purpose, the view must sort them",
+  "building": {
+    "building": "warehouse",
+    "level": 2,
+    "max_workers": 0,
+    "workers": 0,
+    "worker_slots": [],
+    "storage": {
+      "diamond": 0,
+      "wood": 310,
+      "board": 42,
+      "flax": 90,
+      "cotton": 0,
+      "leather": 45,
+      "coal": 16,
+      "stone": 80,
+      "iron": 27,
+      "mithril": 0,
+      "obsidian": 0,
+      "iron_ingot": 7,
+      "steel": 2,
+      "hard_leather": 0,
+      "thick_leather": 0,
+      "cloth": 0,
+      "stone_block": 0,
+      "jet": 0,
+      "malachite": 0,
+      "topaz": 0,
+      "garnet": 0,
+      "emerald": 0,
+      "ruby": 0,
+      "sapphire": 0,
+      "limit": 3000
+    },
+    "storage_depositable": {
+      "wood": {"in_backpack": 12, "max_deposit": 12},
+      "board": {"in_backpack": 8, "max_deposit": 8},
+      "flax": {"in_backpack": 5, "max_deposit": 5},
+      "leather": {"in_backpack": 3, "max_deposit": 3},
+      "coal": {"in_backpack": 0, "max_deposit": 0},
+      "iron_ingot": {"in_backpack": 4, "max_deposit": 4},
+      "steel": {"in_backpack": 2, "max_deposit": 2}
+    },
+    "city_upgrade": {"charging_resources": []},
+    "upgrade": {
+      "next_level": 3,
+      "time_seconds": 18000,
+      "materials": [
+        {"name": "Древесина", "required": 40, "deposited": 10, "in_warehouse": 310, "remaining": 30},
+        {"name": "Доска", "required": 20, "deposited": 5, "in_warehouse": 15, "remaining": 15},
+        {"name": "Железо", "required": 12, "deposited": 0, "in_warehouse": 7, "remaining": 12}
+      ],
+      "ready": false,
+      "in_progress": false,
+      "finish_at": null,
+      "seconds_left": null
+    }
+  }
+}

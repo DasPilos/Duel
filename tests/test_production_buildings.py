@@ -9,7 +9,7 @@ from core.production_buildings import (
     upgrade_requirements,
 )
 from server.items_database import ItemsDatabase
-from server.production_buildings import (
+from economy.server.production_buildings import (
     STORAGE_RESOURCES_BY_ITEM_ID,
     ProductionBuildings,
     distribute_to_storage,
@@ -209,8 +209,8 @@ class ProductionBuildingsTests(unittest.TestCase):
         character_id = self.database.create_character(user["id"], "StorageApi")["id"]
         ItemsDatabase(self.database).add_to_inventory(character_id, 67, 5)
 
-        with running_server(self.database) as client:
-            client.login("storage-api", "password")
+        with running_server(self.database, mode="economy") as client:
+            client.token = self.database.login("storage-api", "password")["token"]
             deposited = client.building_action(
                 "barnyard", character_id, "storage/deposit",
                 {"resource": "meat", "quantity": 4},
@@ -285,9 +285,9 @@ class ProductionBuildingsTests(unittest.TestCase):
     def test_join_and_leave_announcements_are_posted_once_to_each_chat_location(self):
         from server import presence
 
-        with running_server(self.database) as client:
-            client.register("chat-status-user", "secret1")
-            client.login("chat-status-user", "secret1")
+        with running_server(self.database, mode="economy") as client:
+            self.database.register("chat-status-user", "secret1")
+            client.token = self.database.login("chat-status-user", "secret1")["token"]
             character = client.create_character("ChatStatusUser")
             first_snapshot = client.social_snapshot("tavern", character["id"])
             second_snapshot = client.social_snapshot("tavern", character["id"])
@@ -314,9 +314,9 @@ class ProductionBuildingsTests(unittest.TestCase):
         presence.PRESENCE.pop(afk_presence["token"], None)
 
     def test_active_player_work_lookup_clears_only_after_finishing_work(self):
-        with running_server(self.database) as client:
-            client.register("working-user", "secret1")
-            client.login("working-user", "secret1")
+        with running_server(self.database, mode="economy") as client:
+            self.database.register("working-user", "secret1")
+            client.token = self.database.login("working-user", "secret1")["token"]
             character = client.create_character("WorkingUser")
             character_id = character["id"]
 
@@ -801,9 +801,9 @@ class ProductionBuildingsTests(unittest.TestCase):
                 self.assertEqual(state["max_workers"], workers)
 
     def test_http_contract_for_both_buildings(self):
-        with running_server(self.database) as client:
-            client.register("farmuser", "secret1")
-            client.login("farmuser", "secret1")
+        with running_server(self.database, mode="economy") as client:
+            self.database.register("farmuser", "secret1")
+            client.token = self.database.login("farmuser", "secret1")["token"]
             character = client.create_character("Farmer")
 
             farm = client.get_building("farm", character["id"])

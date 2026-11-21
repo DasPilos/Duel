@@ -1,5 +1,5 @@
 [Unit]
-Description=Duel game server monitor on local console
+Description=Multiverse of Games server monitor on local console
 After=network-online.target postgresql.service game-server.service
 Wants=network-online.target
 

@@ -22,8 +22,12 @@ class GameModesTests(unittest.TestCase):
     def test_tower_is_the_default_mode(self):
         self.assertEqual(DEFAULT_MODE, "tower")
         self.assertTrue(is_mode("tower"))
+        self.assertTrue(is_mode("deck"))
+        self.assertTrue(is_mode("economy"))
         self.assertFalse(is_mode("unknown"))
-        self.assertEqual(mode_name("tower"), "Башня")
+        self.assertEqual(mode_name("tower"), "Tower")
+        self.assertEqual(mode_name("deck"), "Deck")
+        self.assertEqual(mode_name("economy"), "Economy")
 
 
 class MobSettingsTests(unittest.TestCase):
@@ -56,6 +60,100 @@ class MobSettingsTests(unittest.TestCase):
         self.assertEqual(mob_modes.load_mob_settings("tower", "imp_pitchfork", self.folder.name)["aggro_tiles"], 7.0)
         data = json.loads((Path(self.folder.name) / "tower.json").read_text(encoding="utf-8"))
         self.assertEqual(sorted(data["mobs"]), ["imp_pitchfork", "imp_sword"])
+
+    def test_mob_settings_are_isolated_between_modes(self):
+        tower_settings = {
+            **mob_modes.default_settings("imp_sword"),
+            "state": "aggressive",
+            "windup": 0.6,
+        }
+        deck_settings = {
+            **mob_modes.default_settings("imp_sword"),
+            "state": "neutral",
+            "windup": 0.8,
+        }
+
+        mob_modes.save_mob_settings("tower", "imp_sword", tower_settings, self.folder.name)
+        mob_modes.save_mob_settings("deck", "imp_sword", deck_settings, self.folder.name)
+
+        self.assertEqual(
+            mob_modes.load_mob_settings("tower", "imp_sword", self.folder.name)["windup"],
+            0.6,
+        )
+        self.assertEqual(
+            mob_modes.load_mob_settings("deck", "imp_sword", self.folder.name)["windup"],
+            0.8,
+        )
+        self.assertEqual(
+            mob_modes.load_mob_settings("economy", "imp_sword", self.folder.name),
+            mob_modes.default_settings("imp_sword"),
+        )
+
+    def test_attack_range_is_a_front_line_only_setting(self):
+        settings = mob_modes.default_settings("imp_vanilla")
+        mob_modes.save_mob_settings("front_line", "imp_vanilla", {**settings, "attack_range": 250}, self.folder.name)
+        loaded = mob_modes.load_mob_settings("front_line", "imp_vanilla", self.folder.name)
+        self.assertEqual(loaded["attack_range"], 250)
+        self.assertNotIn("attack_range", mob_modes.validate_settings({**settings, "attack_range": 250}, mode="tower"))
+
+    def test_base_damage_is_front_line_only_and_must_be_ordered(self):
+        settings = mob_modes.default_settings("imp_vanilla")
+        self.assertEqual(mob_modes.validate_settings(settings, mode="front_line")["damage_min"], 0)
+        front = mob_modes.validate_settings({**settings, "damage_min": 2, "damage_max": 5}, mode="front_line")
+        self.assertEqual((front["damage_min"], front["damage_max"]), (2, 5))
+        self.assertNotIn("damage_min", mob_modes.validate_settings({**settings, "damage_min": 2, "damage_max": 5}, mode="tower"))
+        with self.assertRaises(ValueError):
+            mob_modes.validate_settings({**settings, "damage_min": 6, "damage_max": 5}, mode="front_line")
+
+    def test_attack_range_defaults_to_one_tile_and_rejects_bad_values(self):
+        settings = mob_modes.default_settings("imp_vanilla")
+        self.assertEqual(mob_modes.load_mob_settings("front_line", "imp_vanilla", self.folder.name)["attack_range"], 100)
+        with self.assertRaises(ValueError):
+            mob_modes.validate_settings({**settings, "attack_range": 2000}, mode="front_line")
+        with self.assertRaises(ValueError):
+            mob_modes.validate_settings({**settings, "attack_range": True}, mode="front_line")
+
+    def test_front_line_stats_and_resources_are_not_limited_by_level_or_point_budget(self):
+        settings = mob_modes.default_settings("imp_sword")
+        settings["level"] = 100
+        settings["stats"] = {
+            "strength": 1_000_000,
+            "agility": 2_000_000,
+            "intuition": 3_000_000,
+            "wisdom": 4_000_000,
+            "intellect": 5_000_000,
+            "endurance": 6_000_000,
+        }
+        settings["max_hp"] = 7_000_000
+        settings["max_mp"] = 8_000_000
+
+        checked = mob_modes.validate_settings(settings, mode="front_line")
+        saved = mob_modes.save_mob_settings(
+            "front_line", "imp_sword", checked, self.folder.name,
+        )
+        loaded = mob_modes.load_mob_settings(
+            "front_line", "imp_sword", self.folder.name,
+        )
+
+        self.assertEqual(loaded, saved)
+        self.assertEqual(loaded["stats"]["endurance"], 6_000_000)
+        self.assertEqual((loaded["max_hp"], loaded["max_mp"]), (7_000_000, 8_000_000))
+        with self.assertRaisesRegex(ValueError, "Уровень"):
+            mob_modes.validate_settings(settings, mode="tower")
+
+    def test_front_line_resource_values_must_be_valid_integers(self):
+        settings = mob_modes.default_settings()
+        settings["max_hp"] = 0
+        with self.assertRaisesRegex(ValueError, "max_hp"):
+            mob_modes.validate_settings(settings, mode="front_line")
+        settings["max_hp"] = 100
+        settings["max_mp"] = -1
+        with self.assertRaisesRegex(ValueError, "max_mp"):
+            mob_modes.validate_settings(settings, mode="front_line")
+        settings["max_mp"] = 0
+        settings["stats"]["endurance"] = -1
+        with self.assertRaisesRegex(ValueError, "Выносливость"):
+            mob_modes.validate_settings(settings, mode="front_line")
 
     def test_invalid_settings_are_rejected_and_file_is_untouched(self):
         good = mob_modes.default_settings()
@@ -112,6 +210,33 @@ class MobEquipmentTests(unittest.TestCase):
         dialog = MobParamsDialog(scene.font, scene.small, "Бес", "Башня", settings, items)
         window = EquipmentDialog(scene.font, scene.small, "Бес", settings["stats"], settings["level"], dialog.equipment, items)
         self.assertEqual([None if item is None else item["id"] for item in window._eligible("weapon")], [None, 23])
+
+    def test_ring_2_takes_ring_items_and_skips_the_ring_worn_elsewhere(self):
+        self.assertEqual(mob_modes.item_slot("ring_2"), "ring")
+        self.assertEqual(mob_modes.item_slot("weapon"), "weapon")
+        scene = MapEditorScene(None, catalog_definitions(), lambda: False)
+        settings = mob_modes.default_settings("imp_sword")
+        items = [
+            {"id": 60, "name": "Перстень", "equip_slot": "ring", "effects": {}},
+            {"id": 61, "name": "Кольцо силы", "equip_slot": "ring", "effects": {}},
+        ]
+        equipment = {slot: None for slot in mob_modes.MOB_EQUIPMENT_SLOTS}
+        equipment["ring"] = 60
+        window = EquipmentDialog(scene.font, scene.small, "Бес", settings["stats"], settings["level"], equipment, items)
+        self.assertEqual([None if item is None else item["id"] for item in window._eligible("ring_2")], [None, 61])
+
+    def test_drop_unfit_equipment_keeps_fitting_and_unknown_items(self):
+        items = [
+            {"id": 23, "equip_slot": "weapon", "effects": {"requirements": {"strength": 6}}},
+            {"id": 38, "equip_slot": "shield", "effects": {}},
+        ]
+        equipment = {"weapon": 23, "shield": 38, "ring": 999}
+        result = mob_modes.drop_unfit_equipment(equipment, items, {"strength": 3}, 1)
+        self.assertIsNone(result["weapon"])
+        self.assertEqual(result["shield"], 38)
+        self.assertEqual(result["ring"], 999)
+        kept = mob_modes.drop_unfit_equipment(equipment, items, {"strength": 6}, 1)
+        self.assertEqual(kept["weapon"], 23)
 
 
 class MobLevelTests(unittest.TestCase):
@@ -255,14 +380,95 @@ class MapEditorMobTests(unittest.TestCase):
         return self.scene.mob_dialog
 
     def test_size_picker_returns_the_chosen_mode(self):
-        picker = SizePicker(self.scene.font, self.scene.small, [(64, 64, "малая")], GAME_MODES)
-        self.assertEqual(picker.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=picker._row(0).center)), (64, 64, "tower"))
+        picker = SizePicker(self.scene.font, self.scene.small, modes=GAME_MODES)
+        self.assertEqual((picker.width, picker.height), (64, 64))
+        rects = [picker._mode_rect(index) for index in range(len(GAME_MODES))]
+        self.assertEqual(len(rects), len({rect.x for rect in rects}))
+        self.assertTrue(all(picker.box().contains(rect) for rect in rects))
+        self.assertTrue(all(
+            self.scene.font.size(mode["name"])[0] <= rect.w - 8
+            for mode, rect in zip(GAME_MODES, rects)
+        ))
+        economy_index = next(
+            index for index, mode in enumerate(GAME_MODES)
+            if mode["key"] == "economy"
+        )
+        self.assertIsNone(picker.handle_event(pygame.event.Event(
+            pygame.MOUSEBUTTONDOWN,
+            button=1,
+            pos=picker._mode_rect(economy_index).center,
+        )))
+        for _ in range(3):
+            picker.handle_event(pygame.event.Event(
+                pygame.MOUSEBUTTONDOWN,
+                button=1,
+                pos=picker._dimension_button_rect("width", 1).center,
+            ))
+        picker.handle_event(pygame.event.Event(
+            pygame.MOUSEBUTTONDOWN,
+            button=1,
+            pos=picker._dimension_button_rect("height", 1).center,
+        ))
+        self.assertEqual((picker.width, picker.height), (512, 128))
+        picker.draw(pygame.display.get_surface())
+        self.assertEqual(
+            picker.handle_event(pygame.event.Event(
+                pygame.MOUSEBUTTONDOWN,
+                button=1,
+                pos=picker._create_rect().center,
+            )),
+            (512, 128, "economy"),
+        )
+
+    def test_map_dimensions_follow_steps_and_stop_at_1600(self):
+        picker = SizePicker(self.scene.font, self.scene.small, modes=GAME_MODES)
+        for _ in range(20):
+            picker.handle_event(pygame.event.Event(
+                pygame.MOUSEBUTTONDOWN,
+                button=1,
+                pos=picker._dimension_button_rect("width", 1).center,
+            ))
+        self.assertEqual(picker.width, 1600)
+        picker.handle_event(pygame.event.Event(
+            pygame.MOUSEBUTTONDOWN,
+            button=1,
+            pos=picker._dimension_button_rect("width", 1).center,
+        ))
+        self.assertEqual(picker.width, 1600)
+        for _ in range(20):
+            picker.handle_event(pygame.event.Event(
+                pygame.MOUSEBUTTONDOWN,
+                button=1,
+                pos=picker._dimension_button_rect("height", -1).center,
+            ))
+        self.assertEqual(picker.height, 64)
 
     def test_new_map_sets_the_mode(self):
         self.scene.new_map()
-        self.down(self.scene.size_picker._row(0).center)
+        self.down(self.scene.size_picker._create_rect().center)
         self.assertEqual(self.scene.mode, "tower")
+        self.assertEqual(
+            (self.scene.state.map_w, self.scene.state.map_h),
+            (64, 64),
+        )
         self.assertIsNone(self.scene.size_picker)
+
+    def test_new_map_sets_deck_and_economy_modes(self):
+        for mode_key in ("deck", "economy"):
+            with self.subTest(mode=mode_key):
+                self.scene.has_map = False
+                self.scene.new_map()
+                mode_index = next(
+                    index for index, mode in enumerate(GAME_MODES)
+                    if mode["key"] == mode_key
+                )
+                self.down(self.scene.size_picker._mode_rect(mode_index).center)
+                self.down(self.scene.size_picker._create_rect().center)
+                self.assertEqual(self.scene.mode, mode_key)
+                if mode_key == "economy":
+                    self.assertIn("заглушка", self.scene.status.lower())
+                else:
+                    self.assertIn("оператор 2", self.scene.status.lower())
 
     def test_saved_draft_remembers_the_mode(self):
         with tempfile.TemporaryDirectory() as folder, patch.object(map_drafts, "DRAFTS_DIR", Path(folder)):

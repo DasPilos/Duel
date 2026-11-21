@@ -47,12 +47,25 @@ class TestWorldTests(unittest.TestCase):
         result = map_worlds.create_test_world(self.database, self.admin["id"], {"saved_id": self.saved["saved_id"]})
         self.assertEqual(self.database.world_info(result["world_id"])["name"], "Тестовая долина")
 
-    def test_moderator_cannot_create_or_start_test_worlds(self):
-        with self.assertRaises(ValueError):
-            map_worlds.create_test_world(self.database, self.mod["id"], {"saved_id": self.saved["saved_id"]})
-        world = map_worlds.create_test_world(self.database, self.admin["id"], {"saved_id": self.saved["saved_id"]})
+    def test_moderator_creates_only_test_worlds_and_starts_them(self):
+        result = map_worlds.create_test_world(self.database, self.mod["id"], {"saved_id": self.saved["saved_id"], "test": False})
+        self.assertTrue(result["test"])
+        self.assertTrue(self.database.world_info(result["world_id"])["test_only"])
+        started = map_worlds.start_world(self.database, self.mod["id"], result["world_id"], spawn=lambda *a: None, healthy=lambda u: False)
+        self.assertTrue(started["started"])
+
+    def test_moderator_cannot_start_a_public_world(self):
+        world = map_worlds.create_test_world(self.database, self.admin["id"], {"saved_id": self.saved["saved_id"], "test": False})
+        self.assertFalse(self.database.world_info(world["world_id"])["test_only"])
         with self.assertRaises(ValueError):
             map_worlds.start_world(self.database, self.mod["id"], world["world_id"], spawn=lambda *a: None, healthy=lambda u: False)
+
+    def test_admin_creates_public_worlds_and_players_cannot_create_worlds(self):
+        world = map_worlds.create_test_world(self.database, self.admin["id"], {"saved_id": self.saved["saved_id"], "test": False})
+        self.assertFalse(world["test"])
+        self.assertFalse(self.database.world_info(world["world_id"])["test_only"])
+        with self.assertRaises(ValueError):
+            map_worlds.create_test_world(self.database, self.player["id"], {"saved_id": self.saved["saved_id"]})
 
     def test_test_world_is_hidden_from_players_and_visible_to_moderators_and_admins(self):
         world = map_worlds.create_test_world(self.database, self.admin["id"], {"saved_id": self.saved["saved_id"]})

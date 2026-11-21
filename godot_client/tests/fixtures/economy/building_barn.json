@@ -1,0 +1,15 @@
+{
+  "source": "economy/server/production_buildings.py get_state() payload (lines 1008-1059), wrapped by economy/server/api.py /api/buildings/{building}/{id} as {\"building\": {...}}; storage keeps the server's limit key; worker_slots items from lines 703-709",
+  "building": {
+    "building": "barn",
+    "level": 1,
+    "max_workers": 0,
+    "workers": 0,
+    "next_harvest_seconds": 3600,
+    "storage": {"wheat": 120, "limit": 400},
+    "worker_slots": [
+      {"slot_index": 0, "resource": "wheat", "occupied": false, "worker_name": "", "is_player": false}
+    ],
+    "upgrade": {}
+  }
+}

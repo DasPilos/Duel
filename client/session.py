@@ -4,6 +4,7 @@ from client.network import GameClient, ServerError
 class OnlineSession:
     def __init__(self, username, password, character_name, server_url):
         self.client = GameClient(server_url)
+        self.lobby_server_url = server_url.rstrip("/")
         self.username = username
         self.password = password
         self.character_name = character_name

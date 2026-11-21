@@ -72,10 +72,10 @@ class MapEditorNpcTabTests(unittest.TestCase):
 
     def test_n_key_toggles_the_section_and_draws(self):
         screen = pygame.display.get_surface()
-        self.scene.handle_event(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_n, mod=0, unicode="n"))
+        self.scene.handle_event(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_n, mod=0, unicode="n", scancode=pygame.KSCAN_N))
         self.assertEqual(self.scene.section, "npc")
         self.scene.draw(screen)
-        self.scene.handle_event(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_n, mod=0, unicode="n"))
+        self.scene.handle_event(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_n, mod=0, unicode="n", scancode=pygame.KSCAN_N))
         self.assertEqual(self.scene.section, "map")
 
 

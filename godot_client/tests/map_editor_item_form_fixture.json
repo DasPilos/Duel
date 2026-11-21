@@ -1,0 +1,7484 @@
+{
+ "source": "Python: core/item_form.py validate_form, default_form and ITEM_FORM_SLOTS, core/item_icons.py, core/mob_modes.py, COLUMNS and SLOT_LABELS of scenes/item_form_dialog.py. Icon keys come from a temporary folder of empty PNG names made for this run; no game assets are read or copied.",
+ "known_icons": [
+  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "head_helm",
+  "misc_gem",
+  "right_hand_axe",
+  "ring_gold",
+  "shield_oak",
+  "weapon_iron_sword"
+ ],
+ "icon_files": [
+  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png",
+  "head_helm.png",
+  "misc_gem.png",
+  "ring_gold.png",
+  "right_hand_axe.png",
+  "shield_oak.png",
+  "weapon_iron_sword.png",
+  "Bad-Key.png",
+  "README.txt"
+ ],
+ "limits": {
+  "MAX_NAME": 64,
+  "MAX_STAT": 50,
+  "MAX_LEVEL": 50,
+  "MAX_PERCENT": 100,
+  "MAX_HP": 10000,
+  "MAX_DAMAGE": 999,
+  "MAX_PRICE": 1000000000,
+  "CUSTOM_ITEM_FIRST_ID": 1000,
+  "DEFAULT_CRIT_POWER": 50,
+  "MAX_ATTACK_DISTANCE": 100,
+  "MAX_AURA_RADIUS": 3000
+ },
+ "default_form": {
+  "name": "",
+  "slot": "weapon",
+  "two_handed": false,
+  "windup_percent": 0,
+  "recovery_percent": 0,
+  "move_speed_percent": 0,
+  "price": 0,
+  "damage_min": 0,
+  "damage_max": 0,
+  "attack_range": 0,
+  "attack_area": 0,
+  "lifesteal_percent": 0,
+  "aura_type": "none",
+  "aura_target": "allies",
+  "aura_radius_px": 0,
+  "aura_lifesteal_percent": 0,
+  "level": 1,
+  "requirements": {
+   "strength": 0,
+   "agility": 0,
+   "intuition": 0,
+   "wisdom": 0,
+   "intellect": 0,
+   "endurance": 0
+  },
+  "bonuses": {
+   "strength": 0,
+   "agility": 0,
+   "intuition": 0,
+   "wisdom": 0,
+   "intellect": 0,
+   "endurance": 0
+  },
+  "dodge": 0,
+  "anti_dodge": 0,
+  "crit": 0,
+  "anti_crit": 0,
+  "crit_power": 50,
+  "block": 0,
+  "hp": 0,
+  "mp": 0,
+  "magic_damage": 0,
+  "icon": null
+ },
+ "slots": [
+  "head",
+  "ears",
+  "neck",
+  "back",
+  "body",
+  "hands",
+  "belt",
+  "legs",
+  "feet",
+  "weapon",
+  "shield",
+  "ring"
+ ],
+ "slot_labels": {
+  "head": "Голова",
+  "ears": "Серьги",
+  "neck": "Шея",
+  "back": "Плащ",
+  "body": "Доспех",
+  "hands": "Руки",
+  "weapon": "Правая рука",
+  "shield": "Левая рука",
+  "belt": "Пояс",
+  "ring": "Кольца",
+  "legs": "Ноги",
+  "feet": "Обувь"
+ },
+ "stats": [
+  [
+   "strength",
+   "Сила"
+  ],
+  [
+   "agility",
+   "Ловкость"
+  ],
+  [
+   "intuition",
+   "Интуиция"
+  ],
+  [
+   "wisdom",
+   "Мудрость"
+  ],
+  [
+   "intellect",
+   "Интеллект"
+  ],
+  [
+   "endurance",
+   "Выносливость"
+  ]
+ ],
+ "slot_icon_prefixes": {
+  "head": [
+   "head_"
+  ],
+  "ears": [
+   "ears_"
+  ],
+  "neck": [
+   "neck_"
+  ],
+  "back": [
+   "back_"
+  ],
+  "body": [
+   "body_"
+  ],
+  "hands": [
+   "hands_"
+  ],
+  "weapon": [
+   "weapon_",
+   "right_hand_"
+  ],
+  "shield": [
+   "shield_",
+   "left_hand_"
+  ],
+  "belt": [
+   "belt_"
+  ],
+  "ring": [
+   "ring_",
+   "rings_"
+  ],
+  "ring_2": [
+   "ring_",
+   "rings_"
+  ],
+  "legs": [
+   "legs_"
+  ],
+  "feet": [
+   "feet_"
+  ]
+ },
+ "field_columns": [
+  [
+   [
+    "name",
+    "Название",
+    "text",
+    0,
+    0,
+    0
+   ],
+   [
+    "slot",
+    "Слот",
+    "slot",
+    0,
+    0,
+    0
+   ],
+   [
+    "icon",
+    "Иконка",
+    "icon",
+    0,
+    0,
+    0
+   ],
+   [
+    "two_handed",
+    "Обе руки (двуручный)",
+    "flag",
+    0,
+    0,
+    0
+   ],
+   [
+    "windup_percent",
+    "Скорость замаха, %",
+    "int",
+    5,
+    -90,
+    200
+   ],
+   [
+    "recovery_percent",
+    "Восстановление, %",
+    "int",
+    5,
+    -90,
+    200
+   ],
+   [
+    "move_speed_percent",
+    "Скорость передвижения, %",
+    "int",
+    5,
+    -90,
+    200
+   ],
+   [
+    "damage_min",
+    "Урон от",
+    "int",
+    1,
+    0,
+    999
+   ],
+   [
+    "damage_max",
+    "Урон до",
+    "int",
+    1,
+    0,
+    999
+   ],
+   [
+    "attack_range",
+    "Дальность атаки, клеток",
+    "int",
+    1,
+    0,
+    100
+   ],
+   [
+    "attack_area",
+    "Площадь атаки, клеток",
+    "int",
+    1,
+    0,
+    100
+   ],
+   [
+    "price",
+    "Цена, мед.",
+    "int",
+    100,
+    0,
+    1000000000
+   ]
+  ],
+  [
+   [
+    "header",
+    "Требование",
+    "",
+    0,
+    0,
+    0
+   ],
+   [
+    "level",
+    "Уровень",
+    "int",
+    1,
+    1,
+    50
+   ],
+   [
+    "req:strength",
+    "Сила",
+    "int",
+    1,
+    0,
+    50
+   ],
+   [
+    "req:agility",
+    "Ловкость",
+    "int",
+    1,
+    0,
+    50
+   ],
+   [
+    "req:intuition",
+    "Интуиция",
+    "int",
+    1,
+    0,
+    50
+   ],
+   [
+    "req:wisdom",
+    "Мудрость",
+    "int",
+    1,
+    0,
+    50
+   ],
+   [
+    "req:intellect",
+    "Интеллект",
+    "int",
+    1,
+    0,
+    50
+   ],
+   [
+    "req:endurance",
+    "Выносливость",
+    "int",
+    1,
+    0,
+    50
+   ],
+   [
+    "header",
+    "Характеристики предмета",
+    "",
+    0,
+    0,
+    0
+   ],
+   [
+    "bon:strength",
+    "Сила",
+    "int",
+    1,
+    0,
+    50
+   ],
+   [
+    "bon:agility",
+    "Ловкость",
+    "int",
+    1,
+    0,
+    50
+   ],
+   [
+    "bon:intuition",
+    "Интуиция",
+    "int",
+    1,
+    0,
+    50
+   ],
+   [
+    "bon:wisdom",
+    "Мудрость",
+    "int",
+    1,
+    0,
+    50
+   ],
+   [
+    "bon:intellect",
+    "Интеллект",
+    "int",
+    1,
+    0,
+    50
+   ],
+   [
+    "bon:endurance",
+    "Выносливость",
+    "int",
+    1,
+    0,
+    50
+   ]
+  ],
+  [
+   [
+    "header",
+    "Бой",
+    "",
+    0,
+    0,
+    0
+   ],
+   [
+    "dodge",
+    "Уворот, %",
+    "int",
+    1,
+    0,
+    100
+   ],
+   [
+    "anti_dodge",
+    "Анти уворот, %",
+    "int",
+    1,
+    0,
+    100
+   ],
+   [
+    "crit",
+    "Крит, %",
+    "int",
+    1,
+    0,
+    100
+   ],
+   [
+    "anti_crit",
+    "Крит антикрит, %",
+    "int",
+    1,
+    0,
+    100
+   ],
+   [
+    "crit_power",
+    "Мощь критического удара, %",
+    "int",
+    5,
+    0,
+    500
+   ],
+   [
+    "block",
+    "Шанс блока, %",
+    "int",
+    1,
+    0,
+    100
+   ],
+   [
+    "lifesteal_percent",
+    "Вампиризм, %",
+    "int",
+    1,
+    0,
+    100
+   ],
+   [
+    "header",
+    "Аура",
+    "",
+    0,
+    0,
+    0
+   ],
+   [
+    "aura_type",
+    "Тип ауры",
+    "choice",
+    0,
+    0,
+    0
+   ],
+   [
+    "aura_target",
+    "Цель ауры",
+    "choice",
+    0,
+    0,
+    0
+   ],
+   [
+    "aura_radius_px",
+    "Радиус, пикселей",
+    "int",
+    10,
+    0,
+    3000
+   ],
+   [
+    "aura_lifesteal_percent",
+    "Вампиризм ауры, %",
+    "int",
+    1,
+    0,
+    100
+   ],
+   [
+    "hp",
+    "ХП",
+    "int",
+    10,
+    0,
+    10000
+   ],
+   [
+    "mp",
+    "МП",
+    "int",
+    10,
+    0,
+    10000
+   ],
+   [
+    "magic_damage",
+    "Маг урон",
+    "int",
+    1,
+    0,
+    999
+   ]
+  ]
+ ],
+ "icons_for_slot": {
+  "head": [
+   "head_helm"
+  ],
+  "ears": [
+   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "head_helm",
+   "misc_gem",
+   "right_hand_axe",
+   "ring_gold",
+   "shield_oak",
+   "weapon_iron_sword"
+  ],
+  "neck": [
+   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "head_helm",
+   "misc_gem",
+   "right_hand_axe",
+   "ring_gold",
+   "shield_oak",
+   "weapon_iron_sword"
+  ],
+  "back": [
+   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "head_helm",
+   "misc_gem",
+   "right_hand_axe",
+   "ring_gold",
+   "shield_oak",
+   "weapon_iron_sword"
+  ],
+  "body": [
+   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "head_helm",
+   "misc_gem",
+   "right_hand_axe",
+   "ring_gold",
+   "shield_oak",
+   "weapon_iron_sword"
+  ],
+  "hands": [
+   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "head_helm",
+   "misc_gem",
+   "right_hand_axe",
+   "ring_gold",
+   "shield_oak",
+   "weapon_iron_sword"
+  ],
+  "belt": [
+   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "head_helm",
+   "misc_gem",
+   "right_hand_axe",
+   "ring_gold",
+   "shield_oak",
+   "weapon_iron_sword"
+  ],
+  "legs": [
+   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "head_helm",
+   "misc_gem",
+   "right_hand_axe",
+   "ring_gold",
+   "shield_oak",
+   "weapon_iron_sword"
+  ],
+  "feet": [
+   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "head_helm",
+   "misc_gem",
+   "right_hand_axe",
+   "ring_gold",
+   "shield_oak",
+   "weapon_iron_sword"
+  ],
+  "weapon": [
+   "right_hand_axe",
+   "weapon_iron_sword"
+  ],
+  "shield": [
+   "shield_oak"
+  ],
+  "ring": [
+   "ring_gold"
+  ],
+  "ring_2": [
+   "ring_gold"
+  ]
+ },
+ "int_text_cases": [
+  {
+   "text": "0",
+   "value": 0
+  },
+  {
+   "text": "12",
+   "value": 12
+  },
+  {
+   "text": " 12 ",
+   "value": 12
+  },
+  {
+   "text": "\t7\n",
+   "value": 7
+  },
+  {
+   "text": "+7",
+   "value": 7
+  },
+  {
+   "text": "-3",
+   "value": -3
+  },
+  {
+   "text": "-0",
+   "value": 0
+  },
+  {
+   "text": "007",
+   "value": 7
+  },
+  {
+   "text": "1_000",
+   "value": 1000
+  },
+  {
+   "text": "1__0",
+   "value": null
+  },
+  {
+   "text": "_1",
+   "value": null
+  },
+  {
+   "text": "1_",
+   "value": null
+  },
+  {
+   "text": "",
+   "value": null
+  },
+  {
+   "text": " ",
+   "value": null
+  },
+  {
+   "text": "abc",
+   "value": null
+  },
+  {
+   "text": "1.5",
+   "value": null
+  },
+  {
+   "text": "1e3",
+   "value": null
+  },
+  {
+   "text": "0x1F",
+   "value": null
+  },
+  {
+   "text": "12a",
+   "value": null
+  },
+  {
+   "text": "- 5",
+   "value": null
+  },
+  {
+   "text": "+-5",
+   "value": null
+  },
+  {
+   "text": "5 5",
+   "value": null
+  }
+ ],
+ "validate_cases": [
+  {
+   "name": "windup_percent_low_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "windup_percent": -90
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": -90,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 999,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "windup_percent_high_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "windup_percent": 200
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 200,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 999,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "windup_percent_below_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "windup_percent": -91
+   },
+   "error": "Скорость замаха, %: от -90 до 200",
+   "clean": null
+  },
+  {
+   "name": "windup_percent_above_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "windup_percent": 201
+   },
+   "error": "Скорость замаха, %: от -90 до 200",
+   "clean": null
+  },
+  {
+   "name": "windup_percent_text_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "windup_percent": "abc"
+   },
+   "error": "Скорость замаха, %: нужно целое число",
+   "clean": null
+  },
+  {
+   "name": "recovery_percent_low_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "recovery_percent": -90
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": -90,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 999,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "recovery_percent_high_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "recovery_percent": 200
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 200,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 999,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "recovery_percent_below_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "recovery_percent": -91
+   },
+   "error": "Восстановление, %: от -90 до 200",
+   "clean": null
+  },
+  {
+   "name": "recovery_percent_above_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "recovery_percent": 201
+   },
+   "error": "Восстановление, %: от -90 до 200",
+   "clean": null
+  },
+  {
+   "name": "recovery_percent_text_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "recovery_percent": "abc"
+   },
+   "error": "Восстановление, %: нужно целое число",
+   "clean": null
+  },
+  {
+   "name": "move_speed_percent_low_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "move_speed_percent": -90
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": -90,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 999,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "move_speed_percent_high_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "move_speed_percent": 200
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 200,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 999,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "move_speed_percent_below_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "move_speed_percent": -91
+   },
+   "error": "Скорость передвижения, %: от -90 до 200",
+   "clean": null
+  },
+  {
+   "name": "move_speed_percent_above_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "move_speed_percent": 201
+   },
+   "error": "Скорость передвижения, %: от -90 до 200",
+   "clean": null
+  },
+  {
+   "name": "move_speed_percent_text_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "move_speed_percent": "abc"
+   },
+   "error": "Скорость передвижения, %: нужно целое число",
+   "clean": null
+  },
+  {
+   "name": "price_low_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "price": 0
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 999,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "price_high_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "price": 1000000000
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 1000000000,
+    "damage_min": 0,
+    "damage_max": 999,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "price_below_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "price": -1
+   },
+   "error": "Цена: от 0 до 1000000000",
+   "clean": null
+  },
+  {
+   "name": "price_above_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "price": 1000000001
+   },
+   "error": "Цена: от 0 до 1000000000",
+   "clean": null
+  },
+  {
+   "name": "price_text_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "price": "abc"
+   },
+   "error": "Цена: нужно целое число",
+   "clean": null
+  },
+  {
+   "name": "damage_min_low_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 999,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "damage_min_high_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 999,
+    "damage_max": 999
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 999,
+    "damage_max": 999,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "damage_min_below_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": -1,
+    "damage_max": 999
+   },
+   "error": "Урон от: от 0 до 999",
+   "clean": null
+  },
+  {
+   "name": "damage_min_above_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 1000,
+    "damage_max": 999
+   },
+   "error": "Урон от: от 0 до 999",
+   "clean": null
+  },
+  {
+   "name": "damage_min_text_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": "abc",
+    "damage_max": 999
+   },
+   "error": "Урон от: нужно целое число",
+   "clean": null
+  },
+  {
+   "name": "damage_max_low_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 0
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 0,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "damage_max_high_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 999,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "damage_max_below_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": -1
+   },
+   "error": "Урон до: от 0 до 999",
+   "clean": null
+  },
+  {
+   "name": "damage_max_above_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 1000
+   },
+   "error": "Урон до: от 0 до 999",
+   "clean": null
+  },
+  {
+   "name": "damage_max_text_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": "abc"
+   },
+   "error": "Урон до: нужно целое число",
+   "clean": null
+  },
+  {
+   "name": "level_low_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "level": 1
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 999,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "level_high_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "level": 50
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 999,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 50,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "level_below_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "level": 0
+   },
+   "error": "Уровень: от 1 до 50",
+   "clean": null
+  },
+  {
+   "name": "level_above_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "level": 51
+   },
+   "error": "Уровень: от 1 до 50",
+   "clean": null
+  },
+  {
+   "name": "level_text_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "level": "abc"
+   },
+   "error": "Уровень: нужно целое число",
+   "clean": null
+  },
+  {
+   "name": "crit_power_low_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "crit_power": 0
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 999,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 0,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "crit_power_high_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "crit_power": 500
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 999,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 500,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "crit_power_below_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "crit_power": -1
+   },
+   "error": "Сила крита, %: от 0 до 500",
+   "clean": null
+  },
+  {
+   "name": "crit_power_above_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "crit_power": 501
+   },
+   "error": "Сила крита, %: от 0 до 500",
+   "clean": null
+  },
+  {
+   "name": "crit_power_text_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "crit_power": "abc"
+   },
+   "error": "Сила крита, %: нужно целое число",
+   "clean": null
+  },
+  {
+   "name": "hp_low_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "hp": 0
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 999,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "hp_high_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "hp": 10000
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 999,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 10000,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "hp_below_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "hp": -1
+   },
+   "error": "ХП: от 0 до 10000",
+   "clean": null
+  },
+  {
+   "name": "hp_above_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "hp": 10001
+   },
+   "error": "ХП: от 0 до 10000",
+   "clean": null
+  },
+  {
+   "name": "hp_text_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "hp": "abc"
+   },
+   "error": "ХП: нужно целое число",
+   "clean": null
+  },
+  {
+   "name": "mp_low_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "mp": 0
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 999,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "mp_high_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "mp": 10000
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 999,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 10000,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "mp_below_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "mp": -1
+   },
+   "error": "МП: от 0 до 10000",
+   "clean": null
+  },
+  {
+   "name": "mp_above_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "mp": 10001
+   },
+   "error": "МП: от 0 до 10000",
+   "clean": null
+  },
+  {
+   "name": "mp_text_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "mp": "abc"
+   },
+   "error": "МП: нужно целое число",
+   "clean": null
+  },
+  {
+   "name": "magic_damage_low_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "magic_damage": 0
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 999,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "magic_damage_high_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "magic_damage": 999
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 999,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 999,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "magic_damage_below_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "magic_damage": -1
+   },
+   "error": "Маг урон: от 0 до 999",
+   "clean": null
+  },
+  {
+   "name": "magic_damage_above_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "magic_damage": 1000
+   },
+   "error": "Маг урон: от 0 до 999",
+   "clean": null
+  },
+  {
+   "name": "magic_damage_text_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "magic_damage": "abc"
+   },
+   "error": "Маг урон: нужно целое число",
+   "clean": null
+  },
+  {
+   "name": "dodge_low_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "dodge": 0
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 999,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "dodge_high_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "dodge": 100
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 999,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 100,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "dodge_below_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "dodge": -1
+   },
+   "error": "Уворот, %: от 0 до 100",
+   "clean": null
+  },
+  {
+   "name": "dodge_above_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "dodge": 101
+   },
+   "error": "Уворот, %: от 0 до 100",
+   "clean": null
+  },
+  {
+   "name": "dodge_text_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "dodge": "abc"
+   },
+   "error": "Уворот, %: нужно целое число",
+   "clean": null
+  },
+  {
+   "name": "anti_dodge_low_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "anti_dodge": 0
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 999,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "anti_dodge_high_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "anti_dodge": 100
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 999,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 100,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "anti_dodge_below_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "anti_dodge": -1
+   },
+   "error": "Анти уворот, %: от 0 до 100",
+   "clean": null
+  },
+  {
+   "name": "anti_dodge_above_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "anti_dodge": 101
+   },
+   "error": "Анти уворот, %: от 0 до 100",
+   "clean": null
+  },
+  {
+   "name": "anti_dodge_text_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "anti_dodge": "abc"
+   },
+   "error": "Анти уворот, %: нужно целое число",
+   "clean": null
+  },
+  {
+   "name": "crit_low_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "crit": 0
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 999,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "crit_high_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "crit": 100
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 999,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 100,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "crit_below_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "crit": -1
+   },
+   "error": "Крит, %: от 0 до 100",
+   "clean": null
+  },
+  {
+   "name": "crit_above_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "crit": 101
+   },
+   "error": "Крит, %: от 0 до 100",
+   "clean": null
+  },
+  {
+   "name": "crit_text_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "crit": "abc"
+   },
+   "error": "Крит, %: нужно целое число",
+   "clean": null
+  },
+  {
+   "name": "anti_crit_low_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "anti_crit": 0
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 999,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "anti_crit_high_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "anti_crit": 100
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 999,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 100,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "anti_crit_below_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "anti_crit": -1
+   },
+   "error": "Крит антикрит, %: от 0 до 100",
+   "clean": null
+  },
+  {
+   "name": "anti_crit_above_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "anti_crit": 101
+   },
+   "error": "Крит антикрит, %: от 0 до 100",
+   "clean": null
+  },
+  {
+   "name": "anti_crit_text_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "anti_crit": "abc"
+   },
+   "error": "Крит антикрит, %: нужно целое число",
+   "clean": null
+  },
+  {
+   "name": "block_low_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "block": 0
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 999,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "block_high_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "block": 100
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 999,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 100,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "block_below_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "block": -1
+   },
+   "error": "Блок, %: от 0 до 100",
+   "clean": null
+  },
+  {
+   "name": "block_above_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "block": 101
+   },
+   "error": "Блок, %: от 0 до 100",
+   "clean": null
+  },
+  {
+   "name": "block_text_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "block": "abc"
+   },
+   "error": "Блок, %: нужно целое число",
+   "clean": null
+  },
+  {
+   "name": "requirements_strength_zero_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "requirements": {
+     "strength": 0
+    }
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 999,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "requirements_strength_max_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "requirements": {
+     "strength": 50
+    }
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 999,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 50,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "requirements_strength_above_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "requirements": {
+     "strength": 51
+    }
+   },
+   "error": "Сила: от 0 до 50",
+   "clean": null
+  },
+  {
+   "name": "requirements_strength_below_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "requirements": {
+     "strength": -1
+    }
+   },
+   "error": "Сила: от 0 до 50",
+   "clean": null
+  },
+  {
+   "name": "requirements_strength_text_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "requirements": {
+     "strength": "x"
+    }
+   },
+   "error": "Сила: нужно целое число",
+   "clean": null
+  },
+  {
+   "name": "requirements_agility_zero_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "requirements": {
+     "agility": 0
+    }
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 999,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "requirements_agility_max_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "requirements": {
+     "agility": 50
+    }
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 999,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 50,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "requirements_agility_above_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "requirements": {
+     "agility": 51
+    }
+   },
+   "error": "Ловкость: от 0 до 50",
+   "clean": null
+  },
+  {
+   "name": "requirements_agility_below_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "requirements": {
+     "agility": -1
+    }
+   },
+   "error": "Ловкость: от 0 до 50",
+   "clean": null
+  },
+  {
+   "name": "requirements_agility_text_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "requirements": {
+     "agility": "x"
+    }
+   },
+   "error": "Ловкость: нужно целое число",
+   "clean": null
+  },
+  {
+   "name": "requirements_intuition_zero_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "requirements": {
+     "intuition": 0
+    }
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 999,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "requirements_intuition_max_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "requirements": {
+     "intuition": 50
+    }
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 999,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 50,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "requirements_intuition_above_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "requirements": {
+     "intuition": 51
+    }
+   },
+   "error": "Интуиция: от 0 до 50",
+   "clean": null
+  },
+  {
+   "name": "requirements_intuition_below_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "requirements": {
+     "intuition": -1
+    }
+   },
+   "error": "Интуиция: от 0 до 50",
+   "clean": null
+  },
+  {
+   "name": "requirements_intuition_text_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "requirements": {
+     "intuition": "x"
+    }
+   },
+   "error": "Интуиция: нужно целое число",
+   "clean": null
+  },
+  {
+   "name": "requirements_wisdom_zero_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "requirements": {
+     "wisdom": 0
+    }
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 999,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "requirements_wisdom_max_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "requirements": {
+     "wisdom": 50
+    }
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 999,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 50,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "requirements_wisdom_above_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "requirements": {
+     "wisdom": 51
+    }
+   },
+   "error": "Мудрость: от 0 до 50",
+   "clean": null
+  },
+  {
+   "name": "requirements_wisdom_below_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "requirements": {
+     "wisdom": -1
+    }
+   },
+   "error": "Мудрость: от 0 до 50",
+   "clean": null
+  },
+  {
+   "name": "requirements_wisdom_text_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "requirements": {
+     "wisdom": "x"
+    }
+   },
+   "error": "Мудрость: нужно целое число",
+   "clean": null
+  },
+  {
+   "name": "requirements_intellect_zero_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "requirements": {
+     "intellect": 0
+    }
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 999,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "requirements_intellect_max_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "requirements": {
+     "intellect": 50
+    }
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 999,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 50,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "requirements_intellect_above_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "requirements": {
+     "intellect": 51
+    }
+   },
+   "error": "Интеллект: от 0 до 50",
+   "clean": null
+  },
+  {
+   "name": "requirements_intellect_below_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "requirements": {
+     "intellect": -1
+    }
+   },
+   "error": "Интеллект: от 0 до 50",
+   "clean": null
+  },
+  {
+   "name": "requirements_intellect_text_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "requirements": {
+     "intellect": "x"
+    }
+   },
+   "error": "Интеллект: нужно целое число",
+   "clean": null
+  },
+  {
+   "name": "requirements_endurance_zero_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "requirements": {
+     "endurance": 0
+    }
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 999,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "requirements_endurance_max_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "requirements": {
+     "endurance": 50
+    }
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 999,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 50
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "requirements_endurance_above_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "requirements": {
+     "endurance": 51
+    }
+   },
+   "error": "Выносливость: от 0 до 50",
+   "clean": null
+  },
+  {
+   "name": "requirements_endurance_below_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "requirements": {
+     "endurance": -1
+    }
+   },
+   "error": "Выносливость: от 0 до 50",
+   "clean": null
+  },
+  {
+   "name": "requirements_endurance_text_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "requirements": {
+     "endurance": "x"
+    }
+   },
+   "error": "Выносливость: нужно целое число",
+   "clean": null
+  },
+  {
+   "name": "bonuses_strength_zero_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "bonuses": {
+     "strength": 0
+    }
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 999,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "bonuses_strength_max_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "bonuses": {
+     "strength": 50
+    }
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 999,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 50,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "bonuses_strength_above_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "bonuses": {
+     "strength": 51
+    }
+   },
+   "error": "Сила: от 0 до 50",
+   "clean": null
+  },
+  {
+   "name": "bonuses_strength_below_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "bonuses": {
+     "strength": -1
+    }
+   },
+   "error": "Сила: от 0 до 50",
+   "clean": null
+  },
+  {
+   "name": "bonuses_strength_text_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "bonuses": {
+     "strength": "x"
+    }
+   },
+   "error": "Сила: нужно целое число",
+   "clean": null
+  },
+  {
+   "name": "bonuses_agility_zero_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "bonuses": {
+     "agility": 0
+    }
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 999,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "bonuses_agility_max_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "bonuses": {
+     "agility": 50
+    }
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 999,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 50,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "bonuses_agility_above_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "bonuses": {
+     "agility": 51
+    }
+   },
+   "error": "Ловкость: от 0 до 50",
+   "clean": null
+  },
+  {
+   "name": "bonuses_agility_below_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "bonuses": {
+     "agility": -1
+    }
+   },
+   "error": "Ловкость: от 0 до 50",
+   "clean": null
+  },
+  {
+   "name": "bonuses_agility_text_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "bonuses": {
+     "agility": "x"
+    }
+   },
+   "error": "Ловкость: нужно целое число",
+   "clean": null
+  },
+  {
+   "name": "bonuses_intuition_zero_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "bonuses": {
+     "intuition": 0
+    }
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 999,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "bonuses_intuition_max_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "bonuses": {
+     "intuition": 50
+    }
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 999,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 50,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "bonuses_intuition_above_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "bonuses": {
+     "intuition": 51
+    }
+   },
+   "error": "Интуиция: от 0 до 50",
+   "clean": null
+  },
+  {
+   "name": "bonuses_intuition_below_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "bonuses": {
+     "intuition": -1
+    }
+   },
+   "error": "Интуиция: от 0 до 50",
+   "clean": null
+  },
+  {
+   "name": "bonuses_intuition_text_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "bonuses": {
+     "intuition": "x"
+    }
+   },
+   "error": "Интуиция: нужно целое число",
+   "clean": null
+  },
+  {
+   "name": "bonuses_wisdom_zero_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "bonuses": {
+     "wisdom": 0
+    }
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 999,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "bonuses_wisdom_max_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "bonuses": {
+     "wisdom": 50
+    }
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 999,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 50,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "bonuses_wisdom_above_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "bonuses": {
+     "wisdom": 51
+    }
+   },
+   "error": "Мудрость: от 0 до 50",
+   "clean": null
+  },
+  {
+   "name": "bonuses_wisdom_below_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "bonuses": {
+     "wisdom": -1
+    }
+   },
+   "error": "Мудрость: от 0 до 50",
+   "clean": null
+  },
+  {
+   "name": "bonuses_wisdom_text_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "bonuses": {
+     "wisdom": "x"
+    }
+   },
+   "error": "Мудрость: нужно целое число",
+   "clean": null
+  },
+  {
+   "name": "bonuses_intellect_zero_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "bonuses": {
+     "intellect": 0
+    }
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 999,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "bonuses_intellect_max_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "bonuses": {
+     "intellect": 50
+    }
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 999,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 50,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "bonuses_intellect_above_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "bonuses": {
+     "intellect": 51
+    }
+   },
+   "error": "Интеллект: от 0 до 50",
+   "clean": null
+  },
+  {
+   "name": "bonuses_intellect_below_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "bonuses": {
+     "intellect": -1
+    }
+   },
+   "error": "Интеллект: от 0 до 50",
+   "clean": null
+  },
+  {
+   "name": "bonuses_intellect_text_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "bonuses": {
+     "intellect": "x"
+    }
+   },
+   "error": "Интеллект: нужно целое число",
+   "clean": null
+  },
+  {
+   "name": "bonuses_endurance_zero_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "bonuses": {
+     "endurance": 0
+    }
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 999,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "bonuses_endurance_max_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "bonuses": {
+     "endurance": 50
+    }
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 999,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 50
+    }
+   }
+  },
+  {
+   "name": "bonuses_endurance_above_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "bonuses": {
+     "endurance": 51
+    }
+   },
+   "error": "Выносливость: от 0 до 50",
+   "clean": null
+  },
+  {
+   "name": "bonuses_endurance_below_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "bonuses": {
+     "endurance": -1
+    }
+   },
+   "error": "Выносливость: от 0 до 50",
+   "clean": null
+  },
+  {
+   "name": "bonuses_endurance_text_error",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon",
+    "damage_min": 0,
+    "damage_max": 999,
+    "bonuses": {
+     "endurance": "x"
+    }
+   },
+   "error": "Выносливость: нужно целое число",
+   "clean": null
+  },
+  {
+   "name": "slot_head_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "head"
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "head",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 0,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "slot_ears_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "ears"
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "ears",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 0,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "slot_neck_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "neck"
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "neck",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 0,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "slot_back_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "back"
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "back",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 0,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "slot_body_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "body"
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "body",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 0,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "slot_hands_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "hands"
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "hands",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 0,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "slot_belt_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "belt"
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "belt",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 0,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "slot_legs_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "legs"
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "legs",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 0,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "slot_feet_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "feet"
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "feet",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 0,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "slot_weapon_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "weapon"
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 0,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "slot_shield_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "shield"
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "shield",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 0,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "slot_ring_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "ring"
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "ring",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 0,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "slot_ring_2_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "ring_2"
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "ring",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 0,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "slot_bad_'Weapon'_error",
+   "form": {
+    "name": "Меч",
+    "slot": "Weapon"
+   },
+   "error": "Выберите слот экипировки",
+   "clean": null
+  },
+  {
+   "name": "slot_bad_'foot'_error",
+   "form": {
+    "name": "Меч",
+    "slot": "foot"
+   },
+   "error": "Выберите слот экипировки",
+   "clean": null
+  },
+  {
+   "name": "slot_bad_''_error",
+   "form": {
+    "name": "Меч",
+    "slot": ""
+   },
+   "error": "Выберите слот экипировки",
+   "clean": null
+  },
+  {
+   "name": "slot_bad_None_error",
+   "form": {
+    "name": "Меч",
+    "slot": null
+   },
+   "error": "Выберите слот экипировки",
+   "clean": null
+  },
+  {
+   "name": "empty_form",
+   "form": {},
+   "error": "Укажите название предмета",
+   "clean": null
+  },
+  {
+   "name": "name_spaces_only",
+   "form": {
+    "name": "   "
+   },
+   "error": "Укажите название предмета",
+   "clean": null
+  },
+  {
+   "name": "name_tabs_newlines",
+   "form": {
+    "name": "\t\n"
+   },
+   "error": "Укажите название предмета",
+   "clean": null
+  },
+  {
+   "name": "name_trimmed",
+   "form": {
+    "name": "  Меч  "
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 0,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "name_64_ok",
+   "form": {
+    "name": "яяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяя"
+   },
+   "error": "",
+   "clean": {
+    "name": "яяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяя",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 0,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "name_64_after_trim_ok",
+   "form": {
+    "name": " бббббббббббббббббббббббббббббббббббббббббббббббббббббббббббббббб "
+   },
+   "error": "",
+   "clean": {
+    "name": "бббббббббббббббббббббббббббббббббббббббббббббббббббббббббббббббб",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 0,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "name_65_error",
+   "form": {
+    "name": "яяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяя"
+   },
+   "error": "Название длиннее 64 символов",
+   "clean": null
+  },
+  {
+   "name": "name_65_after_trim_error",
+   "form": {
+    "name": " ббббббббббббббббббббббббббббббббббббббббббббббббббббббббббббббббб"
+   },
+   "error": "Название длиннее 64 символов",
+   "clean": null
+  },
+  {
+   "name": "name_only_defaults_ok",
+   "form": {
+    "name": "Меч"
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 0,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "groups_none_use_defaults",
+   "form": {
+    "name": "Меч",
+    "requirements": null,
+    "bonuses": null
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 0,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "requirements_partial_ok",
+   "form": {
+    "name": "Меч",
+    "requirements": {
+     "strength": 5
+    }
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 0,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 5,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "requirement_none_error",
+   "form": {
+    "name": "Меч",
+    "requirements": {
+     "strength": null
+    }
+   },
+   "error": "Сила: нужно целое число",
+   "clean": null
+  },
+  {
+   "name": "icon_none_ok",
+   "form": {
+    "name": "Меч",
+    "icon": null
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 0,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "icon_empty_string_ok",
+   "form": {
+    "name": "Меч",
+    "icon": ""
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 0,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "icon_zero_is_none_ok",
+   "form": {
+    "name": "Меч",
+    "icon": 0
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 0,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "icon_known_ok",
+   "form": {
+    "name": "Меч",
+    "icon": "weapon_iron_sword"
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": "weapon_iron_sword",
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 0,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "icon_known_64_ok",
+   "form": {
+    "name": "Меч",
+    "icon": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 0,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "icon_unknown_error",
+   "form": {
+    "name": "Меч",
+    "icon": "weapon_missing"
+   },
+   "error": "Иконка не найдена в базе иконок",
+   "clean": null
+  },
+  {
+   "name": "icon_bad_pattern_error",
+   "form": {
+    "name": "Меч",
+    "icon": "Weapon_Iron"
+   },
+   "error": "Иконка не найдена в базе иконок",
+   "clean": null
+  },
+  {
+   "name": "icon_65_error",
+   "form": {
+    "name": "Меч",
+    "icon": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+   },
+   "error": "Иконка не найдена в базе иконок",
+   "clean": null
+  },
+  {
+   "name": "icon_with_space_error",
+   "form": {
+    "name": "Меч",
+    "icon": "shield oak"
+   },
+   "error": "Иконка не найдена в базе иконок",
+   "clean": null
+  },
+  {
+   "name": "icon_other_slot_ok",
+   "form": {
+    "name": "Меч",
+    "slot": "head",
+    "icon": "weapon_iron_sword"
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "head",
+    "icon": "weapon_iron_sword",
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 0,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "two_handed_true_ok",
+   "form": {
+    "name": "Меч",
+    "two_handed": true
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": true,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 0,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "two_handed_yes_text_ok",
+   "form": {
+    "name": "Меч",
+    "two_handed": "yes"
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": true,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 0,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "two_handed_empty_text_ok",
+   "form": {
+    "name": "Меч",
+    "two_handed": ""
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 0,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "two_handed_zero_ok",
+   "form": {
+    "name": "Меч",
+    "two_handed": 0
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 0,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "price_text_number_ok",
+   "form": {
+    "name": "Меч",
+    "price": "1500"
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 1500,
+    "damage_min": 0,
+    "damage_max": 0,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "price_float_truncates_ok",
+   "form": {
+    "name": "Меч",
+    "price": 999.9
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 999,
+    "damage_min": 0,
+    "damage_max": 0,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "price_huge_text_error",
+   "form": {
+    "name": "Меч",
+    "price": "99999999999999999999"
+   },
+   "error": "Цена: от 0 до 1000000000",
+   "clean": null
+  },
+  {
+   "name": "level_padded_text_ok",
+   "form": {
+    "name": "Меч",
+    "level": " 7 "
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 0,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 7,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "hp_underscores_ok",
+   "form": {
+    "name": "Меч",
+    "hp": "1_000"
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 0,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 1000,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "mp_plus_sign_ok",
+   "form": {
+    "name": "Меч",
+    "mp": "+5"
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 0,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 5,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "hp_fraction_text_error",
+   "form": {
+    "name": "Меч",
+    "hp": "1.5"
+   },
+   "error": "ХП: нужно целое число",
+   "clean": null
+  },
+  {
+   "name": "hp_empty_text_error",
+   "form": {
+    "name": "Меч",
+    "hp": ""
+   },
+   "error": "ХП: нужно целое число",
+   "clean": null
+  },
+  {
+   "name": "hp_none_error",
+   "form": {
+    "name": "Меч",
+    "hp": null
+   },
+   "error": "ХП: нужно целое число",
+   "clean": null
+  },
+  {
+   "name": "hp_bool_true_ok",
+   "form": {
+    "name": "Меч",
+    "hp": true
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 0,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 1,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "crit_negative_fraction_ok",
+   "form": {
+    "name": "Меч",
+    "crit": -0.5
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 0,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "crit_power_text_ok",
+   "form": {
+    "name": "Меч",
+    "crit_power": "120"
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 0,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 120,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "order_hp_before_crit",
+   "form": {
+    "name": "Меч",
+    "hp": 20000,
+    "crit": 500
+   },
+   "error": "ХП: от 0 до 10000",
+   "clean": null
+  },
+  {
+   "name": "order_windup_before_price",
+   "form": {
+    "name": "Меч",
+    "windup_percent": 999,
+    "price": -1
+   },
+   "error": "Скорость замаха, %: от -90 до 200",
+   "clean": null
+  },
+  {
+   "name": "order_magic_before_damage_order",
+   "form": {
+    "name": "Меч",
+    "damage_min": 10,
+    "damage_max": 5,
+    "magic_damage": 1000
+   },
+   "error": "Маг урон: от 0 до 999",
+   "clean": null
+  },
+  {
+   "name": "order_name_before_windup",
+   "form": {
+    "name": "",
+    "windup_percent": 999
+   },
+   "error": "Укажите название предмета",
+   "clean": null
+  },
+  {
+   "name": "order_slot_before_icon",
+   "form": {
+    "name": "Меч",
+    "slot": "x",
+    "icon": "nope"
+   },
+   "error": "Выберите слот экипировки",
+   "clean": null
+  },
+  {
+   "name": "order_icon_before_numbers",
+   "form": {
+    "name": "Меч",
+    "icon": "nope",
+    "windup_percent": 999
+   },
+   "error": "Иконка не найдена в базе иконок",
+   "clean": null
+  },
+  {
+   "name": "damage_order_error",
+   "form": {
+    "name": "Меч",
+    "damage_min": 10,
+    "damage_max": 5
+   },
+   "error": "Урон «от» не может быть больше «до»",
+   "clean": null
+  },
+  {
+   "name": "damage_equal_ok",
+   "form": {
+    "name": "Меч",
+    "damage_min": 5,
+    "damage_max": 5
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 5,
+    "damage_max": 5,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "damage_full_range_ok",
+   "form": {
+    "name": "Меч",
+    "damage_min": 1,
+    "damage_max": 999
+   },
+   "error": "",
+   "clean": {
+    "name": "Меч",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 1,
+    "damage_max": 999,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "full_form_ok",
+   "form": {
+    "name": "Длинный меч",
+    "slot": "weapon",
+    "icon": "weapon_iron_sword",
+    "two_handed": true,
+    "windup_percent": -20,
+    "recovery_percent": 15,
+    "move_speed_percent": 0,
+    "price": 2500,
+    "damage_min": 12,
+    "damage_max": 18,
+    "level": 10,
+    "requirements": {
+     "strength": 8,
+     "agility": 3,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 2
+    },
+    "bonuses": {
+     "strength": 2,
+     "agility": 0,
+     "intuition": 1,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "dodge": 5,
+    "anti_dodge": 3,
+    "crit": 7,
+    "anti_crit": 2,
+    "crit_power": 80,
+    "block": 0,
+    "hp": 120,
+    "mp": 30,
+    "magic_damage": 0
+   },
+   "error": "",
+   "clean": {
+    "name": "Длинный меч",
+    "slot": "weapon",
+    "icon": "weapon_iron_sword",
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": true,
+    "windup_percent": -20,
+    "recovery_percent": 15,
+    "move_speed_percent": 0,
+    "price": 2500,
+    "damage_min": 12,
+    "damage_max": 18,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 10,
+    "crit_power": 80,
+    "hp": 120,
+    "mp": 30,
+    "magic_damage": 0,
+    "dodge": 5,
+    "anti_dodge": 3,
+    "crit": 7,
+    "anti_crit": 2,
+    "block": 0,
+    "requirements": {
+     "strength": 8,
+     "agility": 3,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 2
+    },
+    "bonuses": {
+     "strength": 2,
+     "agility": 0,
+     "intuition": 1,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "attack_distance_values",
+   "form": {
+    "name": "?????",
+    "slot": "weapon",
+    "attack_range": 8,
+    "attack_area": 3
+   },
+   "error": "",
+   "clean": {
+    "name": "?????",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "none",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 0,
+    "attack_range": 8,
+    "attack_area": 3,
+    "lifesteal_percent": 0,
+    "aura_radius_px": 0,
+    "aura_lifesteal_percent": 0,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "vampirism_and_ally_aura",
+   "form": {
+    "name": "???",
+    "slot": "weapon",
+    "lifesteal_percent": 12,
+    "aura_type": "vampirism",
+    "aura_target": "allies",
+    "aura_radius_px": 180,
+    "aura_lifesteal_percent": 20
+   },
+   "error": "",
+   "clean": {
+    "name": "???",
+    "slot": "weapon",
+    "icon": null,
+    "aura_type": "vampirism",
+    "aura_target": "allies",
+    "two_handed": false,
+    "windup_percent": 0,
+    "recovery_percent": 0,
+    "move_speed_percent": 0,
+    "price": 0,
+    "damage_min": 0,
+    "damage_max": 0,
+    "attack_range": 0,
+    "attack_area": 0,
+    "lifesteal_percent": 12,
+    "aura_radius_px": 180,
+    "aura_lifesteal_percent": 20,
+    "level": 1,
+    "crit_power": 50,
+    "hp": 0,
+    "mp": 0,
+    "magic_damage": 0,
+    "dodge": 0,
+    "anti_dodge": 0,
+    "crit": 0,
+    "anti_crit": 0,
+    "block": 0,
+    "requirements": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    },
+    "bonuses": {
+     "strength": 0,
+     "agility": 0,
+     "intuition": 0,
+     "wisdom": 0,
+     "intellect": 0,
+     "endurance": 0
+    }
+   }
+  },
+  {
+   "name": "aura_radius_too_large",
+   "form": {
+    "name": "???",
+    "slot": "weapon",
+    "aura_radius_px": 3001
+   },
+   "error": "Радиус ауры, пикселей: от 0 до 3000",
+   "clean": null
+  },
+  {
+   "name": "invalid_aura_target",
+   "form": {
+    "name": "???",
+    "slot": "weapon",
+    "aura_target": "everyone"
+   },
+   "error": "Выберите цель ауры",
+   "clean": null
+  }
+ ]
+}

@@ -1,0 +1,351 @@
+{
+  "battle_id": "5b0e7c2a9d4f4e61a3c8f1e2d7b9a046",
+  "group_id": null,
+  "phase": "draft",
+  "seconds_left": 61,
+  "timeout_count": 0,
+  "draft_mode": "redraft",
+  "turn": 3,
+  "side": "player",
+  "fighter": {
+    "name": "Тестовый Маг",
+    "level": 4,
+    "type": "mage",
+    "hp": 40,
+    "max_hp": 40,
+    "mp": 95,
+    "max_mp": 95,
+    "stats": {
+      "strength": 2,
+      "agility": 3,
+      "intuition": 2,
+      "wisdom": 7,
+      "intellect": 6,
+      "harmony": 5,
+      "endurance": 3
+    },
+    "unique_resource_type": "mana",
+    "unique_resource": 95,
+    "unique_resource_max": 95
+  },
+  "opponent": {
+    "name": "Тестовый Ассасин",
+    "level": 3,
+    "type": "assassin",
+    "hp": 46,
+    "max_hp": 55,
+    "mp": 10,
+    "max_mp": 10,
+    "stats": {
+      "strength": 4,
+      "agility": 6,
+      "intuition": 5,
+      "wisdom": 2,
+      "intellect": 2,
+      "harmony": 2,
+      "endurance": 4
+    },
+    "unique_resource_type": "concentration",
+    "unique_resource": 68,
+    "unique_resource_max": 68
+  },
+  "hand": [
+    {
+      "key": "mage_flash",
+      "name": "Вспышка",
+      "group_name": "Магия: Огонь",
+      "effect_type": "mage_damage_status",
+      "effect_data": {
+        "element": "Огонь",
+        "damage": 4,
+        "status": "огонь",
+        "status_duration": 1,
+        "range": 4
+      },
+      "resource_type": "mana",
+      "resource_cost": 6,
+      "effect_duration": 0,
+      "rarity": "basic"
+    },
+    {
+      "key": "mage_fireball",
+      "name": "Фаербол",
+      "group_name": "Магия: Огонь",
+      "effect_type": "mage_damage_status",
+      "effect_data": {
+        "element": "Огонь",
+        "damage": 9,
+        "status": "огонь",
+        "status_duration": 2,
+        "stacks": 2,
+        "range": 4
+      },
+      "resource_type": "mana",
+      "resource_cost": 14,
+      "effect_duration": 0,
+      "rarity": "basic"
+    },
+    {
+      "key": "mage_crimson_blood",
+      "name": "Багровая кровь",
+      "group_name": "Магия: Огонь",
+      "effect_type": "mage_reactive_blessing",
+      "effect_data": {
+        "element": "Огонь",
+        "status": "огонь",
+        "status_duration": 2,
+        "retaliation_damage": 2,
+        "retaliation_status_duration": 1,
+        "range": 3
+      },
+      "resource_type": "mana",
+      "resource_cost": 16,
+      "effect_duration": 2,
+      "rarity": "basic"
+    },
+    {
+      "key": "mage_burning_support",
+      "name": "Пылающая поддержка",
+      "group_name": "Магия: Огонь",
+      "effect_type": "mage_damage_buff",
+      "effect_data": {
+        "element": "Огонь",
+        "status": "огонь",
+        "status_duration": 2,
+        "damage_percent": 25,
+        "harmony_percent": 1,
+        "range": 3
+      },
+      "resource_type": "mana",
+      "resource_cost": 10,
+      "effect_duration": 2,
+      "rarity": "basic"
+    },
+    {
+      "key": "mage_fervent_service",
+      "name": "Пылкая услуга",
+      "group_name": "Магия: Огонь",
+      "effect_type": "mage_hp_for_mana",
+      "effect_data": {
+        "element": "Огонь",
+        "hp_percent": 7,
+        "mana_percent": 21
+      },
+      "resource_type": "mana",
+      "resource_cost": 0,
+      "effect_duration": 0,
+      "rarity": "basic"
+    },
+    {
+      "key": "mage_paralysis",
+      "name": "Паралич",
+      "group_name": "Магия: Электричество",
+      "effect_type": "mage_stun_status",
+      "effect_data": {
+        "element": "Электричество",
+        "stun_duration": 1,
+        "status": "электро",
+        "status_duration": 3,
+        "range": 4
+      },
+      "resource_type": "mana",
+      "resource_cost": 20,
+      "effect_duration": 0,
+      "rarity": "basic"
+    },
+    {
+      "key": "mage_lightning_punishment",
+      "name": "Просвещение молний",
+      "group_name": "Магия: Электричество",
+      "effect_type": "mage_restore_mana",
+      "effect_data": {
+        "element": "Электричество",
+        "missing_mana_percent": 25,
+        "harmony_percent": 0.25,
+        "max_mana_percent": 30
+      },
+      "resource_type": "mana",
+      "resource_cost": 0,
+      "effect_duration": 0,
+      "rarity": "basic"
+    }
+  ],
+  "selected": [],
+  "table": [
+    {
+      "key": "mage_shift",
+      "name": "Сдвиг",
+      "group_name": "Магия: Электричество",
+      "effect_type": "mage_dodge_buff",
+      "effect_data": {
+        "element": "Электричество",
+        "dodge_percent": 30,
+        "intellect_percent": 0.35
+      },
+      "resource_type": "mana",
+      "resource_cost": 26,
+      "effect_duration": 2,
+      "rarity": "basic"
+    },
+    {
+      "key": "mage_raging_storm",
+      "name": "Бушующий шторм",
+      "group_name": "Магия: Электричество",
+      "effect_type": "mage_stun_status",
+      "effect_data": {
+        "element": "Электричество",
+        "damage": 11,
+        "stun_duration": 1,
+        "status": "электро",
+        "status_duration": 3,
+        "ultimate": true,
+        "cast_turns": 1,
+        "range": 4
+      },
+      "resource_type": "mana",
+      "resource_cost": 50,
+      "effect_duration": 1,
+      "rarity": "basic"
+    },
+    {
+      "key": "mage_wind_gust",
+      "name": "Порыв ветра",
+      "group_name": "Магия: Воздух",
+      "effect_type": "mage_wind_gust",
+      "effect_data": {
+        "element": "Воздух",
+        "damage": 4,
+        "status_reduction": 1,
+        "removed_damage": 3,
+        "range": 4
+      },
+      "resource_type": "mana",
+      "resource_cost": 9,
+      "effect_duration": 0,
+      "rarity": "basic"
+    },
+    {
+      "key": "mage_raging_cyclone",
+      "name": "Бушующий циклон",
+      "group_name": "Магия: Воздух",
+      "effect_type": "mage_cleanse_area",
+      "effect_data": {
+        "element": "Воздух",
+        "damage": 5,
+        "remove_statuses": true,
+        "range": 3
+      },
+      "resource_type": "mana",
+      "resource_cost": 17,
+      "effect_duration": 0,
+      "rarity": "basic"
+    },
+    {
+      "key": "mage_magic_destruction",
+      "name": "Разрушение магии",
+      "group_name": "Магия: Воздух",
+      "effect_type": "mage_cleanse_ally",
+      "effect_data": {
+        "element": "Воздух",
+        "removed_heal": 8,
+        "range": 3
+      },
+      "resource_type": "mana",
+      "resource_cost": 21,
+      "effect_duration": 0,
+      "rarity": "basic"
+    },
+    {
+      "key": "mage_headwind",
+      "name": "Встречный ветер",
+      "group_name": "Магия: Воздух",
+      "effect_type": "mage_damage_debuff",
+      "effect_data": {
+        "element": "Воздух",
+        "damage_percent": -20,
+        "harmony_percent": -1,
+        "duration": 2,
+        "range": 4
+      },
+      "resource_type": "mana",
+      "resource_cost": 18,
+      "effect_duration": 2,
+      "rarity": "basic"
+    }
+  ],
+  "draw_choices": [],
+  "can_select": [],
+  "confirmed": false,
+  "opponent_confirmed": false,
+  "opponent_draft_picks": [
+    "assassin_poison_execution",
+    "assassin_numbness"
+  ],
+  "opponent_last_draft_picks": [],
+  "last_exchange": [
+    {
+      "side": "player",
+      "card": "Фаербол",
+      "damage": 4,
+      "healed": 0,
+      "critical": false,
+      "dodged": false
+    },
+    {
+      "side": "enemy",
+      "card": "Удар кинжалом",
+      "damage": 7,
+      "healed": 0,
+      "critical": true,
+      "dodged": false
+    }
+  ],
+  "history": [
+    {
+      "turn": 2,
+      "events": [
+        {
+          "side": "player",
+          "card": "Фаербол",
+          "damage": 4,
+          "healed": 0,
+          "critical": false,
+          "dodged": false
+        },
+        {
+          "side": "enemy",
+          "card": "Удар кинжалом",
+          "damage": 7,
+          "healed": 0,
+          "critical": true,
+          "dodged": false
+        }
+      ]
+    }
+  ],
+  "outcome": null,
+  "reward_card_keys": [
+    "mage_flash",
+    "mage_fireball",
+    "mage_crimson_blood",
+    "mage_burning_support",
+    "mage_fervent_service",
+    "mage_pyromania",
+    "mage_water_summon",
+    "mage_rising_flow",
+    "mage_flow_blessing",
+    "mage_water_guard",
+    "mage_waterfall",
+    "mage_gurgling_flow",
+    "mage_boulder_summon",
+    "mage_earth_spikes",
+    "mage_stone_barrages",
+    "mage_golem_summon",
+    "mage_mineral_armor",
+    "mage_stone_spikes",
+    "mage_lightning_strike",
+    "mage_thundercloud",
+    "mage_paralysis",
+    "mage_lightning_punishment"
+  ]
+}

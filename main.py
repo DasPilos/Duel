@@ -1,7 +1,17 @@
 import argparse
 import os
 import sys
+
 from concurrent.futures import ThreadPoolExecutor
+
+DISABLED_MESSAGE = (
+    "Python-клиент отключён. Используйте Godot-клиент (godot_client/): "
+    "редактор карт и параметры мобов работают там."
+)
+
+if __name__ == "__main__":
+    print(DISABLED_MESSAGE, file=sys.stderr)
+    sys.exit(2)
 
 import pygame
 
@@ -22,6 +32,7 @@ from client.app_flow import (
 from client.connection import ConnectionMonitor
 from client.network import ServerError
 from core.settings import FPS, HEIGHT, WIDTH
+from deck.entry import open_world
 from scenes.account_menu_scene import AccountMenuScene
 from scenes.character_scene import CharacterScene
 from scenes.city_scene import CityScene
@@ -38,7 +49,7 @@ from ui.server_status_hud import ServerStatusHUD
 from ui.sfx import stop_run_sound
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Мир Duel")
+    parser = argparse.ArgumentParser(description="Multiverse of Games")
     parser.add_argument("--online", action="store_true")
     parser.add_argument("--username", default=os.getenv("GAME_USERNAME"))
     parser.add_argument("--password", default=os.getenv("GAME_PASSWORD"))
@@ -52,6 +63,7 @@ def main():
     pygame.mixer.init()  # Инициализируем звуковую систему
 
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
+    pygame.display.set_caption("Multiverse of Games")
 
     clock = pygame.time.Clock()
     scene = TitleScene(
@@ -186,7 +198,7 @@ def main():
                     close_scene_ui(scene)
                     if scene.world_session is not None:
                         world_session = scene.world_session
-                        transition.start(screen, lambda: CharacterScene(world_session))
+                        transition.start(screen, lambda: open_world(world_session))
                     else:
                         pygame.key.start_text_input()
                         transition.start(screen, lambda: TitleScene(args.server))

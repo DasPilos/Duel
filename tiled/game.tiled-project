@@ -1,0 +1,11 @@
+{
+  "automappingRulesFile": "",
+  "commands": [],
+  "extensionsPath": "extensions",
+  "version": "1.4",
+  "propertyTypes": [],
+  "folders": [
+    "maps",
+    "tilesets"
+  ]
+}

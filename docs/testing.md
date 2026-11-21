@@ -29,6 +29,16 @@ python -m unittest tests.test_transport tests.test_castle_window -q
 серверные требования улучшений и Governor income. UI-тесты проверяют видимость
 карточек по уровню и прикрепление слота к правильному полю.
 
+## Тесты Godot-клиента
+
+Сцены `godot_client/tests/*.tscn` запускаются без окна. Укажите консольный исполняемый файл Godot 4.7.1:
+
+```powershell
+& "<путь-к-Godot>\Godot_v4.7.1-stable_win64_console.exe" --headless --path godot_client --scene res://tests/tower_entity_smoke_test.tscn
+```
+
+Успех: строка `<имя>: OK (N checks)`. Ошибки выводятся как `ERROR:` с номером проверки. Всего 103 сцены. На момент передачи падают `map_editor_spawns_smoke_test`, `map_editor_seed_smoke_test` и `deck_player_sprite_smoke_test`. Подробности: `docs/CLIENT_MIGRATION_OPERATOR2.md`, шаг 8.
+
 ## Ручная проверка интерфейса
 
 Запустите игру:

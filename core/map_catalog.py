@@ -12,11 +12,37 @@ import re
 from pathlib import Path
 
 MAP_SIZE_MIN = 16
-MAP_SIZE_MAX = 512
+MAP_SIZE_MAX = 1600
 DEFAULT_MAP_SIZE = 125
 
 MAP_ASSETS = Path(__file__).resolve().parent.parent / "assets" / "map"
 MAINLEV_DIR = "mainlev"
+CRYSTAL_DIR = "crystals"
+CRYSTAL_CATEGORY = "crystal"
+ROCKY_GROUND_MOSS_GRASS_TILE_IDS = frozenset({
+    47, 49, 51, 52, 54, 55,
+    77, 78, 79, 81, 82, 84, 85,
+    107, 108, 109, 113, 116, 254,
+})
+ROCKY_DIR = "rocky"
+ROCKY_CATALOG_FILE = "catalog.json"
+WINTER_DIR = "winter"
+WINTER_CATALOG_FILE = "catalog.json"
+UNDEAD_DIR = "undead"
+UNDEAD_CATALOG_FILE = "catalog.json"
+DESERT_DIR = "desert"
+DESERT_CATALOG_FILE = "catalog.json"
+GRASSLAND_DIR = "grassland"
+GRASSLAND_CATALOG_FILE = "catalog.json"
+CITY_BUILDINGS_DIR = "city_buildings"
+CITY_BUILDINGS_CATALOG_FILE = "catalog.json"
+BUSH_DIR = "bushes"
+ANIMAL_DIR = "animals"
+WATER_ANIMAL_KEYS = frozenset({
+    "animal_duck_water",
+    "animal_drake_water",
+    "animal_duckling_water",
+})
 MAINLEV_BLOCK_W = 6
 MAINLEV_BLOCK_H = 7
 MAINLEV_TILE_RE = re.compile(r"r(\d+)_c(\d+)\.png")
@@ -27,6 +53,7 @@ PASSABLE_FILE = "passable.json"
 OVERLAY_FILE = "overlay.json"
 PALETTE_GROUPS_FILE = "palette_groups.json"
 PALETTE_SHEETS_FILE = "palette_sheets.json"
+INFRASTRUCTURE_GROUP = "Инфраструктура"
 # Соглашение об образцах палитры (одно для любого образца: леса, гор и других). Каждый блок 5×5: кольцо вокруг —
 # переходы, внутри 3×3 — тайлы слоя. Раскладка блоков задаётся полем layout образца.
 # layout 2 («Лесной ландшафт»): шесть блоков 5×5. Блоки 1–4 в строках 0–9 — декор: слева два блока декора земли
@@ -86,7 +113,7 @@ TREE_ENTRIES = (
     ("big_tree", "old_tree", "trees/big_tree.png"),
 )
 
-BLOCKING_CATEGORIES = ("tree", "old_tree", "log", "stump", "rock", "water")
+BLOCKING_CATEGORIES = ("tree", "old_tree", "log", "stump", "rock", "water", "animal", CRYSTAL_CATEGORY)
 DECOR_COUNT = 100
 DEFAULT_DECOR_CATEGORY = "bush"
 # Номера объектов соответствуют порядку вырезки из Decorative.psd (слева направо, сверху вниз).
@@ -116,6 +143,231 @@ def _decor_entries():
         yield key, "object", _decor_category(number), f"objects/{key}.png"
 
 
+def _crystal_entries():
+    # Файлы <цвет>_<стадия>.png: стадия 1 — самый маленький кристалл, стадия 4 — созревший (для роста).
+    for path in sorted((MAP_ASSETS / CRYSTAL_DIR).glob("*.png")):
+        yield f"crystal_{path.stem.lower()}", "object", CRYSTAL_CATEGORY, f"{CRYSTAL_DIR}/{path.name}"
+
+
+def _bush_entries():
+    for path in sorted((MAP_ASSETS / BUSH_DIR).glob("*.png")):
+        yield f"bush_{path.stem}", "object", "bush", f"{BUSH_DIR}/{path.name}"
+
+
+def _animal_entries():
+    for path in sorted((MAP_ASSETS / ANIMAL_DIR).glob("*.png")):
+        yield f"animal_{path.stem}", "object", "animal", f"{ANIMAL_DIR}/{path.name}"
+
+
+@functools.cache
+def rocky_tiles():
+    """Tiles imported from Rocky_area.tmx, including their source-sheet placement and layer role."""
+    path = MAP_ASSETS / ROCKY_DIR / ROCKY_CATALOG_FILE
+    return json.loads(path.read_text(encoding="utf-8"))["items"] if path.exists() else []
+
+
+@functools.cache
+def rocky_tile_specs():
+    return {item["key"]: item for item in rocky_tiles()}
+
+
+@functools.cache
+def rocky_animated_groups():
+    """Whole-cell compositions for adjacent animated Rocky water tiles."""
+    path = MAP_ASSETS / ROCKY_DIR / ROCKY_CATALOG_FILE
+    if not path.exists():
+        return []
+    return json.loads(path.read_text(encoding="utf-8")).get("animated_groups", [])
+
+
+@functools.cache
+def rocky_water_object_groups():
+    """Whole Rocky object-and-wave compositions sampled from the author's Tiled map."""
+    path = MAP_ASSETS / ROCKY_DIR / ROCKY_CATALOG_FILE
+    if not path.exists():
+        return []
+    return json.loads(path.read_text(encoding="utf-8")).get("water_object_groups", [])
+
+
+@functools.cache
+def rocky_animations():
+    path = MAP_ASSETS / ROCKY_DIR / "animations.json"
+    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+
+
+def _rocky_entries():
+    for item in rocky_tiles():
+        yield item["key"], item["kind"], item["category"], item["asset"]
+
+
+@functools.cache
+def winter_tiles():
+    path = MAP_ASSETS / WINTER_DIR / WINTER_CATALOG_FILE
+    return json.loads(path.read_text(encoding="utf-8"))["items"] if path.exists() else []
+
+
+@functools.cache
+def winter_tile_specs():
+    return {item["key"]: item for item in winter_tiles()}
+
+
+@functools.cache
+def undead_tiles():
+    path = MAP_ASSETS / UNDEAD_DIR / UNDEAD_CATALOG_FILE
+    return json.loads(path.read_text(encoding="utf-8"))["items"] if path.exists() else []
+
+
+@functools.cache
+def undead_tile_specs():
+    return {item["key"]: item for item in undead_tiles()}
+
+
+@functools.cache
+def undead_animations():
+    path = MAP_ASSETS / UNDEAD_DIR / "animations.json"
+    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+
+
+@functools.cache
+def undead_animated_groups():
+    path = MAP_ASSETS / UNDEAD_DIR / UNDEAD_CATALOG_FILE
+    if not path.exists():
+        return []
+    return json.loads(path.read_text(encoding="utf-8")).get("animated_groups", [])
+
+
+@functools.cache
+def desert_tiles():
+    path = MAP_ASSETS / DESERT_DIR / DESERT_CATALOG_FILE
+    return json.loads(path.read_text(encoding="utf-8"))["items"] if path.exists() else []
+
+
+@functools.cache
+def desert_tile_specs():
+    return {item["key"]: item for item in desert_tiles()}
+
+
+@functools.cache
+def desert_animations():
+    path = MAP_ASSETS / DESERT_DIR / "animations.json"
+    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+
+
+@functools.cache
+def desert_animated_groups():
+    path = MAP_ASSETS / DESERT_DIR / DESERT_CATALOG_FILE
+    if not path.exists():
+        return []
+    return json.loads(path.read_text(encoding="utf-8")).get("animated_groups", [])
+
+
+@functools.cache
+def grassland_tiles():
+    path = MAP_ASSETS / GRASSLAND_DIR / GRASSLAND_CATALOG_FILE
+    return json.loads(path.read_text(encoding="utf-8"))["items"] if path.exists() else []
+
+
+@functools.cache
+def grassland_tile_specs():
+    return {item["key"]: item for item in grassland_tiles()}
+
+
+@functools.cache
+def grassland_animations():
+    path = MAP_ASSETS / GRASSLAND_DIR / "animations.json"
+    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+
+
+@functools.cache
+def city_buildings():
+    path = MAP_ASSETS / CITY_BUILDINGS_DIR / CITY_BUILDINGS_CATALOG_FILE
+    return json.loads(path.read_text(encoding="utf-8"))["items"] if path.exists() else []
+
+
+@functools.cache
+def city_building_specs():
+    return {item["key"]: item for item in city_buildings()}
+
+
+@functools.cache
+def water_decor_keys():
+    """Keys for animated water details, including sheets whose category is not marked as water."""
+    water_sheets = {
+        "Water_detilazation", "Water_detilazation2", "Water_under_objects",
+        "water_detilazation_v2",
+    }
+    return frozenset(
+        key
+        for key, spec in {
+            **rocky_tile_specs(), **winter_tile_specs(), **undead_tile_specs(),
+            **desert_tile_specs(), **grassland_tile_specs(),
+        }.items()
+        if (
+            spec.get("sheet") in water_sheets
+            and (
+                spec.get("layer") == "overlay"
+                or spec.get("sheet") == "water_detilazation_v2"
+            )
+        ) or spec.get("water_decor", False)
+    )
+
+
+@functools.cache
+def water_decor_requires_water_keys():
+    """Overlay animation keys that require a water base; standalone water tiles are excluded."""
+    water_sheets = {"Water_detilazation2", "Water_under_objects", "water_detilazation_v2"}
+    return frozenset(
+        key
+        for key, spec in {
+            **rocky_tile_specs(), **winter_tile_specs(), **undead_tile_specs(),
+            **desert_tile_specs(), **grassland_tile_specs(),
+        }.items()
+        if (
+            spec.get("layer") == "overlay" and spec.get("sheet") in water_sheets
+        ) or spec.get("requires_water", False)
+    )
+
+
+@functools.cache
+def winter_animations():
+    path = MAP_ASSETS / WINTER_DIR / "animations.json"
+    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+
+
+@functools.cache
+def winter_animated_groups():
+    """Whole-cell compositions for adjacent animated winter water tiles."""
+    path = MAP_ASSETS / WINTER_DIR / WINTER_CATALOG_FILE
+    if not path.exists():
+        return []
+    return json.loads(path.read_text(encoding="utf-8")).get("animated_groups", [])
+
+
+def _winter_entries():
+    for item in winter_tiles():
+        yield item["key"], item["kind"], item["category"], item["asset"]
+
+
+def _undead_entries():
+    for item in undead_tiles():
+        yield item["key"], item["kind"], item["category"], item["asset"]
+
+
+def _desert_entries():
+    for item in desert_tiles():
+        yield item["key"], item["kind"], item["category"], item["asset"]
+
+
+def _grassland_entries():
+    for item in grassland_tiles():
+        yield item["key"], item["kind"], item["category"], item["asset"]
+
+
+def _city_building_entries():
+    for item in city_buildings():
+        yield item["key"], item["kind"], item["category"], item["asset"]
+
+
 def _mainlev_types():
     """Тип каждого тайла MainLev по блокам: {блок: {rRR_cCC: категория}}."""
     return json.loads((MAP_ASSETS / MAINLEV_DIR / MAINLEV_TYPES_FILE).read_text(encoding="utf-8"))
@@ -132,15 +384,131 @@ def _passable_keys():
 
 
 @functools.cache
+def road_keys():
+    """Дорожные тайлы земли: редактор ставит их слоем overlay, чтобы дорога не стирала траву под собой."""
+    return frozenset(
+        item["item_key"]
+        for item in catalog_definitions()
+        if item["kind"] == "ground" and item["category"] == "road"
+    )
+
+
+@functools.cache
 def overlay_keys():
-    """Тайлы земли с прозрачными частями: редактор ставит их слоем overlay поверх земли, а не вместо неё."""
-    return frozenset(json.loads((MAP_ASSETS / OVERLAY_FILE).read_text(encoding="utf-8")))
+    """Тайлы overlay поверх земли: прозрачные тайлы из файла, дороги и импортированные биомы."""
+    rocky_overlay = {
+        item["key"] for item in rocky_tiles()
+        if item["layer"] == "overlay"
+    }
+    winter_overlay = {
+        item["key"] for item in winter_tiles()
+        if item["layer"] == "overlay"
+    }
+    undead_overlay = {
+        item["key"] for item in undead_tiles()
+        if item["layer"] == "overlay"
+    }
+    desert_overlay = {
+        item["key"] for item in desert_tiles()
+        if item["layer"] == "overlay"
+    }
+    grassland_overlay = {
+        item["key"] for item in grassland_tiles()
+        if item["layer"] == "overlay"
+    }
+    return (
+        frozenset(json.loads((MAP_ASSETS / OVERLAY_FILE).read_text(encoding="utf-8")))
+        | road_keys() | rocky_overlay | winter_overlay | undead_overlay | desert_overlay
+        | grassland_overlay
+    )
+
 
 
 @functools.cache
 def palette_groups():
     """Образцы художника: разделы палитры, где тайлы лежат в заданной раскладке (x, y) одним блоком."""
     return json.loads((MAP_ASSETS / PALETTE_GROUPS_FILE).read_text(encoding="utf-8"))
+
+
+@functools.cache
+def infrastructure_keys():
+    """Тайлы раздела «Инфраструктура»: редактор ставит их слоем infra поверх земли и прозрачных тайлов, не стирая их."""
+    return frozenset(
+        cell["key"]
+        for group in palette_groups()
+        if group["title"] == INFRASTRUCTURE_GROUP
+        for cell in group["cells"]
+    )
+
+
+@functools.cache
+def terrain_layer_keys():
+    """Ключи возвышенностей и рельефа из образцов палитры, отдельно от подложки земли."""
+    result = {"elevation": set(), "relief": set()}
+    for group in palette_groups():
+        for layer in palette_group_layers(group):
+            if layer["role"] == "elevation":
+                result["elevation"].update(layer["cells"].values())
+            elif layer["role"] in ("river", "mountain"):
+                result["relief"].update(layer["cells"].values())
+    return {layer: frozenset(keys) for layer, keys in result.items()}
+
+
+@functools.cache
+def palette_role_keys(role):
+    """Ключи тайлов, расположенные в роли образца палитры."""
+    return frozenset(
+        key
+        for group in palette_groups()
+        for layer in palette_group_layers(group)
+        if layer["role"] == role
+        for key in layer["cells"].values()
+    )
+
+
+@functools.cache
+def palette_storage_layer_keys(storage_layer):
+    """Ключи палитры, у которых заданная роль хранится в указанном слое карты."""
+    return frozenset(
+        key
+        for group in palette_groups()
+        for layer in palette_group_layers(group)
+        if storage_layer_for_palette_role(layer["role"]) == storage_layer
+        for key in layer["cells"].values()
+    )
+
+
+@functools.cache
+def terrain_layer_for_key(key):
+    """Слой возвышенности или рельефа для тайла из соответствующего блока палитры."""
+    for layer, keys in terrain_layer_keys().items():
+        if key in keys:
+            return layer
+    return None
+
+
+def storage_layer_for_palette_role(role):
+    """Слой карты для роли тайла в образце палитры."""
+    if role in ("elevation",):
+        return "elevation"
+    if role in ("overlay", "infra"):
+        return role
+    if role in ("river", "mountain"):
+        return "relief"
+    if role in ("ground", "grass", "ground_decor", "grass_decor", "ground_small", "grass_small"):
+        return "ground"
+    return None
+
+
+@functools.cache
+def bridge_stamps():
+    """Шаблоны мостов из раздела «Инфраструктура» как {(dx, dy): ключ}: вертикальный (настил 2 клетки по x, 4×7) и горизонтальный (настил 2 клетки по y, 5×4)."""
+    group = next(group for group in palette_groups() if group["title"] == INFRASTRUCTURE_GROUP)
+    grid = {(cell["x"], cell["y"]): cell["key"] for cell in group["cells"]}
+    vertical = {(x, y): grid[(x, y)] for x in range(4) for y in range(7) if (x, y) in grid}
+    horizontal = {(x - 2, y - 7): grid[(x, y)] for x in range(2, 7) for y in range(7, 11) if (x, y) in grid}
+    horizontal.setdefault((4, 1), horizontal[(3, 1)])
+    return vertical, horizontal
 
 
 @functools.cache
@@ -323,15 +691,49 @@ def palette_landscape(landscape):
 
 
 def palette_hidden_keys(catalog=None):
-    """Тайлы гор, листвы, дорог, воды и травы (HIDDEN_CATEGORIES), не вошедшие ни в один образец: палитра их не показывает.
+    """Ключи повторных и не выбранных для палитры тайлов: палитра их не показывает.
 
     В каталоге и в базе они остаются, поэтому старые карты и черновики с ними открываются как раньше.
     """
     used = {cell["key"] for group in palette_groups() for cell in group["cells"]}
+    used.update(rocky_tile_specs())
+    used.update(winter_tile_specs())
+    used.update(undead_tile_specs())
+    used.update(desert_tile_specs())
+    hidden_rocky = {
+        item["key"]
+        for item in rocky_tiles()
+        if item.get("palette_hidden", False)
+    }
+    hidden_winter = {
+        item["key"]
+        for item in winter_tiles()
+        if item.get("palette_hidden", False)
+    }
+    hidden_undead = {
+        item["key"]
+        for item in undead_tiles()
+        if item.get("palette_hidden", False)
+    }
+    hidden_desert = {
+        item["key"]
+        for item in desert_tiles()
+        if item.get("palette_hidden", False)
+    }
     return frozenset(
         item["item_key"]
         for item in (catalog_definitions() if catalog is None else catalog)
-        if item["kind"] == "ground" and item["category"] in HIDDEN_CATEGORIES and item["item_key"] not in used
+        if (
+            item["item_key"] in hidden_rocky
+            or item["item_key"] in hidden_winter
+            or item["item_key"] in hidden_undead
+            or item["item_key"] in hidden_desert
+            or (
+                item["kind"] == "ground"
+                and item["category"] in HIDDEN_CATEGORIES
+                and item["item_key"] not in used
+            )
+        )
     )
 
 
@@ -370,23 +772,109 @@ def _mainlev_entries():
 def _entries():
     yield from _tree_entries()
     yield from _decor_entries()
+    yield from _bush_entries()
+    yield from _animal_entries()
+    yield from _rocky_entries()
+    yield from _winter_entries()
+    yield from _undead_entries()
+    yield from _desert_entries()
+    yield from _grassland_entries()
+    yield from _city_building_entries()
     yield from _mainlev_entries()
+    yield from _crystal_entries()
 
 
 def catalog_definitions():
     """Список записей каталога для синхронизации с базой."""
     impassable = _impassable_keys()
     passable = _passable_keys()
-    return [
-        {
+    biome_specs = {
+        **rocky_tile_specs(), **winter_tile_specs(), **undead_tile_specs(),
+        **desert_tile_specs(), **grassland_tile_specs(), **city_building_specs(),
+    }
+    result = []
+    for order, (key, kind, category, asset) in enumerate(_entries(), start=1):
+        spec = biome_specs.get(key)
+        rocky_elevation = (
+            key.startswith("rocky_")
+            and spec is not None
+            and spec.get("layer") == "elevation"
+            and category != "bush"
+            and not (
+                spec.get("sheet") == "Ground_moss"
+                and spec.get("tile_id") in ROCKY_GROUND_MOSS_GRASS_TILE_IDS
+            )
+        )
+        desert_elevation = (
+            key.startswith("desert_")
+            and spec is not None
+            and spec.get("layer") == "elevation"
+            and category != "bush"
+        )
+        item = {
             "item_key": key,
             "kind": kind,
             "category": category,
             "asset": asset,
-            "footprint_w": 1,
-            "footprint_h": 1,
-            "blocks": key in impassable or (category in BLOCKING_CATEGORIES and key not in passable),
+            "footprint_w": int(spec.get("footprint_w", 1)) if spec is not None else 1,
+            "footprint_h": int(spec.get("footprint_h", 1)) if spec is not None else 1,
+            "blocks": key in impassable
+            or bool(spec and spec.get("blocks"))
+            or (
+                key not in passable
+                and (category in BLOCKING_CATEGORIES or rocky_elevation or desert_elevation)
+            ),
             "sort_order": order,
         }
-        for order, (key, kind, category, asset) in enumerate(_entries(), start=1)
-    ]
+        item["editor_layer"] = (
+            int(spec["editor_layer"])
+            if spec is not None and spec.get("editor_layer") is not None
+            else _default_editor_layer(key, kind, category, spec or {})
+        )
+        if spec is not None:
+            for name in (
+                "display_name",
+                "representation",
+                "growth_series",
+                "growth_stage",
+                "growth_size",
+                "render_offset_tiles",
+            ):
+                if name in spec:
+                    item[name] = spec[name]
+        result.append(item)
+    return result
+
+
+def _default_editor_layer(key, kind, category, spec):
+    """Artist-facing layer number; separate from the map's internal storage layer."""
+    sheet = spec.get("sheet")
+    if category == "animal":
+        return 8
+    if key in water_decor_keys():
+        return 2
+    if kind == "object":
+        return 6 if category in ("building", "bridge", "house", "structure") else 7
+    if sheet == "Waterfalls":
+        return 5
+    if (
+        sheet == "Ground_moss"
+        and spec.get("tile_id") in ROCKY_GROUND_MOSS_GRASS_TILE_IDS
+    ):
+        return 3
+    if key in infrastructure_keys():
+        return 6
+    layer = spec.get("layer") or terrain_layer_for_key(key)
+    if layer == "overlay":
+        return 2 if category == "water" else 4
+    if category == "water":
+        return 1
+    if category == "grass":
+        return 3
+    if layer in ("elevation", "relief"):
+        return 5
+    if layer == "infra":
+        return 6
+    if category == "road":
+        return 3
+    return 3

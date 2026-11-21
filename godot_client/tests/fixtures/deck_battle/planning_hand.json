@@ -1,0 +1,244 @@
+{
+  "battle_id": "5b0e7c2a9d4f4e61a3c8f1e2d7b9a046",
+  "group_id": null,
+  "phase": "planning",
+  "seconds_left": 42,
+  "timeout_count": 0,
+  "draft_mode": "",
+  "turn": 2,
+  "side": "player",
+  "fighter": {
+    "name": "Тестовый Боец",
+    "level": 3,
+    "type": "warrior",
+    "hp": 106,
+    "max_hp": 120,
+    "mp": 10,
+    "max_mp": 10,
+    "stats": {
+      "strength": 6,
+      "agility": 3,
+      "intuition": 4,
+      "wisdom": 2,
+      "intellect": 2,
+      "harmony": 2,
+      "endurance": 5
+    },
+    "unique_resource_type": "rage",
+    "unique_resource": 68,
+    "unique_resource_max": 68
+  },
+  "opponent": {
+    "name": "Тестовый Маг",
+    "level": 3,
+    "type": "mage",
+    "hp": 35,
+    "max_hp": 40,
+    "mp": 90,
+    "max_mp": 90,
+    "stats": {
+      "strength": 2,
+      "agility": 2,
+      "intuition": 2,
+      "wisdom": 6,
+      "intellect": 5,
+      "harmony": 4,
+      "endurance": 3
+    },
+    "unique_resource_type": "mana",
+    "unique_resource": 90,
+    "unique_resource_max": 90
+  },
+  "hand": [
+    {
+      "key": "warrior_valen_strike",
+      "name": "Удар Валентайна",
+      "group_name": "Боец: Стиль Валентайна",
+      "effect_type": "damage",
+      "effect_data": {
+        "dice": 7,
+        "heal_percent": 4,
+        "range": 1
+      },
+      "resource_type": "rage",
+      "resource_cost": 11,
+      "effect_duration": 0,
+      "rarity": "basic"
+    },
+    {
+      "key": "warrior_valen_strike_copy",
+      "name": "Удар Валентайна",
+      "group_name": "Боец: Стиль Валентайна",
+      "effect_type": "damage",
+      "effect_data": {
+        "dice": 7,
+        "heal_percent": 4,
+        "range": 1
+      },
+      "resource_type": "rage",
+      "resource_cost": 11,
+      "effect_duration": 0,
+      "rarity": "basic"
+    },
+    {
+      "key": "warrior_valen_cleave",
+      "name": "Целительный выпад",
+      "group_name": "Боец: Стиль Валентайна",
+      "effect_type": "damage",
+      "effect_data": {
+        "dice": 13,
+        "heal_percent": 10,
+        "range": 1
+      },
+      "resource_type": "rage",
+      "resource_cost": 22,
+      "effect_duration": 0,
+      "rarity": "basic"
+    },
+    {
+      "key": "warrior_valen_cleave_copy",
+      "name": "Целительный выпад",
+      "group_name": "Боец: Стиль Валентайна",
+      "effect_type": "damage",
+      "effect_data": {
+        "dice": 13,
+        "heal_percent": 10,
+        "range": 1
+      },
+      "resource_type": "rage",
+      "resource_cost": 22,
+      "effect_duration": 0,
+      "rarity": "basic"
+    },
+    {
+      "key": "warrior_valen_sweep",
+      "name": "Полуночный натиск",
+      "group_name": "Боец: Стиль Валентайна",
+      "effect_type": "damage",
+      "effect_data": {
+        "dice": 3,
+        "hits": 3,
+        "heal_percent": 3,
+        "range": 1
+      },
+      "resource_type": "rage",
+      "resource_cost": 19,
+      "effect_duration": 0,
+      "rarity": "basic"
+    },
+    {
+      "key": "warrior_weakness_strength",
+      "name": "Слабость - сила",
+      "group_name": "Боец: Стиль Валентайна",
+      "effect_type": "damage_buff",
+      "effect_data": {
+        "missing_hp_damage": 1,
+        "duration": 2,
+        "range": 3
+      },
+      "resource_type": "rage",
+      "resource_cost": 9,
+      "effect_duration": 0,
+      "rarity": "basic"
+    },
+    {
+      "key": "warrior_weakness_strength_copy",
+      "name": "Слабость - сила",
+      "group_name": "Боец: Стиль Валентайна",
+      "effect_type": "damage_buff",
+      "effect_data": {
+        "missing_hp_damage": 1,
+        "duration": 2,
+        "range": 3
+      },
+      "resource_type": "rage",
+      "resource_cost": 9,
+      "effect_duration": 0,
+      "rarity": "basic"
+    }
+  ],
+  "selected": [
+    "warrior_valen_strike",
+    "warrior_valen_strike_copy"
+  ],
+  "table": [],
+  "draw_choices": [],
+  "can_select": [
+    "warrior_valen_strike",
+    "warrior_valen_strike_copy",
+    "warrior_valen_cleave",
+    "warrior_valen_cleave_copy",
+    "warrior_valen_sweep",
+    "warrior_weakness_strength"
+  ],
+  "confirmed": false,
+  "opponent_confirmed": false,
+  "opponent_draft_picks": [],
+  "opponent_last_draft_picks": [],
+  "last_exchange": [
+    {
+      "side": "player",
+      "card": "Целительный выпад",
+      "damage": 6,
+      "healed": 0,
+      "critical": false,
+      "dodged": false
+    },
+    {
+      "side": "enemy",
+      "card": "Вспышка",
+      "damage": 0,
+      "healed": 0,
+      "critical": false,
+      "dodged": true
+    }
+  ],
+  "history": [
+    {
+      "turn": 1,
+      "events": [
+        {
+          "side": "player",
+          "card": "Целительный выпад",
+          "damage": 6,
+          "healed": 0,
+          "critical": false,
+          "dodged": false
+        },
+        {
+          "side": "enemy",
+          "card": "Вспышка",
+          "damage": 0,
+          "healed": 0,
+          "critical": false,
+          "dodged": true
+        }
+      ]
+    }
+  ],
+  "outcome": null,
+  "reward_card_keys": [
+    "warrior_valen_strike",
+    "warrior_valen_strike_copy",
+    "warrior_valen_cleave",
+    "warrior_valen_cleave_copy",
+    "warrior_valen_sweep",
+    "warrior_weakness_strength",
+    "warrior_weakness_strength_copy",
+    "warrior_blood_pact",
+    "warrior_fog_curse",
+    "warrior_valentine_transcendence",
+    "warrior_dagger_throw",
+    "warrior_dagger_throw_copy",
+    "warrior_severe_demeanor",
+    "warrior_grave_frost",
+    "warrior_grave_frost_copy",
+    "warrior_blood_favor",
+    "warrior_blood_favor_copy",
+    "warrior_hunter_bonds",
+    "warrior_hunter_bonds_copy",
+    "warrior_scarlet_throne",
+    "warrior_buried_alive",
+    "warrior_no_losses"
+  ]
+}

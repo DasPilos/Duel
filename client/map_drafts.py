@@ -65,7 +65,10 @@ def load_draft(draft_id, folder=DRAFTS_DIR):
         raise DraftError("Черновик не найден, возможно он был удалён") from error
 
 
-def save_draft(name, cells, map_w, map_h, draft_id=None, folder=DRAFTS_DIR, mode=None, mobs=None, spawns=None):
+def save_draft(
+    name, cells, map_w, map_h, draft_id=None, folder=DRAFTS_DIR, mode=None, mobs=None, spawns=None,
+    crystals=None, harvest_enabled=False, editor_layers=None,
+):
     """Создаёт черновик или перезаписывает draft_id. Возвращает сохранённый черновик.
 
     Режим игры (mode) задаётся при создании карты; без него берётся режим уже сохранённого черновика, затем режим по умолчанию.
@@ -93,9 +96,18 @@ def save_draft(name, cells, map_w, map_h, draft_id=None, folder=DRAFTS_DIR, mode
         "mode": mode or stored_mode or DEFAULT_MODE,
         "updated_at": time.time(),
         "cells": [{"layer": cell["layer"], "x": cell["x"], "y": cell["y"], "key": cell["key"]} for cell in cells],
+        "editor_layers": [
+            [
+                {"layer": cell["layer"], "x": cell["x"], "y": cell["y"], "key": cell["key"]}
+                for cell in layer_cells
+            ]
+            for layer_cells in (editor_layers or [])
+        ],
         "published": published,
         "mobs": [dict(mob) for mob in (mobs or [])],
         "spawns": [dict(spawn) for spawn in (spawns or [])],
+        "crystals": {color: dict(values) for color, values in (crystals or {}).items()},
+        "harvest_enabled": bool(harvest_enabled),
         "server_map": stored_server_map,
     }
     _write(_path(draft_id, folder), data)

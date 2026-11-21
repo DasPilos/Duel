@@ -38,7 +38,10 @@ def _stat(fighter, name):
 
 
 def _weapon_range(fighter):
-    return fighter.weapon_damage or (0, 0)
+    """Диапазон урона оружия плюс врождённый урон вида (мобы Front Line задают его в настройках вида)."""
+    low, high = fighter.weapon_damage or (0, 0)
+    innate_low, innate_high = getattr(fighter, "innate_damage_range", None) or (0, 0)
+    return low + innate_low, high + innate_high
 
 
 def get_block_chance(defender):
@@ -199,5 +202,5 @@ def resolve_world_melee_attack(attacker, defender, rng=None, defender_facing=Non
 
     defense = get_defense(defender)
     result["defense"] = defense
-    result["damage"] = max(0, base_damage - defense)
+    result["damage"] = int(round(max(0, base_damage - defense)))
     return result

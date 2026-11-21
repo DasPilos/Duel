@@ -1,9 +1,12 @@
 import unittest
 
+from core.map_catalog import catalog_definitions
 from tests.fixtures import create_test_database, drop_test_database
 
 MAP_W = 16
 MAP_H = 16
+GRASS_KEY = min(item["item_key"] for item in catalog_definitions() if item["kind"] == "ground" and item["category"] == "grass")
+TREE_KEY = "tree1"
 
 
 class MapPublishTests(unittest.TestCase):
@@ -13,8 +16,8 @@ class MapPublishTests(unittest.TestCase):
         self.moderator = self.database.register("publish-mod", "password")
         with self.database.connection() as connection:
             connection.execute("UPDATE users SET role = 'moderator' WHERE id = %s", (self.moderator["id"],))
-        self.grass = [{"layer": "ground", "x": 0, "y": 0, "key": "grass_1"}]
-        self.rock = [{"layer": "object", "x": 2, "y": 2, "key": "rock_01"}]
+        self.grass = [{"layer": "ground", "x": 0, "y": 0, "key": GRASS_KEY}]
+        self.rock = [{"layer": "object", "x": 2, "y": 2, "key": TREE_KEY}]
 
     def tearDown(self):
         drop_test_database(self.database)
@@ -29,8 +32,8 @@ class MapPublishTests(unittest.TestCase):
     def test_catalog_is_seeded_from_assets(self):
         keys = {item["item_key"] for item in self.database.map_catalog()}
 
-        self.assertIn("grass_1", keys)
-        self.assertIn("rock_01", keys)
+        self.assertIn(GRASS_KEY, keys)
+        self.assertIn(TREE_KEY, keys)
 
     def test_moderator_publishes_cells_to_world(self):
         cells = self.grass + self.rock
@@ -40,14 +43,14 @@ class MapPublishTests(unittest.TestCase):
         self.assertEqual(result["applied"], 2)
         self.assertEqual(result["name"], "Степь")
         self.assertEqual(result["world_id"], self.database.world_id)
-        self.assertEqual(self._live(), {("ground", 0, 0, "grass_1"), ("object", 2, 2, "rock_01")})
+        self.assertEqual(self._live(), {("ground", 0, 0, GRASS_KEY), ("object", 2, 2, TREE_KEY)})
 
     def test_publish_replaces_previous_map_of_same_world(self):
         self._publish(self.grass)
 
         self._publish(self.rock, name="Лес")
 
-        self.assertEqual(self._live(), {("object", 2, 2, "rock_01")})
+        self.assertEqual(self._live(), {("object", 2, 2, TREE_KEY)})
         self.assertEqual(self.database.published_map()["name"], "Лес")
 
     def test_published_map_reports_name_and_size(self):
@@ -71,7 +74,7 @@ class MapPublishTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self._publish([{"layer": "ground", "x": 1, "y": 1, "key": "missing"}], name="Битая")
 
-        self.assertEqual(self._live(), {("ground", 0, 0, "grass_1")})
+        self.assertEqual(self._live(), {("ground", 0, 0, GRASS_KEY)})
         self.assertEqual(self.database.published_map()["name"], "Степь")
 
     def test_empty_map_is_rejected(self):
@@ -90,7 +93,13 @@ class MapPublishTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self._publish(self.grass, map_w=8)
         with self.assertRaises(ValueError):
-            self._publish(self.grass, map_h=1000)
+            self._publish(self.grass, map_h=1601)
+
+    def test_map_size_limit_is_1600_per_dimension(self):
+        result = self._publish(self.grass, map_w=1600, map_h=1600)
+        published = self.database.published_map()
+        self.assertEqual((published["map_w"], published["map_h"]), (1600, 1600))
+        self.assertEqual(result["name"], "Степь")
 
     def test_publish_to_unknown_world_is_rejected(self):
         with self.assertRaises(ValueError):

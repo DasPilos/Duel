@@ -8,8 +8,12 @@ DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://game@127.0.0.1:5432/
 DB_POOL_MIN_SIZE = int(os.environ.get("DB_POOL_MIN_SIZE", "1"))
 DB_POOL_MAX_SIZE = int(os.environ.get("DB_POOL_MAX_SIZE", "20"))
 WORLD_ID = int(os.environ.get("WORLD_ID", "1"))
+WORLD_IS_TEST = os.environ.get("WORLD_TEST") == "1"
+GAME_SCHEMA = os.environ.get("GAME_SCHEMA")
 HOST = os.environ.get("HOST", "0.0.0.0")
 PORT = int(os.environ.get("PORT", "8765"))
+PUBLIC_URL = os.environ.get("PUBLIC_URL") or f"http://127.0.0.1:{PORT}"
+DECK_WORLD_ID = int(os.environ["DECK_WORLD_ID"]) if os.environ.get("DECK_WORLD_ID") else None
 TOKEN_TTL_SECONDS = 60 * 60 * 24 * 7
 ONLINE_PLAYER_TTL_SECONDS = 15
 SERVER_TIMEZONE = os.environ.get("SERVER_TIMEZONE", "Europe/Kyiv")

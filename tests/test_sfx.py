@@ -20,7 +20,7 @@ class FakeWorldClient:
             "dash_cooldown": 0.0, "reach": 60, "move_speed": 200, "carry_multiplier": 1.0,
         }
 
-    def world_sync(self, character_id, x, y, attack_id, dash_target, since):
+    def world_sync(self, character_id, x, y, attack_id, dash_target, since, harvest_target=None):
         self.seq += 1
         return {"seq": self.seq, "accepted": True, "player": dict(self.player, x=x, y=y),
                 "mobs": [], "trails": [], "events": []}

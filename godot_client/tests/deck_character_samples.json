@@ -1,0 +1,1979 @@
+{
+ "profiles": {
+  "warrior": {
+   "input": {
+    "id": 1,
+    "name": "Боец",
+    "type": "warrior",
+    "level": 5,
+    "xp": 120,
+    "hp": 100,
+    "max_hp": 120,
+    "mp": 10,
+    "max_mp": 10,
+    "stat_points": 3,
+    "coins": 1234,
+    "stats": {
+     "strength": 5,
+     "agility": 4,
+     "intuition": 3,
+     "wisdom": 2,
+     "intellect": 2,
+     "harmony": 2,
+     "endurance": 6
+    },
+    "equipment": {
+     "weapon": {
+      "name": "Меч",
+      "effects": {
+       "damage": [
+        3,
+        7
+       ]
+      }
+     }
+    },
+    "equipment_bonuses": {
+     "strength": 2,
+     "dodge": 4,
+     "block": 6,
+     "hp": 15
+    },
+    "max_hp_includes_equipment": false
+   },
+   "normalized": {
+    "type": "warrior",
+    "profession_type": "warrior",
+    "level": 5,
+    "hp": 100,
+    "max_hp": 120,
+    "mp": 10,
+    "max_mp": 10,
+    "stat_points": 3,
+    "stats": {
+     "strength": 5,
+     "agility": 4,
+     "intuition": 3,
+     "wisdom": 2,
+     "intellect": 2,
+     "harmony": 2,
+     "endurance": 6
+    },
+    "max_hp_includes_equipment": false
+   },
+   "effective": {
+    "strength": 7,
+    "agility": 4,
+    "intuition": 3,
+    "wisdom": 2,
+    "intellect": 2,
+    "harmony": 2,
+    "endurance": 6
+   },
+   "hp_display": [
+    100,
+    135
+   ],
+   "derived": {
+    "Урон": "10-14",
+    "Уворот": "12%",
+    "Крит": "5% × 165%",
+    "HP": 135
+   },
+   "derived_with": {
+    "assassin": {
+     "Урон": 11,
+     "Уворот": "12%",
+     "Крит": "5% × 165%",
+     "HP": 135
+    },
+    "mage": {
+     "Урон": 10,
+     "Уворот": "12%",
+     "Крит": "5% × 165%",
+     "HP": 135
+    },
+    "fallback_occupant": {
+     "Урон": 13,
+     "Уворот": "12%",
+     "Крит": "5% × 165%",
+     "HP": 135
+    }
+   },
+   "is_mage": true,
+   "is_warrior": false
+  },
+  "archer": {
+   "input": {
+    "id": 3,
+    "name": "Лучник",
+    "type": "archer",
+    "level": 3,
+    "xp": 40,
+    "hp": 25,
+    "max_hp": 60,
+    "mp": 0,
+    "max_mp": 0,
+    "stat_points": 0,
+    "coins": 0,
+    "stats": {
+     "strength": 2,
+     "agility": 7,
+     "intuition": 4,
+     "wisdom": 2,
+     "intellect": 2,
+     "harmony": 2,
+     "endurance": 4
+    },
+    "equipment": {},
+    "equipment_bonuses": {}
+   },
+   "normalized": {
+    "type": "archer",
+    "profession_type": "archer",
+    "level": 3,
+    "hp": 25,
+    "max_hp": 60,
+    "mp": 0,
+    "max_mp": 1,
+    "stat_points": 0,
+    "stats": {
+     "strength": 2,
+     "agility": 7,
+     "intuition": 4,
+     "wisdom": 2,
+     "intellect": 2,
+     "harmony": 2,
+     "endurance": 4
+    },
+    "max_hp_includes_equipment": false
+   },
+   "effective": {
+    "strength": 2,
+    "agility": 7,
+    "intuition": 4,
+    "wisdom": 2,
+    "intellect": 2,
+    "harmony": 2,
+    "endurance": 4
+   },
+   "hp_display": [
+    25,
+    60
+   ],
+   "derived": {
+    "Урон": 2,
+    "Уворот": "24%",
+    "Крит": "5% × 170%",
+    "HP": 60
+   },
+   "derived_with": {
+    "warrior": {
+     "Урон": 1,
+     "Уворот": "24%",
+     "Крит": "5% × 170%",
+     "HP": 60
+    },
+    "assassin": {
+     "Урон": 1,
+     "Уворот": "24%",
+     "Крит": "5% × 170%",
+     "HP": 60
+    },
+    "mage": {
+     "Урон": 1,
+     "Уворот": "24%",
+     "Крит": "5% × 170%",
+     "HP": 60
+    },
+    "fallback_occupant": {
+     "Урон": 3,
+     "Уворот": "24%",
+     "Крит": "5% × 170%",
+     "HP": 60
+    }
+   },
+   "is_mage": true,
+   "is_warrior": false
+  },
+  "assassin": {
+   "input": {
+    "id": 4,
+    "name": "Асасин",
+    "type": "assassin",
+    "level": 4,
+    "xp": 50,
+    "hp": 50,
+    "max_hp": 40,
+    "mp": 5,
+    "max_mp": 40,
+    "stat_points": 1,
+    "coins": 7,
+    "stats": {
+     "strength": 2,
+     "agility": 6,
+     "intuition": 8,
+     "wisdom": 2,
+     "intellect": 2,
+     "harmony": 2,
+     "endurance": 5
+    },
+    "equipment": {
+     "weapon": {
+      "name": "Кинжал",
+      "effects": {
+       "damage": [
+        0,
+        0
+       ]
+      }
+     }
+    },
+    "equipment_bonuses": {
+     "hp": 15,
+     "intuition": 1
+    },
+    "max_hp_includes_equipment": true
+   },
+   "normalized": {
+    "type": "assassin",
+    "profession_type": "assassin",
+    "level": 4,
+    "hp": 80,
+    "max_hp": 80,
+    "mp": 5,
+    "max_mp": 40,
+    "stat_points": 1,
+    "stats": {
+     "strength": 2,
+     "agility": 6,
+     "intuition": 8,
+     "wisdom": 2,
+     "intellect": 2,
+     "harmony": 2,
+     "endurance": 5
+    },
+    "max_hp_includes_equipment": true
+   },
+   "effective": {
+    "strength": 2,
+    "agility": 6,
+    "intuition": 9,
+    "wisdom": 2,
+    "intellect": 2,
+    "harmony": 2,
+    "endurance": 5
+   },
+   "hp_display": [
+    80,
+    80
+   ],
+   "derived": {
+    "Урон": 2,
+    "Уворот": "12%",
+    "Крит": "13% × 225%",
+    "HP": 80
+   },
+   "derived_with": {
+    "warrior": {
+     "Урон": 1,
+     "Уворот": "12%",
+     "Крит": "13% × 225%",
+     "HP": 80
+    },
+    "mage": {
+     "Урон": 1,
+     "Уворот": "12%",
+     "Крит": "13% × 225%",
+     "HP": 80
+    },
+    "fallback_occupant": {
+     "Урон": 3,
+     "Уворот": "12%",
+     "Крит": "13% × 225%",
+     "HP": 80
+    }
+   },
+   "is_mage": true,
+   "is_warrior": false
+  },
+  "mage": {
+   "input": {
+    "id": 5,
+    "name": "Маг",
+    "type": "mage",
+    "level": 6,
+    "xp": 10,
+    "hp": 30,
+    "max_hp": 80,
+    "mp": 30,
+    "max_mp": 80,
+    "stat_points": 2,
+    "coins": 50,
+    "stats": {
+     "strength": 2,
+     "agility": 2,
+     "intuition": 2,
+     "wisdom": 9,
+     "intellect": 7,
+     "harmony": 3,
+     "endurance": 7
+    },
+    "equipment": {
+     "weapon": {
+      "name": "Посох",
+      "effects": {
+       "damage": [
+        1,
+        1
+       ]
+      }
+     }
+    },
+    "equipment_bonuses": {
+     "intellect": 2
+    }
+   },
+   "normalized": {
+    "type": "mage",
+    "profession_type": "mage",
+    "level": 6,
+    "hp": 30,
+    "max_hp": 80,
+    "mp": 30,
+    "max_mp": 80,
+    "stat_points": 2,
+    "stats": {
+     "strength": 2,
+     "agility": 2,
+     "intuition": 2,
+     "wisdom": 9,
+     "intellect": 7,
+     "harmony": 3,
+     "endurance": 7
+    },
+    "max_hp_includes_equipment": false
+   },
+   "effective": {
+    "strength": 2,
+    "agility": 2,
+    "intuition": 2,
+    "wisdom": 9,
+    "intellect": 9,
+    "harmony": 3,
+    "endurance": 7
+   },
+   "hp_display": [
+    30,
+    80
+   ],
+   "derived": {
+    "Урон": 3,
+    "Уворот": "4%",
+    "Крит": "5% × 160%",
+    "HP": 80,
+    "Маг Урон": 10
+   },
+   "derived_with": {
+    "warrior": {
+     "Урон": 1,
+     "Уворот": "4%",
+     "Крит": "5% × 160%",
+     "HP": 80,
+     "Маг Урон": 10
+    },
+    "assassin": {
+     "Урон": 1,
+     "Уворот": "4%",
+     "Крит": "5% × 160%",
+     "HP": 80,
+     "Маг Урон": 10
+    },
+    "fallback_occupant": {
+     "Урон": 3,
+     "Уворот": "4%",
+     "Крит": "5% × 160%",
+     "HP": 80,
+     "Маг Урон": 10
+    }
+   },
+   "is_mage": true,
+   "is_warrior": false
+  },
+  "legacy_mage": {
+   "input": {
+    "id": 7,
+    "name": "Старый маг",
+    "type": "battle_mage",
+    "level": 2,
+    "xp": 3,
+    "hp": 10,
+    "max_hp": 10,
+    "mp": 5,
+    "max_mp": 5,
+    "stat_points": 0,
+    "coins": 0,
+    "stats": {
+     "strength": 2,
+     "agility": 2,
+     "intuition": 2,
+     "wisdom": 4,
+     "intellect": 2,
+     "harmony": 2,
+     "endurance": 2
+    }
+   },
+   "normalized": {
+    "type": "mage",
+    "profession_type": "mage",
+    "level": 2,
+    "hp": 10,
+    "max_hp": 10,
+    "mp": 5,
+    "max_mp": 5,
+    "stat_points": 0,
+    "stats": {
+     "strength": 2,
+     "agility": 2,
+     "intuition": 2,
+     "wisdom": 4,
+     "intellect": 2,
+     "harmony": 2,
+     "endurance": 2
+    },
+    "max_hp_includes_equipment": false
+   },
+   "effective": {
+    "strength": 2,
+    "agility": 2,
+    "intuition": 2,
+    "wisdom": 4,
+    "intellect": 2,
+    "harmony": 2,
+    "endurance": 2
+   },
+   "hp_display": [
+    10,
+    10
+   ],
+   "derived": {
+    "Урон": 2,
+    "Уворот": "4%",
+    "Крит": "5% × 160%",
+    "HP": 10,
+    "Маг Урон": 4
+   },
+   "derived_with": {
+    "warrior": {
+     "Урон": 1,
+     "Уворот": "4%",
+     "Крит": "5% × 160%",
+     "HP": 10,
+     "Маг Урон": 4
+    },
+    "assassin": {
+     "Урон": 1,
+     "Уворот": "4%",
+     "Крит": "5% × 160%",
+     "HP": 10,
+     "Маг Урон": 4
+    },
+    "mage": {
+     "Урон": 1,
+     "Уворот": "4%",
+     "Крит": "5% × 160%",
+     "HP": 10,
+     "Маг Урон": 4
+    },
+    "fallback_occupant": {
+     "Урон": 3,
+     "Уворот": "4%",
+     "Крит": "5% × 160%",
+     "HP": 10,
+     "Маг Урон": 4
+    }
+   },
+   "is_mage": true,
+   "is_warrior": false
+  },
+  "necromancer": {
+   "input": {
+    "id": 6,
+    "name": "Некромант",
+    "type": "necromancer",
+    "level": 2,
+    "xp": 0,
+    "hp": 20,
+    "max_hp": 20,
+    "mp": 25,
+    "max_mp": 25,
+    "stat_points": 0,
+    "coins": 0,
+    "stats": {
+     "strength": 2,
+     "agility": 2,
+     "intuition": 2,
+     "wisdom": 6,
+     "intellect": 2,
+     "harmony": 2,
+     "endurance": 2
+    }
+   },
+   "normalized": {
+    "type": "necromancer",
+    "profession_type": "necromancer",
+    "level": 2,
+    "hp": 20,
+    "max_hp": 20,
+    "mp": 25,
+    "max_mp": 25,
+    "stat_points": 0,
+    "stats": {
+     "strength": 2,
+     "agility": 2,
+     "intuition": 2,
+     "wisdom": 6,
+     "intellect": 2,
+     "harmony": 2,
+     "endurance": 2
+    },
+    "max_hp_includes_equipment": false
+   },
+   "effective": {
+    "strength": 2,
+    "agility": 2,
+    "intuition": 2,
+    "wisdom": 6,
+    "intellect": 2,
+    "harmony": 2,
+    "endurance": 2
+   },
+   "hp_display": [
+    20,
+    20
+   ],
+   "derived": {
+    "Урон": 2,
+    "Уворот": "4%",
+    "Крит": "5% × 160%",
+    "HP": 20,
+    "Маг Урон": 6
+   },
+   "derived_with": {
+    "warrior": {
+     "Урон": 1,
+     "Уворот": "4%",
+     "Крит": "5% × 160%",
+     "HP": 20,
+     "Маг Урон": 6
+    },
+    "assassin": {
+     "Урон": 1,
+     "Уворот": "4%",
+     "Крит": "5% × 160%",
+     "HP": 20,
+     "Маг Урон": 6
+    },
+    "mage": {
+     "Урон": 1,
+     "Уворот": "4%",
+     "Крит": "5% × 160%",
+     "HP": 20,
+     "Маг Урон": 6
+    },
+    "fallback_occupant": {
+     "Урон": 3,
+     "Уворот": "4%",
+     "Крит": "5% × 160%",
+     "HP": 20,
+     "Маг Урон": 6
+    }
+   },
+   "is_mage": true,
+   "is_warrior": false
+  },
+  "debug_warrior": {
+   "input": {
+    "id": 2,
+    "name": "Отладка",
+    "type": "warrior",
+    "level": 9,
+    "xp": 0,
+    "hp": 90,
+    "max_hp": 90,
+    "mp": 0,
+    "max_mp": 0,
+    "stat_points": 999,
+    "coins": 0,
+    "stats": {
+     "strength": 3,
+     "agility": 2,
+     "intuition": 2,
+     "wisdom": 2,
+     "intellect": 2,
+     "harmony": 2,
+     "endurance": 9
+    }
+   },
+   "normalized": {
+    "type": "warrior",
+    "profession_type": "warrior",
+    "level": 9,
+    "hp": 90,
+    "max_hp": 90,
+    "mp": 0,
+    "max_mp": 1,
+    "stat_points": 999,
+    "stats": {
+     "strength": 3,
+     "agility": 2,
+     "intuition": 2,
+     "wisdom": 2,
+     "intellect": 2,
+     "harmony": 2,
+     "endurance": 9
+    },
+    "max_hp_includes_equipment": false
+   },
+   "effective": {
+    "strength": 3,
+    "agility": 2,
+    "intuition": 2,
+    "wisdom": 2,
+    "intellect": 2,
+    "harmony": 2,
+    "endurance": 9
+   },
+   "hp_display": [
+    90,
+    90
+   ],
+   "derived": {
+    "Урон": 3,
+    "Уворот": "4%",
+    "Крит": "5% × 160%",
+    "HP": 90
+   },
+   "derived_with": {
+    "warrior": {
+     "Урон": 3,
+     "Уворот": "4%",
+     "Крит": "5% × 160%",
+     "HP": 90
+    },
+    "assassin": {
+     "Урон": 3,
+     "Уворот": "4%",
+     "Крит": "5% × 160%",
+     "HP": 90
+    },
+    "mage": {
+     "Урон": 2,
+     "Уворот": "4%",
+     "Крит": "5% × 160%",
+     "HP": 90
+    },
+    "fallback_occupant": {
+     "Урон": 5,
+     "Уворот": "4%",
+     "Крит": "5% × 160%",
+     "HP": 90
+    }
+   },
+   "is_mage": true,
+   "is_warrior": false
+  },
+  "fallback_occupant": {
+   "input": {
+    "name": "Оффер",
+    "level": 1,
+    "stats": {}
+   },
+   "normalized": {
+    "type": "warrior",
+    "profession_type": "warrior",
+    "level": 1,
+    "hp": 0,
+    "max_hp": 1,
+    "mp": 0,
+    "max_mp": 1,
+    "stat_points": 0,
+    "stats": {
+     "strength": 2,
+     "agility": 2,
+     "intuition": 2,
+     "wisdom": 2,
+     "intellect": 2,
+     "harmony": 2,
+     "endurance": 2
+    },
+    "max_hp_includes_equipment": false
+   },
+   "effective": {
+    "strength": 2,
+    "agility": 2,
+    "intuition": 2,
+    "wisdom": 2,
+    "intellect": 2,
+    "harmony": 2,
+    "endurance": 2
+   },
+   "hp_display": [
+    0,
+    1
+   ],
+   "derived": {
+    "Урон": 2,
+    "Уворот": "4%",
+    "Крит": "5% × 160%",
+    "HP": 1
+   },
+   "derived_with": {
+    "warrior": {
+     "Урон": 1,
+     "Уворот": "4%",
+     "Крит": "5% × 160%",
+     "HP": 1
+    },
+    "assassin": {
+     "Урон": 1,
+     "Уворот": "4%",
+     "Крит": "5% × 160%",
+     "HP": 1
+    },
+    "mage": {
+     "Урон": 1,
+     "Уворот": "4%",
+     "Крит": "5% × 160%",
+     "HP": 1
+    }
+   },
+   "is_mage": false,
+   "is_warrior": true
+  }
+ },
+ "adjust_warrior": [
+  {
+   "profile": "warrior",
+   "stat": "strength",
+   "delta": 1,
+   "ok": true,
+   "stats": {
+    "strength": 6,
+    "agility": 4,
+    "intuition": 3,
+    "wisdom": 2,
+    "intellect": 2,
+    "harmony": 2,
+    "endurance": 6
+   },
+   "stat_points": 2,
+   "hp": 100,
+   "max_hp": 130
+  },
+  {
+   "profile": "warrior",
+   "stat": "strength",
+   "delta": -1,
+   "ok": true,
+   "stats": {
+    "strength": 4,
+    "agility": 4,
+    "intuition": 3,
+    "wisdom": 2,
+    "intellect": 2,
+    "harmony": 2,
+    "endurance": 6
+   },
+   "stat_points": 4,
+   "hp": 100,
+   "max_hp": 130
+  },
+  {
+   "profile": "warrior",
+   "stat": "agility",
+   "delta": 1,
+   "ok": true,
+   "stats": {
+    "strength": 5,
+    "agility": 5,
+    "intuition": 3,
+    "wisdom": 2,
+    "intellect": 2,
+    "harmony": 2,
+    "endurance": 6
+   },
+   "stat_points": 2,
+   "hp": 100,
+   "max_hp": 130
+  },
+  {
+   "profile": "warrior",
+   "stat": "agility",
+   "delta": -1,
+   "ok": true,
+   "stats": {
+    "strength": 5,
+    "agility": 3,
+    "intuition": 3,
+    "wisdom": 2,
+    "intellect": 2,
+    "harmony": 2,
+    "endurance": 6
+   },
+   "stat_points": 4,
+   "hp": 100,
+   "max_hp": 130
+  },
+  {
+   "profile": "warrior",
+   "stat": "intuition",
+   "delta": 1,
+   "ok": true,
+   "stats": {
+    "strength": 5,
+    "agility": 4,
+    "intuition": 4,
+    "wisdom": 2,
+    "intellect": 2,
+    "harmony": 2,
+    "endurance": 6
+   },
+   "stat_points": 2,
+   "hp": 100,
+   "max_hp": 130
+  },
+  {
+   "profile": "warrior",
+   "stat": "intuition",
+   "delta": -1,
+   "ok": true,
+   "stats": {
+    "strength": 5,
+    "agility": 4,
+    "intuition": 2,
+    "wisdom": 2,
+    "intellect": 2,
+    "harmony": 2,
+    "endurance": 6
+   },
+   "stat_points": 4,
+   "hp": 100,
+   "max_hp": 130
+  },
+  {
+   "profile": "warrior",
+   "stat": "wisdom",
+   "delta": 1,
+   "ok": true,
+   "stats": {
+    "strength": 5,
+    "agility": 4,
+    "intuition": 3,
+    "wisdom": 3,
+    "intellect": 2,
+    "harmony": 2,
+    "endurance": 6
+   },
+   "stat_points": 2,
+   "hp": 100,
+   "max_hp": 130
+  },
+  {
+   "profile": "warrior",
+   "stat": "wisdom",
+   "delta": -1,
+   "ok": false,
+   "stats": {
+    "strength": 5,
+    "agility": 4,
+    "intuition": 3,
+    "wisdom": 2,
+    "intellect": 2,
+    "harmony": 2,
+    "endurance": 6
+   },
+   "stat_points": 3,
+   "hp": 100,
+   "max_hp": 120
+  },
+  {
+   "profile": "warrior",
+   "stat": "intellect",
+   "delta": 1,
+   "ok": true,
+   "stats": {
+    "strength": 5,
+    "agility": 4,
+    "intuition": 3,
+    "wisdom": 2,
+    "intellect": 3,
+    "harmony": 2,
+    "endurance": 6
+   },
+   "stat_points": 2,
+   "hp": 100,
+   "max_hp": 130
+  },
+  {
+   "profile": "warrior",
+   "stat": "intellect",
+   "delta": -1,
+   "ok": false,
+   "stats": {
+    "strength": 5,
+    "agility": 4,
+    "intuition": 3,
+    "wisdom": 2,
+    "intellect": 2,
+    "harmony": 2,
+    "endurance": 6
+   },
+   "stat_points": 3,
+   "hp": 100,
+   "max_hp": 120
+  },
+  {
+   "profile": "warrior",
+   "stat": "harmony",
+   "delta": 1,
+   "ok": true,
+   "stats": {
+    "strength": 5,
+    "agility": 4,
+    "intuition": 3,
+    "wisdom": 2,
+    "intellect": 2,
+    "harmony": 3,
+    "endurance": 6
+   },
+   "stat_points": 2,
+   "hp": 100,
+   "max_hp": 130
+  },
+  {
+   "profile": "warrior",
+   "stat": "harmony",
+   "delta": -1,
+   "ok": false,
+   "stats": {
+    "strength": 5,
+    "agility": 4,
+    "intuition": 3,
+    "wisdom": 2,
+    "intellect": 2,
+    "harmony": 2,
+    "endurance": 6
+   },
+   "stat_points": 3,
+   "hp": 100,
+   "max_hp": 120
+  },
+  {
+   "profile": "warrior",
+   "stat": "endurance",
+   "delta": 1,
+   "ok": false,
+   "stats": {
+    "strength": 5,
+    "agility": 4,
+    "intuition": 3,
+    "wisdom": 2,
+    "intellect": 2,
+    "harmony": 2,
+    "endurance": 6
+   },
+   "stat_points": 3,
+   "hp": 100,
+   "max_hp": 120
+  },
+  {
+   "profile": "warrior",
+   "stat": "endurance",
+   "delta": -1,
+   "ok": false,
+   "stats": {
+    "strength": 5,
+    "agility": 4,
+    "intuition": 3,
+    "wisdom": 2,
+    "intellect": 2,
+    "harmony": 2,
+    "endurance": 6
+   },
+   "stat_points": 3,
+   "hp": 100,
+   "max_hp": 120
+  },
+  {
+   "profile": "mage",
+   "stat": "strength",
+   "delta": 1,
+   "ok": true,
+   "stats": {
+    "strength": 3,
+    "agility": 2,
+    "intuition": 2,
+    "wisdom": 9,
+    "intellect": 7,
+    "harmony": 3,
+    "endurance": 7
+   },
+   "stat_points": 1,
+   "hp": 30,
+   "max_hp": 140
+  },
+  {
+   "profile": "mage",
+   "stat": "strength",
+   "delta": -1,
+   "ok": false,
+   "stats": {
+    "strength": 2,
+    "agility": 2,
+    "intuition": 2,
+    "wisdom": 9,
+    "intellect": 7,
+    "harmony": 3,
+    "endurance": 7
+   },
+   "stat_points": 2,
+   "hp": 30,
+   "max_hp": 80
+  },
+  {
+   "profile": "mage",
+   "stat": "agility",
+   "delta": 1,
+   "ok": true,
+   "stats": {
+    "strength": 2,
+    "agility": 3,
+    "intuition": 2,
+    "wisdom": 9,
+    "intellect": 7,
+    "harmony": 3,
+    "endurance": 7
+   },
+   "stat_points": 1,
+   "hp": 30,
+   "max_hp": 140
+  },
+  {
+   "profile": "mage",
+   "stat": "agility",
+   "delta": -1,
+   "ok": false,
+   "stats": {
+    "strength": 2,
+    "agility": 2,
+    "intuition": 2,
+    "wisdom": 9,
+    "intellect": 7,
+    "harmony": 3,
+    "endurance": 7
+   },
+   "stat_points": 2,
+   "hp": 30,
+   "max_hp": 80
+  },
+  {
+   "profile": "mage",
+   "stat": "intuition",
+   "delta": 1,
+   "ok": true,
+   "stats": {
+    "strength": 2,
+    "agility": 2,
+    "intuition": 3,
+    "wisdom": 9,
+    "intellect": 7,
+    "harmony": 3,
+    "endurance": 7
+   },
+   "stat_points": 1,
+   "hp": 30,
+   "max_hp": 140
+  },
+  {
+   "profile": "mage",
+   "stat": "intuition",
+   "delta": -1,
+   "ok": false,
+   "stats": {
+    "strength": 2,
+    "agility": 2,
+    "intuition": 2,
+    "wisdom": 9,
+    "intellect": 7,
+    "harmony": 3,
+    "endurance": 7
+   },
+   "stat_points": 2,
+   "hp": 30,
+   "max_hp": 80
+  },
+  {
+   "profile": "mage",
+   "stat": "wisdom",
+   "delta": 1,
+   "ok": false,
+   "stats": {
+    "strength": 2,
+    "agility": 2,
+    "intuition": 2,
+    "wisdom": 9,
+    "intellect": 7,
+    "harmony": 3,
+    "endurance": 7
+   },
+   "stat_points": 2,
+   "hp": 30,
+   "max_hp": 80
+  },
+  {
+   "profile": "mage",
+   "stat": "wisdom",
+   "delta": -1,
+   "ok": true,
+   "stats": {
+    "strength": 2,
+    "agility": 2,
+    "intuition": 2,
+    "wisdom": 8,
+    "intellect": 7,
+    "harmony": 3,
+    "endurance": 7
+   },
+   "stat_points": 3,
+   "hp": 30,
+   "max_hp": 140
+  },
+  {
+   "profile": "mage",
+   "stat": "intellect",
+   "delta": 1,
+   "ok": false,
+   "stats": {
+    "strength": 2,
+    "agility": 2,
+    "intuition": 2,
+    "wisdom": 9,
+    "intellect": 7,
+    "harmony": 3,
+    "endurance": 7
+   },
+   "stat_points": 2,
+   "hp": 30,
+   "max_hp": 80
+  },
+  {
+   "profile": "mage",
+   "stat": "intellect",
+   "delta": -1,
+   "ok": false,
+   "stats": {
+    "strength": 2,
+    "agility": 2,
+    "intuition": 2,
+    "wisdom": 9,
+    "intellect": 7,
+    "harmony": 3,
+    "endurance": 7
+   },
+   "stat_points": 2,
+   "hp": 30,
+   "max_hp": 80
+  },
+  {
+   "profile": "mage",
+   "stat": "harmony",
+   "delta": 1,
+   "ok": true,
+   "stats": {
+    "strength": 2,
+    "agility": 2,
+    "intuition": 2,
+    "wisdom": 9,
+    "intellect": 7,
+    "harmony": 4,
+    "endurance": 7
+   },
+   "stat_points": 1,
+   "hp": 30,
+   "max_hp": 140
+  },
+  {
+   "profile": "mage",
+   "stat": "harmony",
+   "delta": -1,
+   "ok": false,
+   "stats": {
+    "strength": 2,
+    "agility": 2,
+    "intuition": 2,
+    "wisdom": 9,
+    "intellect": 7,
+    "harmony": 3,
+    "endurance": 7
+   },
+   "stat_points": 2,
+   "hp": 30,
+   "max_hp": 80
+  },
+  {
+   "profile": "mage",
+   "stat": "endurance",
+   "delta": 1,
+   "ok": false,
+   "stats": {
+    "strength": 2,
+    "agility": 2,
+    "intuition": 2,
+    "wisdom": 9,
+    "intellect": 7,
+    "harmony": 3,
+    "endurance": 7
+   },
+   "stat_points": 2,
+   "hp": 30,
+   "max_hp": 80
+  },
+  {
+   "profile": "mage",
+   "stat": "endurance",
+   "delta": -1,
+   "ok": false,
+   "stats": {
+    "strength": 2,
+    "agility": 2,
+    "intuition": 2,
+    "wisdom": 9,
+    "intellect": 7,
+    "harmony": 3,
+    "endurance": 7
+   },
+   "stat_points": 2,
+   "hp": 30,
+   "max_hp": 80
+  }
+ ],
+ "adjust_mage": [
+  {
+   "profile": "warrior",
+   "stat": "strength",
+   "delta": 1,
+   "ok": true,
+   "stats": {
+    "strength": 6,
+    "agility": 4,
+    "intuition": 3,
+    "wisdom": 2,
+    "intellect": 2,
+    "harmony": 2,
+    "endurance": 6
+   },
+   "stat_points": 2,
+   "mp": 10,
+   "max_mp": 10
+  },
+  {
+   "profile": "warrior",
+   "stat": "strength",
+   "delta": -1,
+   "ok": true,
+   "stats": {
+    "strength": 4,
+    "agility": 4,
+    "intuition": 3,
+    "wisdom": 2,
+    "intellect": 2,
+    "harmony": 2,
+    "endurance": 6
+   },
+   "stat_points": 4,
+   "mp": 10,
+   "max_mp": 10
+  },
+  {
+   "profile": "warrior",
+   "stat": "agility",
+   "delta": 1,
+   "ok": true,
+   "stats": {
+    "strength": 5,
+    "agility": 5,
+    "intuition": 3,
+    "wisdom": 2,
+    "intellect": 2,
+    "harmony": 2,
+    "endurance": 6
+   },
+   "stat_points": 2,
+   "mp": 10,
+   "max_mp": 10
+  },
+  {
+   "profile": "warrior",
+   "stat": "agility",
+   "delta": -1,
+   "ok": true,
+   "stats": {
+    "strength": 5,
+    "agility": 3,
+    "intuition": 3,
+    "wisdom": 2,
+    "intellect": 2,
+    "harmony": 2,
+    "endurance": 6
+   },
+   "stat_points": 4,
+   "mp": 10,
+   "max_mp": 10
+  },
+  {
+   "profile": "warrior",
+   "stat": "intuition",
+   "delta": 1,
+   "ok": true,
+   "stats": {
+    "strength": 5,
+    "agility": 4,
+    "intuition": 4,
+    "wisdom": 2,
+    "intellect": 2,
+    "harmony": 2,
+    "endurance": 6
+   },
+   "stat_points": 2,
+   "mp": 10,
+   "max_mp": 10
+  },
+  {
+   "profile": "warrior",
+   "stat": "intuition",
+   "delta": -1,
+   "ok": true,
+   "stats": {
+    "strength": 5,
+    "agility": 4,
+    "intuition": 2,
+    "wisdom": 2,
+    "intellect": 2,
+    "harmony": 2,
+    "endurance": 6
+   },
+   "stat_points": 4,
+   "mp": 10,
+   "max_mp": 10
+  },
+  {
+   "profile": "warrior",
+   "stat": "wisdom",
+   "delta": 1,
+   "ok": true,
+   "stats": {
+    "strength": 5,
+    "agility": 4,
+    "intuition": 3,
+    "wisdom": 3,
+    "intellect": 2,
+    "harmony": 2,
+    "endurance": 6
+   },
+   "stat_points": 2,
+   "mp": 10,
+   "max_mp": 10
+  },
+  {
+   "profile": "warrior",
+   "stat": "wisdom",
+   "delta": -1,
+   "ok": false,
+   "stats": {
+    "strength": 5,
+    "agility": 4,
+    "intuition": 3,
+    "wisdom": 2,
+    "intellect": 2,
+    "harmony": 2,
+    "endurance": 6
+   },
+   "stat_points": 3,
+   "mp": 10,
+   "max_mp": 10
+  },
+  {
+   "profile": "warrior",
+   "stat": "intellect",
+   "delta": 1,
+   "ok": true,
+   "stats": {
+    "strength": 5,
+    "agility": 4,
+    "intuition": 3,
+    "wisdom": 2,
+    "intellect": 3,
+    "harmony": 2,
+    "endurance": 6
+   },
+   "stat_points": 2,
+   "mp": 10,
+   "max_mp": 80
+  },
+  {
+   "profile": "warrior",
+   "stat": "intellect",
+   "delta": -1,
+   "ok": false,
+   "stats": {
+    "strength": 5,
+    "agility": 4,
+    "intuition": 3,
+    "wisdom": 2,
+    "intellect": 2,
+    "harmony": 2,
+    "endurance": 6
+   },
+   "stat_points": 3,
+   "mp": 10,
+   "max_mp": 10
+  },
+  {
+   "profile": "warrior",
+   "stat": "harmony",
+   "delta": 1,
+   "ok": true,
+   "stats": {
+    "strength": 5,
+    "agility": 4,
+    "intuition": 3,
+    "wisdom": 2,
+    "intellect": 2,
+    "harmony": 3,
+    "endurance": 6
+   },
+   "stat_points": 2,
+   "mp": 10,
+   "max_mp": 10
+  },
+  {
+   "profile": "warrior",
+   "stat": "harmony",
+   "delta": -1,
+   "ok": false,
+   "stats": {
+    "strength": 5,
+    "agility": 4,
+    "intuition": 3,
+    "wisdom": 2,
+    "intellect": 2,
+    "harmony": 2,
+    "endurance": 6
+   },
+   "stat_points": 3,
+   "mp": 10,
+   "max_mp": 10
+  },
+  {
+   "profile": "warrior",
+   "stat": "endurance",
+   "delta": 1,
+   "ok": false,
+   "stats": {
+    "strength": 5,
+    "agility": 4,
+    "intuition": 3,
+    "wisdom": 2,
+    "intellect": 2,
+    "harmony": 2,
+    "endurance": 6
+   },
+   "stat_points": 3,
+   "mp": 10,
+   "max_mp": 10
+  },
+  {
+   "profile": "warrior",
+   "stat": "endurance",
+   "delta": -1,
+   "ok": true,
+   "stats": {
+    "strength": 5,
+    "agility": 4,
+    "intuition": 3,
+    "wisdom": 2,
+    "intellect": 2,
+    "harmony": 2,
+    "endurance": 5
+   },
+   "stat_points": 4,
+   "mp": 10,
+   "max_mp": 10
+  },
+  {
+   "profile": "mage",
+   "stat": "strength",
+   "delta": 1,
+   "ok": true,
+   "stats": {
+    "strength": 3,
+    "agility": 2,
+    "intuition": 2,
+    "wisdom": 9,
+    "intellect": 7,
+    "harmony": 3,
+    "endurance": 7
+   },
+   "stat_points": 1,
+   "mp": 30,
+   "max_mp": 80
+  },
+  {
+   "profile": "mage",
+   "stat": "strength",
+   "delta": -1,
+   "ok": false,
+   "stats": {
+    "strength": 2,
+    "agility": 2,
+    "intuition": 2,
+    "wisdom": 9,
+    "intellect": 7,
+    "harmony": 3,
+    "endurance": 7
+   },
+   "stat_points": 2,
+   "mp": 30,
+   "max_mp": 80
+  },
+  {
+   "profile": "mage",
+   "stat": "agility",
+   "delta": 1,
+   "ok": true,
+   "stats": {
+    "strength": 2,
+    "agility": 3,
+    "intuition": 2,
+    "wisdom": 9,
+    "intellect": 7,
+    "harmony": 3,
+    "endurance": 7
+   },
+   "stat_points": 1,
+   "mp": 30,
+   "max_mp": 80
+  },
+  {
+   "profile": "mage",
+   "stat": "agility",
+   "delta": -1,
+   "ok": false,
+   "stats": {
+    "strength": 2,
+    "agility": 2,
+    "intuition": 2,
+    "wisdom": 9,
+    "intellect": 7,
+    "harmony": 3,
+    "endurance": 7
+   },
+   "stat_points": 2,
+   "mp": 30,
+   "max_mp": 80
+  },
+  {
+   "profile": "mage",
+   "stat": "intuition",
+   "delta": 1,
+   "ok": true,
+   "stats": {
+    "strength": 2,
+    "agility": 2,
+    "intuition": 3,
+    "wisdom": 9,
+    "intellect": 7,
+    "harmony": 3,
+    "endurance": 7
+   },
+   "stat_points": 1,
+   "mp": 30,
+   "max_mp": 80
+  },
+  {
+   "profile": "mage",
+   "stat": "intuition",
+   "delta": -1,
+   "ok": false,
+   "stats": {
+    "strength": 2,
+    "agility": 2,
+    "intuition": 2,
+    "wisdom": 9,
+    "intellect": 7,
+    "harmony": 3,
+    "endurance": 7
+   },
+   "stat_points": 2,
+   "mp": 30,
+   "max_mp": 80
+  },
+  {
+   "profile": "mage",
+   "stat": "wisdom",
+   "delta": 1,
+   "ok": true,
+   "stats": {
+    "strength": 2,
+    "agility": 2,
+    "intuition": 2,
+    "wisdom": 10,
+    "intellect": 7,
+    "harmony": 3,
+    "endurance": 7
+   },
+   "stat_points": 1,
+   "mp": 30,
+   "max_mp": 80
+  },
+  {
+   "profile": "mage",
+   "stat": "wisdom",
+   "delta": -1,
+   "ok": true,
+   "stats": {
+    "strength": 2,
+    "agility": 2,
+    "intuition": 2,
+    "wisdom": 8,
+    "intellect": 7,
+    "harmony": 3,
+    "endurance": 7
+   },
+   "stat_points": 3,
+   "mp": 30,
+   "max_mp": 80
+  },
+  {
+   "profile": "mage",
+   "stat": "intellect",
+   "delta": 1,
+   "ok": true,
+   "stats": {
+    "strength": 2,
+    "agility": 2,
+    "intuition": 2,
+    "wisdom": 9,
+    "intellect": 8,
+    "harmony": 3,
+    "endurance": 7
+   },
+   "stat_points": 1,
+   "mp": 30,
+   "max_mp": 105
+  },
+  {
+   "profile": "mage",
+   "stat": "intellect",
+   "delta": -1,
+   "ok": true,
+   "stats": {
+    "strength": 2,
+    "agility": 2,
+    "intuition": 2,
+    "wisdom": 9,
+    "intellect": 6,
+    "harmony": 3,
+    "endurance": 7
+   },
+   "stat_points": 3,
+   "mp": 30,
+   "max_mp": 95
+  },
+  {
+   "profile": "mage",
+   "stat": "harmony",
+   "delta": 1,
+   "ok": true,
+   "stats": {
+    "strength": 2,
+    "agility": 2,
+    "intuition": 2,
+    "wisdom": 9,
+    "intellect": 7,
+    "harmony": 4,
+    "endurance": 7
+   },
+   "stat_points": 1,
+   "mp": 30,
+   "max_mp": 80
+  },
+  {
+   "profile": "mage",
+   "stat": "harmony",
+   "delta": -1,
+   "ok": true,
+   "stats": {
+    "strength": 2,
+    "agility": 2,
+    "intuition": 2,
+    "wisdom": 9,
+    "intellect": 7,
+    "harmony": 2,
+    "endurance": 7
+   },
+   "stat_points": 3,
+   "mp": 30,
+   "max_mp": 80
+  },
+  {
+   "profile": "mage",
+   "stat": "endurance",
+   "delta": 1,
+   "ok": false,
+   "stats": {
+    "strength": 2,
+    "agility": 2,
+    "intuition": 2,
+    "wisdom": 9,
+    "intellect": 7,
+    "harmony": 3,
+    "endurance": 7
+   },
+   "stat_points": 2,
+   "mp": 30,
+   "max_mp": 80
+  },
+  {
+   "profile": "mage",
+   "stat": "endurance",
+   "delta": -1,
+   "ok": true,
+   "stats": {
+    "strength": 2,
+    "agility": 2,
+    "intuition": 2,
+    "wisdom": 9,
+    "intellect": 7,
+    "harmony": 3,
+    "endurance": 6
+   },
+   "stat_points": 3,
+   "mp": 30,
+   "max_mp": 80
+  }
+ ],
+ "xp": {
+  "0": 0,
+  "1": 20,
+  "2": 40,
+  "3": 120,
+  "4": 200,
+  "5": 350,
+  "6": 500,
+  "7": 750,
+  "8": 900,
+  "9": 1100,
+  "10": 0,
+  "11": 0
+ },
+ "tooltips": [
+  {
+   "item": {
+    "name": "Меч",
+    "description": "Острый клинок",
+    "bonuses": {
+     "strength": 2,
+     "dodge": 3,
+     "block": 5,
+     "hp": 12
+    },
+    "effects": {
+     "damage": [
+      3,
+      7
+     ]
+    },
+    "weight": 1.25
+   },
+   "lines": [
+    [
+     "Меч",
+     [
+      255,
+      224,
+      150
+     ]
+    ],
+    [
+     "Острый клинок",
+     [
+      225,
+      220,
+      207
+     ]
+    ],
+    [
+     "Бонус: +2 Сила",
+     [
+      140,
+      230,
+      150
+     ]
+    ],
+    [
+     "Бонус: +3 % Уворот",
+     [
+      140,
+      230,
+      150
+     ]
+    ],
+    [
+     "Бонус: +5 % Блок",
+     [
+      140,
+      230,
+      150
+     ]
+    ],
+    [
+     "Бонус: +12 HP",
+     [
+      140,
+      230,
+      150
+     ]
+    ],
+    [
+     "Урон: 7",
+     [
+      255,
+      220,
+      120
+     ]
+    ],
+    [
+     "Вес: 1.25 кг",
+     [
+      175,
+      180,
+      185
+     ]
+    ]
+   ]
+  },
+  {
+   "item": {
+    "name": "Кольцо",
+    "bonuses": {
+     "intellect": -1,
+     "harmony": 2
+    },
+    "weight": 0.05,
+    "effects": {}
+   },
+   "lines": [
+    [
+     "Кольцо",
+     [
+      255,
+      224,
+      150
+     ]
+    ],
+    [
+     "Бонус: -1 Интеллект",
+     [
+      140,
+      230,
+      150
+     ]
+    ],
+    [
+     "Бонус: +2 Гармония",
+     [
+      140,
+      230,
+      150
+     ]
+    ],
+    [
+     "Вес: 0.05 кг",
+     [
+      175,
+      180,
+      185
+     ]
+    ]
+   ]
+  },
+  {
+   "item": {
+    "name": "Щит",
+    "bonuses": {
+     "endurance": 1
+    },
+    "effects": {
+     "damage": [
+      0,
+      0
+     ]
+    }
+   },
+   "lines": [
+    [
+     "Щит",
+     [
+      255,
+      224,
+      150
+     ]
+    ],
+    [
+     "Бонус: +1 Выносливость",
+     [
+      140,
+      230,
+      150
+     ]
+    ],
+    [
+     "Вес: 0 кг",
+     [
+      175,
+      180,
+      185
+     ]
+    ]
+   ]
+  },
+  {
+   "item": {
+    "name": "Плащ",
+    "description": "",
+    "bonuses": {},
+    "weight": 2
+   },
+   "lines": [
+    [
+     "Плащ",
+     [
+      255,
+      224,
+      150
+     ]
+    ],
+    [
+     "Вес: 2 кг",
+     [
+      175,
+      180,
+      185
+     ]
+    ]
+   ]
+  }
+ ]
+}

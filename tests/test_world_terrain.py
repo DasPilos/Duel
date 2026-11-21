@@ -11,7 +11,7 @@ from server.world_map import OBSTACLES, _edge_distance, is_passable, point_in_po
 from server.structures import WORLD_OBJECTS, city_structures
 from client.network import ServerError
 from server import presence
-from server.world_roads import COUNTRY_BUILDINGS, CITY_GATES, roads_payload
+from economy.server.world_roads import COUNTRY_BUILDINGS, CITY_GATES, roads_payload
 from tests.fixtures import create_test_database, drop_test_database, running_server
 
 # Фиксированный исход удара игрока: попадание на 13 без крита.
@@ -38,7 +38,7 @@ class EchoWorldClient:
         self.windup = 0.0
         self.error = None
 
-    def world_sync(self, character_id, x, y, attack_id, dash_target, since):
+    def world_sync(self, character_id, x, y, attack_id, dash_target, since, harvest_target=None):
         if self.error is not None:
             raise self.error
         self.seq += 1
@@ -326,7 +326,7 @@ class WorldTerrainTests(unittest.TestCase):
         routes = {route["building_id"]: route for route in roads["routes"]}
         self.assertEqual(set(routes), set(COUNTRY_BUILDINGS))
         self.assertEqual(set(CITY_GATES), {"north", "west", "south"})
-        blocked = __import__("server.world_roads", fromlist=["_blocked_cells"])._blocked_cells()
+        blocked = __import__("economy.server.world_roads", fromlist=["_blocked_cells"])._blocked_cells()
         objects = {obj["id"]: obj for obj in WORLD_OBJECTS}
 
         for building_id, route in routes.items():
@@ -378,9 +378,9 @@ class WorldTerrainTests(unittest.TestCase):
     def test_structures_come_from_server(self):
         database = create_test_database()
         try:
-            with running_server(database) as client:
-                client.register("builder", "secret1")
-                client.login("builder", "secret1")
+            with running_server(database, mode="economy") as client:
+                database.register("builder", "secret1")
+                client.token = database.login("builder", "secret1")["token"]
                 terrain = client.get_map_terrain()
                 city = client.get_city_structures()
         finally:
@@ -1130,9 +1130,9 @@ class WorldTerrainTests(unittest.TestCase):
     def test_terrain_comes_from_server(self):
         database = create_test_database()
         try:
-            with running_server(database) as client:
-                client.register("mapuser", "secret1")
-                client.login("mapuser", "secret1")
+            with running_server(database, mode="economy") as client:
+                database.register("mapuser", "secret1")
+                client.token = database.login("mapuser", "secret1")["token"]
                 terrain = client.get_map_terrain()
         finally:
             drop_test_database(database)

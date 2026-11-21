@@ -1,6 +1,6 @@
 import unittest
 
-from server.world_events import WorldEventWatcher
+from economy.server.world_events import WorldEventWatcher
 
 
 class WorldEventWatcherTests(unittest.TestCase):

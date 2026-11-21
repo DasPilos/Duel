@@ -1,0 +1,41 @@
+{
+  "source": "economy/server/production_buildings.py get_state() for 'stable' (lines 1008-1059) and _cart_progress() (lines 1172-1218), wrapped by economy/server/api.py as {\"building\": {...}}; the fields below are the ones scenes/city_scene.py _refresh_workshop_state() reads",
+  "building": {
+    "building": "stable",
+    "faction": "radburg",
+    "level": 1,
+    "server_time": 1767225600.0,
+    "cart_progress": {
+      "schema_version": 1,
+      "selected_grade": 1,
+      "grades": {
+        "1": {
+          "blueprint_owned": true,
+          "body_owned": true,
+          "body_count": 1,
+          "body_finish_at": 1767228000.0,
+          "production_orders": [
+            {"order_id": 7, "grade": 1, "created_at": 1767225600.0, "finish_at": 1767228000.0}
+          ],
+          "wood_deposited": 0,
+          "silver_deposited": 0,
+          "upgrades": {"wheels": 0, "sides": 0, "axles": 0},
+          "wear": {}
+        },
+        "2": {
+          "blueprint_owned": false,
+          "body_owned": false,
+          "body_count": 0,
+          "body_finish_at": null,
+          "production_orders": [],
+          "wood_deposited": 0,
+          "silver_deposited": 0,
+          "upgrades": {"wheels": 0, "sides": 0, "axles": 0},
+          "wear": {}
+        }
+      }
+    },
+    "warehouse_storage": {"wood": 100, "stone": 40},
+    "treasury_silver_available": 10
+  }
+}

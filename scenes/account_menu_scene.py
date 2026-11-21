@@ -105,17 +105,20 @@ class AccountMenuScene:
             return
         world_session = OnlineSession(self.session.username, self.session.password, "", world["server_url"])
         try:
-            world_session.user = world_session.client.login(self.session.username, self.session.password)
+            connection = self.session.client.connect_world(world["id"])
         except ServerError as error:
             self.error = str(error)
             return
+        world_session.client.token = connection["token"]
+        world_session.user = connection["user"]
+        world_session.lobby_server_url = self.session.client.base_url
         try:
             self.session.disconnect()
         except ServerError:
             # Лобби учитывает только свежие сессии, поэтому старая сессия аккаунтного сервера истечёт сама.
             pass
-        # Миры карт (код map…) открываются сразу на карте: в таверне их нет
-        world_session.map_world = str(world.get("code", "")).startswith("map")
+        # Map-based worlds have no tavern; Deck also uses a dedicated map-code prefix.
+        world_session.map_world = str(world.get("code", "")).startswith(("map", "deck_map"))
         self.world_session = world_session
         self._finish()
 
@@ -175,7 +178,14 @@ class AccountMenuScene:
         pygame.draw.rect(screen, (90, 100, 140), rect, width=2, border_radius=12)
         draw_text(screen, self.font, "Миры", rect.x + 16, rect.y + 14, color=(240, 220, 150))
         if not self.worlds:
-            draw_text(screen, self.small_font, "Миров пока нет", rect.x + 16, self.worlds_rows_top, color=(170, 170, 185))
+            draw_text(
+                screen,
+                self.small_font,
+                "Создатель еще не подготовил идеальный мир для тебя",
+                rect.x + 16,
+                self.worlds_rows_top,
+                color=(170, 170, 185),
+            )
             return
         mouse_pos = pygame.mouse.get_pos()
         visible = self.worlds[self.world_scroll:self.world_scroll + self.visible_world_rows]

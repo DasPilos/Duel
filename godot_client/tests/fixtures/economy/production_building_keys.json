@@ -1,0 +1,13 @@
+{
+ "source": "core/production_buildings.py BUILDINGS (economy/server/api.py /api/buildings/{building}/{id} accepts these keys)",
+ "keys": [
+  "farm",
+  "lumber_camp",
+  "mountain_rift",
+  "barnyard",
+  "black_pit",
+  "barn",
+  "warehouse",
+  "stable"
+ ]
+}

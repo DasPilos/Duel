@@ -1,0 +1,436 @@
+{
+  "battle_id": "5b0e7c2a9d4f4e61a3c8f1e2d7b9a046",
+  "group_id": null,
+  "phase": "draft",
+  "seconds_left": 75,
+  "timeout_count": 0,
+  "draft_mode": "starting",
+  "turn": 0,
+  "side": "player",
+  "fighter": {
+    "name": "Тестовый Лучник",
+    "level": 2,
+    "type": "archer",
+    "hp": 65,
+    "max_hp": 65,
+    "mp": 15,
+    "max_mp": 15,
+    "stats": {
+      "strength": 3,
+      "agility": 5,
+      "intuition": 4,
+      "wisdom": 2,
+      "intellect": 3,
+      "harmony": 2,
+      "endurance": 4
+    },
+    "unique_resource_type": "accuracy",
+    "unique_resource": 59,
+    "unique_resource_max": 59
+  },
+  "opponent": {
+    "name": "Тестовый Боец",
+    "level": 2,
+    "type": "warrior",
+    "hp": 110,
+    "max_hp": 110,
+    "mp": 10,
+    "max_mp": 10,
+    "stats": {
+      "strength": 5,
+      "agility": 2,
+      "intuition": 2,
+      "wisdom": 2,
+      "intellect": 2,
+      "harmony": 2,
+      "endurance": 4
+    },
+    "unique_resource_type": "rage",
+    "unique_resource": 59,
+    "unique_resource_max": 59
+  },
+  "hand": [
+    {
+      "key": "archer_entangling_vine",
+      "name": "Сдерживающая лоза",
+      "group_name": "Лучник: Проворный герой",
+      "effect_type": "damage",
+      "effect_data": {
+        "dice": 4,
+        "entangle": 1,
+        "range": 3
+      },
+      "resource_type": "accuracy",
+      "resource_cost": 10,
+      "effect_duration": 0,
+      "rarity": "basic"
+    },
+    {
+      "key": "archer_heather_copy",
+      "name": "Вереск",
+      "group_name": "Лучник: Проворный герой",
+      "effect_type": "damage",
+      "effect_data": {
+        "dice": 2,
+        "poison": 2,
+        "range": 4
+      },
+      "resource_type": "accuracy",
+      "resource_cost": 14,
+      "effect_duration": 0,
+      "rarity": "basic"
+    }
+  ],
+  "selected": [],
+  "table": [
+    {
+      "key": "archer_quick_shot",
+      "name": "Быстрый выстрел",
+      "group_name": "Лучник: Проворный герой",
+      "effect_type": "damage",
+      "effect_data": {
+        "dice": 5,
+        "hit_bonus": 10,
+        "range": 4
+      },
+      "resource_type": "accuracy",
+      "resource_cost": 8,
+      "effect_duration": 0,
+      "rarity": "basic"
+    },
+    {
+      "key": "archer_quick_shot_copy",
+      "name": "Быстрый выстрел",
+      "group_name": "Лучник: Проворный герой",
+      "effect_type": "damage",
+      "effect_data": {
+        "dice": 5,
+        "hit_bonus": 10,
+        "range": 4
+      },
+      "resource_type": "accuracy",
+      "resource_cost": 8,
+      "effect_duration": 0,
+      "rarity": "basic"
+    },
+    {
+      "key": "archer_blood_sacrifice",
+      "name": "Лесной контракт",
+      "group_name": "Лучник: Проворный герой",
+      "effect_type": "damage_buff",
+      "effect_data": {
+        "hp_percent": 20,
+        "mana_percent": 25,
+        "agility_bonus": 10,
+        "duration": 3
+      },
+      "resource_type": "accuracy",
+      "resource_cost": 10,
+      "effect_duration": 0,
+      "rarity": "basic"
+    },
+    {
+      "key": "archer_entangling_vine_copy",
+      "name": "Сдерживающая лоза",
+      "group_name": "Лучник: Проворный герой",
+      "effect_type": "damage",
+      "effect_data": {
+        "dice": 4,
+        "entangle": 1,
+        "range": 3
+      },
+      "resource_type": "accuracy",
+      "resource_cost": 10,
+      "effect_duration": 0,
+      "rarity": "basic"
+    },
+    {
+      "key": "archer_oak_bulwark",
+      "name": "Дубовый заслон",
+      "group_name": "Лучник: Проворный герой",
+      "effect_type": "damage_buff",
+      "effect_data": {
+        "shield_flat": 10,
+        "shield_agility": 1,
+        "range": 3
+      },
+      "resource_type": "accuracy",
+      "resource_cost": 10,
+      "effect_duration": 0,
+      "rarity": "basic"
+    },
+    {
+      "key": "archer_oak_bulwark_copy",
+      "name": "Дубовый заслон",
+      "group_name": "Лучник: Проворный герой",
+      "effect_type": "damage_buff",
+      "effect_data": {
+        "shield_flat": 10,
+        "shield_agility": 1,
+        "range": 3
+      },
+      "resource_type": "accuracy",
+      "resource_cost": 10,
+      "effect_duration": 0,
+      "rarity": "basic"
+    },
+    {
+      "key": "archer_healing_fern",
+      "name": "Целительный папоротник",
+      "group_name": "Лучник: Проворный герой",
+      "effect_type": "damage_buff",
+      "effect_data": {
+        "cleanse": true,
+        "range": 3
+      },
+      "resource_type": "accuracy",
+      "resource_cost": 10,
+      "effect_duration": 0,
+      "rarity": "basic"
+    },
+    {
+      "key": "archer_poison_ivy",
+      "name": "Ядовитый плющ",
+      "group_name": "Лучник: Проворный герой",
+      "effect_type": "damage_buff",
+      "effect_data": {
+        "poison": 2,
+        "poison_damage": 2,
+        "entangle": 2,
+        "range": 4
+      },
+      "resource_type": "accuracy",
+      "resource_cost": 10,
+      "effect_duration": 0,
+      "rarity": "basic"
+    },
+    {
+      "key": "archer_piercing_shot",
+      "name": "Ветвистый выстрел",
+      "group_name": "Лучник: Проворный герой",
+      "effect_type": "damage",
+      "effect_data": {
+        "dice": 9,
+        "stun_on_dodge": true,
+        "range": 4
+      },
+      "resource_type": "accuracy",
+      "resource_cost": 14,
+      "effect_duration": 0,
+      "rarity": "basic"
+    },
+    {
+      "key": "archer_piercing_shot_copy",
+      "name": "Ветвистый выстрел",
+      "group_name": "Лучник: Проворный герой",
+      "effect_type": "damage",
+      "effect_data": {
+        "dice": 9,
+        "stun_on_dodge": true,
+        "range": 4
+      },
+      "resource_type": "accuracy",
+      "resource_cost": 14,
+      "effect_duration": 0,
+      "rarity": "basic"
+    },
+    {
+      "key": "archer_heather",
+      "name": "Вереск",
+      "group_name": "Лучник: Проворный герой",
+      "effect_type": "damage",
+      "effect_data": {
+        "dice": 2,
+        "poison": 2,
+        "range": 4
+      },
+      "resource_type": "accuracy",
+      "resource_cost": 14,
+      "effect_duration": 0,
+      "rarity": "basic"
+    },
+    {
+      "key": "archer_healing_moss",
+      "name": "Лечебный мох",
+      "group_name": "Лучник: Проворный герой",
+      "effect_type": "heal",
+      "effect_data": {
+        "heal_flat": 10,
+        "heal_endurance": 1,
+        "range": 3
+      },
+      "resource_type": "accuracy",
+      "resource_cost": 15,
+      "effect_duration": 0,
+      "rarity": "basic"
+    },
+    {
+      "key": "archer_hidden_step",
+      "name": "Скрытый шаг",
+      "group_name": "Лучник: Проворный герой",
+      "effect_type": "damage_buff",
+      "effect_data": {
+        "guaranteed_dodge": 1,
+        "duration": 1,
+        "range": 3
+      },
+      "resource_type": "accuracy",
+      "resource_cost": 15,
+      "effect_duration": 0,
+      "rarity": "basic"
+    },
+    {
+      "key": "archer_barrage",
+      "name": "Туманный град",
+      "group_name": "Лучник: Проворный герой",
+      "effect_type": "damage",
+      "effect_data": {
+        "dice": 1,
+        "hits": 8,
+        "hit_bonus_scale": 1,
+        "crit_bonus_scale": 2,
+        "range": 4
+      },
+      "resource_type": "accuracy",
+      "resource_cost": 20,
+      "effect_duration": 0,
+      "rarity": "basic"
+    },
+    {
+      "key": "archer_barrage_copy",
+      "name": "Туманный град",
+      "group_name": "Лучник: Проворный герой",
+      "effect_type": "damage",
+      "effect_data": {
+        "dice": 1,
+        "hits": 8,
+        "hit_bonus_scale": 1,
+        "crit_bonus_scale": 2,
+        "range": 4
+      },
+      "resource_type": "accuracy",
+      "resource_cost": 20,
+      "effect_duration": 0,
+      "rarity": "basic"
+    },
+    {
+      "key": "archer_forest_rest",
+      "name": "Лесной покой",
+      "group_name": "Лучник: Проворный герой",
+      "effect_type": "damage_buff",
+      "effect_data": {
+        "heal_per_turn": 5,
+        "duration": 4,
+        "damage_buff_percent": 5,
+        "hit_chance_bonus": 5,
+        "buff_duration": 2,
+        "range": 3
+      },
+      "resource_type": "accuracy",
+      "resource_cost": 20,
+      "effect_duration": 0,
+      "rarity": "basic"
+    },
+    {
+      "key": "archer_dodge_counter",
+      "name": "Коренное наследие",
+      "group_name": "Лучник: Проворный герой",
+      "effect_type": "damage_buff",
+      "effect_data": {
+        "damage_buff_percent": 10,
+        "dodge_stun": true,
+        "duration": 1,
+        "range": 3
+      },
+      "resource_type": "accuracy",
+      "resource_cost": 21,
+      "effect_duration": 0,
+      "rarity": "basic"
+    },
+    {
+      "key": "archer_elven_song",
+      "name": "Эльфийская песнь",
+      "group_name": "Лучник: Проворный герой",
+      "effect_type": "heal",
+      "effect_data": {
+        "heal_agility_multiplier": 2,
+        "heal_flat": 1,
+        "incoming_damage_percent": 10,
+        "duration": 3,
+        "range": 3
+      },
+      "resource_type": "accuracy",
+      "resource_cost": 27,
+      "effect_duration": 0,
+      "rarity": "basic"
+    },
+    {
+      "key": "archer_hunt_stance",
+      "name": "Охота",
+      "group_name": "Лучник: Проворный герой",
+      "effect_type": "damage",
+      "effect_data": {
+        "dice": 24,
+        "no_miss": true,
+        "hunt": true,
+        "range": 5
+      },
+      "resource_type": "accuracy",
+      "resource_cost": 35,
+      "effect_duration": 0,
+      "rarity": "basic"
+    },
+    {
+      "key": "archer_forest_spirit",
+      "name": "Лесной Дух",
+      "group_name": "Лучник: Проворный герой",
+      "effect_type": "damage",
+      "effect_data": {
+        "summon_spirit": true,
+        "spirit_hp": 30,
+        "spirit_dodge": 15,
+        "ultimate": true
+      },
+      "resource_type": "accuracy",
+      "resource_cost": 40,
+      "effect_duration": 0,
+      "rarity": "basic"
+    }
+  ],
+  "draw_choices": [],
+  "can_select": [],
+  "confirmed": false,
+  "opponent_confirmed": false,
+  "opponent_draft_picks": [
+    "warrior_weakness_strength",
+    "warrior_grave_frost_copy"
+  ],
+  "opponent_last_draft_picks": [],
+  "last_exchange": [],
+  "history": [],
+  "outcome": null,
+  "reward_card_keys": [
+    "archer_quick_shot",
+    "archer_quick_shot_copy",
+    "archer_blood_sacrifice",
+    "archer_entangling_vine",
+    "archer_entangling_vine_copy",
+    "archer_oak_bulwark",
+    "archer_oak_bulwark_copy",
+    "archer_healing_fern",
+    "archer_poison_ivy",
+    "archer_piercing_shot",
+    "archer_piercing_shot_copy",
+    "archer_heather",
+    "archer_heather_copy",
+    "archer_healing_moss",
+    "archer_hidden_step",
+    "archer_barrage",
+    "archer_barrage_copy",
+    "archer_forest_rest",
+    "archer_dodge_counter",
+    "archer_elven_song",
+    "archer_hunt_stance",
+    "archer_forest_spirit"
+  ]
+}

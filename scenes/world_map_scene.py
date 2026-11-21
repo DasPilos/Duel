@@ -8,13 +8,15 @@ from core.currency import Currency
 from core.carry_weight import character_movement_speed_multiplier
 from combat.fighter import Fighter
 from combat.fighter_profile import apply_fighter_profile
+from core.map_animals import animal_facing_index, animal_sheet
 from combat.world_stats import (
     get_attack_reach,
     get_move_speed,
     get_world_max_hp,
     get_world_max_mana,
 )
-from core.mob_profiles import NPC_KEYS, npc_profiles
+from core.mob_catalog import palette_mob, palette_mob_animations
+from core.mob_profiles import NPC_KEYS, mob_profiles
 from core.npc_catalog import NPC_FRAME, NPC_FRAMES_PER_ROW, NPC_ROW_DOWN, NPC_ROW_LEFT, NPC_ROW_RIGHT, NPC_ROW_UP, facing_row, npc_catalog, sheet_path
 from core.player_movement import find_tile_path, follow_path
 from core.tile_mask import mask_blocks_rect
@@ -81,8 +83,8 @@ HERO_HIT_SECONDS = 0.45  # сколько играет анимация полу
 HERO_DEATH_SECONDS = 1.0  # сколько герой падает; после этого держится последний кадр, пока здоровье на нуле
 DASH_TRAIL_SIZE = 64  # px на земле (умножается на зум) — размер спрайта следа
 DASH_AIM_COLOR = (90, 255, 120)
-# Профили мобов — только виды из редактора карт; их характеристики и экипировка приходят с сервера в снимке мира.
-MOB_PROFILES = dict(npc_profiles())  # бесы карты: название и подписи в логе боя
+# Характеристики и экипировка мобов приходят с сервера в снимке мира.
+MOB_PROFILES = mob_profiles()
 PLAYER_REPATH_INTERVAL = 0.3  # как часто пересчитывать путь к движущемуся мобу
 PLAYER_STALL_TIMEOUT = 0.4  # если персонаж не может продвинуться так долго, путь сбрасывается
 DAMAGE_NUMBER_DURATION = 5.0
@@ -96,6 +98,9 @@ EDGE_SCROLL_SPEED = 600.0  # скорость краевой прокрутки,
 DRAG_THRESHOLD = 6  # px: дальше этого ЛКМ — перетаскивание карты, а не клик
 DOUBLE_CLICK_MS = 350
 MOB_SPRITE_SIZE = (90, 53)
+MOB_RENDER_FRAME_SIZE = 16
+MOB_RENDER_FIGURE_HEIGHT = 16
+MOB_RENDER_FEET_Y = 16
 MOB_WALK_FPS = 8
 MOB_WALK_HOLD_MS = 300  # моб считается идущим, пока его позиция менялась за последние 300 мс
 MOB_CORPSE_FALL_MS = 500  # без листа смерти тело валится на бок
@@ -117,6 +122,43 @@ def _tiles_word(count):
     if 2 <= last <= 4:
         return "тайла"
     return "тайлов"  # затем труп медленно гаснет
+
+
+def _normalize_mob_frames(frames):
+    """Fit directional frames within half a tile and align their feet on a shared canvas."""
+    bounds = [frame.get_bounding_rect(min_alpha=1) for row in frames.values() for frame in row]
+    if not any(rect.height for rect in bounds):
+        return {row: [pygame.Surface((MOB_RENDER_FRAME_SIZE, MOB_RENDER_FRAME_SIZE), pygame.SRCALPHA)
+                      for _frame in row_frames]
+                for row, row_frames in frames.items()}
+
+    normalized = {}
+    for row, row_frames in frames.items():
+        normalized[row] = []
+        for frame in row_frames:
+            bounds = frame.get_bounding_rect(min_alpha=1)
+            if bounds.height == 0:
+                normalized[row].append(
+                    pygame.Surface((MOB_RENDER_FRAME_SIZE, MOB_RENDER_FRAME_SIZE), pygame.SRCALPHA))
+                continue
+            crop = frame.subsurface(bounds)
+            scale = min(
+                MOB_RENDER_FIGURE_HEIGHT / bounds.height,
+                MOB_RENDER_FRAME_SIZE / bounds.width,
+            )
+            size = (
+                max(1, round(crop.get_width() * scale)),
+                max(1, round(bounds.height * scale)),
+            )
+            scaled = pygame.transform.scale(crop, size)
+            scaled_bounds = scaled.get_bounding_rect(min_alpha=1)
+            canvas = pygame.Surface((MOB_RENDER_FRAME_SIZE, MOB_RENDER_FRAME_SIZE), pygame.SRCALPHA)
+            canvas.blit(scaled, (
+                MOB_RENDER_FRAME_SIZE // 2 - scaled_bounds.centerx,
+                MOB_RENDER_FEET_Y - scaled_bounds.bottom,
+            ))
+            normalized[row].append(canvas)
+    return normalized
 
 
 def _mob_facing_row(angle):
@@ -141,6 +183,21 @@ def mob_frame(mob, now_ms):
     moving = now_ms - mob.get("moved_at", -MOB_WALK_HOLD_MS) < MOB_WALK_HOLD_MS
     index = int(now_ms / 1000 * MOB_WALK_FPS) % NPC_FRAMES_PER_ROW if moving else 0
     return frames[row][index]
+
+
+def _mob_display_frame(mob, sprite):
+    """Keep regular mobs within half a tile; bosses render four times larger."""
+    max_dimension = MOB_RENDER_FRAME_SIZE
+    largest_dimension = max(sprite.get_size())
+    if largest_dimension > max_dimension:
+        scale = max_dimension / largest_dimension
+        sprite = pygame.transform.scale(
+            sprite,
+            (max(1, round(sprite.get_width() * scale)), max(1, round(sprite.get_height() * scale))),
+        )
+    if mob.get("is_boss"):
+        sprite = pygame.transform.scale(sprite, (sprite.get_width() * 4, sprite.get_height() * 4))
+    return sprite
 
 
 def mob_death_frame(mob, now_ms):
@@ -232,7 +289,7 @@ MAP_TREE_FRAMES = 10
 MAP_TREE_FRAMES_PER_ROW = 6
 MAP_TREE_COLUMNS = {"big_tree": 5}
 MAP_TREE_FRAME_MS = 140
-MAP_TREE_SCALE = 0.5
+MAP_TREE_SCALE = 1.0
 MAP_PROP_SPRITES = {"stump": ("stump_1", "stump_2"), "log": ("log_1", "log_2")}
 MAP_PROP_SCALE = 0.5
 # Сухой край карты — мёртвые деревья того же художника; остальной лес — зелёные
@@ -590,6 +647,11 @@ class WorldMapScene:
 
         self.minimap_surface = None
         self.terrain_version = None
+        self.crystal_tiles = {}
+        self.animals = {}
+        self.animal_frames = {}
+        self.harvest_target = None
+        self.harvest_view = None
         self.obstacles = self._load_terrain()
         self._build_minimap(self.obstacles)
         if spawn_pos is None and spawn_gate not in gate_spawns:
@@ -707,6 +769,36 @@ class WorldMapScene:
         self.repath_timer = 0.0
         self._repath_to_attack_target()
 
+    def _crystal_tile_at(self, wx, wy):
+        """Клетка кристалла под точкой мира или None."""
+        tile = (int(wx // self.tile_size), int(wy // self.tile_size))
+        return tile if tile in self.crystal_tiles else None
+
+    def _begin_harvest(self, tile):
+        """ПКМ по кристаллу: держим цель, пока кнопка зажата. Идём к ближайшей свободной клетке рядом с кристаллом."""
+        self.harvest_target = tile
+        size = self.tile_size
+        tile_x, tile_y = tile
+        if self._is_adjacent_to_tile(tile):
+            self.move_path = []
+            return
+        neighbors = [(tile_x + dx, tile_y + dy) for dx in (-1, 0, 1) for dy in (-1, 0, 1) if dx or dy]
+        player_gx = self.player_x // size
+        player_gy = self.player_y // size
+        neighbors.sort(key=lambda n: (n[0] - player_gx) ** 2 + (n[1] - player_gy) ** 2)
+        for neighbor_x, neighbor_y in neighbors:
+            if self._set_move_target(((neighbor_x + 0.5) * size, (neighbor_y + 0.5) * size)):
+                return
+        self.harvest_target = None
+        self.action_notice = "Кристалл недоступен"
+        self.action_notice_timer = 2.0
+
+    def _is_adjacent_to_tile(self, tile):
+        """Игрок стоит вплотную к клетке (включая диагональ) — как требует сервер для добычи."""
+        player_gx = int(self.player_x // self.tile_size)
+        player_gy = int(self.player_y // self.tile_size)
+        return max(abs(player_gx - tile[0]), abs(player_gy - tile[1])) == 1
+
     def _repath_to_attack_target(self):
         """Путь к движущемуся мобу: цель — центр моба, ходьба останавливается на дистанции удара."""
         mob = self.attack_target
@@ -757,10 +849,11 @@ class WorldMapScene:
         attack_id = self.attack_target["id"] if self.attack_target is not None else None
         dash_target = self.world_dash_target
         self.world_dash_target = None
+        harvest_target = list(self.harvest_target) if self.harvest_target is not None else None
         try:
             snap = self.session.client.world_sync(
                 self.session.character["id"], self.player_x, self.player_y,
-                attack_id, dash_target, self.world_seq)
+                attack_id, dash_target, self.world_seq, harvest_target=harvest_target)
         except (ServerError, OSError) as error:
             if not self.world_sync_failed:
                 self.action_notice = str(error)
@@ -811,7 +904,9 @@ class WorldMapScene:
         self.attack_windup_total = float(player["windup_total"])
         self.attack_backswing = float(player["backswing"])
         self.dash_cooldown = float(player["dash_cooldown"])
+        self.harvest_view = player.get("harvest")
         self._track_player_hp(player["hp"])
+
         self.combat_fighter.hp = player["hp"]
         self.combat_fighter.max_hp = player["max_hp"]
         self.combat_fighter.mp = player["mp"]
@@ -822,6 +917,7 @@ class WorldMapScene:
         self.world_swing_id = swing_id
         self.whirlwinds = [{"x": t["x"], "y": t["y"], "timer": t["ttl"]} for t in snap["trails"]]
         self._apply_world_mobs(snap["mobs"])
+        self._apply_world_animals(snap.get("animals", []))
         self.player_corpses = [dict(corpse) for corpse in snap.get("corpses", [])]
         if self._corpse_by_id(self.corpse_window_id) is None:
             self.corpse_window_id = None
@@ -966,54 +1062,193 @@ class WorldMapScene:
         return math.atan2(dy, dx)
 
     def _mob_sprite_for(self, kind):
-        """Спрайт моба по виду: бесы — первый кадр ходьбы вниз из листа NPC, остальные — прежний спрайт."""
+        """Спрайт моба: первый кадр ходьбы вниз или стандартный спрайт при недоступном наборе."""
         frames = self._mob_walk_frames(kind)
         if frames is None:
-            return self.mob_sprite
+            return None if palette_mob(kind) is not None else self.mob_sprite
         return frames[NPC_ROW_DOWN][0]
 
     def _mob_walk_frames(self, kind):
-        """Кадры ходьбы NPC по строкам листа (направления): {строка: [кадр, ...]}, масштаб 77x77. None — у вида нет листа."""
+        """Кадры ходьбы NPC по направлениям с общей высотой и точкой опоры."""
         return self._mob_sheet_frames(kind, "walk")
 
     def _mob_sheet_frames(self, kind, action):
-        """Кадры листа NPC (walk или attack) по строкам направления. None — у вида нет листа или он не загрузился."""
-        if kind not in NPC_KEYS:
+        """Кадры листа моба (walk или attack) по направлениям."""
+        if kind not in NPC_KEYS and palette_mob(kind) is None:
             return None
         key = (kind, action)
         if key not in self._npc_mob_frames:
-            npc = next(item for item in npc_catalog() if item["key"] == kind)
-            try:
-                sheet = pygame.image.load(str(sheet_path(npc, action))).convert_alpha()
-                self._npc_mob_frames[key] = {
-                    row: [
-                        pygame.transform.smoothscale(
-                            sheet.subsurface(pygame.Rect(col * 64, row * 64, 64, 64)).copy(), (77, 77))
-                        for col in range(NPC_FRAMES_PER_ROW)
-                    ]
-                    for row in range(4)
-                }
-            except (pygame.error, OSError):
-                self._npc_mob_frames[key] = None
+            if kind in NPC_KEYS:
+                self._npc_mob_frames[key] = self._npc_catalog_frames(kind, action)
+            else:
+                self._npc_mob_frames[key] = self._palette_mob_frames(kind, action)
+                if self._npc_mob_frames[key] is None:
+                    print(f"Не удалось загрузить кадры моба из палитры: {kind} ({action})")
         return self._npc_mob_frames[key]
 
     def _mob_death_frames(self, kind):
-        """Кадры листа смерти вида (одна строка, 7 кадров 64 px) или None, если листа нет."""
-        if kind not in NPC_KEYS:
+        """Кадры листа смерти вида или None, если листа нет."""
+        if kind not in NPC_KEYS and palette_mob(kind) is None:
             return None
         key = (kind, "death")
         if key not in self._npc_mob_frames:
-            npc = next(item for item in npc_catalog() if item["key"] == kind)
-            try:
-                sheet = pygame.image.load(str(sheet_path(npc, "death"))).convert_alpha()
-                self._npc_mob_frames[key] = [
-                    pygame.transform.smoothscale(
-                        sheet.subsurface(pygame.Rect(col * 64, 0, 64, 64)).copy(), (77, 77))
-                    for col in range(sheet.get_width() // 64)
-                ]
-            except (pygame.error, OSError):
-                self._npc_mob_frames[key] = None
+            if kind in NPC_KEYS:
+                self._npc_mob_frames[key] = self._npc_catalog_death_frames(kind)
+            else:
+                frames = self._palette_mob_frames(kind, "death")
+                self._npc_mob_frames[key] = (
+                    [pygame.transform.scale(frame, (MOB_RENDER_FRAME_SIZE, MOB_RENDER_FRAME_SIZE))
+                     for frame in frames[NPC_ROW_DOWN]]
+                    if frames is not None else None
+                )
         return self._npc_mob_frames[key]
+
+    def _npc_catalog_frames(self, kind, action):
+        npc = next(item for item in npc_catalog() if item["key"] == kind)
+        try:
+            sheet = pygame.image.load(str(sheet_path(npc, action))).convert_alpha()
+            frames = {
+                row: [
+                    sheet.subsurface(
+                        pygame.Rect(col * NPC_FRAME, row * NPC_FRAME, NPC_FRAME, NPC_FRAME)
+                    ).copy()
+                    for col in range(NPC_FRAMES_PER_ROW)
+                ]
+                for row in range(4)
+            }
+            return _normalize_mob_frames(frames)
+        except (pygame.error, OSError):
+            return None
+
+    def _npc_catalog_death_frames(self, kind):
+        npc = next(item for item in npc_catalog() if item["key"] == kind)
+        try:
+            sheet = pygame.image.load(str(sheet_path(npc, "death"))).convert_alpha()
+            return [
+                pygame.transform.scale(
+                    sheet.subsurface(pygame.Rect(col * 64, 0, 64, 64)).copy(),
+                    (MOB_RENDER_FRAME_SIZE, MOB_RENDER_FRAME_SIZE),
+                )
+                for col in range(sheet.get_width() // 64)
+            ]
+        except (pygame.error, OSError):
+            return None
+
+    def _palette_mob_frames(self, kind, action):
+        mob = palette_mob(kind)
+        if mob is None:
+            return None
+        if mob["pack_folder"] == "goblin sprite-pack":
+            return self._goblin_mob_frames(mob, action)
+        clips = palette_mob_animations(kind, action)
+        if not clips:
+            return self._fallback_palette_mob_frames(mob, action)
+        directional = {}
+        try:
+            for entry in clips:
+                sheet = pygame.image.load(str(entry["path"])).convert_alpha()
+                direction = entry["direction"]
+                direction_row = {
+                    "front": NPC_ROW_DOWN,
+                    "back": NPC_ROW_UP,
+                    "right": NPC_ROW_RIGHT,
+                    "left": NPC_ROW_LEFT,
+                }.get(direction)
+                for clip in entry["clips"]:
+                    row = direction_row if direction_row is not None else int(clip["row"]) % 4
+                    if row in directional:
+                        continue
+                    rects = clip["rects"]
+                    sample_indices = [
+                        round(index * (len(rects) - 1) / (NPC_FRAMES_PER_ROW - 1))
+                        for index in range(NPC_FRAMES_PER_ROW)
+                    ]
+                    directional[row] = [
+                        sheet.subsurface(pygame.Rect(*rects[index])).copy()
+                        for index in sample_indices
+                    ]
+                    if len(directional) == 4:
+                        break
+                if len(directional) == 4:
+                    break
+        except (pygame.error, OSError, ValueError):
+            return None
+        if not directional:
+            return None
+        fallback = next(iter(directional.values()))
+        return _normalize_mob_frames({
+            row: directional.get(row, fallback)
+            for row in range(4)
+        })
+
+    def _goblin_mob_frames(self, mob, action):
+        state_order = {
+            "walk": ("walk", "run", "animation", "idle", "death"),
+            "attack": ("attack", "walk_attack", "run_attack", "animation", "walk", "run", "death"),
+            "death": ("death",),
+        }.get(action, ("idle", "animation", "walk", "run", "death"))
+        for state in state_order:
+            entries = mob["sheet_paths"].get(state, [])
+            if not entries:
+                continue
+            try:
+                sheet = pygame.image.load(str(entries[0]["path"])).convert_alpha()
+            except (pygame.error, OSError):
+                return None
+            frame_size = 64
+            frame_count = min(NPC_FRAMES_PER_ROW, sheet.get_width() // frame_size)
+            if frame_count <= 0 or sheet.get_height() < 4 * frame_size:
+                return None
+            rows = {}
+            for row in range(4):
+                row_frames = [
+                    sheet.subsurface(
+                        pygame.Rect(
+                            column * frame_size,
+                            row * frame_size,
+                            frame_size,
+                            frame_size,
+                        )
+                    ).copy()
+                    for column in range(frame_count)
+                ]
+                rows[row] = row_frames + [row_frames[-1]] * (NPC_FRAMES_PER_ROW - frame_count)
+            return _normalize_mob_frames(rows)
+        return None
+
+    def _fallback_palette_mob_frames(self, mob, action):
+        state_order = {
+            "walk": ("walk", "run", "animation", "idle", "death"),
+            "attack": ("attack", "walk_attack", "run_attack", "animation", "walk", "run", "death"),
+            "death": ("death",),
+        }.get(action, ("idle", "animation", "walk", "run", "death"))
+        for state in state_order:
+            entries = mob["sheet_paths"].get(state, [])
+            if not entries:
+                continue
+            try:
+                sheet = pygame.image.load(str(entries[0]["path"])).convert_alpha()
+            except (pygame.error, OSError):
+                return None
+            frame_size = 64 if sheet.get_width() % 64 == 0 and sheet.get_height() >= 4 * 64 else 32
+            columns = sheet.get_width() // frame_size
+            rows = sheet.get_height() // frame_size
+            if columns <= 0 or rows < 4:
+                return None
+            frame_count = min(NPC_FRAMES_PER_ROW, columns)
+            frames = {
+                row: [
+                    sheet.subsurface(
+                        pygame.Rect(column * frame_size, row * frame_size, frame_size, frame_size)
+                    ).copy()
+                    for column in range(frame_count)
+                ]
+                for row in range(4)
+            }
+            for row in frames:
+                frames[row].extend([frames[row][-1]] * (NPC_FRAMES_PER_ROW - len(frames[row])))
+            return _normalize_mob_frames(frames)
+        return None
 
     def _load_mob_sprite(self):
         """Спрайт разбойника из assets/mobs/woodland_bandit.png. Мобы клиента только отображаются, их состояние приходит с сервера."""
@@ -1070,6 +1305,19 @@ class WorldMapScene:
                 "facing": payload["facing"],
                 "coins": payload["coins"],
             })
+
+    def _apply_world_animals(self, payloads):
+        updated = {}
+        now = pygame.time.get_ticks()
+        for payload in payloads:
+            animal_id = payload["id"]
+            previous = self.animals.get(animal_id, {})
+            moved = previous.get("x") != payload["x"] or previous.get("y") != payload["y"]
+            updated[animal_id] = {
+                **payload,
+                "moved_at": now if moved else previous.get("moved_at", now),
+            }
+        self.animals = updated
 
     def _load_forester_sprite(self):
         """
@@ -1377,6 +1625,10 @@ class WorldMapScene:
             if (obstacle["bounds"].collidepoint(px, py) and point_in_polygon((px, py), obstacle["points"])
                     and not any(passage.collidepoint(px, py) for passage in obstacle["passages"])):
                 return True
+        if any(feet_rect.colliderect(pygame.Rect(0, 0, 16, 8).move(
+            round(animal["x"] - 8), round(animal["y"] - 4)
+        )) for animal in self.animals.values()):
+            return True
         return self._rect_touches_blocked_tile(feet_rect)
 
     def _load_terrain(self):
@@ -1392,6 +1644,10 @@ class WorldMapScene:
         self._apply_map_size(terrain.get("map", {}))
         self.terrain_version = terrain.get("map", {}).get("version")
         self._apply_tile_terrain(terrain.get("tiles", {}), terrain.get("props", []), terrain.get("bridges", []))
+        self._apply_world_animals(terrain.get("animals", []))
+        self.crystal_tiles = {
+            (int(x), int(y)): (color, int(stage)) for x, y, color, stage in terrain.get("crystals", [])
+        }
         self.city_visual_state = dict(terrain.get(
             "city_visual_state", {"city_level": 1, "active": False}
         ))
@@ -1559,7 +1815,8 @@ class WorldMapScene:
             for gx in range(start_gx, end_gx):
                 prop = self.prop_anchors.get((gx, gy))
                 if prop:
-                    self._draw_prop(screen, props[prop["type"]], prop["width"], gx, gy)
+                    image = props[prop["type"]][_map_hash(gx, gy) % len(props[prop["type"]])]
+                    slots.append(((gy + 1) * size, gx * size + prop["width"] * size // 2, image))
                 if (gx, gy) in self.dry_tiles:
                     pool = trees["dead"]
                 elif (gx, gy) in self.forest_tiles:
@@ -1584,6 +1841,7 @@ class WorldMapScene:
         for base_y, base_x, tree in slots:
             sx, sy = self.world_to_screen(base_x, base_y)
             screen.blit(tree, (sx - tree.get_width() // 2, sy - tree.get_height()))
+        return slots
 
     def _add_tree_slots(self, slots, gx, gy, pool):
         """Место и кадр деревьев клетки: хэш задаёт сдвиг, вариант и пустоту, поэтому каждая клетка выглядит по-своему."""
@@ -1612,13 +1870,6 @@ class WorldMapScene:
             centre_y = (min(ys) + max(ys) + 1) * size // 2
             sx, sy = self.world_to_screen(centre_x, centre_y)
             screen.blit(image, (sx - image.get_width() // 2, sy - image.get_height() // 2))
-
-    def _draw_prop(self, screen, images, width, gx, gy):
-        """Пень или бревно стоит на нижней границе своего тайла; бревно занимает width тайлов и центрируется на них."""
-        size = self.tile_size
-        image = images[_map_hash(gx, gy) % len(images)]
-        sx, sy = self.world_to_screen(gx * size + width * size // 2, (gy + 1) * size)
-        screen.blit(image, (sx - image.get_width() // 2, sy - image.get_height()))
 
     def _draw_shore_rims(self, screen, shores, start_gx, end_gx, start_gy, end_gy, edge_x, edge_y):
         """Каменная кромка берега художника: кусочки кладутся на сухие тайлы рядом с водой."""
@@ -2018,7 +2269,11 @@ class WorldMapScene:
                 self._handle_left_click(event.pos)
             return
 
-        # ПКМ (как в Dota 2): по мобу — идти и бить, по земле — идти в точку
+        # ПКМ (как в Dota 2): по мобу — идти и бить, по кристаллу — добывать, по земле — идти в точку
+        if event.type == pygame.MOUSEBUTTONUP and event.button == 3:
+            self.harvest_target = None
+            return
+
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 3:
             if self.active_entity is not None and self.active_window_rect.collidepoint(event.pos):
                 return
@@ -2028,9 +2283,13 @@ class WorldMapScene:
             # Замах нельзя отменить: ПКМ во время замаха игнорируется; во время рывка персонаж занят
             if self.attack_windup > 0 or self.world_dash_active:
                 return
+            self.harvest_target = None
             mob = self._mob_at_world_point(wx, wy)
+            crystal = self._crystal_tile_at(wx, wy)
             if mob is not None:
                 self._set_attack_target(mob)
+            elif crystal is not None:
+                self._begin_harvest(crystal)
             else:
                 self._set_move_target((wx, wy))
                 self.click_effect = {"x": wx, "y": wy, "timer": CLICK_EFFECT_DURATION}
@@ -2428,19 +2687,20 @@ class WorldMapScene:
         if sprites:
             self._draw_shore_rims(screen, sprites["shores"], start_gx, end_gx, start_gy, end_gy, edge_x, edge_y)
             self._draw_bridges(screen, sprites)
-            self._draw_forest_trees(screen, sprites["trees"], sprites["props"])
+            forest_trees = self._draw_forest_trees(screen, sprites["trees"], sprites["props"])
+        else:
+            forest_trees = ()
         self._draw_terrain(screen)
         self._draw_objects(screen)
         self._draw_click_effect(screen)
-        self._draw_whirlwinds(screen)
+        self._draw_harvest_progress(screen)
+
         if self.dash_aiming:
             self._draw_dash_aim(screen)
-        self._draw_mobs(screen)
+        self._draw_mobs(screen, forest_trees)
         self._draw_player_corpses(screen)
         self._draw_damage_numbers(screen)
 
-        # 3. Игровой персонаж
-        self._draw_player_character(screen)
         draw_active_players(self, screen, "world_map")
         draw_traveling_entities(self, screen, "world_map")
         draw_afk_players(self, screen, "world_map")
@@ -2481,37 +2741,126 @@ class WorldMapScene:
                 and self.hovered_mobile_entity.get("entity_kind") == "player"):
             draw_mobile_hover_card(self, screen, self.hovered_mobile_entity)
 
-    def _draw_mobs(self, screen):
-        """Рисует мобов карты 90х53 px по центру их точки, с полоской HP над спрайтом."""
+    def _draw_mobs(self, screen, forest_trees=()):
+        """Рисует мобов, животных, героя и перекрывающие их деревья по глубине точки опоры."""
         now = pygame.time.get_ticks()
+        entries = []
         for mob in self.mobs:
             if mob["hp"] <= 0:
-                body = mob_death_frame(mob, now)
-                if body is not None:
-                    screen.blit(body, body.get_rect(center=self.world_to_screen(mob["x"], mob["y"])))
-                continue
-            sprite = mob_frame(mob, now) or mob.get("sprite")
+                sprite = mob_death_frame(mob, now)
+            else:
+                sprite = mob_frame(mob, now) or mob.get("sprite")
             if sprite is None:
                 continue
+            sprite = _mob_display_frame(mob, sprite)
             sx, sy = self.world_to_screen(mob["x"], mob["y"])
             rect = sprite.get_rect(center=(sx, sy))
+            entries.append((mob["y"], 1, "mob", mob, sprite, rect))
+
+        for animal in self.animals.values():
+            sprite = self._animal_frame_for(
+                animal["key"],
+                animal.get("facing", 0.0),
+                animal.get("moving", False),
+                now,
+            )
+            if sprite is None:
+                continue
+            sx, sy = self.world_to_screen(animal["x"], animal["y"])
+            rect = sprite.get_rect(midbottom=(sx, sy))
+            entries.append((animal["y"], 1, "animal", animal, sprite, rect))
+
+        character = getattr(self.session, "character", None) or {}
+        player_sprite = self._player_character_frame(character)
+        player_sx, player_sy = self.world_to_screen(self.player_x, self.player_y)
+        if player_sprite is not None:
+            player_rect = player_sprite.get_rect(midbottom=(player_sx, player_sy))
+        else:
+            player_rect = pygame.Rect(player_sx - 13, player_sy - 25, 26, 38)
+        entries.append((self.player_y, 1, "player", character, player_sprite, player_rect))
+
+        foreground_trees = []
+        for base_y, base_x, tree in forest_trees:
+            sx, sy = self.world_to_screen(base_x, base_y)
+            rect = tree.get_rect(midbottom=(sx, sy))
+            if any(base_y >= entity_y and rect.colliderect(entity_rect)
+                   for entity_y, _order, _kind, _entity, _sprite, entity_rect in entries):
+                foreground_trees.append((base_y, 2, "tree", tree, None, rect))
+        entries.extend(foreground_trees)
+
+        for _depth, _order, kind, entity, sprite, rect in sorted(entries, key=lambda entry: (entry[0], entry[1])):
             if not rect.colliderect(pygame.Rect(0, 0, settings.WIDTH, settings.HEIGHT)):
                 continue
+            if kind == "tree":
+                screen.blit(entity, rect)
+                continue
+            if kind == "player":
+                self._draw_player_character(screen, sprite)
+                continue
+            if kind == "animal":
+                screen.blit(sprite, rect)
+                continue
+            mob = entity
             screen.blit(sprite, rect)
-
+            if mob["hp"] <= 0:
+                continue
             is_active = self.active_entity is not None and self.active_entity.get("id") == mob["id"]
             is_hovered = self.hovered_entity is not None and self.hovered_entity.get("id") == mob["id"]
             if is_active:
                 pygame.draw.rect(screen, (255, 215, 60), rect.inflate(8, 8), 2, border_radius=6)
             elif is_hovered:
                 pygame.draw.rect(screen, (80, 200, 255), rect.inflate(8, 8), 2, border_radius=6)
-
             hp_ratio = max(0.0, min(1.0, mob["hp"] / mob["max_hp"]))
-            bar = pygame.Rect(0, 0, 100, 5)
+            bar = pygame.Rect(0, 0, max(MOB_RENDER_FRAME_SIZE * 2, rect.width), 5)
             bar.midbottom = (rect.centerx, rect.top - 3)
             pygame.draw.rect(screen, (40, 10, 10), bar)
             pygame.draw.rect(screen, (200, 40, 40), (bar.left, bar.top, int(bar.width * hp_ratio), bar.height))
             self._draw_overhead_label(screen, f"ХП {int(mob['hp'])}/{int(mob['max_hp'])}", (255, 110, 110), (bar.centerx, bar.top - 1))
+
+    def _animal_frames_for(self, key):
+        if key not in self.animal_frames:
+            layout = animal_sheet(key)
+            if layout is None:
+                self.animal_frames[key] = None
+                return None
+            path = Path(__file__).resolve().parent.parent / "assets" / "map" / "animals" / f"{layout.asset}.png"
+            try:
+                sheet = pygame.image.load(str(path)).convert_alpha()
+                frames = {}
+                for state, rows in (("moving", layout.walking_rows), ("idle", layout.idle_rows)):
+                    state_frames = []
+                    for row in rows:
+                        frame_count = layout.frames if state == "moving" else 1
+                        row_frames = []
+                        for column in range(frame_count):
+                            rect = pygame.Rect(
+                                column * layout.frame_size,
+                                row * layout.frame_size,
+                                layout.frame_size,
+                                layout.frame_size,
+                            )
+                            if rect.right > sheet.get_width() or rect.bottom > sheet.get_height():
+                                break
+                            row_frames.append(sheet.subsurface(rect).copy())
+                        state_frames.append(tuple(row_frames))
+                    frames[state] = tuple(state_frames)
+                self.animal_frames[key] = frames
+            except (pygame.error, OSError) as error:
+                print(f"Ошибка загрузки спрайта животного {key}: {error}")
+                self.animal_frames[key] = None
+        return self.animal_frames[key]
+
+    def _animal_frame_for(self, key, facing, moving, now):
+        frames = self._animal_frames_for(key)
+        if not frames:
+            return None
+        direction = animal_facing_index(facing)
+        state = "moving" if moving else "idle"
+        row_frames = frames[state][direction]
+        if not row_frames:
+            return None
+        frame = (now // 160) % len(row_frames) if moving else 0
+        return row_frames[frame]
 
     def _corpse_by_id(self, corpse_id):
         if corpse_id is None:
@@ -3340,7 +3689,32 @@ class WorldMapScene:
         pygame.draw.circle(ring, (80, 255, 120, alpha_val), (radius + 2, radius + 2), radius, 2)
         screen.blit(ring, (cx - radius - 2, cy - radius - 2))
 
-    def _draw_player_character(self, screen):
+    def _draw_harvest_progress(self, screen):
+        """Полоска добычи над кристаллом: заполняется, пока зажата ПКМ рядом с кристаллом."""
+        view = self.harvest_view
+        if view is None or view["total"] <= 0:
+            return
+        half = self.tile_size / 2
+        cx, cy = self.world_to_screen(view["x"] * self.tile_size + half, view["y"] * self.tile_size + half)
+        width, height = 40, 6
+        fill = min(1.0, view["progress"] / view["total"])
+        left, top = int(cx - width / 2), int(cy - self.tile_size * self.zoom / 2 - 10)
+        pygame.draw.rect(screen, (30, 30, 30), (left, top, width, height))
+        pygame.draw.rect(screen, (120, 220, 255), (left, top, int(width * fill), height))
+        pygame.draw.rect(screen, (0, 0, 0), (left, top, width, height), 1)
+
+    def _player_character_frame(self, character):
+        windup_total = self.attack_windup_total or self.attack_windup
+        attacking = self.attack_windup > 0
+        attack_progress = 1.0 - self.attack_windup / max(windup_total, 1e-6) if attacking else 0.0
+        hit_progress, death_progress = self._hero_reaction_progress()
+        return player_frame(
+            self, character, self.player_direction, self.player_anim_timer,
+            moving=self.player_state == "walk", attacking=attacking, attack_progress=attack_progress,
+            attack_variant=self.attack_variant, hit_progress=hit_progress, death_progress=death_progress,
+        )
+
+    def _draw_player_character(self, screen, frame_surf=None):
         """
         Отрисовывает персонажа:
         - В движении (walk): 8-направленный бег (assets/3run/), 6 кадров по направлению движения.
@@ -3365,15 +3739,8 @@ class WorldMapScene:
             pygame.draw.circle(screen, (80, 200, 255), (sx, sy), 22, 2)
 
         character = getattr(self.session, "character", None) or {}
-        windup_total = self.attack_windup_total or self.attack_windup
-        attacking = self.attack_windup > 0
-        attack_progress = 1.0 - self.attack_windup / max(windup_total, 1e-6) if attacking else 0.0
-        hit_progress, death_progress = self._hero_reaction_progress()
-        frame_surf = player_frame(
-            self, character, self.player_direction, self.player_anim_timer,
-            moving=self.player_state == "walk", attacking=attacking, attack_progress=attack_progress,
-            attack_variant=self.attack_variant, hit_progress=hit_progress, death_progress=death_progress,
-        )
+        if frame_surf is None:
+            frame_surf = self._player_character_frame(character)
 
         if frame_surf is not None:
             # Ноги персонажа касаются земли в точке (sx, sy)
@@ -3519,4 +3886,3 @@ class WorldMapScene:
                 self.session.client.world_leave(character["id"])
             except (ServerError, OSError):
                 pass
-

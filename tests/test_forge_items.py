@@ -133,7 +133,7 @@ class ForgeItemsTest(unittest.TestCase):
         self.assertEqual(bonuses.get("block"), 5)
 
     def test_forge_order_creation_queue_limit_and_storage(self):
-        from server.forge import Forge
+        from economy.server.forge import Forge
         forge = Forge(self.db, self.items_db)
 
         user1 = self.db.register("blacksmith_fan1", "pass123")

@@ -56,6 +56,105 @@ class SavedMapTests(unittest.TestCase):
         self.assertEqual(stored["cells"], [{"layer": "ground", "x": 0, "y": 0, "key": GROUND}])
         self.assertEqual(stored["mobs"], [{"kind": "imp_sword", "x": 2, "y": 2}])
 
+    def test_saving_map_modes_keeps_maps_in_separate_lists(self):
+        tower = map_worlds.save_map(self.database, self.moderator["id"], self.body)
+        deck = map_worlds.save_map(
+            self.database,
+            self.moderator["id"],
+            {**self.body, "name": "Карта Колоды", "mode": "deck"},
+        )
+        economy = map_worlds.save_map(
+            self.database,
+            self.moderator["id"],
+            {**self.body, "name": "Карта Экономики", "mode": "economy"},
+        )
+        front_line = map_worlds.save_map(
+            self.database,
+            self.moderator["id"],
+            {**self.body, "name": "Коридор", "mode": "front_line"},
+        )
+
+        self.assertEqual(self.database.get_saved_map(deck["saved_id"])["mode"], "deck")
+        self.assertEqual(self.database.get_saved_map(economy["saved_id"])["mode"], "economy")
+        self.assertEqual(self.database.get_saved_map(front_line["saved_id"])["mode"], "front_line")
+        self.assertEqual(
+            [saved["id"] for saved in self.database.list_saved_maps("tower")],
+            [tower["saved_id"]],
+        )
+        self.assertEqual(
+            [saved["id"] for saved in self.database.list_saved_maps("deck")],
+            [deck["saved_id"]],
+        )
+        self.assertEqual(
+            [saved["id"] for saved in self.database.list_saved_maps("economy")],
+            [economy["saved_id"]],
+        )
+        self.assertEqual(
+            [saved["id"] for saved in self.database.list_saved_maps("front_line")],
+            [front_line["saved_id"]],
+        )
+
+    def test_front_line_map_world_can_be_created_and_started(self):
+        saved = map_worlds.save_map(
+            self.database,
+            self.moderator["id"],
+            {**self.body, "name": "Коридор", "mode": "front_line"},
+        )
+        worlds_before = len(self.database.list_worlds(viewer_id=self.moderator["id"]))
+
+        world = map_worlds.create_test_world(
+            self.database, self.moderator["id"], {"saved_id": saved["saved_id"], "test": True},
+        )
+        self.assertEqual(world["mode"], "front_line")
+        self.assertEqual(
+            len(self.database.list_worlds(viewer_id=self.moderator["id"])),
+            worlds_before + 1,
+        )
+        spawn = FakeSpawn()
+        with patch.object(map_worlds, "free_port", return_value=8899):
+            started = map_worlds.start_world(
+                self.database,
+                self.moderator["id"],
+                world["world_id"],
+                spawn=spawn,
+                healthy=lambda _url: False,
+            )
+        self.assertTrue(started["started"])
+        self.assertEqual(spawn.calls, [(world["world_id"], 8899)])
+
+    def test_front_line_matchmaking_world_is_created_once_and_started_automatically(self):
+        spawn = FakeSpawn()
+        with patch.object(map_worlds, "free_port", return_value=8898):
+            first = map_worlds.ensure_front_line_world(
+                self.database, healthy=lambda _url: False, spawn=spawn,
+            )
+            second = map_worlds.ensure_front_line_world(
+                self.database, healthy=lambda _url: False, spawn=spawn,
+            )
+        self.assertTrue(first["started"])
+        self.assertFalse(second["started"])
+        self.assertEqual(first["world_id"], second["world_id"])
+        self.assertEqual(len(spawn.calls), 1)
+        world = self.database.world_info(first["world_id"])
+        self.assertEqual(world["mode"], "front_line")
+        self.assertFalse(world["test_only"])
+
+    def test_saving_map_accepts_dimensions_up_to_1600(self):
+        result = map_worlds.save_map(
+            self.database,
+            self.moderator["id"],
+            {**self.body, "name": "Большая карта", "map_w": 1600, "map_h": 1024},
+        )
+        stored = self.database.get_saved_map(result["saved_id"])
+        self.assertEqual((stored["map_w"], stored["map_h"]), (1600, 1024))
+
+        with self.assertRaises(ValueError):
+            map_worlds.save_map(
+                self.database,
+                self.moderator["id"],
+                {**self.body, "name": "Слишком большая", "map_w": 1601},
+            )
+
     def test_saving_again_updates_the_same_saved_map(self):
         first = map_worlds.save_map(self.database, self.moderator["id"], self.body)
         again = map_worlds.save_map(self.database, self.moderator["id"],

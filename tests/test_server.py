@@ -3,6 +3,7 @@ import threading
 from datetime import datetime, timezone
 import unittest
 from unittest.mock import patch
+from zoneinfo import ZoneInfo
 
 from client.network import ServerError
 from server.database import Database
@@ -87,6 +88,8 @@ class ServerPersistenceTests(unittest.TestCase):
             self.assertEqual(status["online_players"], 1)
             self.assertIsNone(status["restart_notice"])
             self.assertEqual(status["server_timezone"], "Europe/Kyiv")
+            expected_offset = datetime.fromtimestamp(status["server_time"], ZoneInfo("Europe/Kyiv")).utcoffset()
+            self.assertEqual(status["server_utc_offset_seconds"], int(expected_offset.total_seconds()))
             self.assertAlmostEqual(status["server_time"], time.time(), delta=2)
             with self.assertRaisesRegex(ServerError, "Недостаточно прав"):
                 client.schedule_server_restart()
@@ -99,6 +102,21 @@ class ServerPersistenceTests(unittest.TestCase):
             self.assertIn("обновление", notice["message"])
             self.assertIsNone(client.cancel_server_restart())
         self.assertIsNone(maintenance.public_notice())
+
+    def test_game_server_exposes_public_version_compatibility(self):
+        with running_server(self.database) as client:
+            response = client._request(
+                "GET", "/api/version?app=editor&version=1.0.0&protocol=1"
+            )
+        with running_server(self.database, mode="tower") as client:
+            scoped_response = client._request(
+                "GET", "/api/version?app=client&version=1.0.0&protocol=1"
+            )
+
+        self.assertEqual(response["server_version"], "1.0.0")
+        self.assertEqual(response["protocol_version"], 1)
+        self.assertTrue(response["compatibility"]["compatible"])
+        self.assertTrue(scoped_response["compatibility"]["compatible"])
 
     def test_online_player_count_deduplicates_accounts_and_ignores_stale_sessions(self):
         self.database.register("online-first", "password")

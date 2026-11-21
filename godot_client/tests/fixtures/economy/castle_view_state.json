@@ -1,0 +1,45 @@
+{
+  "source": "economy/server/city_population.py _payload() (строки 1147-1204) и _castle_upgrades_payload(); имена ключей и ID улучшений как на сервере, значения тестовые и повторяют эталон castle_population.png, castle_treasury.png, castle_upgrades.png",
+  "population": {
+    "castle_name": "Замок Радбурка",
+    "castle_level": 1,
+    "city_level": 1,
+    "population": 6,
+    "population_capacity": 10,
+    "food_status": "запасов на 2 дня",
+    "food_zone": "yellow",
+    "new_citizen_eta_seconds": null,
+    "satiated_eta_seconds": 1260,
+    "departure_eta_seconds": null,
+    "citizens": [
+      {"id": 11, "name": "Агата", "satiety": 62, "strong_hunger": 0, "satisfaction": "satisfied", "work_status": "Свободен", "job_building": "", "job_slot": null, "death_eta_seconds": null, "travel_seconds_left": 0, "travel_direction": null},
+      {"id": 12, "name": "Дорн", "satiety": 9, "strong_hunger": 0, "satisfaction": "starving", "work_status": "Свободен", "job_building": "", "job_slot": null, "death_eta_seconds": 5400, "travel_seconds_left": 0, "travel_direction": null},
+      {"id": 13, "name": "Фрида", "satiety": 77, "strong_hunger": 0, "satisfaction": "satisfied", "work_status": "Свободен", "job_building": "", "job_slot": null, "death_eta_seconds": null, "travel_seconds_left": 0, "travel_direction": null},
+      {"id": 14, "name": "Бран", "satiety": 35, "strong_hunger": 0, "satisfaction": "satisfied", "work_status": "Занят", "job_building": "farm", "job_slot": 0, "death_eta_seconds": null, "travel_seconds_left": 0, "travel_direction": null},
+      {"id": 15, "name": "Лира", "satiety": 48, "strong_hunger": 0, "satisfaction": "satisfied", "work_status": "В пути", "job_building": "lumber_camp", "job_slot": 0, "death_eta_seconds": null, "travel_seconds_left": 94, "travel_direction": "outbound"},
+      {"id": 16, "name": "Эльм", "satiety": 0, "strong_hunger": 35, "satisfaction": "starving", "work_status": "Возвращается", "job_building": "barnyard", "job_slot": null, "death_eta_seconds": null, "travel_seconds_left": 39, "travel_direction": "returning"}
+    ],
+    "worksites": [
+      {"building": "farm", "name": "Крестьянское поселение", "free_slots": [1, 2], "capacity": 3, "travel_seconds": 300},
+      {"building": "lumber_camp", "name": "Лагерь лесорубов", "free_slots": [0, 2, 3], "capacity": 4, "travel_seconds": 420},
+      {"building": "mountain_rift", "name": "Горный разлом", "free_slots": [], "capacity": 2, "travel_seconds": 600}
+    ],
+    "city_resource_income_per_hour": {"wheat": 120.0, "wood": 42.5, "meat": 14.0, "leather": 6.0},
+    "city_resource_consumption_per_hour": {"wheat": 90.0, "wood": 12.0, "meat": 20.0, "leather": 0.0},
+    "city_resource_trend": {"wheat": "surplus", "wood": "upgrade_ready", "meat": "deficit", "leather": "surplus"},
+    "city_resource_storage": {"wheat": 40, "wood": 310, "meat": 5},
+    "treasury": {"copper": 1250, "silver": 36, "gold": 2},
+    "personal_treasury_copper": 1800,
+    "personal_treasury_text": "18 серебра",
+    "spendable_treasury_copper": 1800,
+    "personal_currency_copper": 500,
+    "personal_currency_text": "5 серебра",
+    "is_mayor": true,
+    "tax_tick_seconds_left": 1320,
+    "expected_tax_text": "12 серебра",
+    "upgrades": [
+      {"id": "treasury_edict", "name": "Казначейский указ", "is_complete": false, "is_active": false, "requirement": "Нет", "result": "Налог с горожан +10 медн.", "silver_cost": 5, "wood_cost": 30, "time_seconds": 4800, "seconds_left": 0},
+      {"id": "plot_for_building", "name": "Участок под застройку", "is_complete": false, "is_active": true, "requirement": "Нет", "result": "Вместимость горожан +1", "silver_cost": 10, "wood_cost": 30, "time_seconds": 6000, "seconds_left": 2400}
+    ]
+  }
+}

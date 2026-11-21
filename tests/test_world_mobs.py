@@ -7,7 +7,7 @@ from unittest.mock import patch
 from combat.dash import DASH_RANGE
 from core import mob_modes
 from server import world_map
-from server.world_mobs import MOB_RESPAWN_DELAY, WorldService
+from tower.server.world_mobs import MOB_RESPAWN_DELAY, WorldService
 
 IMP = "imp_sword"  # моб из редактора карт: других видов в мире нет
 
@@ -33,6 +33,7 @@ class FakeDatabase:
         self.wallet = {}
         self.corpses = {}
         self.next_corpse_id = 1
+        self.crystal_states = {}
 
     def create_player_corpse(self, user_id, character_id, x, y, coin_percent):
         lost = self.wallet.get(character_id, 0) * coin_percent // 100
@@ -57,6 +58,20 @@ class FakeDatabase:
 
     def map_live_spawns(self):
         return list(getattr(self, "spawns", []))
+
+    def load_world_crystal_states(self, published_at):
+        return {tile: dict(state) for tile, state in self.crystal_states.items() if state["published_at"] == published_at}
+
+    def save_world_crystal_state(self, published_at, tile, color, stage, elapsed):
+        previous = self.crystal_states.get(tile, {})
+        self.crystal_states[tile] = {
+            "published_at": published_at, "color": color, "stage": stage, "elapsed": elapsed,
+            "harvested": previous.get("harvested", False),
+        }
+
+    def mark_world_crystal_harvested(self, published_at, tile):
+        if tile in self.crystal_states:
+            self.crystal_states[tile]["harvested"] = True
 
     def map_live_mobs(self):
         return list(getattr(self, "mobs", []))
@@ -110,6 +125,9 @@ class FakeItems:
             "20": {"id": 20, "name": "Железный меч", "equip_slot": "weapon", "bonuses": {}, "icon": "sword"},
             "23": {"id": 23, "name": "Дубина", "equip_slot": "weapon", "bonuses": {}, "icon": "club"},
             "38": {"id": 38, "name": "Круглый щит", "equip_slot": "shield", "bonuses": {}, "icon": "shield"},
+            "50": {"id": 50, "name": "Тяжёлый меч", "equip_slot": "weapon", "bonuses": {}, "icon": "sword",
+                   "effects": {"requirements": {"level": 5}}},
+            "60": {"id": 60, "name": "Перстень", "equip_slot": "ring", "bonuses": {}, "icon": "ring"},
         }
         return {str(item_id): dict(catalog[str(item_id)]) for item_id in item_ids if str(item_id) in catalog}
 
@@ -157,6 +175,43 @@ class WorldMobsTest(unittest.TestCase):
         self.assertTrue(snapshot["accepted"])
         self.assertEqual(snapshot["player"]["x"], 700.0)
         self.assertEqual(len(snapshot["mobs"]), 2)
+
+    def test_resync_returns_server_position_without_applying_client_intent(self):
+        self.sync(x=700.0, y=1296.0)
+        player = self.service._players[1]
+        player.x = 710.0
+        player.attack_target = self.mob
+
+        snapshot = self.service.sync(7, 1, {
+            "x": 700.0,
+            "y": 1296.0,
+            "since": 0,
+            "resync": True,
+            "attack_target": None,
+            "dash_target": {"x": 900.0, "y": 1296.0},
+        })
+
+        self.assertFalse(snapshot["accepted"])
+        self.assertEqual(snapshot["player"]["x"], 710.0)
+        self.assertEqual(player.x, 710.0)
+        self.assertIs(player.attack_target, self.mob)
+        self.assertIsNone(player.dash)
+
+    def test_resync_after_server_restart_uses_saved_position_not_client_position(self):
+        character = self.database.get_character(7, 1)
+        character["position_x"] = 725.0
+        character["position_y"] = 1300.0
+        with patch.object(self.database, "get_character", return_value=character):
+            snapshot = self.service.sync(7, 1, {
+                "x": 900.0,
+                "y": 1500.0,
+                "since": 0,
+                "resync": True,
+            })
+
+        self.assertFalse(snapshot["accepted"])
+        self.assertEqual(snapshot["player"]["x"], 725.0)
+        self.assertEqual(snapshot["player"]["y"], 1300.0)
 
     def test_move_beyond_speed_is_rejected(self):
         self.sync(x=700.0, y=1296.0)
@@ -278,6 +333,36 @@ class WorldMobsTest(unittest.TestCase):
         self.assertNotIn(1, self.service._players)
         self.assertTrue(self.database.saved)
 
+    def test_inventory_action_flushes_live_vitals_before_database_change(self):
+        self.sync(x=700.0, y=1296.0)
+        player = self.service._players[1]
+        player.fighter.hp = 37
+        observed = []
+
+        result = self.service.run_inventory_action(
+            7, 1, lambda: observed.append(self.database.saved[-1]) or "done")
+
+        self.assertEqual(result, "done")
+        self.assertEqual(observed, [(37, player.fighter.mp)])
+        self.assertEqual(self.database.saved[-1], (37, player.fighter.mp))
+
+    def test_inventory_action_reloads_online_combat_profile(self):
+        self.sync(x=700.0, y=1296.0)
+        player = self.service._players[1]
+        player.fighter.hp = 20
+
+        self.service.run_inventory_action(7, 1, lambda: None)
+
+        self.assertGreater(player.fighter.hp, 20)
+        self.assertEqual(player.fighter.hp, player.fighter.max_hp)
+
+    def test_inventory_action_is_rejected_during_attack_windup(self):
+        self.sync(x=700.0, y=1296.0)
+        self.service._players[1].windup = 0.5
+
+        with self.assertRaisesRegex(ValueError, "атаки или рывка"):
+            self.service.run_inventory_action(7, 1, lambda: None)
+
     def test_death_leaves_corpse_with_coins_and_respawns(self):
         self.sync(x=700.0, y=1296.0)
         player = self.service._players[1]
@@ -375,6 +460,22 @@ class WorldMobsTest(unittest.TestCase):
         mob_modes.save_mob_settings("tower", IMP, settings)
         service = WorldService(self.database, FakeItems(), clock=self.clock, rng=random.Random(3))
         self.assertEqual(service._mobs["mob_0_imp_sword"].equipment, {})
+
+    def test_item_with_unmet_requirement_is_not_given_to_mob(self):
+        settings = mob_modes.default_settings(IMP)
+        settings["equipment"] = {"weapon": 50, "shield": None}  # требуется уровень 5, у моба уровень 1
+        mob_modes.save_mob_settings("tower", IMP, settings)
+        service = WorldService(self.database, FakeItems(), clock=self.clock, rng=random.Random(3))
+        self.assertEqual(service._mobs["mob_0_imp_sword"].equipment, {})
+
+    def test_ring_item_goes_to_second_ring_slot(self):
+        settings = mob_modes.default_settings(IMP)
+        settings["equipment"] = {"ring": None, "ring_2": 60}
+        mob_modes.save_mob_settings("tower", IMP, settings)
+        service = WorldService(self.database, FakeItems(), clock=self.clock, rng=random.Random(3))
+        mob = service._mobs["mob_0_imp_sword"]
+        self.assertEqual(mob.equipment["ring_2"]["name"], "Перстень")
+        self.assertNotIn("ring", mob.equipment)
 
     def _park_mobs(self):
         for index, mob in enumerate(self.service._mobs.values()):

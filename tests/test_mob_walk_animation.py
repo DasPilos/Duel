@@ -1,6 +1,8 @@
 import math
 import os
 import unittest
+from pathlib import Path
+from unittest import mock
 
 os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 
@@ -13,6 +15,12 @@ from scenes.world_map_scene import (
     MOB_CORPSE_HOLD_MS,
     MOB_WALK_FPS,
     MOB_WALK_HOLD_MS,
+    MOB_RENDER_FIGURE_HEIGHT,
+    MOB_RENDER_FEET_Y,
+    MOB_RENDER_FRAME_SIZE,
+    WorldMapScene,
+    _mob_display_frame,
+    _normalize_mob_frames,
     _mob_facing_row,
     mob_death_frame,
     mob_frame,
@@ -63,6 +71,51 @@ class MobFrameTests(unittest.TestCase):
     def test_mob_without_frames_has_no_frame(self):
         self.assertIsNone(mob_frame({"sprite": object()}, 1000))
 
+    def test_regular_mobs_fit_half_a_tile_and_bosses_are_four_times_as_large(self):
+        pygame.init()
+        try:
+            oversized = pygame.Surface((128, 96), pygame.SRCALPHA)
+            self.assertEqual(_mob_display_frame({}, oversized).get_size(), (16, 12))
+            self.assertEqual(_mob_display_frame({"is_boss": True}, oversized).get_size(), (64, 48))
+        finally:
+            pygame.quit()
+
+    def test_giant_rat_palette_frame_is_reduced_to_half_a_tile(self):
+        pygame.init()
+        try:
+            path = (
+                Path(__file__).resolve().parents[1]
+                / "godot_client"
+                / "assets"
+                / "base_tails"
+                / "LPC"
+                / "craftpix-net-415491-giant-rat-4-direction-pixel-character-sprite-pack"
+                / "Tiled"
+                / "Rat1_Walk_with_shadow.png"
+            )
+            sheet = pygame.image.load(str(path))
+            frame_size = sheet.get_height() // 4
+            frame = None
+            for y in range(0, sheet.get_height(), frame_size):
+                for x in range(0, sheet.get_width(), frame_size):
+                    candidate = sheet.subsurface(pygame.Rect(x, y, frame_size, frame_size)).copy()
+                    if candidate.get_bounding_rect(min_alpha=1).height > 0:
+                        frame = candidate
+                        break
+                if frame is not None:
+                    break
+            self.assertIsNotNone(frame)
+            normalized = _normalize_mob_frames({0: [frame]})[0][0]
+            visible = normalized.get_bounding_rect(min_alpha=1)
+            self.assertGreater(visible.height, 0)
+            self.assertLessEqual(max(visible.size), MOB_RENDER_FRAME_SIZE)
+            self.assertEqual(
+                _mob_display_frame({"is_boss": True}, normalized).get_size(),
+                (MOB_RENDER_FRAME_SIZE * 4, MOB_RENDER_FRAME_SIZE * 4),
+            )
+        finally:
+            pygame.quit()
+
 
 class MobDeathFrameTests(unittest.TestCase):
     def setUp(self):
@@ -100,6 +153,13 @@ class MobDeathFrameTests(unittest.TestCase):
 
 
 class ImpWalkSheetTests(unittest.TestCase):
+    def _set_player_offscreen(self, scene):
+        scene.player_x = 500
+        scene.player_y = 500
+        scene.session = type("Session", (), {"character": None})()
+        scene._player_character_frame = lambda _character: None
+        scene._draw_player_character = mock.Mock()
+
     def test_every_imp_has_full_walk_and_attack_sheets(self):
         pygame.init()
         try:
@@ -111,6 +171,115 @@ class ImpWalkSheetTests(unittest.TestCase):
                     self.assertEqual(sheet.get_size(), (NPC_FRAME * NPC_FRAMES_PER_ROW, NPC_FRAME * 4), path)
         finally:
             pygame.quit()
+
+    def test_all_walk_directions_have_a_shared_visible_height_and_foot_anchor(self):
+        pygame.init()
+        try:
+            for npc in npc_catalog():
+                sheet = pygame.image.load(str(sheet_path(npc, "walk")))
+                frames = {
+                    row: [
+                        sheet.subsurface(pygame.Rect(
+                            column * NPC_FRAME, row * NPC_FRAME, NPC_FRAME, NPC_FRAME,
+                        )).copy()
+                        for column in range(NPC_FRAMES_PER_ROW)
+                    ]
+                    for row in range(4)
+                }
+                normalized = _normalize_mob_frames(frames)
+                with self.subTest(npc=npc["key"]):
+                    for row in range(4):
+                        for frame in normalized[row]:
+                            bounds = frame.get_bounding_rect(min_alpha=1)
+                            self.assertEqual(frame.get_size(), (MOB_RENDER_FRAME_SIZE, MOB_RENDER_FRAME_SIZE))
+                            self.assertLessEqual(bounds.width, MOB_RENDER_FRAME_SIZE)
+                            self.assertLessEqual(bounds.height, MOB_RENDER_FIGURE_HEIGHT)
+                            self.assertEqual(bounds.bottom, MOB_RENDER_FEET_Y)
+        finally:
+            pygame.quit()
+
+    def test_mobs_are_drawn_behind_only_foreground_overlapping_trees(self):
+        pygame.init()
+        scene = object.__new__(WorldMapScene)
+        scene.animals = {}
+        scene.active_entity = None
+        scene.hovered_entity = None
+        self._set_player_offscreen(scene)
+        tree = pygame.Surface((30, 30))
+        tree.fill((0, 200, 0))
+        mob_sprite = pygame.Surface((20, 20))
+        mob_sprite.fill((200, 0, 0))
+        scene.world_to_screen = lambda x, y: (int(x), int(y))
+        screen = pygame.Surface((100, 100))
+
+        for mob_y, sample, expected in (
+            (40, (50, 40), (0, 200, 0)),
+            (50, (50, 45), (0, 200, 0)),
+            (60, (50, 60), (200, 0, 0)),
+        ):
+            screen.fill((0, 0, 0))
+            scene.mobs = [{"id": "test", "hp": 0, "x": 50, "y": mob_y}]
+            with mock.patch("scenes.world_map_scene.mob_death_frame", return_value=mob_sprite):
+                scene._draw_mobs(screen, ((55, 50, tree),))
+            self.assertEqual(screen.get_at(sample)[:3], expected)
+
+    def test_animals_are_drawn_behind_only_foreground_overlapping_trees(self):
+        pygame.init()
+        scene = object.__new__(WorldMapScene)
+        scene.mobs = []
+        scene.animals = {}
+        scene.active_entity = None
+        scene.hovered_entity = None
+        self._set_player_offscreen(scene)
+        tree = pygame.Surface((30, 30))
+        tree.fill((0, 200, 0))
+        animal_sprite = pygame.Surface((20, 20))
+        animal_sprite.fill((200, 0, 0))
+        scene.world_to_screen = lambda x, y: (int(x), int(y))
+        scene._animal_frame_for = lambda *_args: animal_sprite
+        screen = pygame.Surface((100, 100))
+
+        for animal_y, sample, expected in (
+            (40, (50, 30), (0, 200, 0)),
+            (50, (50, 35), (0, 200, 0)),
+            (60, (50, 45), (200, 0, 0)),
+        ):
+            screen.fill((0, 0, 0))
+            scene.animals = {
+                "test": {"key": "animal_duck", "x": 50, "y": animal_y, "moving": True},
+            }
+            scene._draw_mobs(screen, ((55, 50, tree),))
+            self.assertEqual(screen.get_at(sample)[:3], expected)
+
+    def test_hero_is_drawn_with_trees_at_the_same_depth(self):
+        pygame.init()
+        scene = object.__new__(WorldMapScene)
+        scene.mobs = []
+        scene.animals = {}
+        scene.active_entity = None
+        scene.hovered_entity = None
+        scene.session = type("Session", (), {"character": None})()
+        scene.world_to_screen = lambda x, y: (int(x), int(y))
+        hero_sprite = pygame.Surface((20, 20))
+        hero_sprite.fill((200, 0, 0))
+        scene._player_character_frame = lambda _character: hero_sprite
+        scene._draw_player_character = lambda target, sprite: target.blit(
+            sprite, sprite.get_rect(midbottom=(scene.player_x, scene.player_y)),
+        )
+        tree = pygame.Surface((30, 30))
+        tree.fill((0, 200, 0))
+        screen = pygame.Surface((100, 100))
+
+        for hero_y, sample, expected in (
+            (40, (50, 30), (0, 200, 0)),
+            (50, (50, 40), (0, 200, 0)),
+            (60, (50, 45), (200, 0, 0)),
+        ):
+            screen.fill((0, 0, 0))
+            scene.player_x = 50
+            scene.player_y = hero_y
+            scene._draw_mobs(screen, ((55, 50, tree),))
+            self.assertEqual(screen.get_at(sample)[:3], expected)
 
 
 if __name__ == "__main__":

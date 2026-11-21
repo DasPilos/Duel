@@ -155,14 +155,15 @@ class BuildIdTests(unittest.TestCase):
     def test_build_id_is_stable_and_changes_with_source(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            for name in ("server", "core", "combat"):
+            for name in ("server", "tower", "economy", "deck", "core", "combat"):
                 (root / name).mkdir()
             (root / "server" / "main.py").write_text("print(1)\n", encoding="utf-8")
+            (root / "economy" / "main.py").write_text("print(1)\n", encoding="utf-8")
 
             first = compute_build_id(root)
             self.assertEqual(first, compute_build_id(root))
 
-            (root / "server" / "main.py").write_text("print(2)\n", encoding="utf-8")
+            (root / "economy" / "main.py").write_text("print(2)\n", encoding="utf-8")
             self.assertNotEqual(first, compute_build_id(root))
 
 

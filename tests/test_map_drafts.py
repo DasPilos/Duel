@@ -36,6 +36,34 @@ class MapDraftsTests(unittest.TestCase):
 
         self.assertEqual(saved["cells"], [{"layer": "ground", "x": 0, "y": 0, "key": "grass_1"}])
 
+    def test_editor_layers_round_trip_with_only_cell_fields(self):
+        layers = [
+            [{"layer": "ground", "x": 1, "y": 2, "key": "rock_01", "extra": True}],
+            [{"layer": "object", "x": 3, "y": 4, "key": "tree_01"}],
+        ]
+
+        saved = map_drafts.save_draft("Слои", FIRST, 16, 16, folder=self.folder, editor_layers=layers)
+        loaded = map_drafts.load_draft(saved["id"], folder=self.folder)
+
+        self.assertEqual(
+            loaded["editor_layers"],
+            [
+                [{"layer": "ground", "x": 1, "y": 2, "key": "rock_01"}],
+                [{"layer": "object", "x": 3, "y": 4, "key": "tree_01"}],
+            ],
+        )
+
+    def test_legacy_draft_without_editor_layers_remains_loadable(self):
+        saved = self._save(FIRST, "Старый")
+        path = self.folder / f"{saved['id']}.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data.pop("editor_layers")
+        path.write_text(json.dumps(data), encoding="utf-8")
+
+        loaded = map_drafts.load_draft(saved["id"], folder=self.folder)
+
+        self.assertNotIn("editor_layers", loaded)
+
     def test_name_clash_with_other_draft_is_rejected(self):
         self._save(FIRST, "Степь")
 

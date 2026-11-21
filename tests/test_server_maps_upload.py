@@ -39,7 +39,7 @@ class FakeClient:
         self.maps = {"tower": [], "forest": [{"id": 9, "name": "Чаща", "map_w": 16, "map_h": 16}]}
         self.fail = False
 
-    def save_saved_map(self, cells, map_w, map_h, name, mode, mobs=(), saved_id=None, spawns=()):
+    def save_saved_map(self, cells, map_w, map_h, name, mode, mobs=(), saved_id=None, spawns=(), crystals=None, harvest_enabled=False):
         if self.fail:
             raise ServerError("карта повреждена")
         self.saved.append((name, mode, mobs, spawns))

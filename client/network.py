@@ -120,6 +120,11 @@ class GameClient:
         self.token = result["token"]
         return result["user"]
 
+    def connect_world(self, world_id):
+        return self._request(
+            "POST", f"/api/worlds/{int(world_id)}/connect", authenticated=True,
+        )
+
     def create_character(self, name, profession_type="warrior", stats=None):
         return self._request("POST", "/api/characters", {"name": name, "profession_type": profession_type, "stats": stats}, authenticated=True)["character"]
     
@@ -138,8 +143,35 @@ class GameClient:
     def list_worlds(self):
         return self._request("GET", "/api/worlds", authenticated=True)["worlds"]
 
+    def list_modes(self):
+        return self._request("GET", "/api/modes", authenticated=True)["modes"]
+
     def list_lobby(self):
         return self._request("GET", "/api/lobby", authenticated=True)["players"]
+
+    def list_lobby_chat(self):
+        return self._request("GET", "/api/lobby/chat", authenticated=True)["messages"]
+
+    def send_lobby_chat_message(self, text):
+        return self._request(
+            "POST", "/api/lobby/chat", {"text": str(text)}, authenticated=True
+        )["message"]
+
+    def change_password(self, current_password, new_password):
+        return self._request(
+            "POST",
+            "/api/account/password",
+            {"current_password": str(current_password), "new_password": str(new_password)},
+            authenticated=True,
+        )["user"]
+
+    def change_game_nickname(self, game_nickname):
+        return self._request(
+            "POST",
+            "/api/account/game-nickname",
+            {"game_nickname": str(game_nickname)},
+            authenticated=True,
+        )["user"]
 
 
     def update_presence(self, character_id, location):
@@ -210,6 +242,21 @@ class GameClient:
         """Получить хранилище персонажа"""
         return self._request("GET", f"/api/storage/{character_id}/{storage_type}", authenticated=True)["storage"]
 
+    def transfer_storage(self, character_id, storage_type, direction, quantity,
+                         slot_index=None, storage_item_id=None):
+        """Перемещает предметы между рюкзаком и сундуком; проверка вместимости остаётся на сервере."""
+        payload = {
+            "character_id": int(character_id),
+            "storage_type": str(storage_type),
+            "direction": str(direction),
+            "quantity": int(quantity),
+        }
+        if slot_index is not None:
+            payload["slot_index"] = int(slot_index)
+        if storage_item_id is not None:
+            payload["storage_item_id"] = int(storage_item_id)
+        return self._request("POST", "/api/storage/transfer", payload, authenticated=True)
+
     def get_item_catalog(self, item_ids):
         """Предметы каталога сервера по id: {"23": предмет, ...}"""
         ids = ",".join(str(int(item_id)) for item_id in item_ids)
@@ -224,7 +271,11 @@ class GameClient:
         slot_list = ",".join(slots)
         return self._request("GET", f"/api/items/equipment?slots={slot_list}", authenticated=True)["items"]
 
-    def world_sync(self, character_id, x, y, attack_target=None, dash_target=None, since=0):
+    def get_material_items(self):
+        """Материалы каталога для выбора предмета добычи кристаллов: [предмет, ...]"""
+        return self._request("GET", "/api/items/materials", authenticated=True)["items"]
+
+    def world_sync(self, character_id, x, y, attack_target=None, dash_target=None, since=0, harvest_target=None):
         """Отправить намерения игрока на сервер мира и получить снимок боя."""
         payload = {
             "character_id": character_id,
@@ -232,6 +283,7 @@ class GameClient:
             "y": y,
             "attack_target": attack_target,
             "dash_target": dash_target,
+            "harvest_target": harvest_target,
             "since": since,
         }
         return self._request("POST", "/api/world/sync", payload, authenticated=True)
@@ -252,7 +304,7 @@ class GameClient:
         return self._request("GET", "/api/map/terrain", authenticated=True, timeout=max(self.timeout, 15))["terrain"]
 
     def get_me(self):
-        """Текущий пользователь: id, username, role (user, moderator или admin)."""
+        """Текущий пользователь: id, username, role and game nickname."""
         return self._request("GET", "/api/me", authenticated=True)["user"]
 
     def list_saved_maps(self, mode=None):
@@ -267,21 +319,50 @@ class GameClient:
     def start_world(self, world_id):
         return self._request("POST", "/api/worlds/start", {"world_id": world_id}, authenticated=True)
 
-    def save_saved_map(self, cells, map_w, map_h, name, mode, mobs=(), saved_id=None, spawns=()):
+    def save_saved_map(self, cells, map_w, map_h, name, mode, mobs=(), saved_id=None, spawns=(), crystals=None, harvest_enabled=False):
         """Сохраняет карту на сервере как заготовку (мир не создаётся). saved_id обновляет уже сохранённую карту."""
         payload = {
             "cells": cells, "name": name, "map_w": map_w, "map_h": map_h,
             "mobs": list(mobs), "spawns": list(spawns), "mode": mode, "saved_id": saved_id or 0,
+            "crystals": crystals or {}, "harvest_enabled": bool(harvest_enabled),
         }
         return self._request("POST", "/api/map/editor/saved", payload, authenticated=True, timeout=max(self.timeout, 30))
 
-    def publish_map(self, cells, map_w, map_h, name, world_id, mobs=(), mode=None, spawns=(), saved_id=None):
-        """Публикует карту, расстановку NPC, точки спауна и режим на выбранном мире; игроки этого мира увидят карту после обновления."""
+    def publish_map(self, cells, map_w, map_h, name, world_id, mobs=(), mode=None, spawns=(), saved_id=None, crystals=None, harvest_enabled=False):
+        """Публикует карту, расстановку NPC, точки спауна, кристаллы и режим на выбранном мире; игроки этого мира увидят карту после обновления."""
         payload = {
             "cells": cells, "name": name, "map_w": map_w, "map_h": map_h, "world_id": world_id,
             "mobs": list(mobs), "mode": mode or "tower", "spawns": list(spawns), "saved_id": saved_id,
+            "crystals": crystals or {}, "harvest_enabled": bool(harvest_enabled),
         }
         return self._request("POST", "/api/map/editor/publish", payload, authenticated=True, timeout=max(self.timeout, 30))
+
+    def get_map_palette(self):
+        return self._request("GET", "/api/map/palette", authenticated=True)
+
+    def preview_map_palette(self, username, password, overrides):
+        return self._request(
+            "POST",
+            "/api/map/palette/preview",
+            {"username": username, "password": password, "overrides": overrides},
+            authenticated=True,
+            timeout=max(self.timeout, 30),
+        )
+
+    def apply_map_palette(self, username, password, overrides, expected_version, resolutions):
+        return self._request(
+            "POST",
+            "/api/map/palette/apply",
+            {
+                "username": username,
+                "password": password,
+                "overrides": overrides,
+                "expected_version": expected_version,
+                "resolutions": resolutions,
+            },
+            authenticated=True,
+            timeout=max(self.timeout, 60),
+        )
 
     def get_city_structures(self):
         return self._request("GET", "/api/city/structures", authenticated=True)["city"]

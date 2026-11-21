@@ -1,0 +1,38 @@
+{
+	"now": 1800000000.0,
+	"character": {
+		"id": 42,
+		"name": "Тестовый Боец",
+		"type": "warrior",
+		"level": 5,
+		"xp": 120,
+		"hp": 106,
+		"max_hp": 142,
+		"mp": 20,
+		"max_mp": 20,
+		"stat_points": 2,
+		"coins": 1234,
+		"stats": {"strength": 6, "agility": 4, "intuition": 3, "wisdom": 2, "intellect": 2, "harmony": 2, "endurance": 6},
+		"equipment": {},
+		"zone": "backyard"
+	},
+	"occupants": [
+		{"character_id": 42, "name": "Тестовый Боец", "level": 5, "hp": 106, "max_hp": 142, "afk": false},
+		{"character_id": 7, "name": "Соперник", "level": 4, "hp": 60, "max_hp": 80, "afk": false},
+		{"character_id": 9, "name": "Бродяга", "level": 3, "hp": 30, "max_hp": 50, "afk": true},
+		{"character_id": 11, "name": "Лучник из Очень Длинного Имени", "level": 6, "hp": 90, "max_hp": 90, "afk": false}
+	],
+	"messages": [
+		{"id": 1, "location": "backyard", "sender_id": 7, "sender": "Соперник", "recipient_id": null, "text": "Кто готов к дуэли?", "created_at": 1799999900.0, "time_text": "12:00:00"},
+		{"id": 2, "location": "backyard", "sender_id": 42, "sender": "Тестовый Боец", "recipient_id": null, "text": "Я в деле, жду заявок", "created_at": 1799999950.0, "time_text": "12:00:50"},
+		{"id": 3, "location": "backyard", "sender_id": 9, "sender": "Бродяга", "recipient_id": null, "text": "[ИГРОК] Бродяга вышел из игры", "created_at": 1799999990.0, "time_text": "12:01:30"}
+	],
+	"offers": [
+		{"id": "offer-7", "sender_id": "7", "sender": "Соперник", "target_id": null, "location": "backyard", "status": "pending", "created_at": 1799999995.0, "ttl": 300},
+		{"id": "offer-9", "sender_id": "9", "sender": "Бродяга", "target_id": null, "location": "backyard", "status": "pending", "created_at": 1799999700.0, "ttl": 300}
+	],
+	"my_application": null,
+	"group_offers": [
+		{"id": "group-11", "sender_id": 11, "sender": "Лучник", "status": "waiting", "max_participants": 8, "ttl": 600, "created_at": 1799999800.0, "participants": [{"id": 11, "name": "Лучник"}, {"id": 12, "name": "Маг"}, {"id": 13, "name": "Вор"}]}
+	]
+}

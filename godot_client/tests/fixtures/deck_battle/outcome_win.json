@@ -1,0 +1,183 @@
+{
+  "battle_id": "5b0e7c2a9d4f4e61a3c8f1e2d7b9a046",
+  "group_id": null,
+  "phase": "result",
+  "seconds_left": 0,
+  "timeout_count": 0,
+  "draft_mode": "",
+  "turn": 6,
+  "side": "player",
+  "fighter": {
+    "name": "Тестовый Некромант",
+    "level": 4,
+    "type": "necromancer",
+    "hp": 48,
+    "max_hp": 60,
+    "mp": 50,
+    "max_mp": 50,
+    "stats": {
+      "strength": 2,
+      "agility": 3,
+      "intuition": 2,
+      "wisdom": 4,
+      "intellect": 5,
+      "harmony": 3,
+      "endurance": 4
+    },
+    "unique_resource_type": "necrotism",
+    "unique_resource": 77,
+    "unique_resource_max": 77
+  },
+  "opponent": {
+    "name": "Тестовый Боец",
+    "level": 4,
+    "type": "warrior",
+    "hp": 0,
+    "max_hp": 130,
+    "mp": 10,
+    "max_mp": 10,
+    "stats": {
+      "strength": 6,
+      "agility": 2,
+      "intuition": 3,
+      "wisdom": 2,
+      "intellect": 2,
+      "harmony": 2,
+      "endurance": 6
+    },
+    "unique_resource_type": "rage",
+    "unique_resource": 77,
+    "unique_resource_max": 77
+  },
+  "hand": [
+    {
+      "key": "necromancer_familiar",
+      "name": "Призыв фамильяра",
+      "group_name": "Некромант: Некротизм",
+      "effect_type": "necromancer_summon",
+      "effect_data": {
+        "summon_kind": "familiar",
+        "range": 1
+      },
+      "resource_type": "unique",
+      "resource_cost": 14,
+      "effect_duration": 0,
+      "rarity": "basic"
+    },
+    {
+      "key": "necromancer_lokrif",
+      "name": "Призыв локрифа",
+      "group_name": "Некромант: Некротизм",
+      "effect_type": "necromancer_summon",
+      "effect_data": {
+        "summon_kind": "lokrif",
+        "range": 1
+      },
+      "resource_type": "unique",
+      "resource_cost": 24,
+      "effect_duration": 0,
+      "rarity": "basic"
+    },
+    {
+      "key": "necromancer_bone_hero",
+      "name": "Призыв костяного героя",
+      "group_name": "Некромант: Некротизм",
+      "effect_type": "necromancer_summon",
+      "effect_data": {
+        "summon_kind": "bone_hero",
+        "range": 1
+      },
+      "resource_type": "unique",
+      "resource_cost": 43,
+      "effect_duration": 0,
+      "rarity": "basic"
+    }
+  ],
+  "selected": [],
+  "table": [],
+  "draw_choices": [],
+  "can_select": [],
+  "confirmed": true,
+  "opponent_confirmed": true,
+  "opponent_draft_picks": [],
+  "opponent_last_draft_picks": [],
+  "last_exchange": [
+    {
+      "side": "player",
+      "card": "Призыв фамильяра",
+      "damage": 9,
+      "healed": 0,
+      "critical": false,
+      "dodged": false
+    },
+    {
+      "side": "enemy",
+      "card": "Удар Валентайна",
+      "damage": 0,
+      "healed": 0,
+      "critical": false,
+      "dodged": true
+    }
+  ],
+  "history": [
+    {
+      "turn": 5,
+      "events": [
+        {
+          "side": "enemy",
+          "card": "Удар Валентайна",
+          "damage": 5,
+          "healed": 0,
+          "critical": false,
+          "dodged": false
+        }
+      ]
+    },
+    {
+      "turn": 6,
+      "events": [
+        {
+          "side": "player",
+          "card": "Призыв фамильяра",
+          "damage": 9,
+          "healed": 0,
+          "critical": false,
+          "dodged": false
+        },
+        {
+          "side": "enemy",
+          "card": "Удар Валентайна",
+          "damage": 0,
+          "healed": 0,
+          "critical": false,
+          "dodged": true
+        }
+      ]
+    }
+  ],
+  "outcome": "win",
+  "reward_card_keys": [
+    "necromancer_familiar",
+    "necromancer_lokrif",
+    "necromancer_bone_hero",
+    "necromancer_spirit",
+    "necromancer_lyrk",
+    "necromancer_grave_zink",
+    "necromancer_transfer",
+    "necromancer_slow_trap",
+    "necromancer_knockback_trap",
+    "necromancer_dead_god_blessing",
+    "necromancer_in_the_name",
+    "necromancer_familiar_search",
+    "necromancer_necrotic_charge",
+    "necromancer_fragility_curse",
+    "necromancer_gravestones",
+    "necromancer_screamer",
+    "necromancer_grave_soil",
+    "necromancer_dead_god_sacrifice",
+    "necromancer_dead_god_curse",
+    "necromancer_dead_grip",
+    "necromancer_dead_god_bargain",
+    "necromancer_bone_dragon"
+  ]
+}

@@ -1,0 +1,60 @@
+{
+ "items": [
+  {
+   "item_id": 4,
+   "name": "Зелье восстановления здоровья",
+   "item_type": "potion",
+   "rarity": "common",
+   "weight": 0.1,
+   "price": 15,
+   "description": "Восстанавливает 20 HP в бою",
+   "effects": {
+    "type": "battle_hp",
+    "value": 20
+   },
+   "icon": "potion_red"
+  },
+  {
+   "item_id": 5,
+   "name": "Зелье восстановления маны",
+   "item_type": "potion",
+   "rarity": "common",
+   "weight": 0.1,
+   "price": 15,
+   "description": "Восстанавливает 12 маны в бою",
+   "effects": {
+    "type": "battle_mp",
+    "value": 12
+   },
+   "icon": "potion_blue"
+  },
+  {
+   "item_id": 6,
+   "name": "Метательный кинжал",
+   "item_type": "potion",
+   "rarity": "common",
+   "weight": 0.1,
+   "price": 5,
+   "description": "Наносит выбранному врагу 9 урона в бою",
+   "effects": {
+    "type": "battle_damage",
+    "value": 9
+   },
+   "icon": "right_hand_steel_sword"
+  },
+  {
+   "item_id": 52,
+   "name": "Свиток разрушения магии",
+   "item_type": "scroll",
+   "rarity": "rare",
+   "weight": 0.2,
+   "price": 60,
+   "description": "Требует 20 маны. Снимает один отрицательный эффект в бою",
+   "effects": {
+    "type": "battle_cleanse",
+    "mana_cost": 20
+   },
+   "icon": "scroll"
+  }
+ ]
+}

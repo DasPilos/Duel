@@ -1,6 +1,10 @@
-# Duel
+# Multiverse of Games
 
-Multiplayer RPG: a Pygame client and a Python HTTP server. PostgreSQL is the source of truth. All character professions share one world (`WORLD_ID`).
+Multimode game: a Pygame client connects to a central lobby and to independent Tower, Economy, Deck, or Front Line world servers. PostgreSQL is the source of truth; each mode stores its gameplay data separately.
+
+> **Режимы:** world-server entrypoints and APIs are isolated by mode. Shared services are the account/lobby control plane and visual assets.
+
+The Godot client and its source art library are in [`godot_client/`](./godot_client/). Install Git LFS and run `git lfs pull` after cloning to download binary art assets.
 
 ## Quick Start (Windows)
 
@@ -14,16 +18,39 @@ python -m pip install -r requirements.txt
 
 Set `DATABASE_URL` if the default `postgresql://game@127.0.0.1:5432/game` does not fit. Keep the password in the PostgreSQL password file, never in source control.
 
-Terminal 1, server:
+Terminal 1, central lobby:
 
 ```powershell
 $env:HOST = '127.0.0.1'
 $env:PORT = '8765'
-$env:WORLD_ID = '1'
-python -m server.main
+python -m server.central_main
 ```
 
-Terminal 2, online client:
+Start a world from the central lobby, or run one mode manually:
+
+```powershell
+$env:WORLD_ID = '1'
+$env:GAME_SCHEMA = 'tower'
+python -m tower.server.main
+```
+
+For Economy, use its own schema and entrypoint:
+
+```powershell
+$env:WORLD_ID = '1'
+$env:GAME_SCHEMA = 'economy'
+python -m economy.server.main
+```
+
+For Deck, start its separate world server with the central-server-issued mode world ID:
+
+```powershell
+$env:DECK_WORLD_ID = '5'
+$env:DECK_PORT = '8802'
+python -m deck.server.main
+```
+
+Online client:
 
 ```powershell
 python main.py --online --server http://127.0.0.1:8765

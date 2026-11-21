@@ -18,7 +18,7 @@ SLOT_LABELS = dict(
     (slot, label) for slot, label in (
         ("head", "Голова"), ("ears", "Серьги"), ("neck", "Шея"), ("back", "Плащ"), ("body", "Доспех"),
         ("hands", "Руки"), ("weapon", "Правая рука"), ("shield", "Левая рука"), ("belt", "Пояс"),
-        ("ring", "Кольцо 1"), ("ring_2", "Кольцо 2"), ("legs", "Ноги"), ("feet", "Обувь"),
+        ("ring", "Кольца"), ("legs", "Ноги"), ("feet", "Обувь"),
     )
 )
 
@@ -34,6 +34,8 @@ COLUMNS = (
         ("move_speed_percent", "Скорость передвижения, %", "int", 5, -90, 200),
         ("damage_min", "Урон от", "int", 1, 0, 999),
         ("damage_max", "Урон до", "int", 1, 0, 999),
+        ("attack_range", "Дальность атаки, клеток", "int", 1, 0, item_form.MAX_ATTACK_DISTANCE),
+        ("attack_area", "Площадь атаки, клеток", "int", 1, 0, item_form.MAX_ATTACK_DISTANCE),
         ("price", "Цена, мед.", "int", 100, 0, item_form.MAX_PRICE),
     ],
     [("header", "Требование", "", 0, 0, 0), ("level", "Уровень", "int", 1, 1, item_form.MAX_LEVEL)]
@@ -46,8 +48,14 @@ COLUMNS = (
         ("anti_dodge", "Анти уворот, %", "int", 1, 0, 100),
         ("crit", "Крит, %", "int", 1, 0, 100),
         ("anti_crit", "Крит антикрит, %", "int", 1, 0, 100),
-        ("crit_power", "Сила крита, %", "int", 5, 0, 500),
-        ("block", "Блок, %", "int", 1, 0, 100),
+        ("crit_power", "Мощь критического удара, %", "int", 5, 0, 500),
+        ("block", "Шанс блока, %", "int", 1, 0, 100),
+        ("lifesteal_percent", "Вампиризм, %", "int", 1, 0, 100),
+        ("header", "Аура", "", 0, 0, 0),
+        ("aura_type", "Тип ауры", "choice", 0, 0, 0),
+        ("aura_target", "Цель ауры", "choice", 0, 0, 0),
+        ("aura_radius_px", "Радиус, пикселей", "int", 10, 0, item_form.MAX_AURA_RADIUS),
+        ("aura_lifesteal_percent", "Вампиризм ауры, %", "int", 1, 0, 100),
         ("hp", "ХП", "int", 10, 0, item_form.MAX_HP),
         ("mp", "МП", "int", 10, 0, item_form.MAX_HP),
         ("magic_damage", "Маг урон", "int", 1, 0, item_form.MAX_DAMAGE),
@@ -97,6 +105,8 @@ class ItemFormDialog:
             return {"box": pygame.Rect(x + CTRL_X, y + 3, 22, 22)}
         if kind == "icon":
             return {"button": pygame.Rect(x + CTRL_X, y, 160, 28)}
+        if kind == "choice":
+            return {"button": pygame.Rect(x + CTRL_X, y, 160, 28)}
         return {
             "minus": pygame.Rect(x + CTRL_X, y, 28, 28),
             "value": pygame.Rect(x + CTRL_X + 32, y, 72, 28),
@@ -131,7 +141,7 @@ class ItemFormDialog:
         self._set(key, max(low, min(high, self._get(key) + direction * step)))
 
     def _step_slot(self, direction):
-        slots = mob_modes.MOB_EQUIPMENT_SLOTS
+        slots = item_form.ITEM_FORM_SLOTS
         index = slots.index(self.form["slot"])
         self.form["slot"] = slots[(index + direction) % len(slots)]
 
@@ -247,6 +257,12 @@ class ItemFormDialog:
                 self.form["two_handed"] = not self.form["two_handed"]
                 self.focus = None
                 return None
+            if spec[2] == "choice" and controls["button"].collidepoint(pos):
+                choices = item_form.AURA_TYPES if key == "aura_type" else item_form.AURA_TARGETS
+                options = list(choices)
+                self.form[key] = options[(options.index(self.form[key]) + 1) % len(options)]
+                self.focus = None
+                return None
             if spec[2] == "icon" and controls["button"].collidepoint(pos):
                 self._open_icon_picker()
                 return None
@@ -266,7 +282,7 @@ class ItemFormDialog:
         _panel(screen, box)
         screen.blit(self.font.render("Новый предмет", True, TEXT), (box.x + 24, box.y + 18))
         screen.blit(
-            self.small.render("Предмет сохранится в базу. Уворот, скорости, криты и магический урон пока не участвуют в бою: значения сохраняются", True, TEXT_DIM),
+            self.small.render("Вампиризм и аура действуют в бою Front Line; часть остальных параметров пока сохраняется для последующей настройки", True, TEXT_DIM),
             (box.x + 24, box.y + 46),
         )
         mouse = pygame.mouse.get_pos()
@@ -297,6 +313,13 @@ class ItemFormDialog:
                 pygame.draw.rect(screen, BUTTON_ON if button.collidepoint(mouse) else MENU_BG, button, border_radius=4)
                 pygame.draw.rect(screen, BORDER, button, 1, border_radius=4)
                 text = self.small.render(_fit(self.small, self.form["icon"] or "нет", button.w - 12), True, TEXT)
+                screen.blit(text, text.get_rect(center=button.center))
+            elif kind == "choice":
+                button = controls["button"]
+                pygame.draw.rect(screen, BUTTON_ON if button.collidepoint(mouse) else MENU_BG, button, border_radius=4)
+                pygame.draw.rect(screen, BORDER, button, 1, border_radius=4)
+                choices = item_form.AURA_TYPES if key == "aura_type" else item_form.AURA_TARGETS
+                text = self.small.render(_fit(self.small, choices[self.form[key]], button.w - 12), True, TEXT)
                 screen.blit(text, text.get_rect(center=button.center))
             elif kind == "flag":
                 box_rect = controls["box"]

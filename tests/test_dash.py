@@ -72,7 +72,7 @@ class FakeWorldClient:
         self.calls = []
         self.reply = {}
 
-    def world_sync(self, character_id, x, y, attack_id, dash_target, since):
+    def world_sync(self, character_id, x, y, attack_id, dash_target, since, harvest_target=None):
         self.calls.append({"x": x, "y": y, "attack_id": attack_id, "dash_target": dash_target})
         return make_snapshot(seq=len(self.calls), **{"x": x, "y": y, **self.reply})
 

@@ -37,4 +37,5 @@ def upload_server_map(client, entry):
     return client.save_saved_map(
         data["cells"], data["map_w"], data["map_h"], entry["name"], entry["mode"],
         mobs=data.get("mobs", []), spawns=data.get("spawns", []),
+        crystals=data.get("crystals", {}), harvest_enabled=data.get("harvest_enabled", False),
     )

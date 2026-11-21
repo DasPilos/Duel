@@ -1,0 +1,614 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<map version="1.10" tiledversion="1.12.2" orientation="orthogonal" renderorder="right-down" width="30" height="20" tilewidth="16" tileheight="16" infinite="1" nextlayerid="2" nextobjectid="1">
+ <tileset firstgid="1" name="Earth power_front-back" tilewidth="64" tileheight="80" tilecount="42" columns="21">
+  <image source="Earth power_front-back.png" trans="ff00ff" width="1344" height="160"/>
+  <tile id="0">
+   <animation>
+    <frame tileid="0" duration="150"/>
+    <frame tileid="1" duration="150"/>
+    <frame tileid="2" duration="150"/>
+    <frame tileid="3" duration="150"/>
+    <frame tileid="4" duration="150"/>
+    <frame tileid="5" duration="150"/>
+    <frame tileid="6" duration="150"/>
+    <frame tileid="7" duration="150"/>
+    <frame tileid="8" duration="150"/>
+    <frame tileid="9" duration="150"/>
+    <frame tileid="10" duration="150"/>
+    <frame tileid="11" duration="150"/>
+    <frame tileid="12" duration="150"/>
+    <frame tileid="13" duration="150"/>
+    <frame tileid="14" duration="150"/>
+    <frame tileid="15" duration="150"/>
+    <frame tileid="16" duration="150"/>
+    <frame tileid="17" duration="150"/>
+    <frame tileid="18" duration="150"/>
+    <frame tileid="19" duration="150"/>
+    <frame tileid="20" duration="150"/>
+   </animation>
+  </tile>
+  <tile id="21">
+   <animation>
+    <frame tileid="21" duration="150"/>
+    <frame tileid="22" duration="150"/>
+    <frame tileid="23" duration="150"/>
+    <frame tileid="24" duration="150"/>
+    <frame tileid="25" duration="150"/>
+    <frame tileid="26" duration="150"/>
+    <frame tileid="27" duration="150"/>
+    <frame tileid="28" duration="150"/>
+    <frame tileid="29" duration="150"/>
+    <frame tileid="30" duration="150"/>
+    <frame tileid="31" duration="150"/>
+    <frame tileid="32" duration="150"/>
+    <frame tileid="33" duration="150"/>
+    <frame tileid="34" duration="150"/>
+    <frame tileid="35" duration="150"/>
+    <frame tileid="36" duration="150"/>
+    <frame tileid="37" duration="150"/>
+    <frame tileid="38" duration="150"/>
+    <frame tileid="39" duration="150"/>
+    <frame tileid="40" duration="150"/>
+    <frame tileid="41" duration="150"/>
+   </animation>
+  </tile>
+ </tileset>
+ <tileset firstgid="43" name="Earth power_left-right" tilewidth="64" tileheight="64" tilecount="42" columns="21">
+  <image source="Earth power_left-right.png" trans="ff00ff" width="1344" height="128"/>
+  <tile id="0">
+   <animation>
+    <frame tileid="0" duration="150"/>
+    <frame tileid="1" duration="150"/>
+    <frame tileid="2" duration="150"/>
+    <frame tileid="3" duration="150"/>
+    <frame tileid="4" duration="150"/>
+    <frame tileid="5" duration="150"/>
+    <frame tileid="6" duration="150"/>
+    <frame tileid="7" duration="150"/>
+    <frame tileid="8" duration="150"/>
+    <frame tileid="9" duration="150"/>
+    <frame tileid="10" duration="150"/>
+    <frame tileid="11" duration="150"/>
+    <frame tileid="12" duration="150"/>
+    <frame tileid="13" duration="150"/>
+    <frame tileid="14" duration="150"/>
+    <frame tileid="15" duration="150"/>
+    <frame tileid="16" duration="150"/>
+    <frame tileid="17" duration="150"/>
+    <frame tileid="18" duration="150"/>
+    <frame tileid="19" duration="150"/>
+    <frame tileid="20" duration="150"/>
+   </animation>
+  </tile>
+  <tile id="21">
+   <animation>
+    <frame tileid="21" duration="150"/>
+    <frame tileid="22" duration="150"/>
+    <frame tileid="23" duration="150"/>
+    <frame tileid="24" duration="150"/>
+    <frame tileid="25" duration="150"/>
+    <frame tileid="26" duration="150"/>
+    <frame tileid="27" duration="150"/>
+    <frame tileid="28" duration="150"/>
+    <frame tileid="29" duration="150"/>
+    <frame tileid="30" duration="150"/>
+    <frame tileid="31" duration="150"/>
+    <frame tileid="32" duration="150"/>
+    <frame tileid="33" duration="150"/>
+    <frame tileid="34" duration="150"/>
+    <frame tileid="35" duration="150"/>
+    <frame tileid="36" duration="150"/>
+    <frame tileid="37" duration="150"/>
+    <frame tileid="38" duration="150"/>
+    <frame tileid="39" duration="150"/>
+    <frame tileid="40" duration="150"/>
+    <frame tileid="41" duration="150"/>
+   </animation>
+  </tile>
+ </tileset>
+ <tileset firstgid="85" name="Wave_left-right" tilewidth="48" tileheight="64" tilecount="20" columns="10">
+  <image source="Wave_left-right.png" trans="ff00ff" width="480" height="128"/>
+  <tile id="0">
+   <animation>
+    <frame tileid="0" duration="150"/>
+    <frame tileid="1" duration="150"/>
+    <frame tileid="2" duration="150"/>
+    <frame tileid="3" duration="150"/>
+    <frame tileid="4" duration="150"/>
+    <frame tileid="5" duration="150"/>
+    <frame tileid="6" duration="150"/>
+    <frame tileid="7" duration="150"/>
+    <frame tileid="8" duration="150"/>
+    <frame tileid="9" duration="150"/>
+   </animation>
+  </tile>
+  <tile id="10">
+   <animation>
+    <frame tileid="10" duration="150"/>
+    <frame tileid="11" duration="150"/>
+    <frame tileid="12" duration="150"/>
+    <frame tileid="13" duration="150"/>
+    <frame tileid="14" duration="150"/>
+    <frame tileid="15" duration="150"/>
+    <frame tileid="16" duration="150"/>
+    <frame tileid="17" duration="150"/>
+    <frame tileid="18" duration="150"/>
+    <frame tileid="19" duration="150"/>
+   </animation>
+  </tile>
+ </tileset>
+ <tileset firstgid="105" name="Wave_front-bacj" tilewidth="64" tileheight="48" tilecount="20" columns="10">
+  <image source="Wave_front-bacj.aseprite" trans="ff00ff" width="640" height="96"/>
+  <tile id="0">
+   <animation>
+    <frame tileid="0" duration="150"/>
+    <frame tileid="1" duration="150"/>
+    <frame tileid="2" duration="150"/>
+    <frame tileid="3" duration="150"/>
+    <frame tileid="4" duration="150"/>
+    <frame tileid="5" duration="150"/>
+    <frame tileid="6" duration="150"/>
+    <frame tileid="7" duration="150"/>
+    <frame tileid="8" duration="150"/>
+    <frame tileid="9" duration="150"/>
+   </animation>
+  </tile>
+  <tile id="10">
+   <animation>
+    <frame tileid="10" duration="150"/>
+    <frame tileid="11" duration="150"/>
+    <frame tileid="12" duration="150"/>
+    <frame tileid="13" duration="150"/>
+    <frame tileid="14" duration="150"/>
+    <frame tileid="15" duration="150"/>
+    <frame tileid="16" duration="150"/>
+    <frame tileid="17" duration="150"/>
+    <frame tileid="18" duration="150"/>
+    <frame tileid="19" duration="150"/>
+   </animation>
+  </tile>
+ </tileset>
+ <tileset firstgid="125" name="Water _splash_front-back" tilewidth="48" tileheight="64" tilecount="18" columns="9">
+  <image source="Water _splash_front-back.png" trans="ff00ff" width="432" height="128"/>
+  <tile id="0">
+   <animation>
+    <frame tileid="0" duration="150"/>
+    <frame tileid="1" duration="150"/>
+    <frame tileid="2" duration="150"/>
+    <frame tileid="3" duration="150"/>
+    <frame tileid="4" duration="150"/>
+    <frame tileid="5" duration="150"/>
+    <frame tileid="6" duration="150"/>
+    <frame tileid="7" duration="150"/>
+    <frame tileid="8" duration="150"/>
+   </animation>
+  </tile>
+  <tile id="9">
+   <animation>
+    <frame tileid="9" duration="150"/>
+    <frame tileid="10" duration="150"/>
+    <frame tileid="11" duration="150"/>
+    <frame tileid="12" duration="150"/>
+    <frame tileid="13" duration="150"/>
+    <frame tileid="14" duration="150"/>
+    <frame tileid="15" duration="150"/>
+    <frame tileid="16" duration="150"/>
+    <frame tileid="17" duration="150"/>
+   </animation>
+  </tile>
+ </tileset>
+ <tileset firstgid="143" name="Water _splash_left-right" tilewidth="64" tileheight="48" tilecount="18" columns="9">
+  <image source="Water _splash_left-right.png" trans="ff00ff" width="576" height="96"/>
+  <tile id="0">
+   <animation>
+    <frame tileid="0" duration="150"/>
+    <frame tileid="1" duration="150"/>
+    <frame tileid="2" duration="150"/>
+    <frame tileid="3" duration="150"/>
+    <frame tileid="4" duration="150"/>
+    <frame tileid="5" duration="150"/>
+    <frame tileid="6" duration="150"/>
+    <frame tileid="7" duration="150"/>
+    <frame tileid="8" duration="150"/>
+   </animation>
+  </tile>
+  <tile id="9">
+   <animation>
+    <frame tileid="9" duration="150"/>
+    <frame tileid="10" duration="150"/>
+    <frame tileid="11" duration="150"/>
+    <frame tileid="12" duration="150"/>
+    <frame tileid="13" duration="150"/>
+    <frame tileid="14" duration="150"/>
+    <frame tileid="15" duration="150"/>
+    <frame tileid="16" duration="150"/>
+    <frame tileid="17" duration="150"/>
+   </animation>
+  </tile>
+ </tileset>
+ <tileset firstgid="161" name="Lightning_sphere_cycle" tilewidth="128" tileheight="128" tilecount="8" columns="8">
+  <image source="Lightning_sphere_cycle.png" trans="ff00ff" width="1024" height="128"/>
+  <tile id="0">
+   <animation>
+    <frame tileid="0" duration="150"/>
+    <frame tileid="1" duration="150"/>
+    <frame tileid="2" duration="150"/>
+    <frame tileid="3" duration="150"/>
+    <frame tileid="4" duration="150"/>
+    <frame tileid="5" duration="150"/>
+    <frame tileid="6" duration="150"/>
+    <frame tileid="7" duration="150"/>
+   </animation>
+  </tile>
+ </tileset>
+ <tileset firstgid="169" name="Lightning_sphere_fade" tilewidth="128" tileheight="128" tilecount="1" columns="1">
+  <image source="Lightning_sphere_fade.png" trans="ff00ff" width="128" height="128"/>
+ </tileset>
+ <tileset firstgid="170" name="Heart_buff" tilewidth="64" tileheight="48" tilecount="12" columns="12">
+  <image source="Heart_buff.png" trans="ff00ff" width="768" height="48"/>
+  <tile id="0">
+   <animation>
+    <frame tileid="0" duration="150"/>
+    <frame tileid="1" duration="150"/>
+    <frame tileid="2" duration="150"/>
+    <frame tileid="3" duration="150"/>
+    <frame tileid="4" duration="150"/>
+    <frame tileid="5" duration="150"/>
+    <frame tileid="6" duration="150"/>
+    <frame tileid="7" duration="150"/>
+    <frame tileid="8" duration="150"/>
+    <frame tileid="9" duration="150"/>
+    <frame tileid="10" duration="150"/>
+    <frame tileid="11" duration="150"/>
+   </animation>
+  </tile>
+ </tileset>
+ <tileset firstgid="182" name="Feather_buff" tilewidth="64" tileheight="48" tilecount="12" columns="12">
+  <image source="Feather_buff.png" trans="ff00ff" width="768" height="48"/>
+  <tile id="0">
+   <animation>
+    <frame tileid="0" duration="150"/>
+    <frame tileid="1" duration="150"/>
+    <frame tileid="2" duration="150"/>
+    <frame tileid="3" duration="150"/>
+    <frame tileid="4" duration="150"/>
+    <frame tileid="5" duration="150"/>
+    <frame tileid="6" duration="150"/>
+    <frame tileid="7" duration="150"/>
+    <frame tileid="8" duration="150"/>
+    <frame tileid="9" duration="150"/>
+    <frame tileid="10" duration="150"/>
+    <frame tileid="11" duration="150"/>
+   </animation>
+  </tile>
+ </tileset>
+ <tileset firstgid="194" name="Lianas_left-right" tilewidth="96" tileheight="64" tilecount="22" columns="11">
+  <image source="Lianas_left-right.png" trans="ff00ff" width="1056" height="128"/>
+  <tile id="0">
+   <animation>
+    <frame tileid="0" duration="150"/>
+    <frame tileid="1" duration="150"/>
+    <frame tileid="2" duration="150"/>
+    <frame tileid="3" duration="150"/>
+    <frame tileid="4" duration="150"/>
+    <frame tileid="5" duration="150"/>
+    <frame tileid="6" duration="150"/>
+    <frame tileid="7" duration="150"/>
+    <frame tileid="8" duration="150"/>
+    <frame tileid="9" duration="150"/>
+    <frame tileid="10" duration="150"/>
+   </animation>
+  </tile>
+  <tile id="11">
+   <animation>
+    <frame tileid="11" duration="150"/>
+    <frame tileid="12" duration="150"/>
+    <frame tileid="13" duration="150"/>
+    <frame tileid="14" duration="150"/>
+    <frame tileid="15" duration="150"/>
+    <frame tileid="16" duration="150"/>
+    <frame tileid="17" duration="150"/>
+    <frame tileid="18" duration="150"/>
+    <frame tileid="19" duration="150"/>
+    <frame tileid="20" duration="150"/>
+    <frame tileid="21" duration="150"/>
+   </animation>
+  </tile>
+ </tileset>
+ <tileset firstgid="216" name="Lianas_front-back" tilewidth="64" tileheight="112" tilecount="22" columns="11">
+  <image source="Lianas_front-back.png" trans="ff00ff" width="704" height="224"/>
+  <tile id="0">
+   <animation>
+    <frame tileid="0" duration="150"/>
+    <frame tileid="1" duration="150"/>
+    <frame tileid="2" duration="150"/>
+    <frame tileid="3" duration="150"/>
+    <frame tileid="4" duration="150"/>
+    <frame tileid="5" duration="150"/>
+    <frame tileid="6" duration="150"/>
+    <frame tileid="7" duration="150"/>
+    <frame tileid="8" duration="150"/>
+    <frame tileid="9" duration="150"/>
+    <frame tileid="10" duration="150"/>
+   </animation>
+  </tile>
+  <tile id="11">
+   <animation>
+    <frame tileid="11" duration="150"/>
+    <frame tileid="12" duration="150"/>
+    <frame tileid="13" duration="150"/>
+    <frame tileid="14" duration="150"/>
+    <frame tileid="15" duration="150"/>
+    <frame tileid="16" duration="150"/>
+    <frame tileid="17" duration="150"/>
+    <frame tileid="18" duration="150"/>
+    <frame tileid="19" duration="150"/>
+    <frame tileid="20" duration="150"/>
+    <frame tileid="21" duration="150"/>
+   </animation>
+  </tile>
+ </tileset>
+ <tileset firstgid="238" name="Falling_flaming_stones" tilewidth="64" tileheight="96" tilecount="48" columns="12">
+  <image source="Falling_flaming_stones.png" trans="ff00ff" width="768" height="384"/>
+  <tile id="0">
+   <animation>
+    <frame tileid="0" duration="150"/>
+    <frame tileid="1" duration="150"/>
+    <frame tileid="2" duration="150"/>
+    <frame tileid="3" duration="150"/>
+    <frame tileid="4" duration="150"/>
+    <frame tileid="5" duration="150"/>
+    <frame tileid="6" duration="150"/>
+    <frame tileid="7" duration="150"/>
+    <frame tileid="8" duration="150"/>
+    <frame tileid="9" duration="150"/>
+    <frame tileid="10" duration="150"/>
+    <frame tileid="11" duration="150"/>
+   </animation>
+  </tile>
+  <tile id="12">
+   <animation>
+    <frame tileid="12" duration="150"/>
+    <frame tileid="13" duration="150"/>
+    <frame tileid="14" duration="150"/>
+    <frame tileid="15" duration="150"/>
+    <frame tileid="16" duration="150"/>
+    <frame tileid="17" duration="150"/>
+    <frame tileid="18" duration="150"/>
+    <frame tileid="19" duration="150"/>
+    <frame tileid="20" duration="150"/>
+    <frame tileid="21" duration="150"/>
+    <frame tileid="22" duration="150"/>
+    <frame tileid="23" duration="150"/>
+   </animation>
+  </tile>
+  <tile id="24">
+   <animation>
+    <frame tileid="24" duration="150"/>
+    <frame tileid="25" duration="150"/>
+    <frame tileid="26" duration="150"/>
+    <frame tileid="27" duration="150"/>
+    <frame tileid="28" duration="150"/>
+    <frame tileid="29" duration="150"/>
+    <frame tileid="30" duration="150"/>
+    <frame tileid="31" duration="150"/>
+    <frame tileid="32" duration="150"/>
+    <frame tileid="33" duration="150"/>
+    <frame tileid="34" duration="150"/>
+    <frame tileid="35" duration="150"/>
+   </animation>
+  </tile>
+  <tile id="36">
+   <animation>
+    <frame tileid="36" duration="150"/>
+    <frame tileid="37" duration="150"/>
+    <frame tileid="38" duration="150"/>
+    <frame tileid="39" duration="150"/>
+    <frame tileid="40" duration="150"/>
+    <frame tileid="41" duration="150"/>
+    <frame tileid="42" duration="150"/>
+    <frame tileid="43" duration="150"/>
+    <frame tileid="44" duration="150"/>
+    <frame tileid="45" duration="150"/>
+    <frame tileid="46" duration="150"/>
+    <frame tileid="47" duration="150"/>
+   </animation>
+  </tile>
+ </tileset>
+ <tileset firstgid="286" name="Water_attack_left-right" tilewidth="80" tileheight="64" tilecount="30" columns="15">
+  <image source="Water_attack_left-right.png" trans="ff00ff" width="1200" height="128"/>
+  <tile id="0">
+   <animation>
+    <frame tileid="0" duration="150"/>
+    <frame tileid="1" duration="150"/>
+    <frame tileid="2" duration="150"/>
+    <frame tileid="3" duration="150"/>
+    <frame tileid="4" duration="150"/>
+    <frame tileid="5" duration="150"/>
+    <frame tileid="6" duration="150"/>
+    <frame tileid="7" duration="150"/>
+    <frame tileid="8" duration="150"/>
+    <frame tileid="9" duration="150"/>
+    <frame tileid="10" duration="150"/>
+    <frame tileid="11" duration="150"/>
+    <frame tileid="12" duration="150"/>
+    <frame tileid="13" duration="150"/>
+    <frame tileid="14" duration="150"/>
+   </animation>
+  </tile>
+  <tile id="15">
+   <animation>
+    <frame tileid="15" duration="150"/>
+    <frame tileid="16" duration="150"/>
+    <frame tileid="17" duration="150"/>
+    <frame tileid="18" duration="150"/>
+    <frame tileid="19" duration="150"/>
+    <frame tileid="20" duration="150"/>
+    <frame tileid="21" duration="150"/>
+    <frame tileid="22" duration="150"/>
+    <frame tileid="23" duration="150"/>
+    <frame tileid="24" duration="150"/>
+    <frame tileid="25" duration="150"/>
+    <frame tileid="26" duration="150"/>
+    <frame tileid="27" duration="150"/>
+    <frame tileid="28" duration="150"/>
+    <frame tileid="29" duration="150"/>
+   </animation>
+  </tile>
+ </tileset>
+ <tileset firstgid="316" name="Water_attack_front-back" tilewidth="64" tileheight="80" tilecount="30" columns="15">
+  <image source="Water_attack_front-back.png" trans="ff00ff" width="960" height="160"/>
+  <tile id="0">
+   <animation>
+    <frame tileid="0" duration="150"/>
+    <frame tileid="1" duration="150"/>
+    <frame tileid="2" duration="150"/>
+    <frame tileid="3" duration="150"/>
+    <frame tileid="4" duration="150"/>
+    <frame tileid="5" duration="150"/>
+    <frame tileid="6" duration="150"/>
+    <frame tileid="7" duration="150"/>
+    <frame tileid="8" duration="150"/>
+    <frame tileid="9" duration="150"/>
+    <frame tileid="10" duration="150"/>
+    <frame tileid="11" duration="150"/>
+    <frame tileid="12" duration="150"/>
+    <frame tileid="13" duration="150"/>
+    <frame tileid="14" duration="150"/>
+   </animation>
+  </tile>
+  <tile id="15">
+   <animation>
+    <frame tileid="15" duration="150"/>
+    <frame tileid="16" duration="150"/>
+    <frame tileid="17" duration="150"/>
+    <frame tileid="18" duration="150"/>
+    <frame tileid="19" duration="150"/>
+    <frame tileid="20" duration="150"/>
+    <frame tileid="21" duration="150"/>
+    <frame tileid="22" duration="150"/>
+    <frame tileid="23" duration="150"/>
+    <frame tileid="24" duration="150"/>
+    <frame tileid="25" duration="150"/>
+    <frame tileid="26" duration="150"/>
+    <frame tileid="27" duration="150"/>
+    <frame tileid="28" duration="150"/>
+    <frame tileid="29" duration="150"/>
+   </animation>
+  </tile>
+ </tileset>
+ <tileset firstgid="346" name="Flaming_sphere" tilewidth="96" tileheight="96" tilecount="10" columns="10">
+  <image source="Flaming_sphere.png" trans="ff00ff" width="960" height="96"/>
+  <tile id="0">
+   <animation>
+    <frame tileid="0" duration="150"/>
+    <frame tileid="1" duration="150"/>
+    <frame tileid="2" duration="150"/>
+    <frame tileid="3" duration="150"/>
+    <frame tileid="4" duration="150"/>
+    <frame tileid="5" duration="150"/>
+    <frame tileid="6" duration="150"/>
+    <frame tileid="7" duration="150"/>
+    <frame tileid="8" duration="150"/>
+    <frame tileid="9" duration="150"/>
+   </animation>
+  </tile>
+ </tileset>
+ <tileset firstgid="356" name="Flaming_sphere_fade" tilewidth="96" tileheight="96" tilecount="1" columns="1">
+  <image source="Flaming_sphere_fade.png" trans="ff00ff" width="96" height="96"/>
+ </tileset>
+ <layer id="1" name="Слой тайлов 1" width="30" height="20">
+  <data encoding="csv">
+   <chunk x="-16" y="0" width="16" height="16">
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,22,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,43,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,64,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+</chunk>
+   <chunk x="0" y="0" width="16" height="16">
+0,0,85,0,0,0,0,0,0,0,0,0,0,0,0,125,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,95,0,0,0,0,161,0,0,0,0,0,0,0,134,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,105,0,0,0,0,0,0,0,0,0,0,0,0,143,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,115,0,0,0,0,0,0,0,0,0,0,0,0,152,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,169,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+</chunk>
+   <chunk x="16" y="0" width="16" height="16">
+0,0,0,170,0,0,0,194,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,238,0,0,
+0,0,0,182,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,205,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,250,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,216,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,262,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+</chunk>
+   <chunk x="32" y="0" width="16" height="16">
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,286,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,346,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,301,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,356,0,0,0,0,0,0,0,0,0,
+0,316,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,331,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+</chunk>
+   <chunk x="16" y="16" width="16" height="16">
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,227,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,274,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+</chunk>
+  </data>
+ </layer>
+</map>

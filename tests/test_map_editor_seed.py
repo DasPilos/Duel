@@ -1,10 +1,8 @@
 import unittest
 
-from client.map_editor_seed import (
-    BRIDGE_KEY, DEAD_TREE_KEYS, GRASS_KEYS, LOG_KEYS, ROAD_KEYS, STUMP_KEYS, TREE_KEYS, WATER_KEYS,
-    build_tower_seed_cells, decode_tiles,
-)
+from client.map_editor_seed import _pools, build_tower_seed_cells, decode_tiles
 from client.map_editor_state import MapEditorState
+from core.map_catalog import infrastructure_keys
 from server import map_editor
 
 
@@ -30,22 +28,24 @@ def make_terrain():
 
 
 def make_cells(terrain=None):
-    roles = {(8, 1): "rock_01", (9, 1): "rock_01"}
-    return build_tower_seed_cells(terrain or make_terrain(), CATALOG, MAP_W, MAP_H, roles)
+    return build_tower_seed_cells(terrain or make_terrain(), CATALOG, MAP_W, MAP_H)
 
 
 def objects_by_anchor(cells):
     return {(cell["x"], cell["y"]): cell["key"] for cell in cells if cell["layer"] == "object"}
 
 
+def category(key):
+    return CATALOG[key]["category"]
+
+
 class TowerSeedTests(unittest.TestCase):
     def test_decode_tiles_expands_row_spans(self):
         self.assertEqual(decode_tiles([[1, 2, 4]]), {(2, 1), (3, 1), (4, 1)})
 
-    def test_seed_keys_exist_in_catalog(self):
-        keys = GRASS_KEYS + WATER_KEYS + ROAD_KEYS + TREE_KEYS + DEAD_TREE_KEYS + STUMP_KEYS + LOG_KEYS + (BRIDGE_KEY,)
-        missing = [key for key in keys if key not in CATALOG]
-        self.assertEqual(missing, [])
+    def test_seed_uses_catalog_pools_only(self):
+        self.assertTrue(all(_pools(CATALOG).values()), _pools(CATALOG))
+        self.assertTrue(all(cell["key"] in CATALOG for cell in make_cells()))
 
     def test_seed_passes_server_validation_and_loads_without_loss(self):
         cells = make_cells()
@@ -56,24 +56,38 @@ class TowerSeedTests(unittest.TestCase):
     def test_every_tile_gets_ground(self):
         cells = make_cells()
         ground = {(cell["x"], cell["y"]): cell["key"] for cell in cells if cell["layer"] == "ground"}
+        relief = {(cell["x"], cell["y"]): cell["key"] for cell in cells if cell["layer"] == "relief"}
         self.assertEqual(len(ground), MAP_W * MAP_H)
-        self.assertIn(ground[(0, 2)], WATER_KEYS)
-        self.assertIn(ground[(0, 3)], ROAD_KEYS)
-        self.assertIn(ground[(0, 0)], GRASS_KEYS)
+        self.assertEqual(category(ground[(0, 2)]), "water")
+        self.assertEqual(category(ground[(0, 0)]), "grass")
+        self.assertEqual(category(ground[(8, 1)]), "grass")
+        self.assertEqual(category(relief[(8, 1)]), "rock")
+
+    def test_road_sits_on_overlay_and_grass_stays_below(self):
+        cells = make_cells()
+        overlay = {(cell["x"], cell["y"]): cell["key"] for cell in cells if cell["layer"] == "overlay"}
+        ground = {(cell["x"], cell["y"]): cell["key"] for cell in cells if cell["layer"] == "ground"}
+        self.assertEqual(set(overlay), {(x, 3) for x in range(MAP_W)})
+        for x in range(MAP_W):
+            self.assertEqual(category(overlay[(x, 3)]), "road")
+            self.assertEqual(category(ground[(x, 3)]), "grass")
 
     def test_forest_dry_and_mountain_objects(self):
         objects = objects_by_anchor(make_cells())
-        self.assertIn(objects[(0, 5)], TREE_KEYS)
-        self.assertIn(objects[(10, 0)], DEAD_TREE_KEYS)
-        self.assertIn(objects[(11, 0)], DEAD_TREE_KEYS)
-        self.assertEqual(objects[(8, 1)], "rock_01")
-        self.assertEqual(objects[(9, 1)], "rock_01")
+        self.assertEqual(category(objects[(0, 5)]), "tree")
+        self.assertEqual(category(objects[(10, 0)]), "old_tree")
+        self.assertEqual(category(objects[(11, 0)]), "old_tree")
+        self.assertNotIn((8, 1), objects)
+        self.assertNotIn((9, 1), objects)
 
-    def test_props_and_bridge_anchor_at_top_left(self):
-        objects = objects_by_anchor(make_cells())
-        self.assertIn(objects[(7, 7)], STUMP_KEYS)
-        self.assertIn(objects[(10, 6)], LOG_KEYS)
-        self.assertEqual(objects[(3, 3)], BRIDGE_KEY)
+    def test_props_and_bridge_are_objects_and_infrastructure(self):
+        cells = make_cells()
+        objects = objects_by_anchor(cells)
+        self.assertEqual(category(objects[(7, 7)]), "stump")
+        self.assertEqual(category(objects[(10, 6)]), "log")
+        infra = {(cell["x"], cell["y"]): cell["key"] for cell in cells if cell["layer"] == "infra"}
+        self.assertTrue(infra)
+        self.assertTrue(set(infra.values()) <= infrastructure_keys())
 
     def test_bridge_covers_forest_tile_without_tree(self):
         objects = objects_by_anchor(make_cells())
@@ -86,9 +100,10 @@ class TowerSeedTests(unittest.TestCase):
         state = MapEditorState(list(CATALOG.values()), [], MAP_W, MAP_H)
         state.replace_cells(make_cells())
         self.assertTrue(state.dirty)
-        self.assertEqual(state.objects[(3, 3)], BRIDGE_KEY)
+        self.assertTrue(state.infra)
         self.assertTrue(state.undo())
         self.assertEqual(state.ground, {})
+        self.assertEqual(state.infra, {})
         self.assertEqual(state.objects, {})
 
 

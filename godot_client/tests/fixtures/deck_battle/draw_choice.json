@@ -1,0 +1,308 @@
+{
+  "battle_id": "5b0e7c2a9d4f4e61a3c8f1e2d7b9a046",
+  "group_id": null,
+  "phase": "draw",
+  "seconds_left": 9,
+  "timeout_count": 0,
+  "draft_mode": "",
+  "turn": 4,
+  "side": "player",
+  "fighter": {
+    "name": "Тестовый Ассасин",
+    "level": 5,
+    "type": "assassin",
+    "hp": 65,
+    "max_hp": 65,
+    "mp": 10,
+    "max_mp": 10,
+    "stats": {
+      "strength": 3,
+      "agility": 7,
+      "intuition": 6,
+      "wisdom": 2,
+      "intellect": 2,
+      "harmony": 3,
+      "endurance": 5
+    },
+    "unique_resource_type": "concentration",
+    "unique_resource": 86,
+    "unique_resource_max": 86
+  },
+  "opponent": {
+    "name": "Тестовый Некромант",
+    "level": 4,
+    "type": "necromancer",
+    "hp": 54,
+    "max_hp": 60,
+    "mp": 50,
+    "max_mp": 50,
+    "stats": {
+      "strength": 2,
+      "agility": 3,
+      "intuition": 2,
+      "wisdom": 4,
+      "intellect": 5,
+      "harmony": 3,
+      "endurance": 4
+    },
+    "unique_resource_type": "necrotism",
+    "unique_resource": 77,
+    "unique_resource_max": 77
+  },
+  "hand": [
+    {
+      "key": "assassin_poison_strike",
+      "name": "Удар кинжалом",
+      "group_name": "Асасин: Ядовитый Бог",
+      "effect_type": "damage",
+      "effect_data": {
+        "dice": 4,
+        "poison": 1,
+        "range": 1
+      },
+      "resource_type": "concentration",
+      "resource_cost": 5,
+      "effect_duration": 0,
+      "rarity": "basic"
+    },
+    {
+      "key": "assassin_poison_strike_copy",
+      "name": "Удар кинжалом",
+      "group_name": "Асасин: Ядовитый Бог",
+      "effect_type": "damage",
+      "effect_data": {
+        "dice": 4,
+        "poison": 1,
+        "range": 1
+      },
+      "resource_type": "concentration",
+      "resource_cost": 5,
+      "effect_duration": 0,
+      "rarity": "basic"
+    },
+    {
+      "key": "assassin_poison_blade",
+      "name": "Ядовитый выпад",
+      "group_name": "Асасин: Ядовитый Бог",
+      "effect_type": "damage",
+      "effect_data": {
+        "dice": 8,
+        "poison": 2,
+        "range": 1
+      },
+      "resource_type": "concentration",
+      "resource_cost": 11,
+      "effect_duration": 0,
+      "rarity": "basic"
+    },
+    {
+      "key": "assassin_poison_blade_copy",
+      "name": "Ядовитый выпад",
+      "group_name": "Асасин: Ядовитый Бог",
+      "effect_type": "damage",
+      "effect_data": {
+        "dice": 8,
+        "poison": 2,
+        "range": 1
+      },
+      "resource_type": "concentration",
+      "resource_cost": 11,
+      "effect_duration": 0,
+      "rarity": "basic"
+    },
+    {
+      "key": "assassin_poison_rain",
+      "name": "Ядовитый натиск",
+      "group_name": "Асасин: Ядовитый Бог",
+      "effect_type": "damage",
+      "effect_data": {
+        "dice": 2,
+        "hits": 3,
+        "poison": 1,
+        "poison_per_hit": true,
+        "range": 1
+      },
+      "resource_type": "concentration",
+      "resource_cost": 13,
+      "effect_duration": 0,
+      "rarity": "basic"
+    },
+    {
+      "key": "assassin_poison_rain_copy",
+      "name": "Ядовитый натиск",
+      "group_name": "Асасин: Ядовитый Бог",
+      "effect_type": "damage",
+      "effect_data": {
+        "dice": 2,
+        "hits": 3,
+        "poison": 1,
+        "poison_per_hit": true,
+        "range": 1
+      },
+      "resource_type": "concentration",
+      "resource_cost": 13,
+      "effect_duration": 0,
+      "rarity": "basic"
+    },
+    {
+      "key": "assassin_poison_infusion",
+      "name": "Диковиный настой",
+      "group_name": "Асасин: Ядовитый Бог",
+      "effect_type": "damage_buff",
+      "effect_data": {
+        "crit_chance_percent": 16,
+        "duration": 2,
+        "range": 0
+      },
+      "resource_type": "concentration",
+      "resource_cost": 9,
+      "effect_duration": 0,
+      "rarity": "basic"
+    }
+  ],
+  "selected": [],
+  "table": [],
+  "draw_choices": [
+    {
+      "key": "assassin_poison_infusion_copy",
+      "name": "Диковиный настой",
+      "group_name": "Асасин: Ядовитый Бог",
+      "effect_type": "damage_buff",
+      "effect_data": {
+        "crit_chance_percent": 16,
+        "duration": 2,
+        "range": 0
+      },
+      "resource_type": "concentration",
+      "resource_cost": 9,
+      "effect_duration": 0,
+      "rarity": "basic"
+    },
+    {
+      "key": "assassin_poison_cascade",
+      "name": "Ядовитая колба",
+      "group_name": "Асасин: Ядовитый Бог",
+      "effect_type": "damage",
+      "effect_data": {
+        "poison": 3,
+        "range": 3
+      },
+      "resource_type": "concentration",
+      "resource_cost": 14,
+      "effect_duration": 0,
+      "rarity": "basic"
+    },
+    {
+      "key": "assassin_poison_extraction",
+      "name": "Милосердия - нет",
+      "group_name": "Асасин: Ядовитый Бог",
+      "effect_type": "damage",
+      "effect_data": {
+        "poison_extraction": true,
+        "extraction_crit_chance_per_stack": 2,
+        "extraction_crit_damage_per_stack": 4,
+        "extraction_duration": 3,
+        "range": 2
+      },
+      "resource_type": "concentration",
+      "resource_cost": 11,
+      "effect_duration": 0,
+      "rarity": "basic"
+    }
+  ],
+  "can_select": [
+    "assassin_poison_strike",
+    "assassin_poison_strike_copy",
+    "assassin_poison_blade",
+    "assassin_poison_blade_copy",
+    "assassin_poison_rain"
+  ],
+  "confirmed": false,
+  "opponent_confirmed": false,
+  "opponent_draft_picks": [],
+  "opponent_last_draft_picks": [],
+  "last_exchange": [
+    {
+      "side": "player",
+      "card": "Удар кинжалом",
+      "damage": 8,
+      "healed": 0,
+      "critical": true,
+      "dodged": false
+    },
+    {
+      "side": "player",
+      "card": "Удар кинжалом",
+      "damage": 3,
+      "healed": 0,
+      "critical": false,
+      "dodged": false
+    },
+    {
+      "side": "enemy",
+      "card": null,
+      "damage": 0,
+      "healed": 0,
+      "critical": false,
+      "dodged": false,
+      "skipped": true
+    }
+  ],
+  "history": [
+    {
+      "turn": 3,
+      "events": [
+        {
+          "side": "player",
+          "card": "Удар кинжалом",
+          "damage": 8,
+          "healed": 0,
+          "critical": true,
+          "dodged": false
+        },
+        {
+          "side": "player",
+          "card": "Удар кинжалом",
+          "damage": 3,
+          "healed": 0,
+          "critical": false,
+          "dodged": false
+        },
+        {
+          "side": "enemy",
+          "card": null,
+          "damage": 0,
+          "healed": 0,
+          "critical": false,
+          "dodged": false,
+          "skipped": true
+        }
+      ]
+    }
+  ],
+  "outcome": null,
+  "reward_card_keys": [
+    "assassin_poison_strike",
+    "assassin_poison_strike_copy",
+    "assassin_poison_blade",
+    "assassin_poison_blade_copy",
+    "assassin_poison_rain",
+    "assassin_poison_rain_copy",
+    "assassin_poison_infusion",
+    "assassin_poison_infusion_copy",
+    "assassin_poison_cascade",
+    "assassin_poison_extraction",
+    "assassin_poison_execution",
+    "assassin_numbness",
+    "assassin_wormwood",
+    "assassin_wormwood_copy",
+    "assassin_hemlock",
+    "assassin_hemlock_copy",
+    "assassin_datura",
+    "assassin_poison_vines",
+    "assassin_poison_vines_copy",
+    "assassin_neurotoxins",
+    "assassin_overdose",
+    "assassin_antidote_dispel"
+  ]
+}

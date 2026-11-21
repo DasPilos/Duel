@@ -12,6 +12,8 @@ from combat.character_stats import (
     BASE_STAT_VALUE,
     CREATION_ENDURANCE_VALUE,
     CREATION_FREE_POINTS,
+    calculate_max_hp,
+    calculate_max_mana,
     level_stat_points,
 )
 from combat.progression import LEVEL_CAP
@@ -76,6 +78,16 @@ DEFAULT_RESPAWN_SECONDS = 30
 DEFAULT_REWARD_COPPER = 30
 # Опыт по умолчанию: базовая награда моба, делится между игроками по доле урона
 DEFAULT_REWARD_XP = 10
+# Дальность атаки моба Front Line в единицах (1 тайл = 100 ед.). Только для режима front_line;
+# в файлах Tower и Economy этого поля нет.
+DEFAULT_ATTACK_RANGE_UNITS = 100
+ATTACK_RANGE_LIMITS = (0, 1500)
+# Характер боя моба Front Line: ближний бой, стрелок (стрела) или маг (сфера с уроном по области).
+ATTACK_STYLES = ("warrior", "archer", "mage")
+DEFAULT_ATTACK_STYLE = "warrior"
+# Радиус урона мага, единиц (100 ед. = 1 тайл); по умолчанию как у героя-мага.
+DEFAULT_AREA_RADIUS_UNITS = 50
+AREA_RADIUS_LIMITS = (0, 500)
 
 # Слоты экипировки моба, которые художник задаёт в редакторе карт (id предмета из базы или None)
 # Слоты куклы — те же, что у персонажа (server/items_database.py EQUIPMENT_SLOTS)
@@ -91,6 +103,22 @@ def item_fits_mob(item, stats, level):
     if int(requirements.pop("level", 1)) > level:
         return False
     return all(stats.get(stat, 0) >= int(value) for stat, value in requirements.items())
+
+
+def item_slot(slot):
+    """Слот предмета для слота куклы: два кольца в базе — один слот «ring»."""
+    return "ring" if slot == "ring_2" else slot
+
+
+def drop_unfit_equipment(equipment, items, stats, level):
+    """Снимает предметы, которые не подходят виду по текущим характеристикам и уровню. Предметы вне списка items
+    (например, при недоступном сервере) не трогаются: их проверит сервер при сборке мобов."""
+    known = {int(item["id"]): item for item in items}
+    result = {}
+    for slot, item_id in equipment.items():
+        item = known.get(item_id) if item_id is not None else None
+        result[slot] = None if item is not None and not item_fits_mob(item, stats, level) else item_id
+    return result
 
 
 def format_hms(seconds):
@@ -141,6 +169,8 @@ def default_settings(kind=None):
     stats = dict(DEFAULT_STATS)
     return {
         "level": LEVEL_MIN,
+        "max_hp": calculate_max_hp(LEVEL_MIN, stats["endurance"]),
+        "max_mp": calculate_max_mana(stats["intellect"]),
         "move_speed": BASE_MOVE_SPEED + MOVE_SPEED_PER_AGILITY * stats["agility"],
         "windup": round(max(0.05, BASE_ATTACK_WINDUP - WINDUP_REDUCTION_PER_INTUITION * stats["intuition"]), 2),
         "backswing": round(max(0.05, BASE_ATTACK_BACKSWING - BACKSWING_REDUCTION_PER_AGILITY * stats["agility"]), 2),
@@ -191,20 +221,81 @@ def _validate_equipment(equipment):
     return result
 
 
-def validate_settings(settings):
+DAMAGE_LIMIT = 1000
+
+
+def _damage_pair(settings):
+    values = []
+    for key in ("damage_min", "damage_max"):
+        raw = settings.get(key, 0)
+        if isinstance(raw, bool) or not isinstance(raw, (int, float)) or raw != int(raw):
+            raise ValueError(f"Параметр «{key}» должен быть целым числом")
+        if not 0 <= raw <= DAMAGE_LIMIT:
+            raise ValueError(f"Урон: от 0 до {DAMAGE_LIMIT}")
+        values.append(int(raw))
+    if values[0] > values[1]:
+        raise ValueError("Урон: минимум не больше максимума")
+    return values[0], values[1]
+
+
+def _attack_range(settings):
+    raw = settings.get("attack_range", DEFAULT_ATTACK_RANGE_UNITS)
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        raise ValueError("Параметр «attack_range» должен быть числом")
+    low, high = ATTACK_RANGE_LIMITS
+    if not low <= raw <= high:
+        raise ValueError(f"Дальность атаки: от {low} до {high} ед. (100 ед. = 1 тайл)")
+    return int(round(raw))
+
+
+def _attack_style(settings):
+    raw = settings.get("attack_style", DEFAULT_ATTACK_STYLE)
+    if raw not in ATTACK_STYLES:
+        raise ValueError("Характер боя: воин, лучник или маг")
+    return raw
+
+
+def _area_radius(settings):
+    raw = settings.get("area_radius", DEFAULT_AREA_RADIUS_UNITS)
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        raise ValueError("Параметр «area_radius» должен быть числом")
+    low, high = AREA_RADIUS_LIMITS
+    if not low <= raw <= high:
+        raise ValueError(f"Радиус урона: от {low} до {high} ед. (100 ед. = 1 тайл)")
+    return int(round(raw))
+
+
+def validate_settings(settings, mode=None):
     """Проверяет настройки моба и возвращает их в нормальном виде. Ошибка — ValueError с текстом для художника."""
     if not isinstance(settings, dict):
         raise ValueError("Настройки моба должны быть словарём")
+    unlimited_stats = mode == "front_line"
     result = {key: _number(settings, key) for key in LIMITS}
     result["respawn_seconds"] = int(result["respawn_seconds"])
     result["reward_copper"] = int(result["reward_copper"])
     result["reward_xp"] = int(result["reward_xp"])
+    for key, minimum in (("max_hp", 1), ("max_mp", 0)):
+        if key not in settings and not unlimited_stats:
+            result[key] = default_settings()[key]
+            continue
+        try:
+            value = int(settings[key])
+        except (KeyError, TypeError, ValueError, OverflowError):
+            raise ValueError(f"Параметр «{key}» должен быть целым числом") from None
+        if isinstance(settings[key], bool) or value != settings[key] or value < minimum:
+            raise ValueError(f"Параметр «{key}» должен быть целым числом не меньше {minimum}")
+        result[key] = value
     result["equipment"] = _validate_equipment(settings.get("equipment"))
+    if unlimited_stats:
+        result["attack_range"] = _attack_range(settings)
+        result["damage_min"], result["damage_max"] = _damage_pair(settings)
+        result["attack_style"] = _attack_style(settings)
+        result["area_radius"] = _area_radius(settings)
     try:
         level = int(settings["level"])
     except (KeyError, TypeError, ValueError):
         raise ValueError("Уровень должен быть целым числом") from None
-    if not LEVEL_MIN <= level <= LEVEL_CAP:
+    if level < LEVEL_MIN or (not unlimited_stats and level > LEVEL_CAP):
         raise ValueError(f"Уровень: от {LEVEL_MIN} до {LEVEL_CAP}")
     result["level"] = level
     state = settings.get("state")
@@ -220,14 +311,16 @@ def validate_settings(settings):
             value = int(stats[key])
         except (KeyError, TypeError, ValueError):
             raise ValueError(f"Характеристика «{label}» должна быть целым числом") from None
-        if key == "endurance":
+        if unlimited_stats and value < 0:
+            raise ValueError(f"Характеристика «{label}» не ниже 0")
+        if not unlimited_stats and key == "endurance":
             if value != endurance_for_level(level):
                 raise ValueError(f"Выносливость на уровне {level} равна {endurance_for_level(level)}")
-        elif value < STAT_MIN:
+        elif not unlimited_stats and value < STAT_MIN:
             raise ValueError(f"Характеристика «{label}» не ниже {STAT_MIN}")
         result["stats"][key] = value
     spent, total = spent_points(result["stats"]), free_points_for_level(level)
-    if spent > total:
+    if not unlimited_stats and spent > total:
         raise ValueError(f"Вложено {spent} очков характеристик, на уровне {level} доступно {total}")
     patrol = settings.get("patrol")
     if not isinstance(patrol, list):
@@ -271,9 +364,13 @@ def load_mob_settings(mode, kind, folder=None):
     stored = _read_file(mode, folder)["mobs"].get(kind, {})
     merged = default_settings(kind)
     if isinstance(stored, dict):
-        merged.update({key: value for key, value in stored.items() if key in merged})
+        allowed = set(merged) | (
+            {"attack_range", "damage_min", "damage_max", "attack_style", "area_radius"}
+            if mode == "front_line" else set()
+        )
+        merged.update({key: value for key, value in stored.items() if key in allowed})
     try:
-        return validate_settings(merged)
+        return validate_settings(merged, mode=mode)
     except ValueError as error:
         raise ModeFileError(f"Настройки «{kind}» в {mode}.json неверны: {error}") from error
 
@@ -282,7 +379,7 @@ def save_mob_settings(mode, kind, settings, folder=None):
     """Записывает настройки вида моба в файл режима, не трогая остальных мобов. Возвращает записанные настройки."""
     if not is_mode(mode):
         raise ModeFileError(f"Неизвестный режим «{mode}»")
-    checked = validate_settings(settings)
+    checked = validate_settings(settings, mode=mode)
     data = _read_file(mode, folder)
     data["mode"] = mode
     data["mobs"][kind] = checked

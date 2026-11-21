@@ -1,0 +1,1 @@
+ALTER TABLE sessions ALTER COLUMN world_id DROP NOT NULL;

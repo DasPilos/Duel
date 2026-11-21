@@ -1,0 +1,5 @@
+CREATE TABLE user_avatars (
+    user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    png BYTEA NOT NULL,
+    updated_at DOUBLE PRECISION NOT NULL
+);

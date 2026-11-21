@@ -1,0 +1,1869 @@
+{
+ "source": "scenes/create_character_scene.py CreateCharacterScene._card_profile/_draw_card (recorded), combat/character_stats.py, core/carry_weight.py, ui/character_profile.py, deck/combat/character_stats.py, deck/server/database.py create_character",
+ "layout": {
+  "card_width": 450,
+  "card_height": 1000,
+  "slots": {
+   "ears": [
+    16,
+    305,
+    66,
+    62
+   ],
+   "head": [
+    192,
+    305,
+    66,
+    62
+   ],
+   "neck": [
+    365,
+    305,
+    66,
+    62
+   ],
+   "back": [
+    16,
+    391,
+    66,
+    62
+   ],
+   "body": [
+    192,
+    391,
+    66,
+    62
+   ],
+   "ring": [
+    365,
+    391,
+    66,
+    62
+   ],
+   "hands": [
+    16,
+    477,
+    66,
+    62
+   ],
+   "shield": [
+    113,
+    477,
+    66,
+    62
+   ],
+   "belt": [
+    192,
+    477,
+    66,
+    62
+   ],
+   "weapon": [
+    282,
+    477,
+    66,
+    62
+   ],
+   "ring_2": [
+    365,
+    477,
+    66,
+    62
+   ],
+   "legs": [
+    192,
+    563,
+    66,
+    62
+   ],
+   "feet": [
+    192,
+    649,
+    66,
+    62
+   ]
+  },
+  "hp_bar": [
+   20,
+   100,
+   360,
+   14
+  ],
+  "mp_bar": [
+   20,
+   140,
+   360,
+   14
+  ],
+  "icon_box": [
+   20,
+   14,
+   32,
+   32
+  ],
+  "name_left": 56,
+  "name_top": 20,
+  "info_top": 717
+ },
+ "tower": [
+  {
+   "profession": "warrior",
+   "allocation": {},
+   "stats": {
+    "strength": 3,
+    "agility": 3,
+    "intuition": 3,
+    "wisdom": 3,
+    "intellect": 3,
+    "endurance": 4
+   },
+   "free_points": 3,
+   "hp": 48,
+   "max_hp": 48,
+   "mp": 18,
+   "max_mp": 18,
+   "carried_kg": 0.0,
+   "capacity_kg": 27,
+   "attack_seconds": 0.88,
+   "move_speed": 175,
+   "reach": 48.0,
+   "load_color": [
+    115,
+    215,
+    125
+   ],
+   "texts": {
+    "hp": "HP 48/48",
+    "mp": "MP 18/18",
+    "weight": "Грузоподъёмность: 0/27 кг",
+    "attack": "Скорость атаки: 0.88 с",
+    "move": "Скорость передвижения: 175 px/с",
+    "reach": "Дальность удара: 48 px",
+    "free": "Свободные очки: 3"
+   },
+   "colors": {
+    "weight": [
+     115,
+     215,
+     125
+    ],
+    "attack": [
+     235,
+     215,
+     150
+    ],
+    "move": [
+     150,
+     220,
+     255
+    ],
+    "reach": [
+     255,
+     190,
+     150
+    ]
+   }
+  },
+  {
+   "profession": "archer",
+   "allocation": {},
+   "stats": {
+    "strength": 3,
+    "agility": 3,
+    "intuition": 3,
+    "wisdom": 3,
+    "intellect": 3,
+    "endurance": 4
+   },
+   "free_points": 3,
+   "hp": 48,
+   "max_hp": 48,
+   "mp": 18,
+   "max_mp": 18,
+   "carried_kg": 0.0,
+   "capacity_kg": 27,
+   "attack_seconds": 0.88,
+   "move_speed": 175,
+   "reach": 48.0,
+   "load_color": [
+    115,
+    215,
+    125
+   ],
+   "texts": {
+    "hp": "HP 48/48",
+    "mp": "MP 18/18",
+    "weight": "Грузоподъёмность: 0/27 кг",
+    "attack": "Скорость атаки: 0.88 с",
+    "move": "Скорость передвижения: 175 px/с",
+    "reach": "Дальность удара: 48 px",
+    "free": "Свободные очки: 3"
+   },
+   "colors": {
+    "weight": [
+     115,
+     215,
+     125
+    ],
+    "attack": [
+     235,
+     215,
+     150
+    ],
+    "move": [
+     150,
+     220,
+     255
+    ],
+    "reach": [
+     255,
+     190,
+     150
+    ]
+   }
+  },
+  {
+   "profession": "assassin",
+   "allocation": {},
+   "stats": {
+    "strength": 3,
+    "agility": 3,
+    "intuition": 3,
+    "wisdom": 3,
+    "intellect": 3,
+    "endurance": 4
+   },
+   "free_points": 3,
+   "hp": 48,
+   "max_hp": 48,
+   "mp": 18,
+   "max_mp": 18,
+   "carried_kg": 0.0,
+   "capacity_kg": 27,
+   "attack_seconds": 0.88,
+   "move_speed": 175,
+   "reach": 48.0,
+   "load_color": [
+    115,
+    215,
+    125
+   ],
+   "texts": {
+    "hp": "HP 48/48",
+    "mp": "MP 18/18",
+    "weight": "Грузоподъёмность: 0/27 кг",
+    "attack": "Скорость атаки: 0.88 с",
+    "move": "Скорость передвижения: 175 px/с",
+    "reach": "Дальность удара: 48 px",
+    "free": "Свободные очки: 3"
+   },
+   "colors": {
+    "weight": [
+     115,
+     215,
+     125
+    ],
+    "attack": [
+     235,
+     215,
+     150
+    ],
+    "move": [
+     150,
+     220,
+     255
+    ],
+    "reach": [
+     255,
+     190,
+     150
+    ]
+   }
+  },
+  {
+   "profession": "mage",
+   "allocation": {},
+   "stats": {
+    "strength": 3,
+    "agility": 3,
+    "intuition": 3,
+    "wisdom": 3,
+    "intellect": 3,
+    "endurance": 4
+   },
+   "free_points": 3,
+   "hp": 48,
+   "max_hp": 48,
+   "mp": 18,
+   "max_mp": 18,
+   "carried_kg": 0.0,
+   "capacity_kg": 27,
+   "attack_seconds": 0.88,
+   "move_speed": 175,
+   "reach": 48.0,
+   "load_color": [
+    115,
+    215,
+    125
+   ],
+   "texts": {
+    "hp": "HP 48/48",
+    "mp": "MP 18/18",
+    "weight": "Грузоподъёмность: 0/27 кг",
+    "attack": "Скорость атаки: 0.88 с",
+    "move": "Скорость передвижения: 175 px/с",
+    "reach": "Дальность удара: 48 px",
+    "free": "Свободные очки: 3"
+   },
+   "colors": {
+    "weight": [
+     115,
+     215,
+     125
+    ],
+    "attack": [
+     235,
+     215,
+     150
+    ],
+    "move": [
+     150,
+     220,
+     255
+    ],
+    "reach": [
+     255,
+     190,
+     150
+    ]
+   }
+  },
+  {
+   "profession": "warrior",
+   "allocation": {
+    "strength": 6
+   },
+   "stats": {
+    "strength": 6,
+    "agility": 3,
+    "intuition": 3,
+    "wisdom": 3,
+    "intellect": 3,
+    "endurance": 4
+   },
+   "free_points": 0,
+   "hp": 48,
+   "max_hp": 48,
+   "mp": 18,
+   "max_mp": 18,
+   "carried_kg": 0.0,
+   "capacity_kg": 42,
+   "attack_seconds": 0.88,
+   "move_speed": 175,
+   "reach": 48.0,
+   "load_color": [
+    115,
+    215,
+    125
+   ],
+   "texts": {
+    "hp": "HP 48/48",
+    "mp": "MP 18/18",
+    "weight": "Грузоподъёмность: 0/42 кг",
+    "attack": "Скорость атаки: 0.88 с",
+    "move": "Скорость передвижения: 175 px/с",
+    "reach": "Дальность удара: 48 px",
+    "free": "Свободные очки: 0"
+   },
+   "colors": {
+    "weight": [
+     115,
+     215,
+     125
+    ],
+    "attack": [
+     235,
+     215,
+     150
+    ],
+    "move": [
+     150,
+     220,
+     255
+    ],
+    "reach": [
+     255,
+     190,
+     150
+    ]
+   }
+  },
+  {
+   "profession": "archer",
+   "allocation": {
+    "strength": 6
+   },
+   "stats": {
+    "strength": 6,
+    "agility": 3,
+    "intuition": 3,
+    "wisdom": 3,
+    "intellect": 3,
+    "endurance": 4
+   },
+   "free_points": 0,
+   "hp": 48,
+   "max_hp": 48,
+   "mp": 18,
+   "max_mp": 18,
+   "carried_kg": 0.0,
+   "capacity_kg": 42,
+   "attack_seconds": 0.88,
+   "move_speed": 175,
+   "reach": 48.0,
+   "load_color": [
+    115,
+    215,
+    125
+   ],
+   "texts": {
+    "hp": "HP 48/48",
+    "mp": "MP 18/18",
+    "weight": "Грузоподъёмность: 0/42 кг",
+    "attack": "Скорость атаки: 0.88 с",
+    "move": "Скорость передвижения: 175 px/с",
+    "reach": "Дальность удара: 48 px",
+    "free": "Свободные очки: 0"
+   },
+   "colors": {
+    "weight": [
+     115,
+     215,
+     125
+    ],
+    "attack": [
+     235,
+     215,
+     150
+    ],
+    "move": [
+     150,
+     220,
+     255
+    ],
+    "reach": [
+     255,
+     190,
+     150
+    ]
+   }
+  },
+  {
+   "profession": "assassin",
+   "allocation": {
+    "strength": 6
+   },
+   "stats": {
+    "strength": 6,
+    "agility": 3,
+    "intuition": 3,
+    "wisdom": 3,
+    "intellect": 3,
+    "endurance": 4
+   },
+   "free_points": 0,
+   "hp": 48,
+   "max_hp": 48,
+   "mp": 18,
+   "max_mp": 18,
+   "carried_kg": 0.0,
+   "capacity_kg": 42,
+   "attack_seconds": 0.88,
+   "move_speed": 175,
+   "reach": 48.0,
+   "load_color": [
+    115,
+    215,
+    125
+   ],
+   "texts": {
+    "hp": "HP 48/48",
+    "mp": "MP 18/18",
+    "weight": "Грузоподъёмность: 0/42 кг",
+    "attack": "Скорость атаки: 0.88 с",
+    "move": "Скорость передвижения: 175 px/с",
+    "reach": "Дальность удара: 48 px",
+    "free": "Свободные очки: 0"
+   },
+   "colors": {
+    "weight": [
+     115,
+     215,
+     125
+    ],
+    "attack": [
+     235,
+     215,
+     150
+    ],
+    "move": [
+     150,
+     220,
+     255
+    ],
+    "reach": [
+     255,
+     190,
+     150
+    ]
+   }
+  },
+  {
+   "profession": "mage",
+   "allocation": {
+    "strength": 6
+   },
+   "stats": {
+    "strength": 6,
+    "agility": 3,
+    "intuition": 3,
+    "wisdom": 3,
+    "intellect": 3,
+    "endurance": 4
+   },
+   "free_points": 0,
+   "hp": 48,
+   "max_hp": 48,
+   "mp": 18,
+   "max_mp": 18,
+   "carried_kg": 0.0,
+   "capacity_kg": 42,
+   "attack_seconds": 0.88,
+   "move_speed": 175,
+   "reach": 48.0,
+   "load_color": [
+    115,
+    215,
+    125
+   ],
+   "texts": {
+    "hp": "HP 48/48",
+    "mp": "MP 18/18",
+    "weight": "Грузоподъёмность: 0/42 кг",
+    "attack": "Скорость атаки: 0.88 с",
+    "move": "Скорость передвижения: 175 px/с",
+    "reach": "Дальность удара: 48 px",
+    "free": "Свободные очки: 0"
+   },
+   "colors": {
+    "weight": [
+     115,
+     215,
+     125
+    ],
+    "attack": [
+     235,
+     215,
+     150
+    ],
+    "move": [
+     150,
+     220,
+     255
+    ],
+    "reach": [
+     255,
+     190,
+     150
+    ]
+   }
+  },
+  {
+   "profession": "warrior",
+   "allocation": {
+    "agility": 5,
+    "intuition": 4
+   },
+   "stats": {
+    "strength": 3,
+    "agility": 5,
+    "intuition": 4,
+    "wisdom": 3,
+    "intellect": 3,
+    "endurance": 4
+   },
+   "free_points": 0,
+   "hp": 48,
+   "max_hp": 48,
+   "mp": 18,
+   "max_mp": 18,
+   "carried_kg": 0.0,
+   "capacity_kg": 27,
+   "attack_seconds": 0.82,
+   "move_speed": 185,
+   "reach": 49.0,
+   "load_color": [
+    115,
+    215,
+    125
+   ],
+   "texts": {
+    "hp": "HP 48/48",
+    "mp": "MP 18/18",
+    "weight": "Грузоподъёмность: 0/27 кг",
+    "attack": "Скорость атаки: 0.82 с",
+    "move": "Скорость передвижения: 185 px/с",
+    "reach": "Дальность удара: 49 px",
+    "free": "Свободные очки: 0"
+   },
+   "colors": {
+    "weight": [
+     115,
+     215,
+     125
+    ],
+    "attack": [
+     235,
+     215,
+     150
+    ],
+    "move": [
+     150,
+     220,
+     255
+    ],
+    "reach": [
+     255,
+     190,
+     150
+    ]
+   }
+  },
+  {
+   "profession": "archer",
+   "allocation": {
+    "agility": 5,
+    "intuition": 4
+   },
+   "stats": {
+    "strength": 3,
+    "agility": 5,
+    "intuition": 4,
+    "wisdom": 3,
+    "intellect": 3,
+    "endurance": 4
+   },
+   "free_points": 0,
+   "hp": 48,
+   "max_hp": 48,
+   "mp": 18,
+   "max_mp": 18,
+   "carried_kg": 0.0,
+   "capacity_kg": 27,
+   "attack_seconds": 0.82,
+   "move_speed": 185,
+   "reach": 49.0,
+   "load_color": [
+    115,
+    215,
+    125
+   ],
+   "texts": {
+    "hp": "HP 48/48",
+    "mp": "MP 18/18",
+    "weight": "Грузоподъёмность: 0/27 кг",
+    "attack": "Скорость атаки: 0.82 с",
+    "move": "Скорость передвижения: 185 px/с",
+    "reach": "Дальность удара: 49 px",
+    "free": "Свободные очки: 0"
+   },
+   "colors": {
+    "weight": [
+     115,
+     215,
+     125
+    ],
+    "attack": [
+     235,
+     215,
+     150
+    ],
+    "move": [
+     150,
+     220,
+     255
+    ],
+    "reach": [
+     255,
+     190,
+     150
+    ]
+   }
+  },
+  {
+   "profession": "assassin",
+   "allocation": {
+    "agility": 5,
+    "intuition": 4
+   },
+   "stats": {
+    "strength": 3,
+    "agility": 5,
+    "intuition": 4,
+    "wisdom": 3,
+    "intellect": 3,
+    "endurance": 4
+   },
+   "free_points": 0,
+   "hp": 48,
+   "max_hp": 48,
+   "mp": 18,
+   "max_mp": 18,
+   "carried_kg": 0.0,
+   "capacity_kg": 27,
+   "attack_seconds": 0.82,
+   "move_speed": 185,
+   "reach": 49.0,
+   "load_color": [
+    115,
+    215,
+    125
+   ],
+   "texts": {
+    "hp": "HP 48/48",
+    "mp": "MP 18/18",
+    "weight": "Грузоподъёмность: 0/27 кг",
+    "attack": "Скорость атаки: 0.82 с",
+    "move": "Скорость передвижения: 185 px/с",
+    "reach": "Дальность удара: 49 px",
+    "free": "Свободные очки: 0"
+   },
+   "colors": {
+    "weight": [
+     115,
+     215,
+     125
+    ],
+    "attack": [
+     235,
+     215,
+     150
+    ],
+    "move": [
+     150,
+     220,
+     255
+    ],
+    "reach": [
+     255,
+     190,
+     150
+    ]
+   }
+  },
+  {
+   "profession": "mage",
+   "allocation": {
+    "agility": 5,
+    "intuition": 4
+   },
+   "stats": {
+    "strength": 3,
+    "agility": 5,
+    "intuition": 4,
+    "wisdom": 3,
+    "intellect": 3,
+    "endurance": 4
+   },
+   "free_points": 0,
+   "hp": 48,
+   "max_hp": 48,
+   "mp": 18,
+   "max_mp": 18,
+   "carried_kg": 0.0,
+   "capacity_kg": 27,
+   "attack_seconds": 0.82,
+   "move_speed": 185,
+   "reach": 49.0,
+   "load_color": [
+    115,
+    215,
+    125
+   ],
+   "texts": {
+    "hp": "HP 48/48",
+    "mp": "MP 18/18",
+    "weight": "Грузоподъёмность: 0/27 кг",
+    "attack": "Скорость атаки: 0.82 с",
+    "move": "Скорость передвижения: 185 px/с",
+    "reach": "Дальность удара: 49 px",
+    "free": "Свободные очки: 0"
+   },
+   "colors": {
+    "weight": [
+     115,
+     215,
+     125
+    ],
+    "attack": [
+     235,
+     215,
+     150
+    ],
+    "move": [
+     150,
+     220,
+     255
+    ],
+    "reach": [
+     255,
+     190,
+     150
+    ]
+   }
+  },
+  {
+   "profession": "warrior",
+   "allocation": {
+    "intellect": 5,
+    "wisdom": 4
+   },
+   "stats": {
+    "strength": 3,
+    "agility": 3,
+    "intuition": 3,
+    "wisdom": 4,
+    "intellect": 5,
+    "endurance": 4
+   },
+   "free_points": 0,
+   "hp": 48,
+   "max_hp": 48,
+   "mp": 30,
+   "max_mp": 30,
+   "carried_kg": 0.0,
+   "capacity_kg": 27,
+   "attack_seconds": 0.88,
+   "move_speed": 175,
+   "reach": 48.0,
+   "load_color": [
+    115,
+    215,
+    125
+   ],
+   "texts": {
+    "hp": "HP 48/48",
+    "mp": "MP 30/30",
+    "weight": "Грузоподъёмность: 0/27 кг",
+    "attack": "Скорость атаки: 0.88 с",
+    "move": "Скорость передвижения: 175 px/с",
+    "reach": "Дальность удара: 48 px",
+    "free": "Свободные очки: 0"
+   },
+   "colors": {
+    "weight": [
+     115,
+     215,
+     125
+    ],
+    "attack": [
+     235,
+     215,
+     150
+    ],
+    "move": [
+     150,
+     220,
+     255
+    ],
+    "reach": [
+     255,
+     190,
+     150
+    ]
+   }
+  },
+  {
+   "profession": "archer",
+   "allocation": {
+    "intellect": 5,
+    "wisdom": 4
+   },
+   "stats": {
+    "strength": 3,
+    "agility": 3,
+    "intuition": 3,
+    "wisdom": 4,
+    "intellect": 5,
+    "endurance": 4
+   },
+   "free_points": 0,
+   "hp": 48,
+   "max_hp": 48,
+   "mp": 30,
+   "max_mp": 30,
+   "carried_kg": 0.0,
+   "capacity_kg": 27,
+   "attack_seconds": 0.88,
+   "move_speed": 175,
+   "reach": 48.0,
+   "load_color": [
+    115,
+    215,
+    125
+   ],
+   "texts": {
+    "hp": "HP 48/48",
+    "mp": "MP 30/30",
+    "weight": "Грузоподъёмность: 0/27 кг",
+    "attack": "Скорость атаки: 0.88 с",
+    "move": "Скорость передвижения: 175 px/с",
+    "reach": "Дальность удара: 48 px",
+    "free": "Свободные очки: 0"
+   },
+   "colors": {
+    "weight": [
+     115,
+     215,
+     125
+    ],
+    "attack": [
+     235,
+     215,
+     150
+    ],
+    "move": [
+     150,
+     220,
+     255
+    ],
+    "reach": [
+     255,
+     190,
+     150
+    ]
+   }
+  },
+  {
+   "profession": "assassin",
+   "allocation": {
+    "intellect": 5,
+    "wisdom": 4
+   },
+   "stats": {
+    "strength": 3,
+    "agility": 3,
+    "intuition": 3,
+    "wisdom": 4,
+    "intellect": 5,
+    "endurance": 4
+   },
+   "free_points": 0,
+   "hp": 48,
+   "max_hp": 48,
+   "mp": 30,
+   "max_mp": 30,
+   "carried_kg": 0.0,
+   "capacity_kg": 27,
+   "attack_seconds": 0.88,
+   "move_speed": 175,
+   "reach": 48.0,
+   "load_color": [
+    115,
+    215,
+    125
+   ],
+   "texts": {
+    "hp": "HP 48/48",
+    "mp": "MP 30/30",
+    "weight": "Грузоподъёмность: 0/27 кг",
+    "attack": "Скорость атаки: 0.88 с",
+    "move": "Скорость передвижения: 175 px/с",
+    "reach": "Дальность удара: 48 px",
+    "free": "Свободные очки: 0"
+   },
+   "colors": {
+    "weight": [
+     115,
+     215,
+     125
+    ],
+    "attack": [
+     235,
+     215,
+     150
+    ],
+    "move": [
+     150,
+     220,
+     255
+    ],
+    "reach": [
+     255,
+     190,
+     150
+    ]
+   }
+  },
+  {
+   "profession": "mage",
+   "allocation": {
+    "intellect": 5,
+    "wisdom": 4
+   },
+   "stats": {
+    "strength": 3,
+    "agility": 3,
+    "intuition": 3,
+    "wisdom": 4,
+    "intellect": 5,
+    "endurance": 4
+   },
+   "free_points": 0,
+   "hp": 48,
+   "max_hp": 48,
+   "mp": 30,
+   "max_mp": 30,
+   "carried_kg": 0.0,
+   "capacity_kg": 27,
+   "attack_seconds": 0.88,
+   "move_speed": 175,
+   "reach": 48.0,
+   "load_color": [
+    115,
+    215,
+    125
+   ],
+   "texts": {
+    "hp": "HP 48/48",
+    "mp": "MP 30/30",
+    "weight": "Грузоподъёмность: 0/27 кг",
+    "attack": "Скорость атаки: 0.88 с",
+    "move": "Скорость передвижения: 175 px/с",
+    "reach": "Дальность удара: 48 px",
+    "free": "Свободные очки: 0"
+   },
+   "colors": {
+    "weight": [
+     115,
+     215,
+     125
+    ],
+    "attack": [
+     235,
+     215,
+     150
+    ],
+    "move": [
+     150,
+     220,
+     255
+    ],
+    "reach": [
+     255,
+     190,
+     150
+    ]
+   }
+  },
+  {
+   "profession": "warrior",
+   "allocation": {
+    "strength": 4,
+    "intellect": 4
+   },
+   "stats": {
+    "strength": 4,
+    "agility": 3,
+    "intuition": 3,
+    "wisdom": 3,
+    "intellect": 4,
+    "endurance": 4
+   },
+   "free_points": 1,
+   "hp": 48,
+   "max_hp": 48,
+   "mp": 24,
+   "max_mp": 24,
+   "carried_kg": 0.0,
+   "capacity_kg": 32,
+   "attack_seconds": 0.88,
+   "move_speed": 175,
+   "reach": 48.0,
+   "load_color": [
+    115,
+    215,
+    125
+   ],
+   "texts": {
+    "hp": "HP 48/48",
+    "mp": "MP 24/24",
+    "weight": "Грузоподъёмность: 0/32 кг",
+    "attack": "Скорость атаки: 0.88 с",
+    "move": "Скорость передвижения: 175 px/с",
+    "reach": "Дальность удара: 48 px",
+    "free": "Свободные очки: 1"
+   },
+   "colors": {
+    "weight": [
+     115,
+     215,
+     125
+    ],
+    "attack": [
+     235,
+     215,
+     150
+    ],
+    "move": [
+     150,
+     220,
+     255
+    ],
+    "reach": [
+     255,
+     190,
+     150
+    ]
+   }
+  },
+  {
+   "profession": "archer",
+   "allocation": {
+    "strength": 4,
+    "intellect": 4
+   },
+   "stats": {
+    "strength": 4,
+    "agility": 3,
+    "intuition": 3,
+    "wisdom": 3,
+    "intellect": 4,
+    "endurance": 4
+   },
+   "free_points": 1,
+   "hp": 48,
+   "max_hp": 48,
+   "mp": 24,
+   "max_mp": 24,
+   "carried_kg": 0.0,
+   "capacity_kg": 32,
+   "attack_seconds": 0.88,
+   "move_speed": 175,
+   "reach": 48.0,
+   "load_color": [
+    115,
+    215,
+    125
+   ],
+   "texts": {
+    "hp": "HP 48/48",
+    "mp": "MP 24/24",
+    "weight": "Грузоподъёмность: 0/32 кг",
+    "attack": "Скорость атаки: 0.88 с",
+    "move": "Скорость передвижения: 175 px/с",
+    "reach": "Дальность удара: 48 px",
+    "free": "Свободные очки: 1"
+   },
+   "colors": {
+    "weight": [
+     115,
+     215,
+     125
+    ],
+    "attack": [
+     235,
+     215,
+     150
+    ],
+    "move": [
+     150,
+     220,
+     255
+    ],
+    "reach": [
+     255,
+     190,
+     150
+    ]
+   }
+  },
+  {
+   "profession": "assassin",
+   "allocation": {
+    "strength": 4,
+    "intellect": 4
+   },
+   "stats": {
+    "strength": 4,
+    "agility": 3,
+    "intuition": 3,
+    "wisdom": 3,
+    "intellect": 4,
+    "endurance": 4
+   },
+   "free_points": 1,
+   "hp": 48,
+   "max_hp": 48,
+   "mp": 24,
+   "max_mp": 24,
+   "carried_kg": 0.0,
+   "capacity_kg": 32,
+   "attack_seconds": 0.88,
+   "move_speed": 175,
+   "reach": 48.0,
+   "load_color": [
+    115,
+    215,
+    125
+   ],
+   "texts": {
+    "hp": "HP 48/48",
+    "mp": "MP 24/24",
+    "weight": "Грузоподъёмность: 0/32 кг",
+    "attack": "Скорость атаки: 0.88 с",
+    "move": "Скорость передвижения: 175 px/с",
+    "reach": "Дальность удара: 48 px",
+    "free": "Свободные очки: 1"
+   },
+   "colors": {
+    "weight": [
+     115,
+     215,
+     125
+    ],
+    "attack": [
+     235,
+     215,
+     150
+    ],
+    "move": [
+     150,
+     220,
+     255
+    ],
+    "reach": [
+     255,
+     190,
+     150
+    ]
+   }
+  },
+  {
+   "profession": "mage",
+   "allocation": {
+    "strength": 4,
+    "intellect": 4
+   },
+   "stats": {
+    "strength": 4,
+    "agility": 3,
+    "intuition": 3,
+    "wisdom": 3,
+    "intellect": 4,
+    "endurance": 4
+   },
+   "free_points": 1,
+   "hp": 48,
+   "max_hp": 48,
+   "mp": 24,
+   "max_mp": 24,
+   "carried_kg": 0.0,
+   "capacity_kg": 32,
+   "attack_seconds": 0.88,
+   "move_speed": 175,
+   "reach": 48.0,
+   "load_color": [
+    115,
+    215,
+    125
+   ],
+   "texts": {
+    "hp": "HP 48/48",
+    "mp": "MP 24/24",
+    "weight": "Грузоподъёмность: 0/32 кг",
+    "attack": "Скорость атаки: 0.88 с",
+    "move": "Скорость передвижения: 175 px/с",
+    "reach": "Дальность удара: 48 px",
+    "free": "Свободные очки: 1"
+   },
+   "colors": {
+    "weight": [
+     115,
+     215,
+     125
+    ],
+    "attack": [
+     235,
+     215,
+     150
+    ],
+    "move": [
+     150,
+     220,
+     255
+    ],
+    "reach": [
+     255,
+     190,
+     150
+    ]
+   }
+  },
+  {
+   "profession": "warrior",
+   "allocation": {
+    "intuition": 4,
+    "agility": 4,
+    "wisdom": 3
+   },
+   "stats": {
+    "strength": 3,
+    "agility": 4,
+    "intuition": 4,
+    "wisdom": 3,
+    "intellect": 3,
+    "endurance": 4
+   },
+   "free_points": 1,
+   "hp": 48,
+   "max_hp": 48,
+   "mp": 18,
+   "max_mp": 18,
+   "carried_kg": 0.0,
+   "capacity_kg": 27,
+   "attack_seconds": 0.84,
+   "move_speed": 180,
+   "reach": 49.0,
+   "load_color": [
+    115,
+    215,
+    125
+   ],
+   "texts": {
+    "hp": "HP 48/48",
+    "mp": "MP 18/18",
+    "weight": "Грузоподъёмность: 0/27 кг",
+    "attack": "Скорость атаки: 0.84 с",
+    "move": "Скорость передвижения: 180 px/с",
+    "reach": "Дальность удара: 49 px",
+    "free": "Свободные очки: 1"
+   },
+   "colors": {
+    "weight": [
+     115,
+     215,
+     125
+    ],
+    "attack": [
+     235,
+     215,
+     150
+    ],
+    "move": [
+     150,
+     220,
+     255
+    ],
+    "reach": [
+     255,
+     190,
+     150
+    ]
+   }
+  },
+  {
+   "profession": "archer",
+   "allocation": {
+    "intuition": 4,
+    "agility": 4,
+    "wisdom": 3
+   },
+   "stats": {
+    "strength": 3,
+    "agility": 4,
+    "intuition": 4,
+    "wisdom": 3,
+    "intellect": 3,
+    "endurance": 4
+   },
+   "free_points": 1,
+   "hp": 48,
+   "max_hp": 48,
+   "mp": 18,
+   "max_mp": 18,
+   "carried_kg": 0.0,
+   "capacity_kg": 27,
+   "attack_seconds": 0.84,
+   "move_speed": 180,
+   "reach": 49.0,
+   "load_color": [
+    115,
+    215,
+    125
+   ],
+   "texts": {
+    "hp": "HP 48/48",
+    "mp": "MP 18/18",
+    "weight": "Грузоподъёмность: 0/27 кг",
+    "attack": "Скорость атаки: 0.84 с",
+    "move": "Скорость передвижения: 180 px/с",
+    "reach": "Дальность удара: 49 px",
+    "free": "Свободные очки: 1"
+   },
+   "colors": {
+    "weight": [
+     115,
+     215,
+     125
+    ],
+    "attack": [
+     235,
+     215,
+     150
+    ],
+    "move": [
+     150,
+     220,
+     255
+    ],
+    "reach": [
+     255,
+     190,
+     150
+    ]
+   }
+  },
+  {
+   "profession": "assassin",
+   "allocation": {
+    "intuition": 4,
+    "agility": 4,
+    "wisdom": 3
+   },
+   "stats": {
+    "strength": 3,
+    "agility": 4,
+    "intuition": 4,
+    "wisdom": 3,
+    "intellect": 3,
+    "endurance": 4
+   },
+   "free_points": 1,
+   "hp": 48,
+   "max_hp": 48,
+   "mp": 18,
+   "max_mp": 18,
+   "carried_kg": 0.0,
+   "capacity_kg": 27,
+   "attack_seconds": 0.84,
+   "move_speed": 180,
+   "reach": 49.0,
+   "load_color": [
+    115,
+    215,
+    125
+   ],
+   "texts": {
+    "hp": "HP 48/48",
+    "mp": "MP 18/18",
+    "weight": "Грузоподъёмность: 0/27 кг",
+    "attack": "Скорость атаки: 0.84 с",
+    "move": "Скорость передвижения: 180 px/с",
+    "reach": "Дальность удара: 49 px",
+    "free": "Свободные очки: 1"
+   },
+   "colors": {
+    "weight": [
+     115,
+     215,
+     125
+    ],
+    "attack": [
+     235,
+     215,
+     150
+    ],
+    "move": [
+     150,
+     220,
+     255
+    ],
+    "reach": [
+     255,
+     190,
+     150
+    ]
+   }
+  },
+  {
+   "profession": "mage",
+   "allocation": {
+    "intuition": 4,
+    "agility": 4,
+    "wisdom": 3
+   },
+   "stats": {
+    "strength": 3,
+    "agility": 4,
+    "intuition": 4,
+    "wisdom": 3,
+    "intellect": 3,
+    "endurance": 4
+   },
+   "free_points": 1,
+   "hp": 48,
+   "max_hp": 48,
+   "mp": 18,
+   "max_mp": 18,
+   "carried_kg": 0.0,
+   "capacity_kg": 27,
+   "attack_seconds": 0.84,
+   "move_speed": 180,
+   "reach": 49.0,
+   "load_color": [
+    115,
+    215,
+    125
+   ],
+   "texts": {
+    "hp": "HP 48/48",
+    "mp": "MP 18/18",
+    "weight": "Грузоподъёмность: 0/27 кг",
+    "attack": "Скорость атаки: 0.84 с",
+    "move": "Скорость передвижения: 180 px/с",
+    "reach": "Дальность удара: 49 px",
+    "free": "Свободные очки: 1"
+   },
+   "colors": {
+    "weight": [
+     115,
+     215,
+     125
+    ],
+    "attack": [
+     235,
+     215,
+     150
+    ],
+    "move": [
+     150,
+     220,
+     255
+    ],
+    "reach": [
+     255,
+     190,
+     150
+    ]
+   }
+  },
+  {
+   "profession": "warrior",
+   "allocation": {
+    "intuition": 4
+   },
+   "stats": {
+    "strength": 3,
+    "agility": 3,
+    "intuition": 4,
+    "wisdom": 3,
+    "intellect": 3,
+    "endurance": 4
+   },
+   "free_points": 2,
+   "hp": 48,
+   "max_hp": 48,
+   "mp": 18,
+   "max_mp": 18,
+   "carried_kg": 0.0,
+   "capacity_kg": 27,
+   "attack_seconds": 0.86,
+   "move_speed": 175,
+   "reach": 49.0,
+   "load_color": [
+    115,
+    215,
+    125
+   ],
+   "texts": {
+    "hp": "HP 48/48",
+    "mp": "MP 18/18",
+    "weight": "Грузоподъёмность: 0/27 кг",
+    "attack": "Скорость атаки: 0.86 с",
+    "move": "Скорость передвижения: 175 px/с",
+    "reach": "Дальность удара: 49 px",
+    "free": "Свободные очки: 2"
+   },
+   "colors": {
+    "weight": [
+     115,
+     215,
+     125
+    ],
+    "attack": [
+     235,
+     215,
+     150
+    ],
+    "move": [
+     150,
+     220,
+     255
+    ],
+    "reach": [
+     255,
+     190,
+     150
+    ]
+   }
+  },
+  {
+   "profession": "archer",
+   "allocation": {
+    "intuition": 4
+   },
+   "stats": {
+    "strength": 3,
+    "agility": 3,
+    "intuition": 4,
+    "wisdom": 3,
+    "intellect": 3,
+    "endurance": 4
+   },
+   "free_points": 2,
+   "hp": 48,
+   "max_hp": 48,
+   "mp": 18,
+   "max_mp": 18,
+   "carried_kg": 0.0,
+   "capacity_kg": 27,
+   "attack_seconds": 0.86,
+   "move_speed": 175,
+   "reach": 49.0,
+   "load_color": [
+    115,
+    215,
+    125
+   ],
+   "texts": {
+    "hp": "HP 48/48",
+    "mp": "MP 18/18",
+    "weight": "Грузоподъёмность: 0/27 кг",
+    "attack": "Скорость атаки: 0.86 с",
+    "move": "Скорость передвижения: 175 px/с",
+    "reach": "Дальность удара: 49 px",
+    "free": "Свободные очки: 2"
+   },
+   "colors": {
+    "weight": [
+     115,
+     215,
+     125
+    ],
+    "attack": [
+     235,
+     215,
+     150
+    ],
+    "move": [
+     150,
+     220,
+     255
+    ],
+    "reach": [
+     255,
+     190,
+     150
+    ]
+   }
+  },
+  {
+   "profession": "assassin",
+   "allocation": {
+    "intuition": 4
+   },
+   "stats": {
+    "strength": 3,
+    "agility": 3,
+    "intuition": 4,
+    "wisdom": 3,
+    "intellect": 3,
+    "endurance": 4
+   },
+   "free_points": 2,
+   "hp": 48,
+   "max_hp": 48,
+   "mp": 18,
+   "max_mp": 18,
+   "carried_kg": 0.0,
+   "capacity_kg": 27,
+   "attack_seconds": 0.86,
+   "move_speed": 175,
+   "reach": 49.0,
+   "load_color": [
+    115,
+    215,
+    125
+   ],
+   "texts": {
+    "hp": "HP 48/48",
+    "mp": "MP 18/18",
+    "weight": "Грузоподъёмность: 0/27 кг",
+    "attack": "Скорость атаки: 0.86 с",
+    "move": "Скорость передвижения: 175 px/с",
+    "reach": "Дальность удара: 49 px",
+    "free": "Свободные очки: 2"
+   },
+   "colors": {
+    "weight": [
+     115,
+     215,
+     125
+    ],
+    "attack": [
+     235,
+     215,
+     150
+    ],
+    "move": [
+     150,
+     220,
+     255
+    ],
+    "reach": [
+     255,
+     190,
+     150
+    ]
+   }
+  },
+  {
+   "profession": "mage",
+   "allocation": {
+    "intuition": 4
+   },
+   "stats": {
+    "strength": 3,
+    "agility": 3,
+    "intuition": 4,
+    "wisdom": 3,
+    "intellect": 3,
+    "endurance": 4
+   },
+   "free_points": 2,
+   "hp": 48,
+   "max_hp": 48,
+   "mp": 18,
+   "max_mp": 18,
+   "carried_kg": 0.0,
+   "capacity_kg": 27,
+   "attack_seconds": 0.86,
+   "move_speed": 175,
+   "reach": 49.0,
+   "load_color": [
+    115,
+    215,
+    125
+   ],
+   "texts": {
+    "hp": "HP 48/48",
+    "mp": "MP 18/18",
+    "weight": "Грузоподъёмность: 0/27 кг",
+    "attack": "Скорость атаки: 0.86 с",
+    "move": "Скорость передвижения: 175 px/с",
+    "reach": "Дальность удара: 49 px",
+    "free": "Свободные очки: 2"
+   },
+   "colors": {
+    "weight": [
+     115,
+     215,
+     125
+    ],
+    "attack": [
+     235,
+     215,
+     150
+    ],
+    "move": [
+     150,
+     220,
+     255
+    ],
+    "reach": [
+     255,
+     190,
+     150
+    ]
+   }
+  }
+ ],
+ "deck": [
+  {
+   "profession": "warrior",
+   "endurance": 2,
+   "intellect": 2,
+   "hp": 90,
+   "max_hp": 90,
+   "mp": 10,
+   "max_mp": 10,
+   "texts": {
+    "hp": "HP 90/90",
+    "mp": "MP 10/10"
+   }
+  },
+  {
+   "profession": "archer",
+   "endurance": 2,
+   "intellect": 2,
+   "hp": 45,
+   "max_hp": 45,
+   "mp": 10,
+   "max_mp": 10,
+   "texts": {
+    "hp": "HP 45/45",
+    "mp": "MP 10/10"
+   }
+  },
+  {
+   "profession": "assassin",
+   "endurance": 2,
+   "intellect": 2,
+   "hp": 35,
+   "max_hp": 35,
+   "mp": 10,
+   "max_mp": 10,
+   "texts": {
+    "hp": "HP 35/35",
+    "mp": "MP 10/10"
+   }
+  },
+  {
+   "profession": "mage",
+   "endurance": 2,
+   "intellect": 2,
+   "hp": 30,
+   "max_hp": 30,
+   "mp": 75,
+   "max_mp": 75,
+   "texts": {
+    "hp": "HP 30/30",
+    "mp": "MP 75/75"
+   }
+  },
+  {
+   "profession": "necromancer",
+   "endurance": 2,
+   "intellect": 2,
+   "hp": 40,
+   "max_hp": 40,
+   "mp": 35,
+   "max_mp": 35,
+   "texts": {
+    "hp": "HP 40/40",
+    "mp": "MP 35/35"
+   }
+  }
+ ]
+}

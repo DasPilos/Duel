@@ -4,7 +4,30 @@
 """
 
 GAME_MODES = (
-    {"key": "tower", "name": "Башня"},
+    {
+        "key": "tower",
+        "name": "Tower",
+        "description": "Отдельный мир Башни",
+        "runtime_ready": True,
+    },
+    {
+        "key": "economy",
+        "name": "Economy",
+        "description": "Отдельные экономические миры",
+        "runtime_ready": True,
+    },
+    {
+        "key": "deck",
+        "name": "Deck",
+        "description": "Отдельные карточные миры",
+        "runtime_ready": True,
+    },
+    {
+        "key": "front_line",
+        "name": "Front Line",
+        "description": "Совместная оборона карты от волн мобов.",
+        "runtime_ready": False,
+    },
 )
 DEFAULT_MODE = GAME_MODES[0]["key"]
 

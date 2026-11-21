@@ -1,0 +1,67 @@
+{
+	"queue": [
+		{
+			"order_id": 201,
+			"owner_character_id": 1,
+			"owner_name": "Тестовый герой",
+			"item_id": 90,
+			"item_name": "Старый серп",
+			"icon": "tool_sickle",
+			"status": "working",
+			"position": 1,
+			"duration_seconds": 720,
+			"seconds_left": 420
+		},
+		{
+			"order_id": 202,
+			"owner_character_id": 2,
+			"owner_name": "Лесной Волк",
+			"item_id": 23,
+			"item_name": "Дубина",
+			"icon": "weapon_club",
+			"status": "queued",
+			"position": 2,
+			"duration_seconds": 1080,
+			"seconds_left": 1080
+		},
+		{
+			"order_id": 203,
+			"owner_character_id": 1,
+			"owner_name": "Тестовый герой",
+			"item_id": 39,
+			"item_name": "Деревянный щит",
+			"icon": "shield_wooden",
+			"status": "queued",
+			"position": 3,
+			"duration_seconds": 1260,
+			"seconds_left": 1260
+		}
+	],
+	"queue_count": 3,
+	"queue_limit": 5,
+	"queue_total_seconds": 2760,
+	"warehouse": [
+		{
+			"order_id": 301,
+			"item_id": 24,
+			"item_name": "Простой лук",
+			"icon": "weapon_bow",
+			"description": "Лук из ясеня, готов к выдаче",
+			"weight": 1.5,
+			"price": 0,
+			"equip_slot": "weapon",
+			"completed_at": 1767225600.0
+		},
+		{
+			"order_id": 302,
+			"item_id": 20,
+			"item_name": "Железный меч",
+			"icon": "right_hand_steel_sword",
+			"description": "Меч из железа",
+			"weight": 2.5,
+			"price": 0,
+			"equip_slot": "weapon",
+			"completed_at": 1767226200.0
+		}
+	]
+}

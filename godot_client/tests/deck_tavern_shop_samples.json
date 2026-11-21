@@ -1,0 +1,23 @@
+{
+ "texts": {
+  "bartender": "Хозяин трактира",
+  "tab_drinks": "НАПИТКИ",
+  "tab_sell": "СКУПКА",
+  "drinks_title": "Напитки бара",
+  "sell_title": "Скупка",
+  "sell_hint": "Кликните на предмет в рюкзаке",
+  "price_placeholder": "временно недоступно",
+  "purchase_disabled": "Покупки временно отключены до назначения цен в монетах",
+  "close": "ЗАКРЫТЬ"
+ },
+ "drinks": [
+  {
+   "id": 1,
+   "name": "Эль",
+   "description": "Восстанавливает 50 жизней",
+   "price_coins": 20,
+   "effect": "heal",
+   "effect_value": 50
+  }
+ ]
+}

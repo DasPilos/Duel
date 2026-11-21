@@ -1,1 +1,1 @@
-"""Operational utilities for the Duel server host."""
+"""Operational utilities for the Multiverse of Games server host."""

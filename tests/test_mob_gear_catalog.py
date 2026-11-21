@@ -7,7 +7,7 @@ os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
 
 import pygame
 
-from core.mob_profiles import NPC_KEYS  # noqa: E402
+from core.mob_catalog import MOB_KEYS, PALETTE_MOB_CATALOG  # noqa: E402
 from core import mob_modes, settings  # noqa: E402
 from scenes.map_editor_ui import EquipmentDialog, MobParamsDialog  # noqa: E402
 from scenes.world_map_scene import MOB_PROFILES, WorldMapScene  # noqa: E402
@@ -43,10 +43,20 @@ class MobEquipmentTests(PygameTestCase):
         super().setUp()
         self.kind = next(iter(MOB_PROFILES))
 
-    def test_mob_profiles_are_only_editor_npcs_without_equipment_key(self):
-        self.assertEqual(set(MOB_PROFILES), NPC_KEYS)
+    def test_mob_profiles_cover_the_combat_catalog_without_equipment_key(self):
+        self.assertEqual(set(MOB_PROFILES), MOB_KEYS)
         for profile in MOB_PROFILES.values():
             self.assertNotIn("equipment", profile)
+
+    def test_every_palette_mob_loads_directional_runtime_frames(self):
+        scene = _scene()
+
+        for mob in PALETTE_MOB_CATALOG:
+            with self.subTest(key=mob["key"]):
+                frames = scene._mob_walk_frames(mob["key"])
+                self.assertIsNotNone(frames)
+                self.assertEqual(set(frames), {0, 1, 2, 3})
+                self.assertTrue(all(len(row) == 4 for row in frames.values()))
 
     def test_fighter_gets_equipment_from_server_snapshot(self):
         sword = _item_payload(20, "Железный меч", "weapon", {"strength": 1})
@@ -121,10 +131,26 @@ class MobEquipmentDialogTests(PygameTestCase):
         window = self._window({"weapon": 99}, ())
         window.draw(pygame.display.get_surface())
 
-    def test_dialog_draws_with_equipment_rows_and_buttons(self):
+    def test_dialog_draws_with_equipment_button_and_window(self):
         dialog = self._dialog({"weapon": 20, "shield": None}, self.ITEMS)
-        dialog.draw(pygame.display.get_surface())
-        self.assertEqual(dialog.handle_event(SimpleNamespace(type=pygame.MOUSEBUTTONDOWN, button=1, pos=(-1000, -1000))), None)
+        surface = pygame.display.get_surface()
+        dialog.draw(surface)
+        self.assertIsNone(dialog.handle_event(SimpleNamespace(type=pygame.MOUSEBUTTONDOWN, button=1, pos=(-1000, -1000))))
+        click = SimpleNamespace(type=pygame.MOUSEBUTTONDOWN, button=1, pos=dialog._equipment_button_rect().center)
+        self.assertIsNone(dialog.handle_event(click))
+        self.assertIsNotNone(dialog.equipment_window)
+        dialog.draw(surface)
+        escape = SimpleNamespace(type=pygame.KEYDOWN, key=pygame.K_ESCAPE)
+        self.assertIsNone(dialog.handle_event(escape))
+        self.assertIsNone(dialog.equipment_window)
+
+    def test_save_drops_equipment_that_no_longer_fits(self):
+        leveled = {"id": 70, "name": "Доспех ветерана", "equip_slot": "body", "effects": {"requirements": {"level": 5}}}
+        dialog = self._dialog({"body": 70}, [leveled])
+        save = SimpleNamespace(type=pygame.MOUSEBUTTONDOWN, button=1, pos=dialog._save_rect().center)
+        result = dialog.handle_event(save)
+        self.assertEqual(result[0], "save")
+        self.assertIsNone(result[1]["equipment"]["body"])
 
 
 class MobEquipmentSettingsTests(unittest.TestCase):

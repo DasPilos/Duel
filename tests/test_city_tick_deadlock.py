@@ -4,7 +4,7 @@ from unittest import mock
 
 from psycopg import errors as pg_errors
 
-from server.city_population import CITY_DEADLOCK_RETRIES, CityPopulation
+from economy.server.city_population import CITY_DEADLOCK_RETRIES, CityPopulation
 from tests.fixtures import create_test_database, drop_test_database
 
 

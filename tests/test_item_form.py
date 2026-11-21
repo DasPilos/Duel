@@ -10,7 +10,7 @@ import pygame
 
 from core import item_form, item_icons
 from core.map_catalog import catalog_definitions
-from scenes.item_form_dialog import ItemFormDialog
+from scenes.item_form_dialog import ItemFormDialog, SLOT_LABELS
 from scenes.map_editor_scene import MapEditorScene
 
 
@@ -46,12 +46,54 @@ class ItemFormBuildTests(unittest.TestCase):
         record = item_form.build_item(club_form(), 1003)
         self.assertNotIn("crit_power", record["effects"])
 
+    def test_attack_range_and_area_are_saved_as_equipment_effects(self):
+        form = {**club_form(), "attack_range": 8, "attack_area": 3}
+        record = item_form.build_item(form, 1006)
+        self.assertEqual(record["effects"]["attack_range"], 8)
+        self.assertEqual(record["effects"]["attack_area"], 3)
+        with self.assertRaisesRegex(ValueError, "Дальность атаки, клеток"):
+            item_form.validate_form({**club_form(), "attack_range": item_form.MAX_ATTACK_DISTANCE + 1})
+        with self.assertRaisesRegex(ValueError, "Площадь атаки, клеток"):
+            item_form.validate_form({**club_form(), "attack_area": -1})
+
+    def test_lifesteal_and_vampirism_aura_are_serialized(self):
+        form = {
+            **club_form(),
+            "lifesteal_percent": 12,
+            "aura_type": "vampirism",
+            "aura_target": "allies",
+            "aura_radius_px": 180,
+            "aura_lifesteal_percent": 20,
+        }
+        record = item_form.build_item(form, 1007)
+        self.assertEqual(record["effects"]["lifesteal_percent"], 12)
+        self.assertEqual(record["effects"]["aura"], {
+            "type": "vampirism",
+            "target": "allies",
+            "radius_px": 180,
+            "lifesteal_percent": 20,
+        })
+        with self.assertRaisesRegex(ValueError, "Радиус ауры, пикселей"):
+            item_form.validate_form({**club_form(), "aura_radius_px": item_form.MAX_AURA_RADIUS + 1})
+        with self.assertRaisesRegex(ValueError, "Вампиризм ауры, %"):
+            item_form.validate_form({**club_form(), "aura_lifesteal_percent": 101})
+        with self.assertRaisesRegex(ValueError, "Выберите цель ауры"):
+            item_form.validate_form({**club_form(), "aura_target": "everyone"})
+
     def test_missing_fields_take_defaults(self):
         clean = item_form.validate_form({"name": "Меч", "slot": "weapon"})
         self.assertEqual(clean["requirements"]["strength"], 0)
         self.assertEqual(clean["crit_power"], item_form.DEFAULT_CRIT_POWER)
 
+    def test_ring_item_uses_one_generic_slot_for_both_loadout_positions(self):
+        self.assertNotIn("ring_2", item_form.ITEM_FORM_SLOTS)
+        clean = item_form.validate_form({"name": "Кольцо", "slot": "ring_2"})
+        self.assertEqual(clean["slot"], "ring")
+        self.assertEqual(item_form.build_item({"name": "Кольцо", "slot": "ring_2"}, 1008)["equip_slot"], "ring")
+
     def test_invalid_values_are_rejected_with_a_message(self):
+        with self.assertRaisesRegex(ValueError, "Форма предмета должна быть объектом"):
+            item_form.validate_form([])
         with self.assertRaisesRegex(ValueError, "Укажите название"):
             item_form.validate_form({**club_form(), "name": "  "})
         with self.assertRaisesRegex(ValueError, "Урон «от» не может быть больше"):
@@ -95,6 +137,10 @@ class ItemFormDialogTests(unittest.TestCase):
     def setUp(self):
         self.scene = MapEditorScene(None, catalog_definitions(), lambda: True)
         self.scene.has_map = True
+
+    def test_ring_slot_label_is_shared(self):
+        self.assertEqual(SLOT_LABELS["ring"], "Кольца")
+        self.assertNotIn("ring_2", SLOT_LABELS)
 
     def click(self, pos):
         self.scene.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=pos))

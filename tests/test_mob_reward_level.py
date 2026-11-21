@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from core import mob_modes
 from server import world_map
-from server.world_mobs import WorldService
+from tower.server.world_mobs import WorldService
 from tests.test_world_mobs import FakeClock, FakeDatabase, FakeItems
 
 IMP = "imp_sword"
@@ -54,11 +54,11 @@ class RewardAndLevelTests(unittest.TestCase):
     def test_patrolling_mob_faces_its_move_direction(self):
         self.service._terrain_blocked = lambda x, y: False
         self.mob.patrol_cells = ((0, 0), (3, 0))
-        self.mob.patrol_target = (self.mob.home_x + 3 * world_map.TILE, self.mob.home_y)
+        self.mob.patrol_route = [(self.mob.home_x + 3 * world_map.TILE, self.mob.home_y)]
         self.mob.facing = 0.0
         self.service._update_mob_patrol(self.mob, 0.1)
         self.assertAlmostEqual(self.mob.facing, 0.0, places=3)
-        self.mob.patrol_target = (self.mob.home_x, self.mob.home_y + 3 * world_map.TILE)
+        self.mob.patrol_route = [(self.mob.home_x, self.mob.home_y + 3 * world_map.TILE)]
         self.mob.x, self.mob.y = self.mob.home_x, self.mob.home_y
         self.service._update_mob_patrol(self.mob, 0.1)
         self.assertGreater(self.mob.facing, 0.0)  # вниз по экрану

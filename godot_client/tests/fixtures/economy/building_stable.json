@@ -1,0 +1,228 @@
+{
+  "source": "economy/server/production_buildings.py _payload() for 'stable' (lines 628-1062) and get_state() (lines 1598-1608, adds transport_convoys from transport.py get_world_convoys, lines 1025-1170), wrapped by api.py as {\"building\": {...}}. Укорочено: сервер отдаёт 24 слота стойл (10 уровней и 2 улучшения), здесь 9: 3 занятых, 3 свободных и 3 закрытых, как на stable.png",
+  "building": {
+    "building": "stable",
+    "faction": "radburg",
+    "level": 2,
+    "server_time": 1767225600.0,
+    "stall_capacity": 6,
+    "stall_capacity_bonus": 0,
+    "occupied_stalls": 3,
+    "feed_consumption_kg_per_hour": 6,
+    "feed_resource": "wheat",
+    "feed_resource_label": "Пшеница",
+    "horse_price_next_silver": 10,
+    "silver_available": 25,
+    "treasury_copper": 6000,
+    "spendable_treasury_copper": 6000,
+    "treasury_silver_available": 60,
+    "warehouse_storage": {"wood": 300, "stone": 40},
+    "cart_progress": {
+      "schema_version": 1,
+      "selected_grade": 1,
+      "grades": {
+        "1": {
+          "blueprint_owned": true,
+          "body_owned": true,
+          "body_count": 2,
+          "body_finish_at": 1767228000.0,
+          "wood_deposited": 0,
+          "silver_deposited": 0,
+          "upgrades": {"wheels": 1, "sides": 0, "axles": 0},
+          "wear": {
+            "cart_grade_1": {"durability": 80.0, "auto_repair": "always", "updated_at": 1767225000.0, "wear_carry_seconds": 0.0}
+          },
+          "production_orders": [
+            {"order_id": 9, "grade": 1, "created_at": 1767225600.0, "finish_at": 1767228000.0}
+          ]
+        },
+        "2": {
+          "blueprint_owned": false,
+          "body_owned": false,
+          "body_count": 0,
+          "body_finish_at": null,
+          "wood_deposited": 0,
+          "silver_deposited": 0,
+          "upgrades": {"wheels": 0, "sides": 0, "axles": 0},
+          "wear": {},
+          "production_orders": []
+        }
+      }
+    },
+    "available_carts": [
+      {
+        "id": "cart_grade_1",
+        "grade": 1,
+        "instance": 1,
+        "name": "Лёгкая повозка",
+        "custom_name": null,
+        "status": "Свободна",
+        "durability": 80.0,
+        "max_durability": 100,
+        "wear_band": "medium",
+        "broken": false,
+        "auto_repair": "always",
+        "repair_wood_cost": 20,
+        "can_travel": true,
+        "dispatch_available": true,
+        "sprite_key": "light",
+        "horse_slots": 1,
+        "resource_slots": 1,
+        "capacity_kg": 300,
+        "seconds_per_tile": 7.2,
+        "empty_tiles_per_hour": 500,
+        "full_load_speed_penalty_percent": 70
+      },
+      {
+        "id": "cart_grade_1~2",
+        "grade": 1,
+        "instance": 2,
+        "name": "Почтовая",
+        "custom_name": "Почтовая",
+        "status": "В пути",
+        "durability": 100.0,
+        "max_durability": 100,
+        "wear_band": "good",
+        "broken": false,
+        "auto_repair": null,
+        "repair_wood_cost": 0,
+        "can_travel": false,
+        "dispatch_available": false,
+        "sprite_key": "light",
+        "horse_slots": 1,
+        "resource_slots": 1,
+        "capacity_kg": 300,
+        "seconds_per_tile": 7.2,
+        "empty_tiles_per_hour": 500,
+        "full_load_speed_penalty_percent": 70
+      }
+    ],
+    "available_cart_drivers": [
+      {"id": 5, "name": "Марта", "satiety": 80, "satisfaction": "satisfied"}
+    ],
+    "stall_slots": [
+      {
+        "slot_index": 0, "unlocked": true, "unlock_level": 1,
+        "horse": {"id": 1, "name": "Гроза", "breed": "Тяжеловоз", "status": "Отдыхает", "satiety": 86,
+          "satiety_progress": 0.0, "can_travel": true, "purchase_price_silver": 10}
+      },
+      {
+        "slot_index": 1, "unlocked": true, "unlock_level": 1,
+        "horse": {"id": 2, "name": "Искра", "breed": "Степная", "status": "Отдыхает", "satiety": 42,
+          "satiety_progress": 0.0, "can_travel": true, "purchase_price_silver": 10}
+      },
+      {
+        "slot_index": 2, "unlocked": true, "unlock_level": 1,
+        "horse": {"id": 3, "name": "Ветер", "breed": "Арабская", "status": "В пути", "satiety": 15,
+          "satiety_progress": 0.0, "can_travel": false, "purchase_price_silver": 10}
+      },
+      {"slot_index": 3, "unlocked": true, "unlock_level": 1, "horse": null},
+      {"slot_index": 4, "unlocked": true, "unlock_level": 1, "horse": null},
+      {"slot_index": 5, "unlocked": true, "unlock_level": 1, "horse": null},
+      {"slot_index": 6, "unlocked": false, "unlock_level": 3, "horse": null},
+      {"slot_index": 7, "unlocked": false, "unlock_level": 3, "horse": null},
+      {"slot_index": 8, "unlocked": false, "unlock_level": 4, "horse": null}
+    ],
+    "stall_upgrades": {
+      "wooden_stalls": {
+        "name": "Приставные деревянные денники",
+        "horse_capacity": 1,
+        "wood_item_id": 60,
+        "wood_cost": 300,
+        "silver_cost": 50,
+        "time_seconds": 10800,
+        "wood_deposited": 0,
+        "silver_deposited": 0,
+        "wood_in_warehouse": 300,
+        "treasury_copper": 6000,
+        "treasury_silver_available": 60,
+        "purchased": false,
+        "wood_remaining": 300,
+        "silver_remaining": 50,
+        "completed": false,
+        "in_progress": false,
+        "finish_at": null,
+        "seconds_left": 0,
+        "can_purchase": true,
+        "ready": true
+      },
+      "hayloft": {
+        "name": "Внешний сеновал",
+        "horse_capacity": 1,
+        "wood_item_id": 60,
+        "wood_cost": 300,
+        "silver_cost": 50,
+        "time_seconds": 10800,
+        "wood_deposited": 0,
+        "silver_deposited": 0,
+        "wood_in_warehouse": 300,
+        "treasury_copper": 6000,
+        "treasury_silver_available": 60,
+        "purchased": true,
+        "wood_remaining": 300,
+        "silver_remaining": 50,
+        "completed": false,
+        "in_progress": true,
+        "finish_at": 1767232800.0,
+        "seconds_left": 7200,
+        "can_purchase": true,
+        "ready": true
+      }
+    },
+    "upgrade": {
+      "next_level": 3,
+      "time_seconds": 18000,
+      "materials": [
+        {"item_id": 60, "name": "Древесина", "icon": null, "required": 5, "deposited": 0, "in_warehouse": 300, "remaining": 5},
+        {"item_id": 69, "name": "Камень", "icon": null, "required": 5, "deposited": 0, "in_warehouse": 40, "remaining": 5},
+        {"item_id": 10, "name": "Железная руда", "icon": null, "required": 5, "deposited": 0, "in_warehouse": 0, "remaining": 5}
+      ],
+      "ready": false,
+      "in_progress": false,
+      "finish_at": null,
+      "seconds_left": null
+    },
+    "transport_convoys": [
+      {
+        "id": 12,
+        "cart_id": "cart_grade_1~2",
+        "cart_grade": 1,
+        "cart_name": "Лёгкая повозка",
+        "cart_sprite_key": "light",
+        "speed_kmh": 11.2,
+        "durability": 100,
+        "wear_band": "good",
+        "destination_building_id": "wheat_farm",
+        "destination_name": "Крестьянское поселение",
+        "route_name": "Крестьянское поселение",
+        "driver_citizen_id": 7,
+        "driver_name": "Тимофей",
+        "horses": [{"id": 3, "name": "Ветер", "breed": "Арабская", "status": "В пути"}],
+        "cargo": [],
+        "cargo_kg": 0.0,
+        "capacity_kg": 300,
+        "pinned": true,
+        "waiting_for_resources": false,
+        "phase": "outbound",
+        "status": "Едет к объекту",
+        "route_stages": [
+          {"phase": "outbound", "label": "Следует в Крестьянское поселение", "seconds": 1200, "state": "current"},
+          {"phase": "loading", "label": "Погрузка", "seconds": 300, "state": "future"},
+          {"phase": "returning", "label": "Следует в город", "seconds": 1200, "state": "future"},
+          {"phase": "unloading", "label": "Разгрузка", "seconds": 120, "state": "future"}
+        ],
+        "cycle_seconds_remaining": 3120,
+        "movement_text": "Едет к объекту",
+        "direction": "outbound",
+        "travel_seconds": 2400,
+        "seconds_remaining": 1200,
+        "progress_percent": 50,
+        "cargo_percent": 0,
+        "position_x": 0,
+        "position_y": 0,
+        "position_direction": null,
+        "started_at": 1767224400.0
+      }
+    ]
+  }
+}
