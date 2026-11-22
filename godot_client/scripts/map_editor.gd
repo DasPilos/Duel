@@ -3,9 +3,26 @@ extends Control
 const SCENE_TRANSITION := preload("res://scripts/scene_transition.gd")
 const CANVAS_SCRIPT = preload("res://scripts/map_editor_canvas.gd")
 const ATLAS_PALETTE_SCRIPT = preload("res://scripts/map_atlas_palette.gd")
+const FLOATING_PANEL_SCRIPT = preload("res://scripts/editor_floating_panel.gd")
 const ANIMATED_PALETTE_SCRIPT = preload("res://scripts/map_animated_palette.gd")
 const MOB_PROFILE_DIALOG_SCRIPT = preload("res://scripts/mob_profile_dialog.gd")
 const MOB_PROFILE_RULES = preload("res://scripts/mob_profile_rules.gd")
+const BUILDING_SETTINGS_DIALOG_SCRIPT = preload("res://scripts/building_settings_dialog.gd")
+const BUILDING_FOOTPRINT_TILES := 5
+const BUILDING_ANIM_STEP_SECONDS := 0.15
+const BUILDING_FRAME_PATHS := {
+	"castle_8": [
+		"res://assets/map/main_buildings/castle_anim_1.png", "res://assets/map/main_buildings/castle_anim_2.png",
+		"res://assets/map/main_buildings/castle_anim_3.png", "res://assets/map/main_buildings/castle_anim_4.png",
+		"res://assets/map/main_buildings/castle_anim_5.png", "res://assets/map/main_buildings/castle_anim_6.png",
+		"res://assets/map/main_buildings/castle_anim_7.png", "res://assets/map/main_buildings/castle_anim_8.png",
+	],
+	"castle_5": [
+		"res://assets/map/main_buildings/main_castle_anim_1.png", "res://assets/map/main_buildings/main_castle_anim_2.png",
+		"res://assets/map/main_buildings/main_castle_anim_3.png", "res://assets/map/main_buildings/main_castle_anim_4.png",
+		"res://assets/map/main_buildings/main_castle_anim_5.png",
+	],
+}
 const LAYER_LIST_SCRIPT = preload("res://scripts/layer_list.gd")
 const LAYER_RULES = preload("res://scripts/layer_rules.gd")
 const MINIMAP_STROKE_REBUILD_MSEC := 200
@@ -144,7 +161,6 @@ const MOB_INSTANCE_PREFIX := "mob|"
 const LAYER_TILE := "tile"
 const LAYER_DECORATIVE := "decorative"
 const LAYER_OBJECT := "object"
-const TAVERN_ATLAS_PATH_PART := "craftpix-net-666104-tavern-top-down-pixel-rpg-asset-pack/Tiled_files/Exterior.png"
 const LAYER_ANIMAL := "animal"
 const LAYER_MOB := "mob"
 const LAYER_GROUP := "group"
@@ -196,6 +212,13 @@ var _pending_mob_profile_key := ""
 var _pending_mob_profile_kind := ""
 var _pending_mob_profile_settings: Dictionary = {}
 var _mob_profile_dialog: Control
+var _building_settings_dialog: ConfirmationDialog
+var _building_spawn_button: Button
+var _building_sprite := "castle_8"
+var _building_frame_cache := {}
+var _building_anim_frame := 0
+var _building_anim_timer: Timer
+var _building_palette_icons: Array = []
 var _item_form_dialog: Control
 var _new_items: Array[Dictionary] = []
 var _add_item_button: Button
@@ -242,10 +265,6 @@ var _selection := Rect2i()
 var _stamp_buffer: Dictionary = {}
 var _spawns: Array = []
 var _spawn_type := SPAWN_RULES.TYPE_HERO
-var _tavern_settings := {"max_hp": SPAWN_RULES.DEFAULT_TAVERN_HP}
-var _tavern_settings_button: Button
-var _tavern_settings_dialog: ConfirmationDialog
-var _tavern_hp_spin: SpinBox
 var _spawn_settings_dialog: ConfirmationDialog
 var _spawn_settings_index := -1
 var _spawn_name_edit: LineEdit
@@ -340,9 +359,13 @@ var _publish_group_button: Button
 var _publish_group_name: LineEdit
 var _publish_group_category: OptionButton
 var _catalog_tab: Button
-var _workspace_split: HSplitContainer
-var _canvas_side_layout: HBoxContainer
+var _workspace: Control
+var _floating_panels: Array[Control] = []
+var _panels_placed := false
 var _layer_panel: VBoxContainer
+var _layer_passable_select: OptionButton
+var _passability_button: Button
+var _show_passability := false
 var _ui_root: VBoxContainer
 
 var _status: Label
@@ -739,15 +762,17 @@ func _build_ui() -> void:
 	local_delete_button.pressed.connect(_request_delete_local_draft)
 	local_toolbar.add_child(local_delete_button)
 
-	_workspace_split = HSplitContainer.new()
-	_workspace_split.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_workspace_split.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_workspace_split.split_offset = 0
-	root.add_child(_workspace_split)
+	# Рабочая область: каждый блок (биомы, листы, палитра, холст, слои) двигается и меняет размер мышью.
+	_workspace = Control.new()
+	_workspace.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_workspace.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_workspace.clip_contents = true
+	_workspace.custom_minimum_size = Vector2(320, 320)
+	_workspace.resized.connect(_layout_initial_panels)
+	root.add_child(_workspace)
 
 	var palette_panel := HBoxContainer.new()
 	palette_panel.custom_minimum_size.x = roundi(360 * EDITOR_UI_SCALE)
-	_workspace_split.add_child(palette_panel)
 
 	var biome_panel := VBoxContainer.new()
 	biome_panel.custom_minimum_size.x = roundi(110 * EDITOR_UI_SCALE)
@@ -916,6 +941,12 @@ func _build_ui() -> void:
 	_minimap_button.button_pressed = false
 	_minimap_button.pressed.connect(_toggle_minimap)
 	canvas_toolbar.add_child(_minimap_button)
+	_passability_button = Button.new()
+	_passability_button.text = "Проходимость"
+	_passability_button.toggle_mode = true
+	_passability_button.tooltip_text = "Подсветить клетки, заблокированные слоями непроходимости"
+	_passability_button.toggled.connect(_on_passability_toggled)
+	canvas_toolbar.add_child(_passability_button)
 	_annotation_controls.add_child(_annotation_height_select)
 	_annotation_controls.add_child(_corner_variant_select)
 	_annotation_controls.add_child(_corner_variant_assign_button)
@@ -932,16 +963,19 @@ func _build_ui() -> void:
 	_annotation_controls.add_child(load_profile_button)
 	_canvas = CANVAS_SCRIPT.new()
 	_canvas.editor = self
-	_canvas.custom_minimum_size = Vector2(550, 550)
-	_canvas.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	_canvas.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_canvas.custom_minimum_size = Vector2(320, 320)
+	_canvas.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_canvas.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_canvas.clip_contents = true
 	_canvas.mouse_filter = Control.MOUSE_FILTER_STOP
-	var canvas_viewport := CenterContainer.new()
+	# Холст занимает всю область блока и меняет размер вместе с рамкой.
+	var canvas_viewport := Control.new()
 	canvas_viewport.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	canvas_viewport.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	canvas_viewport.clip_contents = true
 	canvas_container.add_child(canvas_viewport)
 	canvas_viewport.add_child(_canvas)
+	_canvas.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_canvas.mouse_exited.connect(_on_canvas_mouse_exited)
 
 	_layer_panel = VBoxContainer.new()
@@ -971,12 +1005,12 @@ func _build_ui() -> void:
 	_mob_spawn_button.tooltip_text = "Размещать точки появления ЛПС; двойной щелчок открывает индивидуальные настройки"
 	_mob_spawn_button.pressed.connect(_select_spawn_type.bind(SPAWN_RULES.TYPE_MOB))
 	_layer_panel.add_child(_mob_spawn_button)
-	if _mode == "front_line":
-		_tavern_settings_button = Button.new()
-		_tavern_settings_button.text = "Настройки таверны"
-		_tavern_settings_button.tooltip_text = "Задать максимальное здоровье главной цели"
-		_tavern_settings_button.pressed.connect(_open_tavern_settings)
-		_layer_panel.add_child(_tavern_settings_button)
+	_building_spawn_button = Button.new()
+	_building_spawn_button.toggle_mode = true
+	_building_spawn_button.button_group = brush_group
+	_building_spawn_button.tooltip_text = "Размещать главные здания; двойной щелчок открывает оборону и здоровье"
+	_building_spawn_button.pressed.connect(_select_spawn_type.bind(SPAWN_RULES.TYPE_BUILDING))
+	_layer_panel.add_child(_building_spawn_button)
 	_inventory_button = Button.new()
 	_inventory_button.text = "Инвентарь"
 	_inventory_button.tooltip_text = "Предметы экипировки для выбранного режима"
@@ -1013,6 +1047,13 @@ func _build_ui() -> void:
 	_layer_type.add_item("Слой изображений (позже)", 6)
 	_layer_type.set_item_disabled(6, true)
 	_layer_panel.add_child(_layer_type)
+	_layer_passable_select = OptionButton.new()
+	_layer_passable_select.add_item("Проходимый", 0)
+	_layer_passable_select.add_item("Непроходимый", 1)
+	_layer_passable_select.select(0)
+	_layer_passable_select.tooltip_text = "Проходимость слоя: клетки слоя проходимы или нет"
+	_layer_type.item_selected.connect(_on_new_layer_type_selected)
+	_layer_panel.add_child(_layer_passable_select)
 	_layer_name = LineEdit.new()
 	_layer_name.placeholder_text = "Название нового слоя"
 	_layer_panel.add_child(_layer_name)
@@ -1025,15 +1066,19 @@ func _build_ui() -> void:
 	_add_layer_action(layer_actions, "Вниз", _move_layer.bind(-1))
 	_add_layer_action(layer_actions, "Замок", _toggle_layer_lock, "Заблокировать или разблокировать слой")
 	_add_layer_action(layer_actions, "Дубль", _duplicate_layer, "Дублировать выбранный слой")
+	_add_layer_action(layer_actions, "Проход.", _toggle_layer_passable, "Переключить проходимость выбранного слоя")
 	_add_layer_action(layer_actions, "Удалить", _delete_layer)
 
-	_canvas_side_layout = HBoxContainer.new()
-	_canvas_side_layout.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_canvas_side_layout.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	canvas_container.custom_minimum_size = Vector2(550, 550)
-	_canvas_side_layout.add_child(canvas_container)
-	_canvas_side_layout.add_child(side_panel_scroll)
-	_workspace_split.add_child(_canvas_side_layout)
+	canvas_container.custom_minimum_size = Vector2(320, 320)
+	_add_floating_panel("biomes", "Биомы", biome_panel)
+	_add_floating_panel("sheets", "Листы", sheet_panel)
+	_add_floating_panel("palette", "Палитра", atlas_panel)
+	_add_floating_panel("canvas", "Холст", canvas_container)
+	_add_floating_panel("side", "Слои и инструменты", side_panel_scroll)
+	_layout_initial_panels()
+	# Все кнопки и надписи редактора выровнены по левому краю, включая созданные позже.
+	_align_controls_left(root)
+	get_tree().node_added.connect(_on_node_added_align_left)
 
 	_status = Label.new()
 	_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -1142,6 +1187,7 @@ func _new_layer(layer_name: String, layer_type: String, parent_id: int) -> Dicti
 		"parent_id": parent_id,
 		"visible": true,
 		"locked": false,
+		"passable": LAYER_RULES.default_passable(layer_type),
 		"cells": {},
 		"animal_settings": {},
 	}
@@ -1159,6 +1205,7 @@ func _add_layer() -> void:
 	var layer_type: String = layer_types[_layer_type.get_selected_id()]
 	var parent_id := _active_layer_id if _layer_type.get_selected_id() == 2 and _get_layer(_active_layer_id).get("type") == LAYER_GROUP else 0
 	var layer: Dictionary = _new_layer(name, layer_type, parent_id)
+	layer["passable"] = _layer_passable_select.selected == 0
 	_push_layers_undo()
 	_layers.insert(LAYER_RULES.insert_index(_layers, layer_type), layer)
 	_active_layer_id = int(layer["id"])
@@ -1434,6 +1481,8 @@ func _update_layer_info() -> void:
 	if number > 0:
 		parts.append("Слой %d" % number)
 		parts.append(_layer_type_label(str(layer.get("type", ""))))
+		if LAYER_RULES.affects_passability(str(layer.get("type", ""))):
+			parts.append("проходимый" if LAYER_RULES.is_passable(layer) else "непроходимый")
 	else:
 		parts.append("Группа слоёв")
 	if not bool(layer.get("visible", true)):
@@ -1441,6 +1490,150 @@ func _update_layer_info() -> void:
 	if bool(layer.get("locked", false)):
 		parts.append("заблокирован")
 	_layer_info.text = " · ".join(parts)
+
+
+func _on_new_layer_type_selected(_index: int) -> void:
+	var layer_type := _selected_new_layer_type()
+	_layer_passable_select.select(0 if LAYER_RULES.default_passable(layer_type) else 1)
+	_layer_passable_select.disabled = not LAYER_RULES.affects_passability(layer_type)
+
+
+func _selected_new_layer_type() -> String:
+	var layer_types: Array[String] = [
+		LAYER_TILE, LAYER_OBJECT, LAYER_GROUP, LAYER_ANIMAL, LAYER_MOB, LAYER_DECORATIVE,
+	]
+	return layer_types[_layer_type.get_selected_id()]
+
+
+func _toggle_layer_passable() -> void:
+	var layer := _get_layer(_active_layer_id)
+	if layer.is_empty():
+		_set_status("Сначала выберите слой.")
+		return
+	if not LAYER_RULES.affects_passability(str(layer.get("type", ""))):
+		_set_status("У групп слоёв нет клеток, проходимость не задаётся.")
+		return
+	_push_layers_undo()
+	layer["passable"] = not LAYER_RULES.is_passable(layer)
+	_update_layer_info()
+	_canvas.queue_redraw()
+	_set_status("Слой «%s»: %s." % [
+		str(layer.get("name", "")),
+		"проходимый" if bool(layer["passable"]) else "непроходимый",
+	])
+
+
+func _on_passability_toggled(pressed: bool) -> void:
+	_show_passability = pressed
+	_canvas.queue_redraw()
+	_set_status("Подсветка непроходимых клеток включена." if pressed else "Подсветка проходимости выключена.")
+
+
+func _draw_passability_overlay(canvas: Control, tile_size: float) -> void:
+	var layers_for_rules: Array = []
+	for layer in _layers:
+		if str(layer.get("type", "")) != LAYER_GROUP and _is_layer_visible(layer):
+			layers_for_rules.append(layer)
+	for coord in LAYER_RULES.blocked_cells(layers_for_rules):
+		var parts := str(coord).split(":")
+		if parts.size() != 2:
+			continue
+		var rect := Rect2(_pan + Vector2(int(parts[0]), int(parts[1])) * tile_size, Vector2.ONE * tile_size)
+		canvas.draw_rect(rect, Color(0.95, 0.15, 0.15, 0.4))
+
+
+func _align_controls_left(node: Node) -> void:
+	if node is Button:
+		(node as Button).alignment = HORIZONTAL_ALIGNMENT_LEFT
+	elif node is Label:
+		(node as Label).horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	for child in node.get_children():
+		_align_controls_left(child)
+
+
+func _on_node_added_align_left(node: Node) -> void:
+	if _ui_root != null and is_instance_valid(_ui_root) and _ui_root.is_ancestor_of(node):
+		_align_controls_left(node)
+
+
+# Блок редактора: заголовок с кнопками закрепить и свернуть, уголок для размера.
+func _add_floating_panel(key: String, title: String, content: Control) -> void:
+	var panel: Control = FLOATING_PANEL_SCRIPT.new()
+	panel.panel_key = key
+	panel.set_title(title)
+	_workspace.add_child(panel)
+	panel.set_content(content)
+	panel.layout_changed.connect(_save_panel_layout)
+	_floating_panels.append(panel)
+
+
+# Стартовая раскладка блоков: доли рабочей области (x, ширина). Дальше блоки двигаются мышью.
+const PANEL_LAYOUT_FILE := "user://editor_panel_layout.json"
+const PANEL_LAYOUT_FRACTIONS := [
+	[0.0, 0.11],
+	[0.115, 0.13],
+	[0.25, 0.30],
+	[0.555, 0.32],
+	[0.88, 0.12],
+]
+
+
+func _layout_initial_panels() -> void:
+	# Раньше всех блоков (сигнал resized может прийти во время сборки) или без размера области раскладку не делаем.
+	if _panels_placed or _workspace == null or _floating_panels.size() < PANEL_LAYOUT_FRACTIONS.size():
+		return
+	if _workspace.size.x <= 0.0 or _workspace.size.y <= 0.0:
+		return
+	_panels_placed = true
+	var area := _workspace.size
+	var saved := _read_saved_panel_states()
+	for index in range(mini(_floating_panels.size(), PANEL_LAYOUT_FRACTIONS.size())):
+		var fraction: Array = PANEL_LAYOUT_FRACTIONS[index]
+		var panel: Control = _floating_panels[index]
+		if saved.has(panel.panel_key):
+			panel.apply_state(saved[panel.panel_key])
+		else:
+			panel.position = Vector2(float(fraction[0]) * area.x, 0.0)
+			panel.size = Vector2(float(fraction[1]) * area.x, area.y)
+	# Порядок наложения: от нижнего блока к верхнему, как сохранено.
+	var ordered := _floating_panels.duplicate()
+	ordered.sort_custom(func(a: Control, b: Control) -> bool:
+		return _saved_z(saved, a) < _saved_z(saved, b))
+	for panel in ordered:
+		panel.move_to_front()
+
+
+func _saved_z(saved: Dictionary, panel: Control) -> int:
+	return int(saved.get(panel.panel_key, {}).get("z", 0)) if saved.has(panel.panel_key) else 0
+
+
+# Сохранённая раскладка блоков из локального файла: ключ панели -> состояние. Ошибки файла игнорируются.
+func _read_saved_panel_states() -> Dictionary:
+	if not FileAccess.file_exists(PANEL_LAYOUT_FILE):
+		return {}
+	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(PANEL_LAYOUT_FILE))
+	if not parsed is Dictionary or not parsed.get("panels", null) is Array:
+		return {}
+	var by_key := {}
+	for state in parsed["panels"]:
+		if state is Dictionary and state.has("key"):
+			by_key[str(state["key"])] = state
+	return by_key
+
+
+# Пишет раскладку всех блоков (положение, размер, закрепление, свёрнутость, порядок наложения).
+func _save_panel_layout() -> void:
+	if not _panels_placed:
+		return
+	var states: Array = []
+	for panel in _floating_panels:
+		var state: Dictionary = panel.get_state()
+		state["z"] = panel.get_index()
+		states.append(state)
+	var file := FileAccess.open(PANEL_LAYOUT_FILE, FileAccess.WRITE)
+	if file == null:
+		return
+	file.store_string(JSON.stringify({"version": 1, "panels": states}, "	"))
 
 
 func _layer_type_label(layer_type: String) -> String:
@@ -1660,7 +1853,6 @@ func _on_api_completed(success: bool, payload: Variant) -> void:
 						_catalog.append(item)
 						_catalog_by_key[key] = item
 			_set_custom_tile_groups(payload.get("tile_groups", []))
-			_ensure_front_line_tavern()
 			_render_palette()
 			if _mode != "deck":
 				_set_loading_progress(90, "Загрузка инвентаря")
@@ -2203,6 +2395,18 @@ func _discover_atlas_sheets() -> void:
 		loading_done = await _advance_loading_progress(
 			loading_done, loading_total, "Загрузка героев",
 		)
+	_add_palette_section_title("Главные здания")
+	for castle in [["castle_8", "Замок"], ["castle_5", "Замок 1"]]:
+		var castle_button := Button.new()
+		castle_button.text = str(castle[1])
+		castle_button.tooltip_text = "Главное здание 5×5 клеток: оборона, здоровье и регенерация задаются в его настройках"
+		castle_button.toggle_mode = true
+		castle_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		castle_button.icon = _building_frame(str(castle[0]), 0)
+		castle_button.pressed.connect(_pick_building_sprite.bind(str(castle[0])))
+		_biome_list.add_child(castle_button)
+		_building_palette_icons.append({"button": castle_button, "sprite": str(castle[0])})
+	_ensure_building_anim_timer()
 	_catalog_tab = Button.new()
 	_catalog_tab.text = "Каталог сервера"
 	_catalog_tab.tooltip_text = "Серверные элементы, совместимые с публикацией"
@@ -6678,7 +6882,6 @@ func _load_map_payload(map_data: Variant) -> void:
 	_map_name.text = str(map_data.get("name", ""))
 	_map_width.value = int(map_data.get("map_w", DEFAULT_MAP_SIZE))
 	_map_height.value = int(map_data.get("map_h", DEFAULT_MAP_SIZE))
-	_tavern_settings = SPAWN_RULES.load_tavern_settings(map_data.get("spawns", []))
 	_spawns = SPAWN_RULES.load_spawns(map_data.get("spawns", []), _map_size(), _mode)
 	_refresh_spawn_button()
 	_minimap_dirty = true
@@ -6697,6 +6900,7 @@ func _load_map_payload(map_data: Variant) -> void:
 				layer["parent_id"] = int(layer.get("parent_id", 0))
 				layer["visible"] = bool(layer.get("visible", true))
 				layer["locked"] = bool(layer.get("locked", false))
+				layer["passable"] = LAYER_RULES.is_passable(layer)
 				layer["cells"] = _cells_to_dictionary(layer.get("cells", []))
 				layer["animal_settings"] = _animal_settings_to_dictionary(
 					layer.get("animal_settings", {})
@@ -6717,7 +6921,6 @@ func _load_map_payload(map_data: Variant) -> void:
 				elif str(cell.get("layer", "")) == "object":
 					target_layer = _layer_by_type(LAYER_OBJECT)
 				target_layer["cells"][_cell_key(int(cell.get("x", 0)), int(cell.get("y", 0)))] = cell_key
-	_ensure_front_line_tavern()
 	_ensure_animal_layer()
 	_ensure_mob_layer()
 	_move_animal_instances_to_animal_layer()
@@ -6737,78 +6940,6 @@ func _layer_by_type(layer_type: String) -> Dictionary:
 		if str(layer.get("type", "")) == layer_type:
 			return layer
 	return {}
-
-
-func _ensure_front_line_tavern() -> void:
-	if _mode != "front_line" or not _catalog_by_key.has("city_building_tavern"):
-		return
-	var atlas_tavern_visible := _has_front_line_tavern_atlas_art()
-	var item: Dictionary = _catalog_by_key["city_building_tavern"]
-	var width := int(item.get("footprint_w", 13))
-	var height := int(item.get("footprint_h", 13))
-	var map_size := _map_size()
-	var default_x := maxi(0, map_size.x - width)
-	var default_y := maxi(0, floori(float(map_size.y - height) / 2.0))
-	for layer in _layers:
-		var cells: Dictionary = layer.get("cells", {})
-		for cell_coord in cells.keys():
-			if str(cells[cell_coord]) != "city_building_tavern":
-				continue
-			var parts := str(cell_coord).split(":")
-			if atlas_tavern_visible and parts.size() == 2 \
-				and int(parts[0]) == default_x and int(parts[1]) == default_y:
-				cells.erase(cell_coord)
-				layer["cells"] = cells
-				_minimap_dirty = true
-				continue
-			return
-	if atlas_tavern_visible:
-		return
-	var object_layer := _layer_by_type(LAYER_OBJECT)
-	if object_layer.is_empty():
-		return
-	var x := default_x
-	var y := default_y
-	var cells: Dictionary = object_layer.get("cells", {})
-	cells[_cell_key(x, y)] = "city_building_tavern"
-	object_layer["cells"] = cells
-	_minimap_dirty = true
-	if is_instance_valid(_canvas):
-		_canvas.queue_redraw()
-
-
-func _has_front_line_tavern_atlas_art() -> bool:
-	var tavern_tiles := {}
-	for layer in _layers:
-		if str(layer.get("type", "")) != LAYER_TILE or not _is_layer_visible(layer):
-			continue
-		for coord in layer.get("cells", {}):
-			var key := str(layer["cells"][coord])
-			if not key.begins_with(ATLAS_CELL_PREFIX):
-				continue
-			var atlas_path := str(_decode_atlas_cell(key).get("path", ""))
-			if atlas_path.ends_with(TAVERN_ATLAS_PATH_PART):
-				tavern_tiles[coord] = true
-	return tavern_tiles.size() >= 20
-
-
-func _tavern_cell_at(map_cell: Vector2i) -> bool:
-	var item: Dictionary = _catalog_by_key.get("city_building_tavern", {})
-	var footprint := Vector2i(
-		int(item.get("footprint_w", 13)),
-		int(item.get("footprint_h", 13)),
-	)
-	for layer in _layers:
-		for coord in layer.get("cells", {}):
-			if str(layer["cells"][coord]) != "city_building_tavern":
-				continue
-			var parts := str(coord).split(":")
-			if parts.size() != 2:
-				continue
-			var anchor := Vector2i(int(parts[0]), int(parts[1]))
-			if Rect2i(anchor, footprint).has_point(map_cell):
-				return true
-	return false
 
 
 func _ensure_animal_layer() -> Dictionary:
@@ -6908,7 +7039,6 @@ func _save_map() -> void:
 			"Карта не сохранена: в волне выбран моб, который ещё не подключён к боевому каталогу."
 		)
 		return
-	_ensure_front_line_tavern()
 	var serialized_layers := _serialize_editor_layers()
 	_last_save_merged_cells = int(serialized_layers["merged_cells"])
 	_post_saved_map({
@@ -6930,7 +7060,7 @@ func _save_map() -> void:
 
 
 func _spawn_payload() -> Array:
-	return SPAWN_RULES.to_payload(_spawns, _mode, _tavern_settings, _map_size())
+	return SPAWN_RULES.to_payload(_spawns, _mode, _map_size())
 
 
 func _post_saved_map(payload: Dictionary) -> void:
@@ -6966,7 +7096,6 @@ func _selected_local_draft_id() -> String:
 
 
 func _save_local_draft() -> bool:
-	_ensure_front_line_tavern()
 	var serialized := _serialize_editor_layers()
 	var result: Dictionary = DRAFTS_RULES.save_draft(
 		_local_drafts_folder, _map_name.text, serialized["catalog_cells"], int(_map_width.value), int(_map_height.value),
@@ -7236,7 +7365,6 @@ func _finish_test_world_request() -> void:
 
 
 func _build_map_payload() -> Dictionary:
-	_ensure_front_line_tavern()
 	var serialized_layers := _serialize_editor_layers()
 	return {
 		"name": _map_name.text.strip_edges(),
@@ -7264,7 +7392,8 @@ func _serialize_editor_layers() -> Dictionary:
 			"parent_id": int(layer.get("parent_id", 0)),
 			"visible": bool(layer.get("visible", true)),
 			"locked": bool(layer.get("locked", false)),
-			"animal_settings": _animal_settings_to_dictionary(layer.get("animal_settings", {})),
+			"passable": LAYER_RULES.is_passable(layer),
+				"animal_settings": _animal_settings_to_dictionary(layer.get("animal_settings", {})),
 			"cells": [],
 		}
 		var layer_cells: Array[Dictionary] = []
@@ -7731,13 +7860,15 @@ func _toggle_spawn(map_cell: Vector2i) -> void:
 		_set_status("Точка уже размещена. Двойной щелчок открывает её настройки.")
 		return
 	var settings := _default_mob_spawn_settings() if _spawn_type == SPAWN_RULES.TYPE_MOB else {}
+	if _spawn_type == SPAWN_RULES.TYPE_BUILDING:
+		settings = SPAWN_RULES.normalize_building_settings({})
 	if _spawn_type == SPAWN_RULES.TYPE_MOB:
 		var waves: Array = settings.get("waves", [])
 		if waves.is_empty() or str(waves[0].get("mob_key", "")).is_empty():
 			_set_status("В палитре нет мобов для размещения точки.")
 			return
 	var result: Dictionary = SPAWN_RULES.toggle(
-		_spawns, map_cell, _map_size(), _spawn_type, settings, _mode == "front_line"
+		_spawns, map_cell, _map_size(), _spawn_type, settings, _mode == "front_line", _building_sprite
 	)
 	if not str(result["error"]).is_empty():
 		_set_status(str(result["error"]))
@@ -7767,6 +7898,7 @@ func _sync_tool_buttons() -> void:
 	_set_button_pressed(_stamp_button, _active_tool == TOOL_STAMP)
 	_set_button_pressed(_hero_spawn_button, _active_tool == TOOL_SPAWN and _spawn_type == SPAWN_RULES.TYPE_HERO)
 	_set_button_pressed(_mob_spawn_button, _active_tool == TOOL_SPAWN and _spawn_type == SPAWN_RULES.TYPE_MOB)
+	_set_button_pressed(_building_spawn_button, _active_tool == TOOL_SPAWN and _spawn_type == SPAWN_RULES.TYPE_BUILDING)
 	_refresh_spawn_button()
 
 
@@ -8042,7 +8174,61 @@ func _select_spawn_type(spawn_type: String) -> void:
 
 func _spawn_type_title(spawn_type := "") -> String:
 	var selected_type := _spawn_type if spawn_type.is_empty() else spawn_type
+	if selected_type == SPAWN_RULES.TYPE_BUILDING:
+		return "главных зданий"
 	return "ЛПС" if selected_type == SPAWN_RULES.TYPE_MOB else "возрождения игроков"
+
+
+func _building_frame(sprite: String, frame: int) -> Texture2D:
+	var paths: Array = BUILDING_FRAME_PATHS.get(sprite, BUILDING_FRAME_PATHS["castle_8"])
+	var path := str(paths[posmod(frame, paths.size())])
+	if not _building_frame_cache.has(path):
+		_building_frame_cache[path] = load(path) as Texture2D
+	return _building_frame_cache[path]
+
+
+func _pick_building_sprite(sprite: String) -> void:
+	_building_sprite = sprite
+	_select_spawn_type(SPAWN_RULES.TYPE_BUILDING)
+
+
+func _ensure_building_anim_timer() -> void:
+	if _building_anim_timer != null:
+		return
+	_building_anim_timer = Timer.new()
+	_building_anim_timer.wait_time = BUILDING_ANIM_STEP_SECONDS
+	_building_anim_timer.timeout.connect(_on_building_anim_tick)
+	add_child(_building_anim_timer)
+	_building_anim_timer.start()
+
+
+func _on_building_anim_tick() -> void:
+	_building_anim_frame += 1
+	for entry in _building_palette_icons:
+		var button: Button = entry["button"]
+		if is_instance_valid(button):
+			button.icon = _building_frame(str(entry["sprite"]), _building_anim_frame)
+	if _canvas != null and _count_spawns(SPAWN_RULES.TYPE_BUILDING) > 0:
+		_canvas.queue_redraw()
+
+
+func _open_building_settings(spawn_index: int) -> void:
+	if _building_settings_dialog == null:
+		_building_settings_dialog = BUILDING_SETTINGS_DIALOG_SCRIPT.new()
+		_building_settings_dialog.theme = _ui_root.theme
+		_building_settings_dialog.confirmed.connect(_save_building_settings)
+		_ui_root.add_child(_building_settings_dialog)
+	_spawn_settings_index = spawn_index
+	_building_settings_dialog.set_settings(_spawns[spawn_index].get("settings", {}))
+	_building_settings_dialog.popup_centered()
+
+
+func _save_building_settings() -> void:
+	if _spawn_settings_index < 0 or _spawn_settings_index >= _spawns.size():
+		return
+	_spawns[_spawn_settings_index]["settings"] = _building_settings_dialog.get_settings()
+	_set_status("Настройки главного здания сохранены.")
+	_refresh_spawn_button()
 
 
 func _count_spawns(spawn_type: String) -> int:
@@ -8058,6 +8244,8 @@ func _refresh_spawn_button() -> void:
 		return
 	_hero_spawn_button.text = "Возрождения · %d" % _count_spawns(SPAWN_RULES.TYPE_HERO)
 	_mob_spawn_button.text = "Появления ЛПС · %d" % _count_spawns(SPAWN_RULES.TYPE_MOB)
+	if _building_spawn_button != null:
+		_building_spawn_button.text = "Главные здания · %d" % _count_spawns(SPAWN_RULES.TYPE_BUILDING)
 
 
 func _default_mob_spawn_settings() -> Dictionary:
@@ -8081,6 +8269,9 @@ func _default_mob_spawn_settings() -> Dictionary:
 
 func _open_spawn_settings(spawn_index: int) -> void:
 	if spawn_index < 0 or spawn_index >= _spawns.size():
+		return
+	if str(_spawns[spawn_index].get("type", "")) == SPAWN_RULES.TYPE_BUILDING:
+		_open_building_settings(spawn_index)
 		return
 	_spawn_settings_index = spawn_index
 	var settings: Dictionary = _spawns[spawn_index].get(
@@ -8640,58 +8831,13 @@ func _front_line_spawns_supported() -> bool:
 
 func _handle_canvas_double_click(position: Vector2) -> void:
 	var map_cell := _map_cell_at(position)
-	if _mode == "front_line" and _tavern_cell_at(map_cell):
-		_open_tavern_settings()
-		return
 	var index := SPAWN_RULES.find(_spawns, map_cell)
 	if index < 0:
 		return
-	if str(_spawns[index].get("type", SPAWN_RULES.TYPE_HERO)) == SPAWN_RULES.TYPE_MOB:
+	if str(_spawns[index].get("type", SPAWN_RULES.TYPE_HERO)) in [SPAWN_RULES.TYPE_MOB, SPAWN_RULES.TYPE_BUILDING]:
 		_open_spawn_settings(index)
 	else:
 		_open_spawn_rename(index)
-
-
-func _open_tavern_settings() -> void:
-	if _mode != "front_line":
-		return
-	if _tavern_settings_dialog == null:
-		_tavern_settings_dialog = ConfirmationDialog.new()
-		_tavern_settings_dialog.theme = _ui_root.theme
-		_tavern_settings_dialog.title = "Настройки таверны"
-		_tavern_settings_dialog.ok_button_text = "Сохранить"
-		_tavern_settings_dialog.confirmed.connect(_save_tavern_settings)
-		var form := VBoxContainer.new()
-		form.add_theme_constant_override("separation", EDITOR_FORM_SPACING)
-		_tavern_settings_dialog.add_child(form)
-		_tavern_hp_spin = _new_spinbox(
-			1, SPAWN_RULES.MAX_TAVERN_HP, SPAWN_RULES.DEFAULT_TAVERN_HP,
-		)
-		_add_spawn_setting_row(form, "Максимальное HP", _tavern_hp_spin)
-		var hint := Label.new()
-		hint.text = "Мобы Front Line атакуют таверну как главную цель."
-		hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		form.add_child(hint)
-		add_child(_tavern_settings_dialog)
-	_tavern_hp_spin.value = int(
-		SPAWN_RULES.normalize_tavern_settings(_tavern_settings)["max_hp"],
-	)
-	_tavern_settings_dialog.popup_centered(EDITOR_DIALOG_SIZE)
-
-
-func _save_tavern_settings() -> void:
-	_tavern_settings = SPAWN_RULES.normalize_tavern_settings({
-		"max_hp": int(_tavern_hp_spin.value),
-	})
-	if _tavern_settings_button != null:
-		_tavern_settings_button.tooltip_text = "Максимальное HP: %d" % int(
-			_tavern_settings["max_hp"],
-		)
-	_tavern_settings_dialog.hide()
-	_set_status(
-		"Здоровье таверны: %d HP. Сохраните карту, чтобы применить настройку."
-		% int(_tavern_settings["max_hp"]),
-	)
 
 
 func _open_spawn_rename(spawn_index: int) -> void:
@@ -9286,6 +9432,8 @@ func _draw_map_canvas(canvas: Control) -> void:
 				_draw_animal_instance(canvas, animal_group, cell_position, tile_size)
 				continue
 			_draw_cell_key(canvas, key, rect)
+	if _show_passability:
+		_draw_passability_overlay(canvas, tile_size)
 	for x in range(int(_map_width.value) + 1):
 		var px := _pan.x + float(x) * tile_size
 		canvas.draw_line(Vector2(px, _pan.y), Vector2(px, _pan.y + float(_map_height.value) * tile_size), Color(0.12, 0.14, 0.15, 0.6))
@@ -9468,6 +9616,19 @@ func _draw_stamp_preview(canvas: Control, tile_size: float) -> void:
 	canvas.draw_rect(frame, HOVER_COLOR, false, 2.0)
 
 
+# Здание 5×5 клеток: спрайт по ширине пяти клеток, низ картинки — на нижней границе клетки точки.
+func _draw_building_marker(canvas: Control, spawn: Dictionary, tile_size: float) -> void:
+	var cell := Vector2i(int(spawn.get("x", 0)), int(spawn.get("y", 0)))
+	var texture := _building_frame(str(spawn.get("sprite", "castle_8")), _building_anim_frame)
+	var origin := _pan + Vector2(cell) * tile_size
+	var width := float(BUILDING_FOOTPRINT_TILES) * tile_size
+	if texture == null:
+		canvas.draw_rect(Rect2(origin, Vector2.ONE * width), SPAWN_COLOR, false, 2.0)
+		return
+	var height := width * float(texture.get_height()) / float(texture.get_width())
+	canvas.draw_texture_rect(texture, Rect2(origin.x + tile_size * 0.5 - width * 0.5, origin.y + tile_size - height, width, height), false)
+
+
 func _draw_spawn_overlay(canvas: Control, tile_size: float) -> void:
 	var radius := maxf(4.0, tile_size * 0.5)
 	var font := ThemeDB.fallback_font
@@ -9478,6 +9639,9 @@ func _draw_spawn_overlay(canvas: Control, tile_size: float) -> void:
 	}
 	for spawn in _spawns:
 		var cell := Vector2i(int(spawn.get("x", -1)), int(spawn.get("y", -1)))
+		if str(spawn.get("type", "")) == SPAWN_RULES.TYPE_BUILDING:
+			_draw_building_marker(canvas, spawn, tile_size)
+			continue
 		var is_mob := str(spawn.get("type", SPAWN_RULES.TYPE_HERO)) == SPAWN_RULES.TYPE_MOB
 		var spawn_type := SPAWN_RULES.TYPE_MOB if is_mob else SPAWN_RULES.TYPE_HERO
 		type_numbers[spawn_type] += 1

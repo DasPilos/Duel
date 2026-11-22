@@ -61,10 +61,12 @@ def _world_h():
 
 
 # Ноги персонажа и тело моба в пикселях (совпадают с клиентом).
-FEET_W = 20
-FEET_H = 10
-MOB_SPRITE_W = 90
-MOB_SPRITE_H = 53
+# Ноги героя и тело моба для столкновений: вертикальный контейнер от ступней до середины спрайта, низ — в точке ног.
+FEET_W = 14
+FEET_H = 20
+MOB_BODY_OFFSET_Y = 7  # тело моба для блокировки героя начинается от ног спрайта (на 7 px ниже точки)
+MOB_SPRITE_W = 45  # контейнер моба для атак и столкновений: вдвое меньше прежних 90×53
+MOB_SPRITE_H = 27
 PLAYER_HEAD_OFFSET = 40  # подпись над персонажем
 MOB_LABEL_OFFSET = MOB_SPRITE_H / 2 + 10  # подпись над мобом
 
@@ -156,7 +158,7 @@ def _rects_collide(a, b):
 
 
 def _feet_rect(x, y):
-    return (int(x - FEET_W / 2), int(y - FEET_H / 2 + 1), FEET_W, FEET_H)
+    return (int(x - FEET_W / 2), int(y - FEET_H), FEET_W, FEET_H)
 
 
 def _mob_block_rect(x, y):
@@ -513,7 +515,7 @@ class WorldService:
     # ----- коллизии -----
 
     def _terrain_blocked(self, x, y):
-        if x - FEET_W / 2 < 0 or x + FEET_W / 2 > _world_w() or y - FEET_H / 2 < 0 or y + FEET_H / 2 > _world_h():
+        if x - FEET_W / 2 < 0 or x + FEET_W / 2 > _world_w() or y - FEET_H < 0 or y > _world_h():
             return True
         feet = _feet_rect(x, y)
         if any(_rects_collide(feet, _wildlife_block_rect(animal.x, animal.y))
@@ -532,7 +534,7 @@ class WorldService:
                 return True
         return False
 
-    def _player_blocked(self, x, y):
+    def _player_blocked(self, x, y, start=None):
         """Персонаж не проходит сквозь рельеф и живых мобов."""
         if self._terrain_blocked(x, y):
             return True
@@ -551,7 +553,7 @@ class WorldService:
         steps = max(1, math.ceil(length / MOVE_SAMPLE_STEP))
         for index in range(1, steps + 1):
             t = index / steps
-            if self._player_blocked(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t):
+            if self._player_blocked(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, (x0, y0)):
                 return False
         return True
 
@@ -754,6 +756,7 @@ class WorldService:
             "max_hp": fighter.max_hp,
             "mp": fighter.mp,
             "max_mp": fighter.max_mp,
+            "type": fighter.profession_type,
             "facing": player.facing,
             "windup": player.windup,
             "windup_total": player.windup_total,
@@ -1325,7 +1328,9 @@ class WorldService:
                 self._move_mob_toward(mob, self._chase_goal(mob, player), dt)
                 return
             if mob.backswing > 0:
-                self._move_mob_toward(mob, self._chase_goal(mob, player), dt)
+                # Стрелок и маг после выстрела стоят на месте: не подбегают вплотную. Ближний бой догоняет цель.
+                if getattr(mob, "attack_style", "warrior") == "warrior":
+                    self._move_mob_toward(mob, self._chase_goal(mob, player), dt)
                 return
             mob.windup = mob.windup_time
             mob.windup_total = mob.windup

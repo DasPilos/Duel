@@ -5,6 +5,7 @@ const DECORATIVE := "decorative"
 const ANIMAL := "animal"
 const MOB := "mob"
 const GROUP := "group"
+const OBJECT := "object"
 
 # Слой 20 и выше имеют самый яркий оттенок.
 const GRADIENT_LAYERS := 20
@@ -95,3 +96,33 @@ static func insert_index(layers: Array, layer_type: String) -> int:
 		if str(layers[index].get("type", "")) in [TILE, DECORATIVE]:
 			last_tile = index
 	return last_tile + 1
+
+
+# Проходимость задаёт флаг слоя, его выставляет художник. Действует на все слои, кроме групп (у них нет клеток).
+# По умолчанию непроходимы только слои объектов; тайлы, животные, мобы и декор проходимы.
+static func affects_passability(layer_type: String) -> bool:
+	return layer_type != GROUP
+
+
+static func default_passable(layer_type: String) -> bool:
+	return layer_type != OBJECT
+
+
+static func is_passable(layer: Dictionary) -> bool:
+	return bool(layer.get("passable", default_passable(str(layer.get("type", "")))))
+
+
+# Заблокированные клетки (ключ "x:y") по слоям, переданным снизу вверх. Верхний слой, в котором есть клетка,
+# решает проходимость. Пустые клетки проходимы. Вызывающий передаёт только видимые слои.
+static func blocked_cells(layers: Array) -> Dictionary:
+	var blocked := {}
+	for layer in layers:
+		if not affects_passability(str(layer.get("type", ""))):
+			continue
+		var passable := is_passable(layer)
+		for coord in layer.get("cells", {}):
+			if passable:
+				blocked.erase(coord)
+			else:
+				blocked[coord] = true
+	return blocked

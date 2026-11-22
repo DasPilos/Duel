@@ -13,6 +13,9 @@ var atlas_columns := 0
 var atlas_rows := 0
 var tile_size := TILE_SIZE
 var animations: Dictionary = {}
+# Кадры анимаций (кроме первого тайла группы) скрыты в палитре: клик по кадру выбирает тайл-якорь.
+var _frame_anchor: Dictionary = {}
+const FRAME_HIDE_COLOR := Color(0.10, 0.11, 0.13)
 var autotile_labels: Dictionary = {}
 var selected_coords := Vector2i(-1, -1)
 var selected_region := Rect2i()
@@ -26,6 +29,7 @@ var _selecting := false
 func set_atlas(texture: Texture2D, tile_animations: Dictionary, atlas_tile_size := TILE_SIZE) -> void:
 	atlas_texture = texture
 	animations = tile_animations
+	_rebuild_frame_anchors()
 	autotile_labels.clear()
 	tile_size = maxi(1, atlas_tile_size)
 	selected_coords = Vector2i(-1, -1)
@@ -108,7 +112,23 @@ func _gui_input(event: InputEvent) -> void:
 
 func _position_to_atlas_coords(position: Vector2) -> Vector2i:
 	var tile_pixel_size := tile_size * _zoom
-	return Vector2i(floori(position.x / tile_pixel_size), floori(position.y / tile_pixel_size))
+	var coords := Vector2i(floori(position.x / tile_pixel_size), floori(position.y / tile_pixel_size))
+	if atlas_columns > 0 and _is_valid_atlas_coords(coords):
+		var tile_id := coords.y * atlas_columns + coords.x
+		if _frame_anchor.has(tile_id):
+			var anchor := int(_frame_anchor[tile_id])
+			return Vector2i(anchor % atlas_columns, anchor / atlas_columns)
+	return coords
+
+
+func _rebuild_frame_anchors() -> void:
+	_frame_anchor.clear()
+	for tile_id_value in animations:
+		var anchor := int(tile_id_value)
+		for frame in animations[tile_id_value]:
+			var frame_id := int(frame.get("tile_id", anchor))
+			if frame_id != anchor:
+				_frame_anchor[frame_id] = anchor
 
 
 func _is_valid_atlas_coords(coords: Vector2i) -> bool:
@@ -120,6 +140,7 @@ func _draw() -> void:
 		return
 	var atlas_size := atlas_texture.get_size() * _zoom
 	draw_texture_rect(atlas_texture, Rect2(Vector2.ZERO, atlas_size), false)
+	_draw_hidden_frames()
 	_draw_animated_tiles()
 	var tile_pixel_size := tile_size * _zoom
 	for x in range(atlas_columns + 1):
@@ -166,6 +187,15 @@ func _draw_autotile_labels(tile_pixel_size: float) -> void:
 			7,
 			Color(1.0, 0.9, 0.56),
 		)
+
+
+func _draw_hidden_frames() -> void:
+	if atlas_columns <= 0:
+		return
+	var tile_pixel_size := tile_size * _zoom
+	for frame_id in _frame_anchor:
+		var coords := Vector2i(int(frame_id) % atlas_columns, int(frame_id) / atlas_columns)
+		draw_rect(Rect2(Vector2(coords) * tile_pixel_size, Vector2.ONE * tile_pixel_size), FRAME_HIDE_COLOR)
 
 
 func _draw_animated_tiles() -> void:

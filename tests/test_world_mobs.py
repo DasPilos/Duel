@@ -513,7 +513,8 @@ class WorldMobsTest(unittest.TestCase):
         mob.x, mob.y = 1500.0, 1296.0
         player = self._dash(1000.0, 1800.0)
         self.assertIsNone(player.dash)
-        self.assertGreater(player.x, mob.x + 40.0)
+        # тело моба и героя 14 px по ширине (ноги у точки): рывок выходит за моба не ближе половины суммы тел
+        self.assertGreaterEqual(player.x, mob.x + 14.0)
 
     def test_whirl_strike_hits_mob_near_end_but_not_on_path(self):
         self._park_mobs()

@@ -16,7 +16,7 @@ const FRONT_LINE_RESOURCE_FIELDS := [
 	{"key": "attack_range", "label": "Дальность атаки", "unit": "ед.", "step": 10},
 	{"key": "area_radius", "label": "Радиус урона", "unit": "ед.", "step": 10},
 ]
-# Дальность атаки моба Front Line, единиц; 100 ед. = 1 тайл. Совпадает с лимитом сервера (core/mob_modes.py).
+# Дальность атаки моба Front Line, единиц; 50 ед. = 1 тайл (16 px). Совпадает с переводом сервера (front_line/server/combat.py).
 const ATTACK_RANGE_MAX := 1500
 const OPTIONAL_RESOURCE_KEYS := ["attack_range", "area_radius"]
 # Характер боя моба: воин (ближний бой), лучник (стрела), маг (сфера с уроном по области).
@@ -294,11 +294,11 @@ static func validate_settings(rules: Dictionary, settings: Dictionary) -> String
 					str(entry["label"]), minimum,
 				]
 	if int(settings.get("attack_range", 0)) > ATTACK_RANGE_MAX:
-		return "Дальность атаки: не больше %d ед. (100 ед. = 1 тайл)." % ATTACK_RANGE_MAX
+		return "Дальность атаки: не больше %d ед. (50 ед. = 1 тайл)." % ATTACK_RANGE_MAX
 	if not str(settings.get("attack_style", "warrior")) in ATTACK_STYLE_IDS:
 		return "Характер боя: воин, лучник или маг."
 	if int(settings.get("area_radius", 0)) > AREA_RADIUS_MAX:
-		return "Радиус урона: не больше %d ед. (100 ед. = 1 тайл)." % AREA_RADIUS_MAX
+		return "Радиус урона: не больше %d ед. (50 ед. = 1 тайл)." % AREA_RADIUS_MAX
 	if int(settings.get("damage_min", 0)) > int(settings.get("damage_max", 0)):
 		return "Урон: минимум не больше максимума."
 	var patrol: Variant = settings.get("patrol")

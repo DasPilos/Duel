@@ -89,7 +89,8 @@ static func _animation_path(profession: String, action: String) -> String:
 		"warrior":
 			level_pattern = "(?i)^Swordsman_lvl1$"
 		"archer":
-			level_pattern = "(?i)^Archer_Lvl1$"
+			# Папки уровней лучника: Archer_Lvl7, Archer_Lvl8, Archer_Lvl9 (берётся самый низкий).
+			level_pattern = "(?i)^Archer_Lvl\\d+$"
 		"mage":
 			level_pattern = "(?i)^Mage_1lvl$"
 		_:
@@ -110,7 +111,9 @@ static func _animation_path(profession: String, action: String) -> String:
 		var png_directory := DirAccess.open(png_path)
 		if png_directory == null:
 			continue
-		for level_folder in png_directory.get_directories():
+		var level_folders := png_directory.get_directories()
+		level_folders.sort()
+		for level_folder in level_folders:
 			if level_regex.search(level_folder) == null:
 				continue
 			var level_path := png_path.path_join(level_folder)

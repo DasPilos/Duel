@@ -25,7 +25,11 @@ from server import map_editor, presence, world_map
 from server.perf_probe import timed
 from server.world_map import TILE
 from front_line.server import combat as front_line_combat
+
+# Главное здание: 5×5 клеток. Клетка спауна — левый верхний угол footprint.
+BUILDING_FOOTPRINT_TILES = 5
 from front_line.server.world_mobs import (
+    _distance_to_rect,
     MOB_LABEL_OFFSET,
     MOB_PROFILES,
     MOB_MISS_LOG_TEXT,
@@ -33,6 +37,9 @@ from front_line.server.world_mobs import (
     PLAYER_MISS_LOG_TEXT,
     WorldService,
     _Mob,
+    FEET_H,
+    FEET_W,
+    MOB_BODY_OFFSET_Y,
     _feet_rect,
     _fighter_from_character,
     _read_point,
@@ -59,12 +66,11 @@ CHASE_OCCUPIED_COST = 3
 
 MOB_CORPSE_SECONDS = 3.0
 ITEM_DROP_PICKUP_RANGE = TILE * 3.0
-TAVERN_FOOTPRINT_TILES = (26, 26)  # 13x13 клеток по 32 px = 26x26 по 16 px
-TAVERN_ATTACK_RANGE = TILE * 3.0
+OBJECTIVE_ATTACK_RANGE = TILE * 3.0
 # Атакующий моб продолжает бить, пока толпа не вытолкнет его дальше этого порога.
-TAVERN_ATTACK_KEEP_RANGE = TAVERN_ATTACK_RANGE + TILE  # полтайла по старой сетке 32 px
-TAVERN_ATTACK_KEEP_CELLS = 3.0  # полтора клетки по 32 px
-TAVERN_FLOW_LOOKAHEAD_CELLS = 8  # четыре клетки по 32 px
+OBJECTIVE_ATTACK_KEEP_RANGE = OBJECTIVE_ATTACK_RANGE + TILE  # полтайла по старой сетке 32 px
+OBJECTIVE_ATTACK_KEEP_CELLS = 3.0  # полтора клетки по 32 px
+OBJECTIVE_FLOW_LOOKAHEAD_CELLS = 8  # четыре клетки по 32 px
 FLOW_NEIGHBOURS = (
     (1, 0, 1.0), (-1, 0, 1.0), (0, 1, 1.0), (0, -1, 1.0),
     (1, 1, math.sqrt(2.0)), (1, -1, math.sqrt(2.0)),
@@ -106,10 +112,6 @@ GRASSLAND_WATER_COAST_CATEGORIES = {
 WAITING_GROUND_KEY = (
     "atlas|res://assets/base_tails/Biome/craftpix-net-189510-grassland-top-down-tileset-pixel-art/"
     "Tiled_files/ground_grasss.png|0|0"
-)
-TAVERN_ATLAS_PATH_PART = (
-    "craftpix-net-666104-tavern-top-down-pixel-rpg-asset-pack/"
-    "tiled_files/exterior.png"
 )
 
 
@@ -154,11 +156,8 @@ class FrontLineWorldService(WorldService):
         self._item_drops = {}
         self._item_drop_sequence = 0
         self._game_started_at = 0.0
-        self._objective = SimpleNamespace(x=0.0, y=0.0)
-        self._tavern = SimpleNamespace(x=0.0, y=0.0)
-        self._tavern_max_hp = map_editor.DEFAULT_TAVERN_HP
-        self._tavern_hp = self._tavern_max_hp
-        self._tavern_flow_cache = None
+        self._building_states = []
+        self._objective_flow_cache = None
         super().__init__(database, items_database, **kwargs)
         self._start_deadline = self._clock() + self._start_wait_seconds
         self._refresh_waiting_map()
@@ -199,6 +198,9 @@ class FrontLineWorldService(WorldService):
             "backswing": mob.backswing,
             "backswing_total": mob.backswing_time,
             "is_boss": bool(getattr(mob, "is_boss", False)),
+            "attack_style": str(getattr(mob, "attack_style", "warrior")),
+            "attack_range_px": front_line_combat.range_units_to_px(
+                getattr(mob, "attack_range_units", None) or front_line_combat.MOB_ATTACK_RANGE_UNITS),
             "front_line": True,
         })
         return payload
@@ -337,9 +339,13 @@ class FrontLineWorldService(WorldService):
         snapshot["item_drops"] = [dict(drop) for drop in self._item_drops.values()]
         now = self._clock()
         snapshot["front_line"] = {
+            "buildings": [
+                {"x": b["x"], "y": b["y"], "sprite": b["sprite"], "hp": round(b["hp"], 1), "max_hp": b["max_hp"]}
+                for b in getattr(self, "_building_states", [])
+            ],
             "state": (
                 "map_unavailable" if not self._game_started and self._map_id <= 0
-                else "lost" if self._match_result == "lost" or self._tavern_hp <= 0
+                else "lost" if self._match_result == "lost" or (self._building_states and not self._any_building_alive())
                 else "victory" if self._match_result == "victory"
                 else "character_draft" if self._character_draft_active
                 else "running" if self._waves_unlocked
@@ -376,14 +382,9 @@ class FrontLineWorldService(WorldService):
             "hero_visible": self._game_started and not self._character_draft_active,
             "elapsed_seconds": max(0, int(now - self._game_started_at))
             if self._game_started and not self._character_draft_active else 0,
-            "tavern": {
-                "hp": self._tavern_hp,
-                "max_hp": self._tavern_max_hp,
-                "x": self._tavern.x,
-                "y": self._tavern.y,
-                "width": TAVERN_FOOTPRINT_TILES[0] * TILE,
-                "height": TAVERN_FOOTPRINT_TILES[1] * TILE,
-                "destroyed": self._tavern_hp <= 0,
+            "objective": {
+                "alive": sum(1 for b in self._building_states if b["hp"] > 0),
+                "total": len(self._building_states),
             },
             "wave": self._wave_progress(now),
         }
@@ -420,7 +421,7 @@ class FrontLineWorldService(WorldService):
             if (
                 self._game_started
                 and self._waves_unlocked
-                and self._tavern_hp > 0
+                and (not self._building_states or self._any_building_alive())
                 and not self._match_result
             ):
                 self._advance_spawners(dt)
@@ -451,12 +452,7 @@ class FrontLineWorldService(WorldService):
         self._round_stats = {}
         self._round_mobs_killed = 0
         self._match_summary = None
-        self._tavern_max_hp = map_editor.DEFAULT_TAVERN_HP
-        self._tavern_hp = self._tavern_max_hp
-        self._tavern.x = 0.0
-        self._tavern.y = 0.0
-        self._objective.x = 0.0
-        self._objective.y = 0.0
+        self._building_states = []
         self._start_deadline = now + self._start_wait_seconds
         self._refresh_waiting_map()
 
@@ -485,7 +481,7 @@ class FrontLineWorldService(WorldService):
                 self._refresh_waiting_map()
 
     def _refresh_waiting_map(self):
-        saved = self._database.first_saved_map("front_line")
+        saved = self._published_saved_map()
         catalog = self._database.map_catalog()
         if saved is None:
             ground_key = next(
@@ -518,19 +514,6 @@ class FrontLineWorldService(WorldService):
             ]
             crystals = saved["crystals"]
             harvest_enabled = bool(saved["harvest_enabled"])
-            atlas_tavern = self._tavern_atlas_anchor(saved)
-            catalog_tavern = self._catalog_tavern_cell(saved)
-            if atlas_tavern is not None and catalog_tavern is not None:
-                default_tavern = self._default_tavern_position(map_w, map_h)
-                if (int(catalog_tavern["x"]), int(catalog_tavern["y"])) == default_tavern:
-                    cells = [
-                        cell for cell in cells
-                        if not (
-                            cell.get("layer") == "object"
-                            and cell.get("key") == "city_building_tavern"
-                            and (int(cell["x"]), int(cell["y"])) == default_tavern
-                        )
-                    ]
         terrain_catalog = self._database.map_catalog()
         terrain_cells = self._editor_terrain_cells(
             cells, self._map_editor_layers, terrain_catalog,
@@ -545,7 +528,11 @@ class FrontLineWorldService(WorldService):
                 terrain_catalog,
                 load_partial_masks(),
             )
+        # Флаги проходимости слоёв редактора: мост и берег проходимы, вода и объекты — нет.
+        terrain = map_editor.apply_layer_passability(terrain, self._map_editor_layers, map_w, map_h)
         self._apply_atlas_collision(terrain, self._map_editor_layers, map_w, map_h)
+        self._building_states = self._buildings_from_saved(saved)
+        terrain["impassable"] = set(terrain.get("impassable", ())) | self._building_tiles(self._building_states)
         published = {
             "map_w": map_w,
             "map_h": map_h,
@@ -554,7 +541,6 @@ class FrontLineWorldService(WorldService):
             "harvest_enabled": harvest_enabled,
         }
         world_map.apply_live_terrain(terrain, published)
-        self._configure_tavern(saved)
         return saved
 
     @staticmethod
@@ -729,111 +715,101 @@ class FrontLineWorldService(WorldService):
             terrain["bridges"] = list(terrain.get("bridges", []))
             terrain["bridges"].append({"tiles": [list(tile) for tile in sorted(bridge_tiles)]})
 
-    def _configure_tavern(self, saved):
-        if saved is None:
-            self._tavern_max_hp = map_editor.DEFAULT_TAVERN_HP
-            self._tavern_hp = self._tavern_max_hp
-            self._tavern.x = 0.0
-            self._tavern.y = 0.0
-            self._objective.x = 0.0
-            self._objective.y = 0.0
-            return
-        tavern_settings = next(
-            (
-                spawn.get("settings", {})
-                for spawn in saved["spawns"]
-                if spawn.get("type") == "objective"
-            ),
-            {},
-        )
-        self._tavern_max_hp = int(
-            tavern_settings.get("max_hp", map_editor.DEFAULT_TAVERN_HP),
-        )
-        self._tavern_hp = self._tavern_max_hp
-        tavern_cell = self._catalog_tavern_cell(saved)
-        atlas_tavern = self._tavern_atlas_anchor(saved)
-        if tavern_cell is not None and (
-            atlas_tavern is None
-            or (int(tavern_cell["x"]), int(tavern_cell["y"]))
-            != self._default_tavern_position(self._map_width, self._map_height)
-        ):
-            tavern_x = int(tavern_cell["x"])
-            tavern_y = int(tavern_cell["y"])
-        elif atlas_tavern is not None:
-            tavern_x, tavern_y = atlas_tavern
-        elif tavern_cell is not None:
-            tavern_x = int(tavern_cell["x"])
-            tavern_y = int(tavern_cell["y"])
-        else:
-            tavern_x, tavern_y = self._default_tavern_position(
-                self._map_width, self._map_height,
-            )
-        self._tavern.x = tavern_x * TILE
-        self._tavern.y = tavern_y * TILE
-        self._objective.x = self._tavern.x - TILE
-        self._objective.y = self._tavern.y + TAVERN_FOOTPRINT_TILES[1] * TILE / 2
-        self._objective.x, self._objective.y = self._nearest_free(
-            self._objective.x, self._objective.y,
-        )
+    def _published_saved_map(self):
+        """Заготовка, опубликованная в этот мир: её рельеф, здания и флаги слоёв.
+        Без публикации (или если заготовка удалена) — первая заготовка режима, как раньше.
+        """
+        published = self._database.published_map()
+        saved_id = published.get("saved_id") if published else None
+        if saved_id:
+            try:
+                return self._database.get_saved_map(saved_id)
+            except ValueError:
+                pass
+        return self._database.first_saved_map("front_line")
+
+    def reload_terrain(self, terrain, published):
+        """Подменяет рельеф и заодно здания опубликованной карты: здания в публикации не хранятся отдельно."""
+        if terrain is not None:
+            buildings = self._buildings_from_saved(self._published_saved_map())
+            terrain["impassable"] = set(terrain.get("impassable", ())) | self._building_tiles(buildings)
+            with self._lock:
+                self._building_states = buildings
+        super().reload_terrain(terrain, published)
 
     @staticmethod
-    def _catalog_tavern_cell(saved):
-        return next(
-            (
-                cell
-                for cell in saved["cells"]
-                if cell.get("layer") == "object"
-                and cell.get("key") == "city_building_tavern"
-            ),
-            None,
-        )
-
-    @staticmethod
-    def _default_tavern_position(map_width, map_height):
-        return (
-            max(0, map_width - TAVERN_FOOTPRINT_TILES[0]),
-            max(0, (map_height - TAVERN_FOOTPRINT_TILES[1]) // 2),
-        )
-
-    @staticmethod
-    def _tavern_atlas_anchor(saved):
-        points = set()
-        for layer in FrontLineWorldService._visible_editor_layers(
-            saved.get("editor_layers", []),
-        ):
-            if layer.get("type") != "tile":
+    def _buildings_from_saved(saved):
+        """Главные здания карты: состояние для тика (здоровье, регенерация, слоты обороны с перезарядкой)."""
+        buildings = []
+        for spawn in (saved or {}).get("spawns", []):
+            if spawn.get("type") != "building":
                 continue
-            for cell in layer.get("cells", []):
-                key = str(cell.get("key", ""))
-                if not key.startswith("atlas|"):
-                    continue
-                parts = key[len("atlas|"):].split("|")
-                if len(parts) not in (3, 5, 6):
-                    continue
-                if TAVERN_ATLAS_PATH_PART not in parts[0].lower():
-                    continue
-                points.add((int(cell.get("x", 0)), int(cell.get("y", 0))))
-        if len(points) < 20:
-            return None
+            settings = spawn.get("settings", {})
+            max_hp = int(settings.get("hp", 500))
+            slots = []
+            for slot in settings.get("defense_slots", []):
+                slots.append({
+                    "attack": str(slot.get("attack", "arrow")),
+                    "damage_min": int(slot.get("damage_min", 1)),
+                    "damage_max": int(slot.get("damage_max", 1)),
+                    "radius_px": front_line_combat.range_units_to_px(float(slot.get("radius_units", 300.0))),
+                    "interval_seconds": float(slot.get("interval_seconds", 2.0)),
+                    "cooldown": 0.0,
+                })
+            buildings.append({
+                "x": int(spawn["x"]),
+                "y": int(spawn["y"]),
+                "sprite": str(spawn.get("sprite", "castle_8")),
+                "hp": float(max_hp),
+                "max_hp": float(max_hp),
+                "regen_per_minute": float(settings.get("hp_regen_per_minute", 0)),
+                "slots": slots,
+            })
+        return buildings
 
-        largest_component = set()
-        remaining = set(points)
-        while remaining:
-            component = {remaining.pop()}
-            frontier = list(component)
-            while frontier:
-                x, y = frontier.pop()
-                for neighbor in ((x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)):
-                    if neighbor in remaining:
-                        remaining.remove(neighbor)
-                        component.add(neighbor)
-                        frontier.append(neighbor)
-            if len(component) > len(largest_component):
-                largest_component = component
-        return (
-            min(x for x, _ in largest_component),
-            min(y for _, y in largest_component),
-        )
+    @staticmethod
+    def _building_tiles(buildings):
+        """Клетки footprint зданий: непроходимы для героев и мобов."""
+        return {
+            (building["x"] + dx, building["y"] + dy)
+            for building in buildings
+            for dx in range(BUILDING_FOOTPRINT_TILES)
+            for dy in range(BUILDING_FOOTPRINT_TILES)
+        }
+
+    def _update_buildings(self, dt):
+        """Регенерация здоровья и выстрелы слотов обороны по ближайшему живому мобу в радиусе."""
+        for building in getattr(self, "_building_states", []):
+            building["hp"] = min(
+                building["max_hp"],
+                building["hp"] + building["regen_per_minute"] * dt / 60.0,
+            )
+            center = (
+                (building["x"] + BUILDING_FOOTPRINT_TILES / 2) * TILE,
+                (building["y"] + BUILDING_FOOTPRINT_TILES / 2) * TILE,
+            )
+            for slot in building["slots"]:
+                slot["cooldown"] = max(0.0, slot["cooldown"] - dt)
+                if slot["cooldown"] > 0.0:
+                    continue
+                target = self._nearest_living_mob(center, slot["radius_px"])
+                if target is None:
+                    continue
+                slot["cooldown"] = slot["interval_seconds"]
+                damage = self._rng.randint(slot["damage_min"], slot["damage_max"])
+                self._damage_mob(target, damage, None)
+                if target.fighter.hp <= 0 and getattr(target, "state", "") != "dead":
+                    self._defeat_mob(target, None)
+
+    def _nearest_living_mob(self, center, radius_px):
+        best, best_distance = None, radius_px
+        for mob in getattr(self, "_mobs", {}).values():
+            if not getattr(mob, "alive", True) or mob.fighter.hp <= 0:
+                continue
+            distance = math.hypot(mob.x - center[0], mob.y - center[1])
+            if distance <= best_distance:
+                best, best_distance = mob, distance
+        return best
 
     def submit_character_draft(self, user_id, character_id, profession_type, allocation):
         if profession_type not in FRONT_LINE_PROFESSIONS:
@@ -1075,7 +1051,7 @@ class FrontLineWorldService(WorldService):
         self._round_countdown_zero_until = 0.0
         self._configure_mob_spawners()
         world_map.TERRAIN_VERSION += 1
-        self._tavern_flow()
+        self._objective_flow()
 
     @timed("волны и спавн")
     def _advance_spawners(self, dt):
@@ -1275,6 +1251,7 @@ class FrontLineWorldService(WorldService):
     def _update_mobs(self, dt):
         self._mob_grid = self._mob_buckets()
         self._move_mobs(dt)
+        self._update_buildings(dt)
 
     def _move_mobs(self, dt):
         self._ring_epoch = getattr(self, "_ring_epoch", 0) + 1
@@ -1286,12 +1263,12 @@ class FrontLineWorldService(WorldService):
                 if mob.respawn_timer <= 0:
                     self._mobs.pop(mob_id, None)
                 continue
-            if self._tavern_hp <= 0:
+            if self._building_states and not self._any_building_alive():
                 mob.state = "idle"
                 mob.target = None
                 continue
             target_mode = getattr(mob, "front_line_target", "objective")
-            objective_distance = math.hypot(self._objective.x - mob.x, self._objective.y - mob.y)
+            _target_building, objective_distance = self._nearest_alive_building(mob.x, mob.y)
             player_target = self._nearest_front_line_player(mob)
             if player_target is not None and (
                 target_mode == "characters"
@@ -1310,23 +1287,23 @@ class FrontLineWorldService(WorldService):
                 mob.chase_route = []
                 mob.windup = 0.0
             if target_mode != "characters":
-                flow = self._tavern_flow()
+                flow = self._objective_flow()
                 cell = (math.floor(mob.x / TILE), math.floor(mob.y / TILE))
                 flow_distance = flow["distance"].get(cell)
                 attacking = mob.state == "attack"
                 if flow_distance is None:
                     in_range = objective_distance <= (
-                        TAVERN_ATTACK_KEEP_RANGE if attacking else TAVERN_ATTACK_RANGE
+                        OBJECTIVE_ATTACK_KEEP_RANGE if attacking else OBJECTIVE_ATTACK_RANGE
                     )
                 else:
-                    in_range = flow_distance <= (TAVERN_ATTACK_KEEP_CELLS if attacking else 0.0)
+                    in_range = flow_distance <= (OBJECTIVE_ATTACK_KEEP_CELLS if attacking else 0.0)
                 if in_range:
-                    self._attack_tavern(mob, dt, self._tavern_attack_facing(flow, cell))
+                    self._attack_objective(mob, dt, self._objective_attack_facing(flow, cell))
                 else:
                     if attacking:
                         mob.state = "idle"
                         mob.windup = 0.0
-                    self._move_mob_to_tavern(mob, dt, flow, cell)
+                    self._move_mob_to_objective(mob, dt, flow, cell)
         self._separate_mobs(dt)
 
     # Сетка мобов на тик: кандидаты для проверки тел. Клетка не меньше самой широкой пары тел.
@@ -1452,7 +1429,7 @@ class FrontLineWorldService(WorldService):
         return walkable
 
     @timed("поле таверны (пересчёт)")
-    def _tavern_flow(self):
+    def _objective_flow(self):
         """Поле потока к стенам таверны, общее для всех мобов карты.
 
         Направление берётся из клетки, где моб стоит сейчас, поэтому толчки
@@ -1460,24 +1437,24 @@ class FrontLineWorldService(WorldService):
         """
         key = (
             world_map.TERRAIN_VERSION, self._map_width, self._map_height,
-            self._tavern.x, self._tavern.y, self._objective.x, self._objective.y,
+            tuple((b["x"], b["y"], b["hp"] > 0) for b in self._building_states),
         )
-        cached = self._tavern_flow_cache
+        cached = self._objective_flow_cache
         if cached is not None and cached["key"] == key:
             return cached
         walkable = self._walkable_cells()
-        walls = self._tavern_wall_cells(walkable)
+        walls = self._objective_wall_cells(walkable)
         facing = {}
         for wall_x, wall_y in sorted(walls):
             for offset_x, offset_y, _cost in FLOW_NEIGHBOURS:
                 cell = (wall_x - offset_x, wall_y - offset_y)
                 if cell in walkable and (cell not in facing or abs(offset_x) + abs(offset_y) == 1):
                     facing[cell] = math.atan2(offset_y, offset_x)
-        objective_cell = (
-            math.floor(self._objective.x / TILE), math.floor(self._objective.y / TILE),
-        )
-        if objective_cell in walkable:
-            facing.setdefault(objective_cell, None)
+        for building in self._alive_buildings():
+            point = self._objective_point(building)
+            objective_cell = (math.floor(point.x / TILE), math.floor(point.y / TILE))
+            if objective_cell in walkable:
+                facing.setdefault(objective_cell, None)
         links = {}
 
         def linked(first, second):
@@ -1516,46 +1493,72 @@ class FrontLineWorldService(WorldService):
                 distance[neighbour] = next_distance
                 parent[neighbour] = cell
                 heapq.heappush(queue, (next_distance, neighbour))
-        self._tavern_flow_cache = {
+        self._objective_flow_cache = {
             "key": key,
             "distance": distance,
             "parent": parent,
             "facing": facing,
             "lookahead": {},
         }
-        return self._tavern_flow_cache
+        return self._objective_flow_cache
 
-    def _tavern_wall_cells(self, walkable):
-        """Непроходимые клетки самой таверны: крупнейшая связная группа в её контуре."""
-        origin_x = math.floor(self._tavern.x / TILE)
-        origin_y = math.floor(self._tavern.y / TILE)
-        remaining = {
-            (cell_x, cell_y)
-            for cell_y in range(origin_y, origin_y + TAVERN_FOOTPRINT_TILES[1])
-            for cell_x in range(origin_x, origin_x + TAVERN_FOOTPRINT_TILES[0])
-            if 0 <= cell_x < self._map_width and 0 <= cell_y < self._map_height
-            and (cell_x, cell_y) not in walkable
-        }
-        largest = set()
-        while remaining:
-            component = {remaining.pop()}
-            frontier = list(component)
-            while frontier:
-                cell_x, cell_y = frontier.pop()
-                for neighbour in (
-                    (cell_x + 1, cell_y), (cell_x - 1, cell_y),
-                    (cell_x, cell_y + 1), (cell_x, cell_y - 1),
-                ):
-                    if neighbour in remaining:
-                        remaining.remove(neighbour)
-                        component.add(neighbour)
-                        frontier.append(neighbour)
-            if len(component) > len(largest):
-                largest = component
-        return largest
+    def _objective_wall_cells(self, walkable):
+        """Непроходимые клетки зданий-целей: крупнейшая связная группа в footprint каждого живого здания."""
+        walls = set()
+        for building in self._alive_buildings():
+            remaining = {
+                (cell_x, cell_y)
+                for cell_y in range(building["y"], building["y"] + BUILDING_FOOTPRINT_TILES)
+                for cell_x in range(building["x"], building["x"] + BUILDING_FOOTPRINT_TILES)
+                if 0 <= cell_x < self._map_width and 0 <= cell_y < self._map_height
+                and (cell_x, cell_y) not in walkable
+            }
+            largest = set()
+            while remaining:
+                component = {remaining.pop()}
+                frontier = list(component)
+                while frontier:
+                    cx, cy = frontier.pop()
+                    for nx, ny in ((cx + 1, cy), (cx - 1, cy), (cx, cy + 1), (cx, cy - 1)):
+                        if (nx, ny) in remaining:
+                            remaining.discard((nx, ny))
+                            component.add((nx, ny))
+                            frontier.append((nx, ny))
+                if len(component) > len(largest):
+                    largest = component
+            walls |= largest
+        return walls
+
+    def _alive_buildings(self):
+        return [building for building in self._building_states if building["hp"] > 0]
+
+    def _any_building_alive(self):
+        return bool(self._alive_buildings())
 
     @staticmethod
-    def _tavern_attack_facing(flow, cell):
+    def _building_rect_px(building):
+        size = BUILDING_FOOTPRINT_TILES * TILE
+        return (building["x"] * TILE, building["y"] * TILE, size, size)
+
+    def _nearest_alive_building(self, x, y):
+        """Ближайшее живое здание к точке и расстояние до его footprint (0 — внутри)."""
+        best, best_distance = None, math.inf
+        for building in self._alive_buildings():
+            distance = _distance_to_rect(x, y, self._building_rect_px(building))
+            if distance < best_distance:
+                best, best_distance = building, distance
+        return best, best_distance
+
+    @staticmethod
+    def _objective_point(building):
+        """Точка подхода мобов к зданию: слева от его стены, по центру высоты."""
+        return SimpleNamespace(
+            x=building["x"] * TILE - TILE,
+            y=(building["y"] + BUILDING_FOOTPRINT_TILES / 2) * TILE,
+        )
+
+    @staticmethod
+    def _objective_attack_facing(flow, cell):
         for _ in range(3):
             if cell is None:
                 return None
@@ -1571,7 +1574,7 @@ class FrontLineWorldService(WorldService):
             return cached
         chain = []
         step = flow["parent"].get(cell)
-        while step is not None and len(chain) < TAVERN_FLOW_LOOKAHEAD_CELLS:
+        while step is not None and len(chain) < OBJECTIVE_FLOW_LOOKAHEAD_CELLS:
             chain.append(step)
             step = flow["parent"].get(step)
         target = cell
@@ -1585,9 +1588,12 @@ class FrontLineWorldService(WorldService):
         flow["lookahead"][cell] = target
         return target
 
-    def _move_mob_to_tavern(self, mob, dt, flow, cell):
+    def _move_mob_to_objective(self, mob, dt, flow, cell):
+        building, _distance = self._nearest_alive_building(mob.x, mob.y)
+        if building is None:
+            return
         if cell not in flow["distance"]:
-            self._move_mob_toward(mob, self._objective, dt)
+            self._move_mob_toward(mob, self._objective_point(building), dt)
             return
         step = mob.move_speed * dt
         for target in (self._flow_lookahead(flow, cell), flow["parent"].get(cell), cell):
@@ -1660,18 +1666,32 @@ class FrontLineWorldService(WorldService):
     @classmethod
     def _mob_body_rect(cls, mob, x, y):
         """Тело моба для столкновений с героем: квадрат со стороной в два радиуса расталкивания."""
-        radius = cls._mob_separation_radius(mob) if mob is not None else MOB_SEPARATION_RADIUS
-        return (int(x - radius), int(y - radius), int(2 * radius), int(2 * radius))
+        # Тело моба для блокировки героя — размер ног героя (FEET_W × FEET_H), а не круг расталкивания:
+        # иначе моб на мосту в два тайла полностью перекрывает проход.
+        # Низ тела моба — на 7 px ниже точки (x, y): там начинаются ноги спрайта.
+        return (int(x - FEET_W / 2), int(y + MOB_BODY_OFFSET_Y - FEET_H), FEET_W, FEET_H)
 
-    def _player_blocked(self, x, y):
-        """Герой не проходит сквозь рельеф и компактные тела живых мобов."""
+    def _player_blocked(self, x, y, start=None):
+        """Герой не проходит сквозь рельеф и компактные тела живых мобов.
+
+        start — точка, откуда идёт герой. Если он уже касается моба, выйти от него можно: блокируется только
+        новое касание или движение к центру моба. Иначе герой застревал бы в касании и не мог уйти.
+        """
         if self._terrain_blocked(x, y):
             return True
         feet = _feet_rect(x, y)
-        return any(
-            mob.alive and _rects_collide(feet, self._mob_body_rect(mob, mob.x, mob.y))
-            for mob in self._mobs.values()
-        )
+        start_feet = _feet_rect(*start) if start is not None else None
+        for mob in self._mobs.values():
+            if not mob.alive:
+                continue
+            body = self._mob_body_rect(mob, mob.x, mob.y)
+            if not _rects_collide(feet, body):
+                continue
+            if start_feet is None or not _rects_collide(start_feet, body):
+                return True
+            if math.hypot(x - mob.x, y - mob.y) < math.hypot(start[0] - mob.x, start[1] - mob.y):
+                return True
+        return False
 
     def _mob_blocked_by_players(self, x, y, mob=None):
         """Тело моба в (x, y) задевает героя.
@@ -1681,6 +1701,9 @@ class FrontLineWorldService(WorldService):
         body = self._mob_body_rect(mob, x, y)
         current = None if mob is None else self._mob_body_rect(mob, mob.x, mob.y)
         for player in self._players.values():
+            # Преследующий моб не упирается в тело своей цели: иначе он не доходит до радиуса атаки и замирает.
+            if mob is not None and mob.state == "chase" and getattr(mob, "target", None) is player:
+                continue
             feet = _feet_rect(player.x, player.y)
             if not _rects_collide(body, feet):
                 continue
@@ -1691,12 +1714,15 @@ class FrontLineWorldService(WorldService):
         # Моб не шагает в тело другого моба: вплотную и ближе, чем сейчас. Отойти и разойтись можно.
         return mob is not None and self._mob_blocked_by_mobs(x, y, mob)
 
-    def _attack_tavern(self, mob, dt, facing=None):
-        """Удар по таверне идёт как удар по герою: замах, урон, откат."""
+    def _attack_objective(self, mob, dt, facing=None):
+        """Удар по ближайшему живому зданию идёт как удар по герою: замах, урон, откат."""
         mob.state = "attack"
+        building, _distance = self._nearest_alive_building(mob.x, mob.y)
+        if building is None:
+            return
         if facing is None:
-            target_x = self._tavern.x + TAVERN_FOOTPRINT_TILES[0] * TILE / 2
-            target_y = self._tavern.y + TAVERN_FOOTPRINT_TILES[1] * TILE / 2
+            target_x = building["x"] * TILE + BUILDING_FOOTPRINT_TILES * TILE / 2
+            target_y = building["y"] * TILE + BUILDING_FOOTPRINT_TILES * TILE / 2
             if math.hypot(target_x - mob.x, target_y - mob.y) > 0:
                 facing = math.atan2(target_y - mob.y, target_x - mob.x)
         if facing is not None:
@@ -1713,8 +1739,8 @@ class FrontLineWorldService(WorldService):
         if mob.windup > 0.0:
             return
         damage = max(1, int(world_stats.get_world_base_damage(mob.fighter, self._rng)))
-        self._tavern_hp = max(0, self._tavern_hp - damage)
-        if self._tavern_hp <= 0:
+        building["hp"] = max(0.0, building["hp"] - damage)
+        if not self._any_building_alive():
             self._finish_match("lost")
         mob.backswing = mob.backswing_time
 
@@ -1857,8 +1883,8 @@ class FrontLineWorldService(WorldService):
             "duration_seconds": max(0, int(self._clock() - self._game_started_at)),
             "mobs_killed": self._round_mobs_killed,
             "total_damage": total_damage,
-            "tavern_hp": self._tavern_hp,
-            "tavern_max_hp": self._tavern_max_hp,
+            "objective_alive": sum(1 for b in self._building_states if b["hp"] > 0),
+            "objective_total": len(self._building_states),
             "players": entries,
         }
 

@@ -1606,7 +1606,7 @@ class Database:
         """Сведения о карте, опубликованной в текущий мир; None, если мир играет процедурным рельефом."""
         with self.connection() as connection:
             row = connection.execute(
-                """SELECT name, map_w, map_h, published_at, mode, crystal_settings_json, harvest_enabled
+                """SELECT name, map_w, map_h, published_at, mode, crystal_settings_json, harvest_enabled, saved_id
                    FROM map_world_publish WHERE world_id = %s""",
                 (self.world_id,),
             ).fetchone()

@@ -45,7 +45,6 @@ const TOWER_ENTITY_SCRIPT := preload("res://scripts/tower_entity_view.gd")
 const TOWER_ENTITY_RULES := preload("res://scripts/front_line_entity_rules.gd")
 const TOWER_HUD_SCRIPT := preload("res://scripts/tower_hud_view.gd")
 const FRONT_LINE_HUD_SCRIPT := preload("res://scripts/front_line_hud_view.gd")
-const FRONT_LINE_TAVERN_TEXTURE := preload("res://assets/map/city_buildings/tavern.png")
 const TOWER_HUB_RULES := preload("res://scripts/tower_hub_rules.gd")
 const TOWER_HUB_VIEW_SCRIPT := preload("res://scripts/tower_hub_view.gd")
 const TOWER_ROOM_RULES := preload("res://scripts/tower_room_rules.gd")
@@ -1556,12 +1555,36 @@ var _shots_done := {}
 var _explosions: Array = []
 
 
+# Отладка настройки режима: постоянно видны контейнеры и радиусы атаки.
+# Зелёный прямоугольник — тело для столкновений (у героя ноги, у моба тело блокировки), голубой круг — радиус атаки героя,
+# красный круг — радиус атаки моба. Размеры в мировых единицах (тайл 16 px).
+const DEBUG_CONTAINERS := true
+
+func _draw_debug_containers(player_state: Dictionary, mobs: Array) -> void:
+	if not DEBUG_CONTAINERS or not _is_front_line_world():
+		return
+	var feet: Array = _collision.feet_rect(_desired_position.x, _desired_position.y)
+	draw_rect(Rect2(feet[0], feet[1], feet[2], feet[3]), Color(0.2, 1.0, 0.3, 0.95), false, 1.0)
+	var reach := float(player_state.get("reach", 0.0))
+	if reach > 0.0:
+		draw_arc(_desired_position, reach, 0.0, TAU, 72, Color(0.35, 0.85, 1.0, 0.8), 1.0)
+	for mob_variant in mobs:
+		if not mob_variant is Dictionary or str(mob_variant.get("state", "")) == "dead":
+			continue
+		var mob: Dictionary = mob_variant
+		var mob_x := float(mob.get("x", 0.0))
+		var mob_y := float(mob.get("y", 0.0))
+		var body: Array = WORLD_COLLISION_SCRIPT.front_line_mob_rect(mob_x, mob_y, bool(mob.get("is_boss", false)))
+		draw_rect(Rect2(body[0], body[1], body[2], body[3]), Color(0.2, 1.0, 0.3, 0.95), false, 1.0)
+		var mob_reach := float(mob.get("attack_range_px", 0.0))
+		if mob_reach > 0.0:
+			draw_arc(Vector2(mob_x, mob_y), mob_reach, 0.0, TAU, 48, Color(1.0, 0.3, 0.3, 0.8), 1.0)
+
+
 func _draw_front_line_range_and_shots(player_state: Dictionary, mobs: Array, now_sec: float) -> void:
 	if not _is_front_line_world():
 		return
-	var reach := float(player_state.get("reach", 0.0))
-	if reach > 0.0 and Input.is_key_pressed(KEY_ALT):
-		draw_arc(_desired_position, reach, 0.0, TAU, 72, Color(0.95, 0.85, 0.4, 0.55), 1.5)
+	# Радиус атаки героя рисуется постоянно (см. _draw_debug_containers).
 	# Снаряды из снимка: если события выстрела не пришло (потеряно или снимок раньше), снаряд стартует с его позиции.
 	for projectile_variant in player_state.get("projectiles", []):
 		if not projectile_variant is Dictionary:
@@ -2859,6 +2882,7 @@ func _dispatch_api_result(action: String, success: bool, payload: Variant) -> vo
 			else:
 				_movement_pending = _desired_position.distance_to(_sent_position) > 1.0
 			GameSession.update_world_snapshot(payload)
+			_sync_front_line_hero_type(payload.get("player", {}))
 			var harvest_target_before_sync: Variant = _harvest_target
 			var harvest_state: Variant = payload["player"].get("harvest")
 			if harvest_state is Dictionary:
@@ -3087,7 +3111,7 @@ func _draw_scene_frame() -> void:
 	var player_state: Dictionary = GameSession.world_snapshot.get("player", {})
 	var character: Dictionary = GameSession.character
 	var player := player_state.duplicate()
-	player["type"] = str(character.get("type", ""))
+	player["type"] = str(player_state.get("type", character.get("type", "")))
 	player["front_line"] = str(GameSession.world.get("mode", "")) == "front_line"
 	var character_name := str(character.get("name", ""))
 	var game_nickname := str(GameSession.user.get("game_nickname", "")).strip_edges()
@@ -3112,7 +3136,7 @@ func _draw_scene_frame() -> void:
 		_front_line_map_view.draw(self, visible)
 	_draw_city_objects(visible, hovered_town, _town_active_id)
 	if _is_front_line_world():
-		_draw_front_line_tavern(GameSession.world_snapshot.get("front_line", {}))
+		_draw_front_line_buildings(GameSession.world_snapshot.get("front_line", {}))
 	_entity_view.draw_corpses(self, corpses, _corpse_window_id, visible)
 	if _is_front_line_world():
 		for drop in item_drops:
@@ -3140,6 +3164,7 @@ func _draw_scene_frame() -> void:
 			var trail_alpha := clampf(float(trail_variant.get("ttl", 0.0)) / 5.0, 0.0, 1.0)
 			draw_circle(Vector2(float(trail_variant.get("x", 0.0)), float(trail_variant.get("y", 0.0))), 5.0, Color(0.38, 0.78, 0.94, trail_alpha * 0.7))
 	_draw_front_line_range_and_shots(player_state, mobs, anim_time)
+	_draw_debug_containers(player_state, mobs)
 	draw_set_transform_matrix(Transform2D.IDENTITY)
 
 	# Подписи, полоски и эффекты рисуются в экранных координатах; размеры Python переводятся множителем 2/3.
@@ -3189,51 +3214,51 @@ func _draw_scene_frame() -> void:
 	_draw_magic_casting_preview(view_size)
 
 
-func _draw_front_line_tavern(front_line_value: Variant) -> void:
+# Главные здания Front Line: спрайт замка по кадрам (анимация) и полоска здоровья над ним.
+# Таверна больше не рисуется: главная цель — здания из раздела «Главные здания» редактора.
+const FRONT_LINE_BUILDING_FRAMES := {
+	"castle_8": [
+		"res://assets/map/main_buildings/castle_anim_1.png", "res://assets/map/main_buildings/castle_anim_2.png",
+		"res://assets/map/main_buildings/castle_anim_3.png", "res://assets/map/main_buildings/castle_anim_4.png",
+		"res://assets/map/main_buildings/castle_anim_5.png", "res://assets/map/main_buildings/castle_anim_6.png",
+		"res://assets/map/main_buildings/castle_anim_7.png", "res://assets/map/main_buildings/castle_anim_8.png",
+	],
+	"castle_5": [
+		"res://assets/map/main_buildings/main_castle_anim_1.png", "res://assets/map/main_buildings/main_castle_anim_2.png",
+		"res://assets/map/main_buildings/main_castle_anim_3.png", "res://assets/map/main_buildings/main_castle_anim_4.png",
+		"res://assets/map/main_buildings/main_castle_anim_5.png",
+	],
+}
+const FRONT_LINE_BUILDING_FOOTPRINT_TILES := 5
+const FRONT_LINE_BUILDING_FRAME_MS := 150
+const FRONT_LINE_TILE_PX := 16.0
+
+func _draw_front_line_buildings(front_line_value: Variant) -> void:
 	if not front_line_value is Dictionary or int(front_line_value.get("map_id", 0)) <= 0:
 		return
-	var tavern_value: Variant = front_line_value.get("tavern", {})
-	if not tavern_value is Dictionary or tavern_value.is_empty():
+	var buildings: Variant = front_line_value.get("buildings", [])
+	if not buildings is Array:
 		return
-	var tavern: Dictionary = tavern_value
-	var position := Vector2(float(tavern.get("x", 0.0)), float(tavern.get("y", 0.0)))
-	var size := Vector2(
-		maxf(1.0, float(tavern.get("width", 416.0))),
-		maxf(1.0, float(tavern.get("height", 416.0))),
-	)
-	var destroyed := bool(tavern.get("destroyed", false))
-	draw_texture_rect(
-		FRONT_LINE_TAVERN_TEXTURE,
-		Rect2(position, size),
-		false,
-		Color(0.42, 0.42, 0.42) if destroyed else Color.WHITE,
-	)
-	var hp := clampi(int(tavern.get("hp", 0)), 0, int(tavern.get("max_hp", 1)))
-	var max_hp := maxi(1, int(tavern.get("max_hp", 1)))
-	var bar_width := minf(220.0, size.x * 0.8)
-	var bar_height := 10.0
-	var bar_position := Vector2(
-		position.x + (size.x - bar_width) * 0.5,
-		position.y - 20.0,
-	)
-	var label := "Таверна разрушена" if destroyed else "Таверна · %d / %d HP" % [hp, max_hp]
-	draw_string(
-		ThemeDB.fallback_font,
-		Vector2(bar_position.x, bar_position.y - 5.0),
-		label,
-		HORIZONTAL_ALIGNMENT_CENTER,
-		bar_width,
-		14,
-		Color8(255, 115, 105) if destroyed else Color8(255, 244, 216),
-	)
-	draw_rect(Rect2(bar_position, Vector2(bar_width, bar_height)), Color8(35, 29, 28))
-	var fill_color := Color8(194, 62, 53) if hp * 4 <= max_hp else Color8(84, 193, 111)
-	draw_rect(
-		Rect2(bar_position, Vector2(bar_width * float(hp) / float(max_hp), bar_height)),
-		fill_color,
-	)
-	draw_rect(Rect2(bar_position, Vector2(bar_width, bar_height)), Color8(239, 230, 208), false, 1.0)
-
+	var frame_index := int(Time.get_ticks_msec() / FRONT_LINE_BUILDING_FRAME_MS)
+	var width := float(FRONT_LINE_BUILDING_FOOTPRINT_TILES) * FRONT_LINE_TILE_PX
+	for building_value in buildings:
+		if not building_value is Dictionary:
+			continue
+		var building: Dictionary = building_value
+		var paths: Array = FRONT_LINE_BUILDING_FRAMES.get(str(building.get("sprite", "castle_8")), FRONT_LINE_BUILDING_FRAMES["castle_8"])
+		var texture := load(str(paths[posmod(frame_index, paths.size())])) as Texture2D
+		var origin := Vector2(float(building.get("x", 0)), float(building.get("y", 0))) * FRONT_LINE_TILE_PX
+		var height := width
+		if texture != null:
+			height = width * float(texture.get_height()) / float(texture.get_width())
+			draw_texture_rect(texture, Rect2(origin.x, origin.y + width - height, width, height), false)
+		var max_hp := maxi(1, int(building.get("max_hp", 1)))
+		var hp := clampi(int(building.get("hp", 0)), 0, max_hp)
+		var bar_width := minf(160.0, width * 0.8)
+		var bar_position := Vector2(origin.x + (width - bar_width) * 0.5, origin.y + width - height - 14.0)
+		draw_rect(Rect2(bar_position, Vector2(bar_width, 8.0)), Color8(35, 29, 28))
+		var fill_color := Color8(194, 62, 53) if hp * 4 <= max_hp else Color8(84, 193, 111)
+		draw_rect(Rect2(bar_position, Vector2(bar_width * float(hp) / float(max_hp), 8.0)), fill_color)
 
 func _handle_magic_preview_key(keycode: Key) -> bool:
 	if not bool(GameSession.world.get("test_only", false)):
@@ -3625,17 +3650,17 @@ func _update_world_status(snapshot: Dictionary) -> void:
 		_update_front_line_draft(front_line)
 		_update_front_line_report(front_line)
 		_update_front_line_summary(front_line)
-		var tavern_value: Variant = front_line.get("tavern", {})
+		var objective_value: Variant = front_line.get("objective", {})
 		var wave_value: Variant = front_line.get("wave", {})
-		var tavern: Dictionary = tavern_value if tavern_value is Dictionary else {}
+		var objective: Dictionary = objective_value if objective_value is Dictionary else {}
 		var wave: Dictionary = wave_value if wave_value is Dictionary else {}
 		var living_mobs := 0
 		for mob in mobs:
 			if mob is Dictionary and float(mob.get("hp", 0.0)) > 0.0:
 				living_mobs += 1
-		_status.text = "Таверна: %d / %d HP · мобов на карте: %d · волна: %d" % [
-			int(tavern.get("hp", 0)),
-			int(tavern.get("max_hp", 0)),
+		_status.text = "Главные здания: %d / %d · мобов на карте: %d · волна: %d" % [
+			int(objective.get("alive", 0)),
+			int(objective.get("total", 0)),
 			living_mobs,
 			int(wave.get("number", 0)),
 		]
@@ -3780,12 +3805,12 @@ func _update_front_line_summary(front_line: Dictionary) -> void:
 func _fill_front_line_summary(summary: Dictionary) -> void:
 	var victory := str(summary.get("result", "")) == "victory"
 	_front_line_summary_title.text = "ПОБЕДА ГЕРОЕВ" if victory else "ПОРАЖЕНИЕ"
-	_front_line_summary_info.text = "Продержались: %s · Мобов побеждено: %d · Всего урона: %d · Таверна: %d / %d HP" % [
+	_front_line_summary_info.text = "Продержались: %s · Мобов побеждено: %d · Всего урона: %d · Главные здания: %d / %d HP" % [
 		_format_front_line_duration(int(summary.get("duration_seconds", 0))),
 		int(summary.get("mobs_killed", 0)),
 		int(summary.get("total_damage", 0)),
-		int(summary.get("tavern_hp", 0)),
-		int(summary.get("tavern_max_hp", 0)),
+		int(summary.get("objective_alive", 0)),
+		int(summary.get("objective_total", 0)),
 	]
 	for child in _front_line_summary_grid.get_children():
 		_front_line_summary_grid.remove_child(child)
@@ -3840,16 +3865,16 @@ func _update_front_line_report(front_line: Dictionary) -> void:
 		int(front_line.get("map_width", 0)),
 		int(front_line.get("map_height", 0)),
 	]
-	var tavern: Variant = front_line.get("tavern", {})
-	var tavern_hp := "—"
-	if tavern is Dictionary and not tavern.is_empty():
-		tavern_hp = "%d / %d HP" % [
-			int(tavern.get("hp", 0)),
-			int(tavern.get("max_hp", 0)),
+	var objective: Variant = front_line.get("objective", {})
+	var objective_text := "—"
+	if objective is Dictionary and not objective.is_empty():
+		objective_text = "%d / %d" % [
+			int(objective.get("alive", 0)),
+			int(objective.get("total", 0)),
 		]
 	var details := [
 		"Карта: %s · %s" % [map_name, size_text],
-		"Цель: таверна · %s" % tavern_hp,
+		"Цель: главные здания · %s" % objective_text,
 	]
 	var title := "FRONT LINE"
 	match state:
@@ -4065,6 +4090,20 @@ func _submit_front_line_character_draft() -> void:
 		"profession_type": str(choice.get("profession_type", "")),
 		"stats": choice.get("stats", {}),
 	})
+
+
+# Класс героя приходит в снимке игрока: драфт завершается на сервере, и клиент узнаёт выбор уже после его конца.
+func _sync_front_line_hero_type(player_payload: Variant) -> void:
+	if not _is_front_line_world() or not player_payload is Dictionary:
+		return
+	var hero_type := str(player_payload.get("type", ""))
+	if hero_type.is_empty() or hero_type == str(GameSession.character.get("type", "")):
+		return
+	var updated_character := GameSession.character.duplicate(true)
+	updated_character["type"] = hero_type
+	updated_character["profession_type"] = hero_type
+	GameSession.select_character(updated_character)
+	_render_character_profile()
 
 
 func _apply_world_events(events: Variant, harvest_target_before_sync: Variant = null) -> void:

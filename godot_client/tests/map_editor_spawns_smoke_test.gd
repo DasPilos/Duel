@@ -66,7 +66,7 @@ func _run() -> void:
 	await _check_drawing()
 	_check_mob_spawns()
 	_check_duration_formatting()
-	_check_tavern_objective()
+	_check_main_buildings()
 	_finish()
 
 
@@ -182,9 +182,9 @@ func _check_rules() -> void:
 		{"name": "Невидимая"},
 		{"x": -1, "y": -1},
 		{"x": 8, "y": 1},
-	], "economy", {}, map_size)
+	], "economy", map_size)
 	_check(
-		payload_with_hidden_points == [{"x": 1, "y": 1, "name": "1"}],
+		payload_with_hidden_points == [{"x": 1, "y": 1}],
 		"Сериализация исключает скрытые и выходящие за карту точки, не создавая координаты -1,-1",
 	)
 	var limited := SPAWN_RULES.normalize_mob_settings({
@@ -508,7 +508,7 @@ func _check_mob_spawns() -> void:
 	_check(editor._rename_spawn(2, "Площадь"), "Размещённую точку возрождения можно переименовать")
 	var payload := SPAWN_RULES.to_payload(editor._spawns)
 	var loaded := SPAWN_RULES.load_spawns(payload, Vector2i(16, 16))
-	_check(loaded == editor._spawns, "Серверный/локальный формат сохраняет имена и настройки спаунов")
+	_check(loaded == SPAWN_RULES.load_spawns(editor._spawns, Vector2i(16, 16)), "Серверный/локальный формат сохраняет имена и настройки спаунов")
 	editor._spawn_rename_dialog.hide()
 	editor._spawn_settings_dialog.hide()
 	editor._mode = "front_line"
@@ -675,35 +675,34 @@ func _contains_text(node: Node, text: String) -> bool:
 	return false
 
 
-func _check_tavern_objective() -> void:
+func _check_main_buildings() -> void:
 	editor._mode = "front_line"
-	editor._catalog_by_key["city_building_tavern"] = {
-		"item_key": "city_building_tavern",
-		"kind": "object",
-		"category": "city_building",
-		"representation": "sprite",
-		"footprint_w": 13,
-		"footprint_h": 13,
-	}
-	editor._open_tavern_settings()
-	_check(
-		editor._tavern_settings_dialog.visible
-		and int(editor._tavern_hp_spin.value) == SPAWN_RULES.DEFAULT_TAVERN_HP,
-		"Настройки таверны открываются с 1000 HP по умолчанию",
-	)
-	editor._tavern_hp_spin.value = 2345
-	editor._save_tavern_settings()
-	editor._ensure_front_line_tavern()
-	var object_layer := editor._layer_by_type(editor.LAYER_OBJECT)
-	_check(
-		str(object_layer["cells"].get("3:1", "")) == "city_building_tavern",
-		"Таверна автоматически размещается цельным 13×13 объектом",
-	)
+	editor._spawns.clear()
+	editor._select_spawn_type(SPAWN_RULES.TYPE_BUILDING)
+	_check(editor._spawn_type == SPAWN_RULES.TYPE_BUILDING, "инструмент главных зданий выбирается из палитры")
+	editor._toggle_spawn(Vector2i(3, 4))
+	_check(editor._spawns.size() == 1 and str(editor._spawns[0]["type"]) == SPAWN_RULES.TYPE_BUILDING,
+		"клик по клетке ставит главное здание")
+	_check(str(editor._spawns[0].get("sprite", "")) == "castle_8", "по умолчанию здание с основным замком")
+	editor._open_building_settings(0)
+	_check(editor._building_settings_dialog.visible, "двойной щелчок открывает меню главного здания")
+	editor._building_settings_dialog.set_settings({
+		"hp": 2345,
+		"hp_regen_per_minute": 60,
+		"defense_slots": [{"attack": "magic", "damage_min": 4, "damage_max": 8,
+			"radius_units": 300, "interval_seconds": 1.5}],
+	})
+	editor._building_settings_dialog._on_add_slot_pressed()
+	editor._save_building_settings()
+	var saved_settings: Dictionary = editor._spawns[0]["settings"]
+	_check(int(saved_settings["hp"]) == 2345 and int(saved_settings["hp_regen_per_minute"]) == 60,
+		"здоровье и регенерация главного здания сохраняются")
+	_check(saved_settings["defense_slots"].size() == 2, "слоты обороны сохраняются (два слота)")
 	var payload := editor._spawn_payload()
-	_check(
-		payload.back() == {"type": SPAWN_RULES.TYPE_OBJECTIVE, "settings": {"max_hp": 2345}},
-		"Максимальное здоровье таверны добавляется в настройки карты",
-	)
+	_check(payload.size() == 1 and str(payload[0]["type"]) == SPAWN_RULES.TYPE_BUILDING,
+		"публикация содержит только главное здание, без таверны")
+	_check(payload[0]["settings"]["defense_slots"][0]["attack"] == "magic",
+		"тип атаки слота попадает в публикацию")
 	editor._load_map_payload({
 		"id": 9,
 		"name": "Front Line",
@@ -713,15 +712,10 @@ func _check_tavern_objective() -> void:
 		"editor_layers": [],
 		"spawns": payload,
 	})
-	_check(
-		int(editor._tavern_settings["max_hp"]) == 2345
-		and str(editor._layer_by_type(editor.LAYER_OBJECT)["cells"].get("3:1", ""))
-			== "city_building_tavern",
-		"Загрузка карты восстанавливает здоровье и автоматическую таверну",
-	)
+	_check(editor._spawns.size() == 1 and int(editor._spawns[0]["settings"]["hp"]) == 2345,
+		"загрузка карты восстанавливает главное здание")
 	editor._save_map()
-	_check(
-		editor.saved_payload["spawns"].back()["settings"]["max_hp"] == 2345,
-		"Сохранение карты сохраняет заданное здоровье таверны",
-	)
-	editor._mode = "economy"
+	_check(editor.saved_payload["spawns"][0]["settings"]["hp"] == 2345,
+		"сохранение карты сохраняет здоровье здания")
+	editor._spawns.clear()
+

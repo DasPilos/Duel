@@ -362,12 +362,18 @@ func _draw_mob_entry(canvas: CanvasItem, mob: Dictionary, sprite: Dictionary, se
 		canvas.draw_polyline(_closed(SHAPE_RULES.rounded_rect_points(outline.grow(4.0), 6.0)), SELECT_COLOR, 2.0)
 
 
+# Стрелок и маг: удар выстрелом (снаряд рисует отдельное событие), без выпада ближнего боя.
+# Внешний вид моба — спрайт его вида; спрайты героев мобам не назначаются.
+func _is_ranged_mob(mob: Dictionary) -> bool:
+	return str(mob.get("attack_style", "warrior")) in ["archer", "mage"]
+
+
 # Спрайт моба: {texture, rect, rotation (рад., по часовой на экране), alpha} или {} — рисовать нечего.
 func _mob_sprite(mob: Dictionary, now_msec: int) -> Dictionary:
 	var state: Dictionary = _mob_states.get(str(mob.get("id", "")), {})
 	var sheets := _npc_sheets(str(mob.get("kind", "")), bool(mob.get("front_line", false)))
 	var center := RULES.mob_display_position(state, now_msec, _point(mob))
-	if state.has("swing_started"):
+	if state.has("swing_started") and not _is_ranged_mob(mob):
 		var mob_elapsed := float(now_msec) - float(state["swing_started"])
 		center += RULES.lunge_offset(mob_elapsed, float(state.get("swing_windup_ms", 0.0)), float(mob.get("facing", 0.0)), RULES.MOB_LUNGE_PX)
 	var facing := float(mob.get("facing", 0.0))
@@ -467,6 +473,19 @@ func _draw_animal_entry(canvas: CanvasItem, sprite: Dictionary) -> void:
 
 # Состояние героя для отрисовки и сортировки: ноги, текстура (null — фигурка) и прямоугольник. Как в Python: кадр по
 # низу от ног, без кадра — прямоугольник 26x38 от точки (sx - 13, sy - 25). Обновляет состояние героя.
+# Прозрачный отступ снизу кадра героя (пикселей); кэшируется по текстуре.
+var _frame_pad_cache: Dictionary = {}
+
+
+func _visible_bottom_pad(texture: Texture2D) -> float:
+	var key := texture.get_instance_id()
+	if not _frame_pad_cache.has(key):
+		var image := texture.get_image()
+		var used := image.get_used_rect() if image != null else Rect2i()
+		_frame_pad_cache[key] = float(image.get_height() - used.end.y) if used.has_area() else 0.0
+	return _frame_pad_cache[key]
+
+
 func _player_draw_state(player: Dictionary, direction: String, anim_time: float, moving: bool) -> Dictionary:
 	_update_hero(player, anim_time)
 	var feet := _point(player)
@@ -474,6 +493,9 @@ func _player_draw_state(player: Dictionary, direction: String, anim_time: float,
 	var rect := Rect2(feet.x - 13.0, feet.y - 25.0, 26.0, 38.0)
 	if texture != null:
 		rect = DECK_SPRITE.player_frame_rect(feet, Vector2i(texture.get_size()))
+		if bool(player.get("front_line", false)):
+			# Ноги героя: самый нижний видимый пиксель кадра стоит в точке ног (как контейнер для столкновений).
+			rect.position.y += _visible_bottom_pad(texture)
 	if bool(player.get("front_line", false)) and str(player.get("projectile", "")).is_empty() and _hero.has("swing_started"):
 		var elapsed := (anim_time - float(_hero["swing_started"])) * 1000.0
 		rect.position += RULES.lunge_offset(elapsed, float(_hero.get("swing_windup_ms", 0.0)), float(player.get("facing", 0.0)), RULES.HERO_LUNGE_PX)

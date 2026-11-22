@@ -5,7 +5,12 @@ const REMOVED := "removed"
 const OUTSIDE_TEXT := "Клетка вне карты"
 const TYPE_HERO := "hero"
 const TYPE_MOB := "mob"
-const TYPE_OBJECTIVE := "objective"
+const TYPE_BUILDING := "building"
+const MAX_DEFENSE_SLOTS := 5
+const BUILDING_ATTACK_TYPES := ["arrow", "magic"]
+const BUILDING_DAMAGE_MAX := 10000
+const BUILDING_SPRITES := ["castle_8", "castle_5"]
+const DEFAULT_BUILDING_SPRITE := "castle_8"
 const TARGET_OBJECTIVE := "objective"
 const TARGET_CHARACTERS := "characters"
 const TARGET_BOTH := "both"
@@ -25,8 +30,6 @@ const FRONT_LINE_MOB_KEYS := [
 const MAX_BOSS_SPELL_SLOTS := 3
 const MAX_BOSS_DROP_SLOTS := 5
 const MAX_BOSS_STAT := 1000000
-const DEFAULT_TAVERN_HP := 1000
-const MAX_TAVERN_HP := 1000000
 const MAX_BOSS_SPELL_RANGE := 100
 const MAX_BOSS_SPELL_COOLDOWN_SECONDS := 86399
 const DEFAULT_MOB_SETTINGS := {
@@ -38,6 +41,42 @@ const DEFAULT_MOB_SETTINGS := {
 	"squad_max": 1,
 	"start_after_seconds": 0,
 }
+
+
+# Главное здание: здоровье, регенерация HP в минуту и до MAX_DEFENSE_SLOTS слотов обороны.
+# Пределы те же, что проверяет сервер (server/map_editor.py: normalize_building_settings).
+static func normalize_building_sprite(value: Variant) -> String:
+	var sprite := str(value)
+	return sprite if BUILDING_SPRITES.has(sprite) else DEFAULT_BUILDING_SPRITE
+
+
+static func normalize_building_settings(settings: Variant) -> Dictionary:
+	var source: Dictionary = settings if settings is Dictionary else {}
+	var slots: Array = []
+	var raw_slots: Variant = source.get("defense_slots", [])
+	if raw_slots is Array:
+		for raw in raw_slots:
+			if slots.size() >= MAX_DEFENSE_SLOTS:
+				break
+			if not raw is Dictionary:
+				continue
+			var attack := str(raw.get("attack", "arrow"))
+			if not BUILDING_ATTACK_TYPES.has(attack):
+				attack = "arrow"
+			var damage_min := clampi(int(raw.get("damage_min", 1)), 0, BUILDING_DAMAGE_MAX)
+			var damage_max := clampi(int(raw.get("damage_max", damage_min)), damage_min, BUILDING_DAMAGE_MAX)
+			slots.append({
+				"attack": attack,
+				"damage_min": damage_min,
+				"damage_max": damage_max,
+				"radius_units": clampf(float(raw.get("radius_units", 300.0)), 10.0, 2000.0),
+				"interval_seconds": clampf(float(raw.get("interval_seconds", 2.0)), 0.2, 60.0),
+			})
+	return {
+		"hp": clampi(int(source.get("hp", 500)), 1, 100000),
+		"hp_regen_per_minute": clampi(int(source.get("hp_regen_per_minute", 0)), 0, 10000),
+		"defense_slots": slots,
+	}
 
 
 static func is_front_line_mob_key(key: String) -> bool:
@@ -55,13 +94,14 @@ static func toggle(
 	spawn_type := TYPE_HERO,
 	mob_settings: Dictionary = {},
 	include_target := false,
+	building_sprite := DEFAULT_BUILDING_SPRITE,
 ) -> Dictionary:
 	if not inside(cell, map_size):
 		return {"result": "", "error": OUTSIDE_TEXT}
 	if find(spawns, cell) >= 0:
 		erase(spawns, cell)
 		return {"result": REMOVED, "error": ""}
-	if spawn_type != TYPE_HERO and spawn_type != TYPE_MOB:
+	if spawn_type != TYPE_HERO and spawn_type != TYPE_MOB and spawn_type != TYPE_BUILDING:
 		return {"result": "", "error": "Неизвестный тип спауна"}
 	var spawn := {
 		"x": cell.x,
@@ -71,6 +111,9 @@ static func toggle(
 	}
 	if spawn_type == TYPE_MOB:
 		spawn["settings"] = normalize_mob_settings(mob_settings, include_target)
+	elif spawn_type == TYPE_BUILDING:
+		spawn["settings"] = normalize_building_settings(mob_settings)
+		spawn["sprite"] = normalize_building_sprite(building_sprite)
 	spawns.append(spawn)
 	return {"result": ADDED, "error": ""}
 
@@ -85,7 +128,7 @@ static func erase(spawns: Array, cell: Vector2i) -> bool:
 
 static func load_spawns(raw: Variant, map_size: Vector2i, mode := "front_line") -> Array:
 	var result: Array = []
-	var type_counts := {TYPE_HERO: 0, TYPE_MOB: 0}
+	var type_counts := {TYPE_HERO: 0, TYPE_MOB: 0, TYPE_BUILDING: 0}
 	if not raw is Array:
 		return result
 	for value in raw:
@@ -95,7 +138,7 @@ static func load_spawns(raw: Variant, map_size: Vector2i, mode := "front_line") 
 		if not inside(cell, map_size) or find(result, cell) >= 0:
 			continue
 		var spawn_type := str(value.get("type", TYPE_HERO))
-		if spawn_type != TYPE_HERO and spawn_type != TYPE_MOB:
+		if spawn_type != TYPE_HERO and spawn_type != TYPE_MOB and spawn_type != TYPE_BUILDING:
 			continue
 		var number_name := str(type_counts[spawn_type] + 1)
 		var saved_name := str(value.get("name", "")).strip_edges()
@@ -107,6 +150,9 @@ static func load_spawns(raw: Variant, map_size: Vector2i, mode := "front_line") 
 			"type": spawn_type,
 			"name": saved_name,
 		}
+		if spawn_type == TYPE_BUILDING:
+			spawn["settings"] = normalize_building_settings(value.get("settings", {}))
+			spawn["sprite"] = normalize_building_sprite(value.get("sprite", ""))
 		if spawn_type == TYPE_MOB:
 			var settings: Variant = value.get("settings", {})
 			if not settings is Dictionary:
@@ -121,33 +167,13 @@ static func load_spawns(raw: Variant, map_size: Vector2i, mode := "front_line") 
 	return result
 
 
-static func load_tavern_settings(raw: Variant) -> Dictionary:
-	if not raw is Array:
-		return {"max_hp": DEFAULT_TAVERN_HP}
-	for value in raw:
-		if value is Dictionary and str(value.get("type", "")) == TYPE_OBJECTIVE:
-			var settings: Variant = value.get("settings", {})
-			if settings is Dictionary:
-				return normalize_tavern_settings(settings)
-	return {"max_hp": DEFAULT_TAVERN_HP}
-
-
-static func normalize_tavern_settings(settings: Dictionary) -> Dictionary:
-	return {
-		"max_hp": clampi(
-			int(settings.get("max_hp", DEFAULT_TAVERN_HP)), 1, MAX_TAVERN_HP,
-		),
-	}
-
-
 static func to_payload(
 	spawns: Array,
 	mode := "front_line",
-	tavern_settings: Dictionary = {},
 	map_size := Vector2i.ZERO,
 ) -> Array:
 	var payload: Array = []
-	var type_counts := {TYPE_HERO: 0, TYPE_MOB: 0}
+	var type_counts := {TYPE_HERO: 0, TYPE_MOB: 0, TYPE_BUILDING: 0}
 	for spawn in spawns:
 		if not spawn is Dictionary or not spawn.has("x") or not spawn.has("y"):
 			continue
@@ -158,23 +184,22 @@ static func to_payload(
 			continue
 		var saved := {"x": x, "y": y}
 		var spawn_type := str(spawn.get("type", TYPE_HERO))
-		if spawn_type != TYPE_HERO and spawn_type != TYPE_MOB:
+		if spawn_type != TYPE_HERO and spawn_type != TYPE_MOB and spawn_type != TYPE_BUILDING:
 			continue
 		if spawn.has("name"):
 			var name := _normalized_name(spawn.get("name", ""), type_counts[spawn_type] + 1)
 			if name.is_valid_int():
 				name = str(type_counts[spawn_type] + 1)
 			saved["name"] = name
+		if spawn_type == TYPE_BUILDING:
+			saved["type"] = TYPE_BUILDING
+			saved["settings"] = normalize_building_settings(spawn.get("settings", {}))
+			saved["sprite"] = normalize_building_sprite(spawn.get("sprite", ""))
 		if spawn_type == TYPE_MOB:
 			saved["type"] = TYPE_MOB
 			saved["settings"] = normalize_mob_settings(spawn.get("settings", {}), mode == "front_line")
 		payload.append(saved)
 		type_counts[spawn_type] += 1
-	if mode == "front_line":
-		payload.append({
-			"type": TYPE_OBJECTIVE,
-			"settings": normalize_tavern_settings(tavern_settings),
-		})
 	return payload
 
 

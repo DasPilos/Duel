@@ -52,8 +52,6 @@ MAX_BOSS_SPELL_COOLDOWN_SECONDS = 86_399
 MAX_BOSS_SPELL_AREA = 100
 MAX_BOSS_SPELL_MANA_COST = 1_000_000
 MAX_BOSS_DROP_SLOTS = 5
-DEFAULT_TAVERN_HP = 1000
-MAX_TAVERN_HP = 1_000_000
 
 
 def check_map_size(map_w, map_h):
@@ -155,6 +153,63 @@ def validate_mobs(mobs, map_w, map_h):
     return result
 
 
+# Главные здания: здоровье, регенерация в минуту и до пяти слотов обороны. Каждый слот настраивается отдельно.
+BUILDING_SIZE_TILES = (5, 5)
+BUILDING_SPRITES = ("castle_8", "castle_5")
+BUILDING_MAX_HP = 100000
+BUILDING_MAX_REGEN_PER_MINUTE = 10000
+BUILDING_ATTACK_TYPES = ("arrow", "magic")
+MAX_DEFENSE_SLOTS = 5
+BUILDING_RADIUS_UNITS = (10, 2000)  # как дальность героев: единицы, 50 ед. = 1 тайл
+BUILDING_INTERVAL_SECONDS = (0.2, 60.0)  # время между выстрелами слота
+BUILDING_DAMAGE_MAX = 10000
+
+
+def _number_in(settings, key, label, low, high, default, cast=float):
+    raw = settings.get(key, default)
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        raise ValueError(f"{label}: нужно число")
+    value = cast(raw)
+    if not low <= value <= high:
+        raise ValueError(f"{label}: от {low} до {high}")
+    return value
+
+
+def normalize_building_settings(settings):
+    """Настройки здания: здоровье, регенерация HP в минуту и слоты обороны (до MAX_DEFENSE_SLOTS)."""
+    if not isinstance(settings, dict):
+        raise ValueError("Настройки здания должны быть объектом")
+    hp = int(_number_in(settings, "hp", "Здоровье здания", 1, BUILDING_MAX_HP, 500, cast=float))
+    regen = int(_number_in(
+        settings, "hp_regen_per_minute", "Регенерация HP в минуту", 0, BUILDING_MAX_REGEN_PER_MINUTE, 0,
+        cast=float,
+    ))
+    raw_slots = settings.get("defense_slots", [])
+    if not isinstance(raw_slots, list) or len(raw_slots) > MAX_DEFENSE_SLOTS:
+        raise ValueError(f"Слотов обороны может быть не больше {MAX_DEFENSE_SLOTS}")
+    slots = []
+    for index, raw in enumerate(raw_slots, 1):
+        if not isinstance(raw, dict):
+            raise ValueError(f"Слот обороны {index}: нужен объект")
+        attack = raw.get("attack")
+        if attack not in BUILDING_ATTACK_TYPES:
+            raise ValueError(f"Слот обороны {index}: тип атаки — стрелы или магия")
+        damage_min = int(_number_in(raw, "damage_min", f"Слот {index}: урон минимум", 0, BUILDING_DAMAGE_MAX, 1))
+        damage_max = int(_number_in(raw, "damage_max", f"Слот {index}: урон максимум", 0, BUILDING_DAMAGE_MAX, 1))
+        if damage_max < damage_min:
+            raise ValueError(f"Слот обороны {index}: урон максимум меньше минимума")
+        slots.append({
+            "attack": attack,
+            "damage_min": damage_min,
+            "damage_max": damage_max,
+            "radius_units": _number_in(raw, "radius_units", f"Слот {index}: радиус атаки", *BUILDING_RADIUS_UNITS, 300),
+            "interval_seconds": _number_in(
+                raw, "interval_seconds", f"Слот {index}: интервал между выстрелами", *BUILDING_INTERVAL_SECONDS, 2.0,
+            ),
+        })
+    return {"hp": hp, "hp_regen_per_minute": regen, "defense_slots": slots}
+
+
 def validate_spawns(spawns, map_w, map_h, *, include_settings=False, mode="front_line"):
     """Проверяет точки игроков и настроенные точки мобов для сохранённой карты."""
     if spawns is None:
@@ -162,26 +217,10 @@ def validate_spawns(spawns, map_w, map_h, *, include_settings=False, mode="front
     if not isinstance(spawns, list):
         raise ValueError("Точки спауна должны быть списком")
     result, taken = [], set()
-    objective_seen = False
     for spawn in spawns:
         if not isinstance(spawn, dict):
             raise ValueError("Каждая точка спауна — объект с полями x, y")
         spawn_type = spawn.get("type", "hero")
-        if spawn_type == "objective":
-            if mode != "front_line":
-                raise ValueError("Настройки главной цели доступны только в режиме Front Line")
-            if objective_seen:
-                raise ValueError("Для карты можно задать только одну главную цель")
-            settings = spawn.get("settings", {})
-            if not isinstance(settings, dict):
-                raise ValueError("Настройки таверны должны быть объектом")
-            max_hp = _bounded_spawn_setting(
-                settings, "max_hp", "Здоровье таверны", MAX_TAVERN_HP,
-                minimum=1, default=DEFAULT_TAVERN_HP,
-            )
-            result.append({"type": "objective", "settings": {"max_hp": max_hp}})
-            objective_seen = True
-            continue
         try:
             x, y = int(spawn.get("x", -1)), int(spawn.get("y", -1))
         except (TypeError, ValueError):
@@ -191,7 +230,7 @@ def validate_spawns(spawns, map_w, map_h, *, include_settings=False, mode="front
         if (x, y) in taken:
             raise ValueError(f"Точка спауна ({x}, {y}) задана дважды")
         taken.add((x, y))
-        if spawn_type not in ("hero", "mob"):
+        if spawn_type not in ("hero", "mob", "building"):
             raise ValueError("Неизвестный тип спауна")
         normalized = {"x": x, "y": y}
         if "name" in spawn:
@@ -199,6 +238,14 @@ def validate_spawns(spawns, map_w, map_h, *, include_settings=False, mode="front
             if not isinstance(name, str) or not 1 <= len(name.strip()) <= 32:
                 raise ValueError("Название точки спауна должно содержать от 1 до 32 символов")
             normalized["name"] = name.strip()
+        if spawn_type == "building":
+            sprite = spawn.get("sprite", BUILDING_SPRITES[0])
+            if sprite not in BUILDING_SPRITES:
+                raise ValueError("Неизвестный спрайт главного здания")
+            normalized["settings"] = normalize_building_settings(spawn.get("settings", {}))
+            normalized["sprite"] = sprite
+            result.append({"type": "building", **normalized})
+            continue
         if spawn_type == "mob":
             if not include_settings:
                 raise ValueError("Настроенные спауны мобов пока нельзя публиковать в игровой мир")
@@ -492,10 +539,92 @@ def terrain_from_cells(cells, catalog, masks=None):
     }
 
 
+def _layer_is_visible(layer, by_id):
+    """Слой виден, если он и все его группы не скрыты."""
+    current = layer
+    seen = set()
+    while current:
+        if not current.get("visible", True):
+            return False
+        parent_id = int(current.get("parent_id", 0) or 0)
+        if parent_id == 0 or parent_id in seen:
+            break
+        seen.add(parent_id)
+        current = by_id.get(parent_id)
+    return True
+
+
+def layer_passability(editor_layers, map_w, map_h):
+    """Проходимость по флагам слоёв редактора: (заблокированные клетки, клетки, покрытые слоями).
+
+    editor_layers идут снизу вверх. Клетка решается верхним видимым слоем, на котором она есть.
+    Флаг passable задаёт художник; если его нет, слои объектов непроходимы, остальные проходимы.
+    Группы клеток не имеют и пропускаются.
+    """
+    layers = [layer for layer in editor_layers or [] if isinstance(layer, dict)]
+    by_id = {int(layer.get("id", 0) or 0): layer for layer in layers}
+    blocked, covered = set(), set()
+    for layer in layers:
+        layer_type = str(layer.get("type", ""))
+        if layer_type == "group" or not _layer_is_visible(layer, by_id):
+            continue
+        flag = layer.get("passable")
+        passable = flag if isinstance(flag, bool) else layer_type != "object"
+        for cell in layer.get("cells", []) or []:
+            if not isinstance(cell, dict):
+                continue
+            try:
+                x, y = int(cell["x"]), int(cell["y"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if not (0 <= x < map_w and 0 <= y < map_h):
+                continue
+            tile = (x, y)
+            covered.add(tile)
+            if passable:
+                blocked.discard(tile)
+            else:
+                blocked.add(tile)
+    return frozenset(blocked), frozenset(covered)
+
+
+def apply_layer_passability(terrain, editor_layers, map_w, map_h):
+    """Клетки, покрытые слоями редактора, получают проходимость от флага верхнего слоя.
+    Клетки без слоёв сохраняют проходимость по каталогу. Клетки животных остаются свободными.
+    """
+    if terrain is None:
+        return None
+    blocked, covered = layer_passability(editor_layers, map_w, map_h)
+    if not covered:
+        return terrain
+    # Проходимые клетки слоя (мост, берег поверх воды) не блокируются водой, лесом, камнем и сухой землёй.
+    passable = covered - blocked
+    animal_tiles = {(animal["x"], animal["y"]) for animal in terrain["animals"]}
+    impassable = (set(terrain["impassable"]) - covered) | blocked
+    terrain["impassable"] = frozenset(impassable - animal_tiles)
+    for key in ("water", "forest", "dry", "mountain"):
+        terrain[key] = frozenset(set(terrain.get(key, ())) - passable)
+    return terrain
+
+
 def load_published_map(database, published=None):
-    """Опубликованная карта текущего мира: (рельеф, сведения о публикации) или (None, None), если карты нет."""
+    """Опубликованная карта текущего мира: (рельеф, сведения о публикации) или (None, None), если карты нет.
+
+    Проходимость берётся из флагов слоёв заготовки (saved_id), если она привязана.
+    """
     if published is None:
         published = database.published_map()
     if published is None:
         return None, None
-    return terrain_from_cells(database.map_live_cells(), database.map_catalog(), load_partial_masks()), published
+    terrain = terrain_from_cells(database.map_live_cells(), database.map_catalog(), load_partial_masks())
+    saved_id = published.get("saved_id")
+    if terrain is not None and saved_id:
+        try:
+            saved = database.get_saved_map(saved_id)
+        except ValueError:
+            saved = None
+        if saved is not None:
+            terrain = apply_layer_passability(
+                terrain, saved.get("editor_layers", []), int(published["map_w"]), int(published["map_h"]),
+            )
+    return terrain, published

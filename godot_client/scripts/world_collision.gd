@@ -5,10 +5,12 @@ extends RefCounted
 # (core/player_movement.py: find_tile_path, follow_path).
 
 const TILE := 16
-const FEET_W := 20
-const FEET_H := 10
-const MOB_W := 90
-const MOB_H := 53
+# Ноги героя и тело моба: вертикальный контейнер от ступней до середины спрайта, низ — в точке ног (как на сервере).
+const FEET_W := 14
+const FEET_H := 20
+const MOB_BODY_OFFSET_Y := 7.0  # низ тела моба — на 7 px ниже точки (ноги спрайта), как на сервере
+const MOB_W := 45  # контейнер моба: вдвое меньше прежних 90×53, как на сервере (world_mobs.py)
+const MOB_H := 27
 # Тело моба Front Line — квадрат со стороной в два радиуса расталкивания (front_line/server/world.py: _mob_body_rect).
 const FRONT_LINE_MOB_RADIUS := 16.0
 # Радиус тела моба для дальности атаки (совпадает с front_line/server/combat.py MOB_RANGE_HULL_PX).
@@ -70,9 +72,10 @@ static func mob_rect(x: float, y: float) -> Array:
 	return [int(x) - int(MOB_W / 2.0), int(y) - int(MOB_H / 2.0), MOB_W, MOB_H]
 
 
-static func front_line_mob_rect(x: float, y: float, is_boss: bool) -> Array:
-	var radius := FRONT_LINE_MOB_RADIUS * (FRONT_LINE_BOSS_SCALE if is_boss else 1.0)
-	return [int(x - radius), int(y - radius), int(radius * 2.0), int(radius * 2.0)]
+# Тело моба Front Line для блокировки героя: размер ног героя, как у сервера (world.py _mob_body_rect).
+# Большое тело перекрывало мост в два тайла.
+static func front_line_mob_rect(x: float, y: float, _is_boss: bool) -> Array:
+	return [int(x - FEET_W / 2.0), int(y + MOB_BODY_OFFSET_Y - FEET_H), FEET_W, FEET_H]
 
 
 static func animal_rect(x: float, y: float) -> Array:
@@ -80,7 +83,7 @@ static func animal_rect(x: float, y: float) -> Array:
 
 
 func feet_rect(x: float, y: float) -> Array:
-	return [int(x - FEET_W / 2.0), int(y - FEET_H / 2.0 + 1.0), FEET_W, FEET_H]
+	return [int(x - FEET_W / 2.0), int(y - FEET_H), FEET_W, FEET_H]
 
 
 # Точка заблокирована рельефом или одним из динамических прямоугольников (живые мобы и животные).
@@ -96,7 +99,7 @@ func point_blocked(point: Vector2, dynamic_rects: Array) -> bool:
 
 func terrain_blocked(x: float, y: float) -> bool:
 	if x - FEET_W / 2.0 < 0.0 or x + FEET_W / 2.0 > _world_size.x \
-			or y - FEET_H / 2.0 < 0.0 or y + FEET_H / 2.0 > _world_size.y:
+			or y - FEET_H < 0.0 or y > _world_size.y:
 		return true
 	if _rect_touches_blocked_tile(feet_rect(x, y)):
 		return true
@@ -296,7 +299,7 @@ func set_solid_rects(rects: Array) -> void:
 func _solid_rects_block(x: float, y: float) -> bool:
 	if _solid_rects.is_empty():
 		return false
-	var feet := [int(x - FEET_W / 2.0), int(y - 6.0), FEET_W, FEET_H]
+	var feet := [int(x - FEET_W / 2.0), int(y - FEET_H), FEET_W, FEET_H]
 	for rect in _solid_rects:
 		if _rects_collide(feet, rect):
 			return true
