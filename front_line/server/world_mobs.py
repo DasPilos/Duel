@@ -917,15 +917,15 @@ class WorldService:
             return self._snapshot(player, since, accepted)
 
     def _apply_orders(self, player, payload):
-        """Приказы игрока: цель удара, стоп, удержание, добыча, рывок. Новый приказ (order_id) отменяет замах."""
+        """Приказы игрока: цель удара, стоп, удержание, добыча, рывок. Замах приказы не отменяют."""
         target_id = payload.get("attack_target")
         target = self._mobs.get(target_id) if isinstance(target_id, str) else None
         if payload.get("stop") is True or (target is not None and not target.alive):
             target = None
         order_id = payload.get("order_id")
         if isinstance(order_id, int) and not isinstance(order_id, bool) and order_id != player.order_seq:
+            # Новый приказ не отменяет замах: герой доделывает выстрел или удар, а движение идёт после него.
             player.order_seq = order_id
-            self._cancel_attack(player)
         player.attack_target = target
         player.hold = payload.get("hold") is True
         self._set_harvest_target(player, payload.get("harvest_target"))
@@ -1338,7 +1338,7 @@ class WorldService:
             mob.facing = math.atan2(player.y - mob.y, player.x - mob.x)
         mob.windup = max(0.0, mob.windup - dt)
         if mob.windup <= 0:
-            if self._mob_attack_distance(mob, player) <= reach:
+            if self._mob_attack_distance(mob, player) <= reach or self._commits_strike(mob):
                 self._mob_strike(mob, player)
             else:
                 self._emit_label(player, "miss", mob.x, mob.y - MOB_LABEL_OFFSET)
@@ -1484,7 +1484,7 @@ class WorldService:
         player.windup_target = None
         if target is None or not target.alive:
             return  # цель пропала во время замаха: удара и отката нет
-        if self._player_attack_distance(player, target) <= self._strike_range_px(player):
+        if self._player_attack_distance(player, target) <= self._strike_range_px(player) or self._commits_strike(player):
             self._deliver_player_strike(player, target)
             player.backswing = self._player_backswing_time(player)
         else:
@@ -1503,10 +1503,14 @@ class WorldService:
         return True
 
     def _cancel_attack(self, player):
-        """Приказ отменяет замах: удара не будет, отката тоже (как в Dota 2)."""
+        """Отмена замаха (команда «стоп»): удара не будет, отката тоже; выпущенный снаряд не отменяется."""
         player.windup = 0.0
         player.windup_total = 0.0
         player.windup_target = None
+
+    def _commits_strike(self, attacker):
+        """Дальний удар выпущен в момент замаха: дистанция в конце замаха его не отменяет (базовый мир — нет)."""
+        return False
 
     def _strike_range_px(self, player):
         return self._player_attack_range_px(player)

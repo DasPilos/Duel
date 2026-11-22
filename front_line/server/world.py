@@ -76,6 +76,7 @@ FLOW_NEIGHBOURS = (
     (1, 1, math.sqrt(2.0)), (1, -1, math.sqrt(2.0)),
     (-1, 1, math.sqrt(2.0)), (-1, -1, math.sqrt(2.0)),
 )
+PROJECTILE_CONTACT_STEP_PX = 2.0  # шаг проверки касания снаряда с телом цели, px
 MOB_SEPARATION_RADIUS = TILE  # полтайла по старой сетке 32 px: радиус тела моба 16 px
 # Клетка сетки мобов: не меньше самой широкой пары тел (два босса), иначе соседи пропустятся.
 MOB_BUCKET_PX = 2.0 * MOB_SEPARATION_RADIUS * 4.0
@@ -220,6 +221,7 @@ class FrontLineWorldService(WorldService):
             {
                 "id": projectile["id"],
                 "kind": projectile["kind"],
+                "spell": projectile.get("spell", ""),
                 "from": [projectile["from"][0], projectile["from"][1]],
                 "target": projectile["target"].id,
                 "radius": front_line_combat.MAGE_AREA_RADIUS_UNITS if projectile["kind"] == "orb" else 0,
@@ -331,7 +333,20 @@ class FrontLineWorldService(WorldService):
                 player = self._players.get(int(character_id))
                 if player is not None:
                     player.known_mobs = set()
+        if payload.get("cancel_strike") is True:
+            self.cancel_strike(int(character_id))
         return super().sync(user_id, character_id, payload)
+
+    def cancel_strike(self, character_id):
+        """Отмена замаха (кнопка «стоп»): до выстрела замах прерывается без удара и отката. Выпущенный снаряд не отменяется."""
+        with self._lock:
+            player = self._players.get(int(character_id))
+            if player is None or player.windup <= 0:
+                return False
+            player.windup = 0.0
+            player.windup_target = None
+            player.attack_target = None
+            return True
 
     @timed("сборка снимка")
     def _snapshot(self, player, since, accepted):
@@ -993,6 +1008,8 @@ class FrontLineWorldService(WorldService):
         self._round_stats = {}
         self._round_mobs_killed = 0
         self._match_summary = None
+        # Трупы прошлого раунда не переходят в новый.
+        self._database.clear_player_corpses()
         if not self._players:
             self._character_draft_active = False
             self._character_draft_deadline = 0.0
@@ -1031,6 +1048,7 @@ class FrontLineWorldService(WorldService):
                 "max_mp": max_mp,
             })
             player.fighter = _fighter_from_character(character)
+            player.corpses = []
             player.dirty = False
             self._refresh_carry(player)
             self._character_draft_results[character_id] = character
@@ -2153,6 +2171,14 @@ class FrontLineWorldService(WorldService):
             self._projectiles = []
         return self._projectiles
 
+    def _commits_strike(self, attacker):
+        """Лучник и маг (герой или моб) выпускают снаряд в момент замаха: цель, ушедшая из радиуса, его не отменяет."""
+        if hasattr(attacker, "character_id"):
+            profession = attacker.fighter.profession_type
+        else:
+            profession = getattr(attacker, "attack_style", "warrior")
+        return front_line_combat.projectile_kind(profession) != ""
+
     def _deliver_player_strike(self, player, target):
         """Ближний бой бьёт сразу; лучник и маг выпускают снаряд, который летит за целью и бьёт при попадании."""
         kind = front_line_combat.projectile_kind(player.fighter.profession_type)
@@ -2167,6 +2193,7 @@ class FrontLineWorldService(WorldService):
             "owner": player,
             "target": target,
             "kind": kind,
+            "spell": "fire" if kind == "orb" else "",
             "from": origin,
             "pos": origin,
             "last": (target.x, target.y),
@@ -2178,6 +2205,7 @@ class FrontLineWorldService(WorldService):
             "type": "projectile",
             "id": self._projectile_sequence,
             "kind": kind,
+            "spell": "fire" if kind == "orb" else "",
             "from": [player.x, player.y],
             "target": target.id,
             "speed": speed,
@@ -2208,6 +2236,7 @@ class FrontLineWorldService(WorldService):
             "owner": mob,
             "target": player,
             "kind": kind,
+            "spell": "lightning" if kind == "orb" else "",
             "pos": origin,
             "speed": speed,
             "age": 0.0,
@@ -2218,13 +2247,28 @@ class FrontLineWorldService(WorldService):
                 "type": "projectile",
                 "id": self._projectile_sequence,
                 "kind": kind,
+                "spell": "lightning" if kind == "orb" else "",
                 "from": [mob.x, mob.y],
                 "target": player.character_id,
                 "speed": speed,
             })
 
+    @staticmethod
+    def _projectile_contact(px, py, nx, ny, rect):
+        """Отрезок полёта снаряда (px, py) → (nx, ny) касается прямоугольника тела цели: точка касания или None."""
+        x0, y0, width, height = rect
+        length = math.hypot(nx - px, ny - py)
+        steps = max(1, math.ceil(length / PROJECTILE_CONTACT_STEP_PX))
+        for index in range(1, steps + 1):
+            t = index / steps
+            x = px + (nx - px) * t
+            y = py + (ny - py) * t
+            if x0 <= x <= x0 + width and y0 <= y <= y0 + height:
+                return (x, y)
+        return None
+
     def _update_mob_projectiles(self, dt):
-        """Двигает снаряды мобов и возвращает те, что ещё летят."""
+        """Двигает снаряды мобов: попадание только при касании тела героя, урон и уворот — в этот момент."""
         flying = []
         for shot in self._projectile_list():
             if shot.get("source") != "mob":
@@ -2237,16 +2281,17 @@ class FrontLineWorldService(WorldService):
             tx, ty = target.x, target.y
             step = shot["speed"] * dt
             distance = math.hypot(tx - px, ty - py)
-            edge = front_line_combat.attack_distance_px(px, py, tx, ty, front_line_combat.HERO_BODY_RADIUS_PX)
-            if edge <= step:
-                self._land_mob_projectile(shot, tx, ty, target)
+            fraction = min(1.0, step / distance) if distance > 0 else 1.0
+            nx, ny = px + (tx - px) * fraction, py + (ty - py) * fraction
+            contact = self._projectile_contact(px, py, nx, ny, _feet_rect(tx, ty))
+            if contact is not None:
+                self._land_mob_projectile(shot, contact[0], contact[1], target)
                 continue
             if shot["age"] >= front_line_combat.PROJECTILE_MAX_SECONDS:
                 if shot["kind"] == "orb":
                     self._land_mob_projectile(shot, px, py, target)
                 continue
-            fraction = min(1.0, step / distance) if distance > 0 else 1.0
-            shot["pos"] = (px + (tx - px) * fraction, py + (ty - py) * fraction)
+            shot["pos"] = (nx, ny)
             flying.append(shot)
         return flying
 
@@ -2258,6 +2303,8 @@ class FrontLineWorldService(WorldService):
             radius = front_line_combat.range_units_to_px(getattr(
                 mob, "area_radius_units", front_line_combat.MAGE_AREA_RADIUS_UNITS))
             for player in list(self._players.values()):
+                if player.fighter.hp <= 0:
+                    continue  # мёртвый герой уже не получает урон от взрыва
                 if front_line_combat.attack_distance_px(x, y, player.x, player.y, front_line_combat.HERO_BODY_RADIUS_PX) <= radius:
                     self._apply_mob_hit(mob, player)
         elif target.fighter.hp > 0:
@@ -2288,9 +2335,11 @@ class FrontLineWorldService(WorldService):
                     self._land_projectile(projectile, px, py, owner, target)
                 continue
             if target.alive:
-                edge = front_line_combat.attack_distance_px(px, py, tx, ty, self._mob_separation_radius(target))
-                if edge <= step:
-                    self._land_projectile(projectile, px, py, owner, target)
+                fraction = min(1.0, step / distance) if distance > 0 else 1.0
+                nx, ny = px + (tx - px) * fraction, py + (ty - py) * fraction
+                contact = self._projectile_contact(px, py, nx, ny, self._mob_body_rect(target, target.x, target.y))
+                if contact is not None:
+                    self._land_projectile(projectile, contact[0], contact[1], owner, target)
                     continue
             elif distance <= step:
                 # Цель погибла в полёте: сгусток взрывается там, где её видели, стрела пропадает.

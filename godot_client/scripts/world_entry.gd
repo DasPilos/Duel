@@ -102,6 +102,10 @@ var _world_sync_timer: Timer
 var _sync_accumulator := 0.0
 var _movement_pending := false
 var _resync_pending := false
+# Замах: клик по земле ставится в очередь и выполняется после выстрела/удара; S отменяет замах (до выстрела).
+var _queued_move_pending := false
+var _queued_move_goal := Vector2.ZERO
+var _pending_cancel_strike := false
 var _desired_position := Vector2.ZERO
 var _sent_position := Vector2.ZERO
 var _move_target := Vector2.ZERO
@@ -1372,6 +1376,9 @@ func _perf_report_frame(delta: float, script_ms: float) -> void:
 
 func _process_frame(delta: float) -> void:
 	_ensure_world_stream(delta)
+	if _queued_move_pending and not _hero_windup_active():
+		_queued_move_pending = false
+		_issue_move(_queued_move_goal)
 	_update_floating_events(delta)
 	_update_player_facing(delta)
 	_click_effect_timer = maxf(0.0, _click_effect_timer - delta)
@@ -1612,7 +1619,7 @@ func _draw_front_line_range_and_shots(player_state: Dictionary, mobs: Array, now
 		shot["pos"] = pos
 		var direction := to_target.normalized() if distance > 0.0 else Vector2.RIGHT
 		if str(shot["kind"]) == "orb":
-			draw_circle(pos, PROJECTILE_ORB_RADIUS, Color(0.5, 0.75, 1.0, 0.85))
+			_draw_spell_orb(pos, str(shot.get("spell", "")), now_sec)
 		else:
 			draw_line(pos - direction * PROJECTILE_ARROW_LENGTH, pos, Color(0.92, 0.9, 0.8), 2.0)
 			draw_circle(pos, 2.5, Color(0.7, 0.7, 0.7))
@@ -1650,6 +1657,45 @@ func _on_projectile_event(event: Dictionary, now_sec: float) -> void:
 	_shots[shot_id] = _new_shot(event, now_sec)
 
 
+# Текстуры для отрисовки в бою: загружаются один раз через Image (как спрайты героев), без load() в каждом кадре.
+var _runtime_texture_cache: Dictionary = {}
+
+
+func _runtime_texture(path: String) -> Texture2D:
+	if _runtime_texture_cache.has(path):
+		return _runtime_texture_cache[path]
+	var texture: Texture2D = null
+	var image := Image.new()
+	if image.load(ProjectSettings.globalize_path(path)) == OK and not image.is_empty():
+		image.convert(Image.FORMAT_RGBA8)
+		texture = ImageTexture.create_from_image(image)
+	_runtime_texture_cache[path] = texture
+	return texture
+
+
+# Заклинания мага: анимированные листы из assets/base_tails/spells (огненный шар у героя, молния у мага-моба).
+const SPELL_SHEETS := {
+	"fire": ["res://assets/base_tails/spells/PNG/Magic/Flaming_sphere.png", 96.0],
+	"lightning": ["res://assets/base_tails/spells/PNG/Magic/Lightning_sphere.png", 128.0],
+}
+const SPELL_FPS := 14.0
+const SPELL_DRAW_PX := 22.0
+
+
+func _draw_spell_orb(pos: Vector2, spell: String, now_sec: float) -> void:
+	var entry: Array = SPELL_SHEETS.get(spell, [])
+	var texture := _runtime_texture(str(entry[0])) if not entry.is_empty() else null
+	if texture == null:
+		draw_circle(pos, PROJECTILE_ORB_RADIUS, Color(0.5, 0.75, 1.0, 0.85))
+		return
+	var frame_size := float(entry[1])
+	var frames := maxi(1, int(texture.get_width() / frame_size))
+	var frame := posmod(int(now_sec * SPELL_FPS), frames)
+	var source := Rect2(float(frame) * frame_size, 0.0, frame_size, frame_size)
+	var destination := Rect2(pos - Vector2.ONE * SPELL_DRAW_PX * 0.5, Vector2.ONE * SPELL_DRAW_PX)
+	draw_texture_rect_region(texture, destination, source)
+
+
 # Попадание с сервера: снаряд пропадает, сгусток мага взрывается в точке попадания.
 func _on_projectile_hit(event: Dictionary, now_sec: float) -> void:
 	var shot_id := int(event.get("id", 0))
@@ -1677,6 +1723,7 @@ func _new_shot(data: Dictionary, now_sec: float) -> Dictionary:
 		"pos": origin,
 		"speed": maxf(1.0, float(data.get("speed", 192.0))),
 		"kind": str(data.get("kind", "")),
+		"spell": str(data.get("spell", "")),
 		"target": str(data.get("target", "")),
 		"last": origin,
 		"last_time": now_sec,
@@ -1865,7 +1912,20 @@ func _issue_attack(mob_id: String) -> void:
 
 
 # Приказ движения снимает удержание и атаку-движение.
+func _hero_windup_active() -> bool:
+	var player_state: Dictionary = GameSession.world_snapshot.get("player", {})
+	return float(player_state.get("windup", 0.0)) > 0.0
+
+
 func _issue_move(goal: Vector2) -> bool:
+	if _hero_windup_active():
+		# Замах доделывается (выстрел или удар), потом герой идёт в эту точку.
+		_queued_move_goal = goal
+		_queued_move_pending = true
+		_click_effect_world = goal
+		_click_effect_timer = CLICK_EFFECT_SECONDS
+		queue_redraw()
+		return true
 	_selected_mob_id = ""
 	_attack_move_active = false
 	_wants_acquire = false
@@ -1887,6 +1947,8 @@ func _issue_attack_move(goal: Vector2) -> bool:
 
 # S: стоп — цель, путь, атака-движение и удержание сбрасываются; новый приказ отменяет замах.
 func _issue_stop() -> void:
+	_queued_move_pending = false
+	_pending_cancel_strike = true
 	_selected_mob_id = ""
 	_attack_move_armed = false
 	_attack_move_active = false
@@ -2218,7 +2280,9 @@ func _send_world_sync() -> void:
 			"dash_target": dash_target,
 			"harvest_target": _harvest_target,
 			"resync": _resync_pending,
+			"cancel_strike": _pending_cancel_strike,
 		}}))
+		_pending_cancel_strike = false
 		_pending_dash_target = null
 		_resync_pending = false
 		return
@@ -2234,7 +2298,9 @@ func _send_world_sync() -> void:
 		"since": int(GameSession.world_snapshot.get("seq", 0)),
 		"dash_target": dash_target,
 		"harvest_target": _harvest_target,
+		"cancel_strike": _pending_cancel_strike,
 	}):
+		_pending_cancel_strike = false
 		_world_request_pending = true
 		_world_action = "world_sync"
 		_pending_dash_target = null
@@ -3246,7 +3312,7 @@ func _draw_front_line_buildings(front_line_value: Variant) -> void:
 			continue
 		var building: Dictionary = building_value
 		var paths: Array = FRONT_LINE_BUILDING_FRAMES.get(str(building.get("sprite", "castle_8")), FRONT_LINE_BUILDING_FRAMES["castle_8"])
-		var texture := load(str(paths[posmod(frame_index, paths.size())])) as Texture2D
+		var texture := _runtime_texture(str(paths[posmod(frame_index, paths.size())]))
 		var origin := Vector2(float(building.get("x", 0)), float(building.get("y", 0))) * FRONT_LINE_TILE_PX
 		var height := width
 		if texture != null:

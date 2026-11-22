@@ -2023,6 +2023,11 @@ class Database:
             for row in rows
         ]
 
+    def clear_player_corpses(self):
+        """Новый раунд мира начинается без трупов: прошлый раунд их не переносит."""
+        with self.connection() as connection:
+            connection.execute("DELETE FROM world_player_corpses WHERE world_id = %s", (self.world_id,))
+
     def loot_player_corpse(self, user_id, character_id, corpse_id):
         """Монеты трупа переходят в кошелёк персонажа, труп удаляется. Возвращает кошелёк и сумму добычи."""
         with self.connection() as connection:

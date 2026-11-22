@@ -89,7 +89,7 @@ static func _animation_path(profession: String, action: String) -> String:
 		"warrior":
 			level_pattern = "(?i)^Swordsman_lvl1$"
 		"archer":
-			# Папки уровней лучника: Archer_Lvl7, Archer_Lvl8, Archer_Lvl9 (берётся самый низкий).
+			# Уровни лучника 1–9 лежат в трёх паках (1–3, 4–6, 7–9): берётся самый низкий уровень.
 			level_pattern = "(?i)^Archer_Lvl\\d+$"
 		"mage":
 			level_pattern = "(?i)^Mage_1lvl$"
@@ -103,7 +103,10 @@ static func _animation_path(profession: String, action: String) -> String:
 		return ""
 	var level_regex := RegEx.new()
 	level_regex.compile(level_pattern)
-	var candidates := PackedStringArray()
+	var number_regex := RegEx.new()
+	number_regex.compile("\\d+")
+	# Кандидаты: [номер уровня, путь к листу]. Выбирается наименьший уровень.
+	var candidates: Array = []
 	for pack_folder in root_directory.get_directories():
 		if pack_folder.begins_with(".") or pack_folder == "__MACOSX":
 			continue
@@ -111,11 +114,11 @@ static func _animation_path(profession: String, action: String) -> String:
 		var png_directory := DirAccess.open(png_path)
 		if png_directory == null:
 			continue
-		var level_folders := png_directory.get_directories()
-		level_folders.sort()
-		for level_folder in level_folders:
+		for level_folder in png_directory.get_directories():
 			if level_regex.search(level_folder) == null:
 				continue
+			var number_match := number_regex.search(level_folder)
+			var level := int(number_match.get_string()) if number_match != null else 0
 			var level_path := png_path.path_join(level_folder)
 			for shadow_folder in ["With_shadow", "Without_shadow", ""]:
 				var animation_directory := DirAccess.open(
@@ -123,29 +126,22 @@ static func _animation_path(profession: String, action: String) -> String:
 				)
 				if animation_directory == null:
 					continue
+				var found := false
 				for file_name in animation_directory.get_files():
 					var lower_name := file_name.to_lower()
-					if file_name.get_extension().to_lower() == "png" \
-							and not file_name.begins_with("._") \
-							and not lower_name.begins_with("shadow") \
-							and lower_name.contains(action) \
-							and (action != "run" or not lower_name.contains("attack")) \
-							and (action != "attack" or not (
+					if file_name.get_extension().to_lower() == "png" 							and not file_name.begins_with("._") 							and not lower_name.begins_with("shadow") 							and lower_name.contains(action) 							and (action != "run" or not lower_name.contains("attack")) 							and (action != "attack" or not (
 								lower_name.contains("run_attack") or lower_name.contains("walk_attack")
 							)):
-						candidates.append(
-							level_path.path_join(shadow_folder).path_join(file_name)
-							if not shadow_folder.is_empty()
-							else level_path.path_join(file_name),
-						)
-				if not candidates.is_empty():
+						candidates.append([level, (level_path.path_join(shadow_folder).path_join(file_name)
+							if not shadow_folder.is_empty() else level_path.path_join(file_name))])
+						found = true
+				if found:
 					break
-			if not candidates.is_empty():
-				break
-		if not candidates.is_empty():
-			break
-	candidates.sort()
-	var path := str(candidates[0]) if not candidates.is_empty() else ""
+	var path := ""
+	if not candidates.is_empty():
+		candidates.sort_custom(func(a: Array, b: Array) -> bool:
+			return a[0] < b[0] or (a[0] == b[0] and str(a[1]) < str(b[1])))
+		path = str(candidates[0][1])
 	_sheet_paths[cache_key] = path
 	return path
 
