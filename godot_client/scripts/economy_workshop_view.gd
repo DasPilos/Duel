@@ -28,8 +28,8 @@ const WORK_MIN_WIDTH := 260.0
 const QUEUE_LIMIT := 5
 const REFRESH_SECONDS := 5.0
 # Скорость пустой повозки при полной прочности (core/cart_progress.py), тайлов в час.
-const CART_TILES_PER_HOUR := 500.0
-const METERS_PER_TILE := 20.0
+const CART_TILES_PER_HOUR := 1000.0
+const METERS_PER_TILE := 10.0
 const TABS := [
 	["helmets", "ШЛЕМЫ"],
 	["armor", "ДОСПЕХИ"],
@@ -217,7 +217,7 @@ static func cart_stats(upgrades: Dictionary) -> Dictionary:
 	var wheels := clampi(int(upgrades.get("wheels", 0)), 0, 3)
 	var sides := clampi(int(upgrades.get("sides", 0)), 0, 3)
 	var axles := clampi(int(upgrades.get("axles", 0)), 0, 3)
-	var seconds_per_tile := maxf(0.5, 3600.0 / CART_TILES_PER_HOUR - 2.0 * wheels)
+	var seconds_per_tile := maxf(0.25, 3600.0 / CART_TILES_PER_HOUR - wheels)
 	return {
 		"capacity_kg": int(CART_GRADES["1"]["base_capacity_kg"]) + 50 * sides,
 		"empty_tiles_per_hour": _round_half_even(3600.0 / seconds_per_tile),

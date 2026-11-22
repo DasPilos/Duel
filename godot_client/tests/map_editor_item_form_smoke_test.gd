@@ -11,7 +11,7 @@ class ItemFormEditor extends "res://scripts/map_editor.gd":
 	var submitted_item_action := ""
 
 	func _ready() -> void:
-		_mode = "tower"
+		_mode = "economy"
 		_build_ui()
 
 	func _request_item_save(action: String, form: Dictionary) -> void:
@@ -420,7 +420,7 @@ func _check_editor_hook() -> void:
 	var item: Dictionary = editor._new_items[0] if editor._new_items.size() == 1 else {}
 	_check(editor._inventory_items.size() == 1 and editor._spawn_item_catalog.size() == 1, "Новый предмет попадает в каталог и список появления")
 	_check(
-		editor._status.text == editor.ITEM_SAVED_STATUS % ["Меч", "Tower"],
+		editor._status.text == editor.ITEM_SAVED_STATUS % ["Меч", "Economy"],
 		"Новый предмет подтверждается в статусе",
 	)
 	editor._open_inventory()

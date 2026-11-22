@@ -3,12 +3,12 @@ extends Node
 const Dialog := preload("res://scripts/mob_profile_dialog.gd")
 const Rules := preload("res://scripts/mob_profile_rules.gd")
 const NOTE := "Экипировка не загружена: сервер недоступен"
-const SAVED_TEXT := "Настройки моба сохранены для режима Tower."
+const SAVED_TEXT := "Настройки моба сохранены для режима Economy."
 
 
 class ProfileEditor extends "res://scripts/map_editor.gd":
 	func _ready() -> void:
-		_mode = "tower"
+		_mode = "economy"
 		_build_ui()
 
 
@@ -184,34 +184,34 @@ func _check_rules() -> void:
 	_check(typeof(Rules.field_output("windup", 0.45)) == TYPE_FLOAT, "Замах уходит на сервер дробным числом.")
 	_check(Rules.item_slot("ring_2") == "ring", "Второе кольцо берёт предметы слота ring.")
 
-	var tower := Rules.rules_for_mode("tower")
-	_check(Rules.validate_settings(tower, _good_settings()) == "", "Корректные настройки должны проходить проверку.")
+	var economy := Rules.rules_for_mode("economy")
+	_check(Rules.validate_settings(economy, _good_settings()) == "", "Корректные настройки должны проходить проверку.")
 	var bad := _good_settings()
 	bad["level"] = 31
-	_check(Rules.validate_settings(tower, bad).begins_with("Уровень"), "Уровень выше 30 должен отклоняться.")
+	_check(Rules.validate_settings(economy, bad).begins_with("Уровень"), "Уровень выше 30 должен отклоняться.")
 	bad = _good_settings()
 	bad["state"] = "bogus"
-	_check(Rules.validate_settings(tower, bad) == "Выберите состояние моба.", "Неизвестное состояние отклоняется.")
+	_check(Rules.validate_settings(economy, bad) == "Выберите состояние моба.", "Неизвестное состояние отклоняется.")
 	bad = _good_settings()
 	bad["stats"].erase("wisdom")
-	_check(Rules.validate_settings(tower, bad).contains("не задана"), "Пропущенная характеристика отклоняется.")
+	_check(Rules.validate_settings(economy, bad).contains("не задана"), "Пропущенная характеристика отклоняется.")
 	bad = _good_settings()
 	bad["stats"]["endurance"] = 7
-	_check(Rules.validate_settings(tower, bad).begins_with("Выносливость"), "Выносливость должна совпадать с уровнем.")
+	_check(Rules.validate_settings(economy, bad).begins_with("Выносливость"), "Выносливость должна совпадать с уровнем.")
 	bad = _good_settings()
 	bad["stats"]["agility"] = 2
-	_check(Rules.validate_settings(tower, bad).contains("не ниже 3"), "Характеристика ниже минимума отклоняется.")
+	_check(Rules.validate_settings(economy, bad).contains("не ниже 3"), "Характеристика ниже минимума отклоняется.")
 	bad = _good_settings()
 	bad["stats"]["strength"] = 12
-	_check(Rules.validate_settings(tower, bad).begins_with("Вложено"), "Лишние очки характеристик отклоняются.")
+	_check(Rules.validate_settings(economy, bad).begins_with("Вложено"), "Лишние очки характеристик отклоняются.")
 	bad = _good_settings()
 	bad["patrol"] = [[9, 0]]
-	_check(Rules.validate_settings(tower, bad).contains("вне поля"), "Клетка патруля вне поля отклоняется.")
+	_check(Rules.validate_settings(economy, bad).contains("вне поля"), "Клетка патруля вне поля отклоняется.")
 	bad = _good_settings()
 	bad["patrol"] = []
-	_check(Rules.validate_settings(tower, bad) == "", "Пустой патруль допустим.")
-	_check(Rules.rules_for_mode("economy") == Rules.rules_for_mode("tower"), "Economy использует правила Tower.")
-	_check(Rules.rules_for_mode("deck") != tower, "Deck использует свои правила.")
+	_check(Rules.validate_settings(economy, bad) == "", "Пустой патруль допустим.")
+	_check(Rules.rules_for_mode("economy") == Rules.DEFAULT_RULES, "Economy использует общие правила.")
+	_check(Rules.rules_for_mode("deck") != economy, "Deck использует свои правила.")
 	var front_line := Rules.rules_for_mode("front_line")
 	var unlimited_settings := _good_settings()
 	unlimited_settings["level"] = 100
@@ -303,7 +303,7 @@ func _check_front_line_rules_and_resources() -> void:
 
 
 func _check_values_and_steppers() -> void:
-	var dialog := await _open_dialog("tower", _sample_settings(), {"mode_name": "Tower", "note": NOTE})
+	var dialog := await _open_dialog("economy", _sample_settings(), {"mode_name": "Economy", "note": NOTE})
 	var texts := _input_texts(dialog.field_inputs)
 	_check(
 		texts == {
@@ -330,7 +330,7 @@ func _check_values_and_steppers() -> void:
 	_check(not (dialog.stat_inputs["endurance"] as LineEdit).editable, "Выносливость нельзя править вручную.")
 	var text_all := _labels_text(dialog)
 	for expected in [
-		"Параметры: Синий бес с вилами  ·  режим «Tower»",
+		"Параметры: Синий бес с вилами  ·  режим «Economy»",
 		"Параметры относятся к виду моба",
 		"Свободных очков: 0 из 9",
 		"Выносливость задаётся уровнем: 6",
@@ -422,7 +422,7 @@ func _check_values_and_steppers() -> void:
 
 
 func _check_stats_and_level() -> void:
-	var dialog := await _open_dialog("tower", _sample_settings())
+	var dialog := await _open_dialog("economy", _sample_settings())
 	dialog.step_stat("strength", 1)
 	(dialog.stat_plus["strength"] as Button).pressed.emit()
 	_check(int(dialog.stats["strength"]) == 4, "Без свободных очков силу повысить нельзя.")
@@ -452,7 +452,7 @@ func _check_stats_and_level() -> void:
 	_check(int(dialog.stats["wisdom"]) == 3 and (dialog.stat_inputs["wisdom"] as LineEdit).text == "3", "Неверный ввод возвращает значение.")
 	_dispose(dialog)
 
-	dialog = await _open_dialog("tower", _sample_settings())
+	dialog = await _open_dialog("economy", _sample_settings())
 	(dialog.level_plus as Button).pressed.emit()
 	_check(
 		dialog.level == 4 and int(dialog.stats["endurance"]) == 7
@@ -472,7 +472,7 @@ func _check_stats_and_level() -> void:
 	_check(
 		dialog.level == 30 and int(dialog.stats["endurance"]) == 33 and dialog.total_points() == 90
 		and (dialog.level_plus as Button).disabled,
-		"Предельный уровень Tower — 30.",
+		"Предельный уровень Economy — 30.",
 	)
 	_type(dialog.level_input, "99")
 	_check(dialog.level == 30, "Уровень выше предела зажимается.")
@@ -515,7 +515,7 @@ func _check_deck_rules() -> void:
 
 
 func _check_states_and_patrol() -> void:
-	var dialog := await _open_dialog("tower", _sample_settings())
+	var dialog := await _open_dialog("economy", _sample_settings())
 	(dialog.state_buttons["neutral"] as Button).pressed.emit()
 	_check(
 		dialog.state == "neutral" and _labels_text(dialog).contains(str(Rules.STATE_HINTS["neutral"]))
@@ -573,7 +573,7 @@ func _screen_size() -> Vector2:
 
 func _check_layout_with_notes() -> void:
 	var screen := _screen_size()
-	for mode in ["tower", "deck", "front_line"]:
+	for mode in ["economy", "deck", "front_line"]:
 		var dialog := await _open_dialog(mode, _sample_settings(), {
 			"mode_name": mode,
 			"note": NOTE + ". " + NOTE + ". " + NOTE,
@@ -596,7 +596,7 @@ func _check_layout_with_notes() -> void:
 func _check_collected_settings() -> void:
 	var settings := _sample_settings()
 	settings["patrol"] = [[1.0, 2.0], [-9.0, -9.0], [0.0, 0.0], [8.0, 8.0], [-3.0, 2.0]]
-	var dialog := await _open_dialog("tower", settings, {"equipment_items": _sample_items()})
+	var dialog := await _open_dialog("economy", settings, {"equipment_items": _sample_items()})
 	var result: Dictionary = dialog.collect_settings()
 	_check(
 		typeof(result["respawn_seconds"]) == TYPE_INT and typeof(result["reward_copper"]) == TYPE_INT
@@ -650,7 +650,7 @@ func _check_collected_settings() -> void:
 func _check_equipment_without_list() -> void:
 	var settings := _sample_settings()
 	settings["equipment"] = {"body": 999.0}
-	var dialog := await _open_dialog("tower", settings, {"note": NOTE})
+	var dialog := await _open_dialog("economy", settings, {"note": NOTE})
 	var panel = dialog.equipment_panel
 	_check(not panel.visible, "Окно экипировки закрыто, пока его не открыли.")
 	_check(panel.equipped_count() == 1, "В настройках надет один предмет.")
@@ -703,7 +703,7 @@ func _check_equipment_without_list() -> void:
 func _check_equipment_with_list() -> void:
 	var settings := _sample_settings()
 	settings["equipment"] = {"body": 999.0}
-	var dialog := await _open_dialog("tower", settings, {"equipment_items": _sample_items()})
+	var dialog := await _open_dialog("economy", settings, {"equipment_items": _sample_items()})
 	var panel = dialog.equipment_panel
 	dialog.open_equipment()
 	_check(panel.slot_items("head").size() == 3, "В слоте головы три предмета.")
@@ -750,7 +750,7 @@ func _check_equipment_with_list() -> void:
 
 
 func _check_keyboard_and_wheel() -> void:
-	var dialog := await _open_dialog("tower", _sample_settings(), {"equipment_items": _sample_items()})
+	var dialog := await _open_dialog("economy", _sample_settings(), {"equipment_items": _sample_items()})
 	var panel = dialog.equipment_panel
 	var row: Control = dialog.field_rows["move_speed"]
 	_mouse_button(row.get_global_rect().get_center(), MOUSE_BUTTON_WHEEL_UP, true)
@@ -808,7 +808,7 @@ func _check_editor_integration() -> void:
 		editor.free()
 		return
 	_check(
-		dialog.mode == "tower" and dialog.message_text().contains("Экипировка не загружена")
+		dialog.mode == "economy" and dialog.message_text().contains("Экипировка не загружена")
 		and not dialog.equipment_panel._items_loaded,
 		"Без списка окно показывает заметку и ручной ввод ID.",
 	)

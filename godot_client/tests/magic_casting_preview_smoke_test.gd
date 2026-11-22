@@ -23,9 +23,9 @@ func _run() -> void:
 		for level in range(1, 10):
 			for direction in directions:
 				var texture: Texture2D = preview.frame_texture(profession, level, direction, 0)
-				_check(texture != null and texture.get_size() == Vector2i(64, 64), "%s level %d direction %s frame 0" % [profession, level, direction])
+				_check(texture != null and texture.get_size() == Vector2(64, 64), "%s level %d direction %s frame 0" % [profession, level, direction])
 			var last_frame: Texture2D = preview.frame_texture(profession, level, "s", 4)
-			_check(last_frame != null and last_frame.get_size() == Vector2i(64, 64), "%s level %d frame 4" % [profession, level])
+			_check(last_frame != null and last_frame.get_size() == Vector2(64, 64), "%s level %d frame 4" % [profession, level])
 
 
 func _check(condition: bool, label: String) -> void:

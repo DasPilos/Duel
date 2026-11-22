@@ -5,7 +5,7 @@ const MINIMAP_RULES = preload("res://scripts/map_editor_minimap_rules.gd")
 
 class MinimapEditor extends "res://scripts/map_editor.gd":
 	func _ready() -> void:
-		_mode = "tower"
+		_mode = "economy"
 		_build_ui()
 
 

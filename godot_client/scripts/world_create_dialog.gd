@@ -4,13 +4,13 @@ signal mode_selected(mode: String)
 signal launch_requested(saved_id: int, world_name: String, test: bool)
 signal close_requested
 
-const MODE_ORDER := ["tower", "economy", "deck"]
+const MODE_ORDER := ["front_line", "economy", "deck"]
 const TITLE_COLOR := Color8(240, 209, 143)
 const MUTED_COLOR := Color8(158, 173, 196)
 const ERROR_COLOR := Color8(255, 120, 100)
 const INFO_COLOR := Color8(200, 205, 215)
 
-var _mode := "tower"
+var _mode := "front_line"
 var _is_admin := false
 var _selected_saved_id := 0
 var _mode_group := ButtonGroup.new()

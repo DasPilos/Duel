@@ -498,7 +498,7 @@ class GameRequestHandler(BaseHTTPRequestHandler):
                 user_id = self.database.user_id_by_token(self._token())
                 target_world_id = int(body.get("world_id") or 0)
                 target_world = self.database.world_info(target_world_id)
-                requested_mode = str(body.get("mode", "tower"))
+                requested_mode = str(body.get("mode", "front_line"))
                 if requested_mode != config.GAME_SCHEMA or target_world["mode"] != config.GAME_SCHEMA:
                     raise ValueError("Карту можно публиковать только в мир текущего режима")
                 published = self.database.publish_map(
@@ -893,13 +893,10 @@ def _run_scheduled_restart(server, stop_event, restart_requested):
 
 def run():
     mode = config.GAME_SCHEMA
-    if mode == "tower":
-        from tower.server.main import run as run_tower
-        return run_tower()
     if mode == "economy":
         from economy.server.main import run as run_economy
         return run_economy()
-    raise RuntimeError("Set GAME_SCHEMA to 'tower' or 'economy' before starting a world process")
+    raise RuntimeError("Set GAME_SCHEMA to 'economy' before starting a world process")
 
 
 if __name__ == "__main__":

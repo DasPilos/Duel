@@ -13,7 +13,7 @@ const BACKGROUND_COLOR := Color(16.0 / 255.0, 20.0 / 255.0, 26.0 / 255.0)
 const GRID_COLOR := Color(58.0 / 255.0, 66.0 / 255.0, 76.0 / 255.0)
 
 var map_tiles := Vector2i(100, 100)
-var tile_px := 32
+var tile_px := 16
 var camera_center := Vector2.ZERO
 var zoom := 1.0
 var show_grid := false

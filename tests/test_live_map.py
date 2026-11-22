@@ -2,11 +2,12 @@ import random
 import unittest
 from unittest import mock
 
+from core.tile import TILE
 from server import structures, world_map
 from economy.server import world_roads
-from tower.server import world_mobs
+from front_line.server import world_mobs
 from server.map_editor import terrain_from_cells
-from tower.server.world_mobs import WorldService
+from front_line.server.world_mobs import WorldService
 from tests.test_world_mobs import FakeClock, FakeDatabase, FakeItems
 
 
@@ -86,18 +87,15 @@ class TerrainFromCellsTest(unittest.TestCase):
 
 class LiveTerrainTest(unittest.TestCase):
     def setUp(self):
-        patcher = mock.patch.object(world_map, "IS_TOWER_WORLD", True)
-        patcher.start()
-        self.addCleanup(patcher.stop)
         self.addCleanup(world_map.apply_live_terrain)
 
     def test_live_map_replaces_procedural_passability(self):
         world_map.apply_live_terrain(sample_terrain(), PUBLISHED)
-        self.assertFalse(world_map.is_passable(5 * 32 + 16, 5 * 32 + 16))
-        self.assertFalse(world_map.is_passable(6 * 32 + 16, 6 * 32 + 16))
-        self.assertFalse(world_map.is_passable(2 * 32 + 16, 2 * 32 + 16))
-        self.assertTrue(world_map.is_passable(20 * 32 + 16, 20 * 32 + 16))
-        self.assertTrue(world_map.is_passable(13 * 32 + 16, 13 * 32 + 16))
+        self.assertFalse(world_map.is_passable(5 * TILE + TILE // 2, 5 * TILE + TILE // 2))
+        self.assertFalse(world_map.is_passable(6 * TILE + TILE // 2, 6 * TILE + TILE // 2))
+        self.assertFalse(world_map.is_passable(2 * TILE + TILE // 2, 2 * TILE + TILE // 2))
+        self.assertTrue(world_map.is_passable(20 * TILE + TILE // 2, 20 * TILE + TILE // 2))
+        self.assertTrue(world_map.is_passable(13 * TILE + TILE // 2, 13 * TILE + TILE // 2))
 
     def test_apply_bumps_version_and_payload_reports_it(self):
         before = world_map.TERRAIN_VERSION
@@ -113,30 +111,27 @@ class LiveTerrainTest(unittest.TestCase):
         ], CATALOG)
         world_map.apply_live_terrain(terrain, PUBLISHED)
         payload = world_map.terrain_payload()
-        self.assertEqual(world_map.TOWER_ANIMALS[0]["key"], "animal_duck_water")
-        self.assertEqual(payload["animals"], [world_map.TOWER_ANIMALS[0]])
-        self.assertNotIn((5, 5), world_map.TOWER_BLOCKED_TILES)
-        self.assertNotIn((5, 5), world_map.TOWER_IMPASSABLE_TILES)
+        self.assertEqual(world_map.MAP_ANIMALS[0]["key"], "animal_duck_water")
+        self.assertEqual(payload["animals"], [world_map.MAP_ANIMALS[0]])
+        self.assertNotIn((5, 5), world_map.MAP_BLOCKED_TILES)
+        self.assertNotIn((5, 5), world_map.MAP_IMPASSABLE_TILES)
 
     def test_empty_map_restores_procedural_terrain(self):
-        original_water = world_map.TOWER_WATER_TILES
+        original_water = world_map.MAP_WATER_TILES
         world_map.apply_live_terrain(sample_terrain(), PUBLISHED)
-        self.assertIsNot(world_map.TOWER_WATER_TILES, original_water)
+        self.assertIsNot(world_map.MAP_WATER_TILES, original_water)
         world_map.apply_live_terrain(None)
-        self.assertIs(world_map.TOWER_WATER_TILES, original_water)
+        self.assertIs(world_map.MAP_WATER_TILES, original_water)
 
     def test_mob_collision_shapes_follow_live_rocks(self):
         world_map.apply_live_terrain(terrain_from_cells(
             [cell("object", 30, 30, "object:rock_01")], CATALOG), PUBLISHED)
         self.assertEqual(len(world_mobs._obstacle_shapes()), len(world_map.OBSTACLES))
-        self.assertEqual(len(world_map.OBSTACLES), 2)
+        self.assertEqual(len(world_map.OBSTACLES), 1)  # башни больше нет: только горный кусок из клеток
 
 
 class LiveRelocationTest(unittest.TestCase):
     def setUp(self):
-        patcher = mock.patch.object(world_map, "IS_TOWER_WORLD", True)
-        patcher.start()
-        self.addCleanup(patcher.stop)
         self.addCleanup(world_map.apply_live_terrain)
         self.database = FakeDatabase({1: 7})
         self.service = WorldService(self.database, FakeItems(), clock=FakeClock(), rng=random.Random(3))
@@ -144,7 +139,7 @@ class LiveRelocationTest(unittest.TestCase):
     def test_player_inside_new_tree_is_moved_to_free_ground(self):
         # На время первого входа рельеф открыт, как в других тестах мобов
         self.service._terrain_blocked = lambda x, y: False
-        self.service.sync(7, 1, {"x": 20 * 32 + 16.0, "y": 20 * 32 + 16.0})
+        self.service.sync(7, 1, {"x": 20 * TILE + TILE // 2, "y": 20 * TILE + TILE // 2})
         del self.service._terrain_blocked
 
         self.service.reload_terrain(terrain_from_cells(
@@ -152,7 +147,7 @@ class LiveRelocationTest(unittest.TestCase):
 
         player = next(iter(self.service._players.values()))
         self.assertFalse(self.service._terrain_blocked(player.x, player.y))
-        self.assertNotEqual((player.x, player.y), (20 * 32 + 16.0, 20 * 32 + 16.0))
+        self.assertNotEqual((player.x, player.y), (20 * TILE + TILE // 2, 20 * TILE + TILE // 2))
 
     def test_snapshot_carries_terrain_version(self):
         self.service._terrain_blocked = lambda x, y: False
@@ -162,7 +157,7 @@ class LiveRelocationTest(unittest.TestCase):
         snapshot = self.service._snapshot(player, 0, True)
         self.assertEqual(snapshot["terrain_version"], world_map.TERRAIN_VERSION)
 
-    def test_animals_wander_without_leaving_their_terrain_or_fifty_tile_radius(self):
+    def test_animals_wander_without_leaving_their_terrain_or_wildlife_radius(self):
         cells = [
             cell("ground", x, y, "ground:water_1")
             for x in range(10, 25) for y in range(10, 25)
@@ -177,9 +172,9 @@ class LiveRelocationTest(unittest.TestCase):
         duck = next(animal for animal in service._wildlife.values() if animal.aquatic)
         land = next(animal for animal in service._wildlife.values() if not animal.aquatic)
         initial = (duck.x, duck.y)
-        self.assertTrue(service._wildlife_position_blocked(duck, 30 * 32 + 16, 30 * 32 + 16))
-        self.assertTrue(service._wildlife_position_blocked(land, 12 * 32 + 16, 12 * 32 + 16))
-        self.assertFalse(service._wildlife_within_radius(duck, duck.home_x + 50 * 32 + 1, duck.home_y))
+        self.assertTrue(service._wildlife_position_blocked(duck, 30 * TILE + TILE // 2, 30 * TILE + TILE // 2))
+        self.assertTrue(service._wildlife_position_blocked(land, 12 * TILE + TILE // 2, 12 * TILE + TILE // 2))
+        self.assertFalse(service._wildlife_within_radius(duck, duck.home_x + world_mobs.WILDLIFE_RADIUS_TILES * TILE + 1, duck.home_y))
 
         for _ in range(1200):
             service._update_wildlife(0.25)
@@ -187,18 +182,15 @@ class LiveRelocationTest(unittest.TestCase):
                 self.assertTrue(service._wildlife_within_radius(animal, animal.x, animal.y))
                 self.assertFalse(service._wildlife_position_blocked(animal, animal.x, animal.y))
                 if animal.aquatic:
-                    tile = (int(animal.x // 32), int(animal.y // 32))
-                    self.assertIn(tile, world_map.TOWER_WATER_TILES)
+                    tile = (int(animal.x // TILE), int(animal.y // TILE))
+                    self.assertIn(tile, world_map.MAP_WATER_TILES)
         self.assertNotEqual((duck.x, duck.y), initial)
-        snapshot = service.sync(7, 1, {"x": 40 * 32 + 16, "y": 40 * 32 + 16})
+        snapshot = service.sync(7, 1, {"x": 40 * TILE + TILE // 2, "y": 40 * TILE + TILE // 2})
         self.assertEqual({animal["id"] for animal in snapshot["animals"]}, set(service._wildlife))
 
 
 class LivePublishTest(unittest.TestCase):
     def setUp(self):
-        patcher = mock.patch.object(world_map, "IS_TOWER_WORLD", False)
-        patcher.start()
-        self.addCleanup(patcher.stop)
         self.addCleanup(world_map.apply_live_terrain)
 
     def test_published_size_and_stamp_are_applied(self):

@@ -15,19 +15,19 @@ const UNREACHABLE_URL := "http://127.0.0.1:9"
 const SYNC_ERROR := "Маршрут не найден в API этого режима"
 # Вход Радбурга из economy/server (server/structures.py:282) с клетками входов на карте мира.
 const TOWN_OBJECTS := [{
-	"id": "town_radburg", "tile_x": 60, "tile_y": 46, "tile_w": 15, "tile_h": 15,
+	"id": "town_radburg", "tile_x": 120, "tile_y": 92, "tile_w": 30, "tile_h": 30,
 	"name": "Город Радбург", "type": "Город Света (15х15)",
-	"desc": "Радбург — священный Город Света. Размер 15х15 тайлов (X: 60..74, Y: 46..60). 4 ворот: Главные (восток), Южные, Северные, Западные.",
+	"desc": "Радбург — священный Город Света. Размер 30х30 тайлов (X: 120..149, Y: 92..121). 4 ворот: Главные (восток), Южные, Северные, Западные.",
 	"solid_rects": [[1984, 1536, 352, 352]],
 	"entrances": [
-		{"id": "east", "tiles": [[74, 52], [74, 53], [74, 54]], "approach_pos": [2416, 1712]},
-		{"id": "south", "tiles": [[67, 60]], "approach_pos": [2160, 1968]},
-		{"id": "north", "tiles": [[67, 46]], "approach_pos": [2160, 1456]},
-		{"id": "west", "tiles": [[60, 53]], "approach_pos": [1904, 1712]},
+		{"id": "east", "tiles": [[148, 104], [148, 106], [148, 108]], "approach_pos": [2416, 1712]},
+		{"id": "south", "tiles": [[134, 120]], "approach_pos": [2160, 1968]},
+		{"id": "north", "tiles": [[134, 92]], "approach_pos": [2160, 1456]},
+		{"id": "west", "tiles": [[120, 106]], "approach_pos": [1904, 1712]},
 	],
 }]
 const MINIMAL_TERRAIN := {
-	"map": {"tiles_w": 100, "tiles_h": 100, "version": 1},
+	"map": {"tiles_w": 200, "tiles_h": 200, "version": 1},
 	"tiles": {}, "objects": TOWN_OBJECTS, "obstacles": [], "props": [], "bridges": [], "crystals": [], "animals": [], "roads": {},
 }
 
@@ -141,12 +141,12 @@ func _check_spawns() -> void:
 	_check(GATE_RULES.city_spawn("south")["position"] == Vector2(1600.0, 3056.0), "возврат через южный вход ставит героя у южных ворот")
 	_check(GATE_RULES.city_spawn("west")["position"] == Vector2(144.0, 1600.0), "возврат через западный вход ставит героя у западных ворот")
 	_check(GATE_RULES.city_spawn("main") == GATE_RULES.city_spawn("east"), "вход main в город — восточный")
-	_check(GATE_RULES.entrance_at_tile(TOWN_OBJECTS, Vector2i(74, 53)) == "east", "клетка 74×53 — восточный вход Радбурга")
-	_check(GATE_RULES.entrance_at_tile(TOWN_OBJECTS, Vector2i(67, 46)) == "north", "клетка 67×46 — северный вход")
-	_check(GATE_RULES.entrance_at_tile(TOWN_OBJECTS, Vector2i(67, 60)) == "south", "клетка 67×60 — южный вход")
-	_check(GATE_RULES.entrance_at_tile(TOWN_OBJECTS, Vector2i(60, 53)) == "west", "клетка 60×53 — западный вход")
-	_check(GATE_RULES.entrance_at_tile(TOWN_OBJECTS, Vector2i(75, 53)) == "", "точка появления у восточного входа сама входом не является")
-	_check(GATE_RULES.entrance_at_tile([], Vector2i(74, 53)) == "", "без объектов карты входа в город нет")
+	_check(GATE_RULES.entrance_at_tile(TOWN_OBJECTS, Vector2i(148, 106)) == "east", "клетка 148×106 — восточный вход Радбурга")
+	_check(GATE_RULES.entrance_at_tile(TOWN_OBJECTS, Vector2i(134, 92)) == "north", "клетка 134×92 — северный вход")
+	_check(GATE_RULES.entrance_at_tile(TOWN_OBJECTS, Vector2i(134, 120)) == "south", "клетка 134×120 — южный вход")
+	_check(GATE_RULES.entrance_at_tile(TOWN_OBJECTS, Vector2i(120, 106)) == "west", "клетка 120×106 — западный вход")
+	_check(GATE_RULES.entrance_at_tile(TOWN_OBJECTS, Vector2i(150, 106)) == "", "точка появления у восточного входа сама входом не является")
+	_check(GATE_RULES.entrance_at_tile([], Vector2i(148, 106)) == "", "без объектов карты входа в город нет")
 
 
 func _check_gate_click_opens_map() -> void:
@@ -211,10 +211,10 @@ func _check_city_return_entrance() -> void:
 	world._set_screen(WORLD_SCRIPT.SCREEN_MAP)
 	world._economy_map = true
 	world._map_objects = TOWN_OBJECTS
-	world._desired_position = _tile_center(Vector2i(59, 53))
+	world._desired_position = _tile_center(Vector2i(118, 106))
 	world._check_city_entrance()
 	_check(not SCENE_TRANSITION.is_running(get_tree()) and GameSession.pending_city_gate.is_empty(), "клетка рядом со входом не открывает город")
-	world._desired_position = _tile_center(Vector2i(60, 53))
+	world._desired_position = _tile_center(Vector2i(120, 106))
 	world._pending_action = "busy"
 	world._check_city_entrance()
 	_check(not SCENE_TRANSITION.is_running(get_tree()) and GameSession.pending_city_gate.is_empty(), "шаг на вход во время запроса карты ждёт, пока запрос закроется")
@@ -269,7 +269,7 @@ func _check_town_window() -> void:
 	_mouse_press(world, _screen_point(world, city))
 	_mouse_press(world, _screen_point(world, ground))
 	_check(world._town_active_id.is_empty(), "клик по земле закрывает окно")
-	world._desired_position = _tile_center(Vector2i(75, 53))
+	world._desired_position = _tile_center(Vector2i(150, 106))
 	_mouse_press(world, _screen_point(world, city))
 	var enter: Rect2 = world._town_window_layout()["action"]
 	_mouse_press(world, enter.get_center())
@@ -390,7 +390,7 @@ func _character() -> Dictionary:
 
 
 func _tile_center(tile: Vector2i) -> Vector2:
-	return Vector2(tile * 32) + Vector2(16.0, 16.0)
+	return Vector2(tile * 16) + Vector2(8.0, 8.0)
 
 
 func _cancel_transitions() -> void:

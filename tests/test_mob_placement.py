@@ -5,7 +5,7 @@ from unittest.mock import patch
 from core import mob_modes
 from server import world_map
 from server.world_map import TILE
-from tower.server.world_mobs import WorldService
+from front_line.server.world_mobs import WorldService
 from tests.test_world_mobs import FakeClock, FakeDatabase, FakeItems
 
 IMP = "imp_sword"
@@ -25,7 +25,7 @@ class PlacedMobTests(unittest.TestCase):
     def test_a_placed_mob_appears_on_its_tile_with_the_mode_settings(self):
         self.assertEqual(self.mob.kind, IMP)
         self.assertEqual((self.mob.home_x, self.mob.home_y), (10 * TILE + TILE // 2, 12 * TILE + TILE // 2))
-        defaults = mob_modes.load_mob_settings("tower", IMP)  # значения из файла режима
+        defaults = mob_modes.load_mob_settings("front_line", IMP)  # значения из файла режима
         self.assertEqual(self.mob.move_speed, defaults["move_speed"])
         self.assertEqual(self.mob.respawn_delay, defaults["respawn_seconds"])
         self.assertEqual(self.mob.attitude, defaults["state"])
@@ -65,7 +65,7 @@ class PlacedMobTests(unittest.TestCase):
         self.assertTrue(set(route) <= allowed, route)
 
     def test_respawn_delay_comes_from_the_mode_file(self):
-        self.assertEqual(self.mob.respawn_delay, mob_modes.load_mob_settings("tower", IMP)["respawn_seconds"])
+        self.assertEqual(self.mob.respawn_delay, mob_modes.load_mob_settings("front_line", IMP)["respawn_seconds"])
 
 
 def _wall_terrain(lo, hi, gap=None):

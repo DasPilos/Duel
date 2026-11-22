@@ -370,17 +370,20 @@ def _city_building_entries():
 
 def _mainlev_types():
     """Тип каждого тайла MainLev по блокам: {блок: {rRR_cCC: категория}}."""
-    return json.loads((MAP_ASSETS / MAINLEV_DIR / MAINLEV_TYPES_FILE).read_text(encoding="utf-8"))
+    path = MAP_ASSETS / MAINLEV_DIR / MAINLEV_TYPES_FILE
+    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
 
 
 def _impassable_keys():
     """Ключи тайлов и объектов, которые художник пометил как непроходимые."""
-    return frozenset(json.loads((MAP_ASSETS / IMPASSABLE_FILE).read_text(encoding="utf-8")))
+    path = MAP_ASSETS / IMPASSABLE_FILE
+    return frozenset(json.loads(path.read_text(encoding="utf-8")) if path.exists() else [])
 
 
 def _passable_keys():
     """Ключи, которые художник пометил как проходимые: они не блокируют даже в блокирующей категории."""
-    return frozenset(json.loads((MAP_ASSETS / PASSABLE_FILE).read_text(encoding="utf-8")))
+    path = MAP_ASSETS / PASSABLE_FILE
+    return frozenset(json.loads(path.read_text(encoding="utf-8")) if path.exists() else [])
 
 
 @functools.cache
@@ -417,7 +420,7 @@ def overlay_keys():
         if item["layer"] == "overlay"
     }
     return (
-        frozenset(json.loads((MAP_ASSETS / OVERLAY_FILE).read_text(encoding="utf-8")))
+        frozenset(json.loads((MAP_ASSETS / OVERLAY_FILE).read_text(encoding="utf-8")) if (MAP_ASSETS / OVERLAY_FILE).exists() else [])
         | road_keys() | rocky_overlay | winter_overlay | undead_overlay | desert_overlay
         | grassland_overlay
     )
@@ -427,7 +430,8 @@ def overlay_keys():
 @functools.cache
 def palette_groups():
     """Образцы художника: разделы палитры, где тайлы лежат в заданной раскладке (x, y) одним блоком."""
-    return json.loads((MAP_ASSETS / PALETTE_GROUPS_FILE).read_text(encoding="utf-8"))
+    path = MAP_ASSETS / PALETTE_GROUPS_FILE
+    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else []
 
 
 @functools.cache
@@ -785,7 +789,12 @@ def _entries():
 
 
 def catalog_definitions():
-    """Список записей каталога для синхронизации с базой."""
+    """Старый каталог из assets/map удалён: записей нет, клетки идут ключами листов «atlas|…» (server/map_editor.py)."""
+    return []
+
+
+def _legacy_catalog_definitions():
+    """Прежний каталог: не используется, удалить вместе с остальными мёртвыми функциями каталога."""
     impassable = _impassable_keys()
     passable = _passable_keys()
     biome_specs = {

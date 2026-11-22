@@ -115,8 +115,8 @@ COMBAT_LOG_APPEAR_INTERVAL = 0.6
 COMMENTS_Y = 640
 COMMENT_LINE_HEIGHT = 35
 
-# Базовая скорость повозки на грунтовых дорогах карты мира (например, ферма -> город): 1 тайл за 60 секунд.
-CART_ROAD_SECONDS_PER_TILE = 60
+# Базовая скорость повозки на грунтовых дорогах карты мира (например, ферма -> город): 1 клетка 16 px за 30 секунд (прежние 60 за тайл 32 px).
+CART_ROAD_SECONDS_PER_TILE = 30
 CART_ROAD_TILES_PER_SECOND = 1.0 / CART_ROAD_SECONDS_PER_TILE
 
 PLAYER_FLOATING_TEXT_X = PLAYER_PANEL_X

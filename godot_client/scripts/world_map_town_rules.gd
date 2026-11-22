@@ -3,7 +3,7 @@ extends RefCounted
 # геометрия draw_city_exterior (scenes/city/exterior.py), подпись, наведение и обводка из _draw_objects и
 # _find_entity_at (scenes/world_map_scene.py). Все размеры в пикселях Python; масштаб мира задаёт вызывающий код.
 
-const TILE_PX := 32
+const TILE_PX := 16
 const TOWN_ID := "town_radburg"
 const SCALE_REFERENCE_PX := 480.0
 const HOVER_TOP_PX := 22.0
@@ -38,7 +38,7 @@ const STATUS_TEXT := "● АКТИВЕН"
 const IN_RANGE_TEXT := "● В радиусе действия (<= 1 тайл)"
 const OUT_OF_RANGE_TEXT := "○ Слишком далеко"
 const DESC_LINE_CHARS := 42
-const RANGE_TILES := 1
+const RANGE_TILES := 2  # один тайл по старой сетке 32 px = две клетки по 16 px
 const NOTICE_SECONDS := 2.2
 const FLOATING_SECONDS := 1.9
 const TOO_FAR_PHRASES := [

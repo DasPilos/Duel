@@ -1,7 +1,7 @@
 extends RefCounted
 
 const DEFAULT_FOLDER := "user://map_drafts"
-const DEFAULT_MODE := "tower"
+const DEFAULT_MODE := "front_line"
 const NAME_MAX := 64
 const NOT_FOUND_TEXT := "Черновик не найден, возможно он был удалён"
 const ALREADY_DELETED_TEXT := "Черновик не найден, возможно он уже удалён"

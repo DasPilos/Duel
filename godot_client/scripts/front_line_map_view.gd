@@ -1,6 +1,6 @@
 extends RefCounted
 
-const MAP_TILE_SIZE := 32.0
+const MAP_TILE_SIZE := 16.0
 const ATLAS_TILE_SIZE := 16
 const ATLAS_CELL_PREFIX := "atlas|"
 

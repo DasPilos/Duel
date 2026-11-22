@@ -6,7 +6,7 @@ extends RefCounted
 # не должны масштабироваться, отдаются числами (mob_overheads, player_overhead, corpse_overheads); полоска
 # добычи и кольцо клика рисуются в экранных координатах (draw_harvest_progress, draw_click_effect).
 
-const RULES := preload("res://scripts/tower_entity_rules.gd")
+const RULES := preload("res://scripts/front_line_entity_rules.gd")
 const DECK_SPRITE := preload("res://scripts/deck_player_sprite_rules.gd")
 const SHAPE_RULES := preload("res://scripts/economy_citizen_sprite_rules.gd")
 const FRONT_LINE_SPRITES := preload("res://scripts/front_line_hero_sprite_rules.gd")

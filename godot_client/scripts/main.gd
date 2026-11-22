@@ -23,7 +23,6 @@ const LOBBY_TOP_BAR_RIGHT_GAP := 350.0
 const LOBBY_AVATAR_SIZE := 150
 const LOBBY_TEXT_COLOR := Color(0.9, 0.9, 0.92)
 const MODE_NAMES := {
-	"tower": "Tower",
 	"economy": "Economy",
 	"deck": "Deck",
 	"front_line": "Front Line",
@@ -1327,7 +1326,7 @@ func _show_new_map_setup() -> void:
 	mode_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	mode_row.add_child(mode_label)
 	_new_map_mode = OptionButton.new()
-	for mode_key in ["tower", "economy", "deck", "front_line"]:
+	for mode_key in ["front_line", "economy", "deck"]:
 		var mode_info := WorldModeRegistry.describe(mode_key)
 		_new_map_mode.add_item(str(mode_info.get("name", mode_key)))
 		_new_map_mode.set_item_metadata(_new_map_mode.item_count - 1, mode_key)
@@ -1400,7 +1399,7 @@ func _show_editor_saved_maps() -> void:
 				str(saved_map.get("map_w", "?")),
 				str(saved_map.get("map_h", "?")),
 			]
-			var mode_key := str(saved_map.get("mode", "tower"))
+			var mode_key := str(saved_map.get("mode", "front_line"))
 			var mode_name := str(WorldModeRegistry.describe(mode_key).get("name", mode_key))
 			_new_button(
 				"%s · %s · %s" % [map_name, mode_name, dimensions],

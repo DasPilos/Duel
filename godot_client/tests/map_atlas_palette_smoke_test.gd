@@ -696,9 +696,9 @@ func _run() -> void:
 		return
 	var animal_settings_path := "user://animal_settings_smoke.cfg"
 	editor._animal_settings_config_path = animal_settings_path
-	if not editor._save_animal_brush_settings(fish_key, "tower", 7) \
+	if not editor._save_animal_brush_settings(fish_key, "economy", 7) \
 		or not editor._save_animal_brush_settings(fish_key, "economy", 3) \
-		or editor._animal_brush_radius(fish_key, "tower") != 7 \
+		or editor._animal_brush_radius(fish_key, "economy") != 7 \
 		or editor._animal_brush_radius(fish_key, "economy") != 3:
 		push_error("Радиус патруля не сохраняется отдельно для режимов игры.")
 		_cleanup_settings(animal_settings_path)
@@ -707,14 +707,14 @@ func _run() -> void:
 		return
 	editor._animal_brush_settings.clear()
 	if editor._load_animal_brush_settings(animal_settings_path) != OK \
-		or editor._animal_brush_radius(fish_key, "tower") != 7 \
+		or editor._animal_brush_radius(fish_key, "economy") != 7 \
 		or editor._animal_brush_radius(fish_key, "economy") != 3:
 		push_error("Настройки патруля не загрузились из файла.")
 		_cleanup_settings(animal_settings_path)
 		editor.free()
 		get_tree().quit(1)
 		return
-	editor._mode = "tower"
+	editor._mode = "economy"
 	var boar_pack_path := ""
 	for candidate_path in editor._biome_buttons:
 		if candidate_path.get_file() == "craftpix-net-789196-free-top-down-hunt-animals-pixel-sprite-pack":
@@ -896,9 +896,10 @@ func _run() -> void:
 	for group in editor._animal_groups:
 		if str(group.get("pack_path", "")) == goblin_pack_path:
 			goblin_pack_group_count += 1
+	var goblin_key := ""
 	for variant in range(1, 4):
 		var goblin_species := "g%d" % variant
-		var goblin_key := editor._mob_instance_key(goblin_folder, goblin_species)
+		goblin_key = editor._mob_instance_key(goblin_folder, goblin_species)
 		var goblin_group: Dictionary = editor._animal_groups_by_key.get(goblin_key, {})
 		var goblin_states: Dictionary = goblin_group.get("states", {})
 		if not goblin_group.is_empty():
@@ -1216,7 +1217,7 @@ func _run() -> void:
 		if str(stored_layer.get("type", "")) == editor.LAYER_ANIMAL:
 			var instance_settings: Dictionary = stored_layer.get("animal_settings", {})
 			if int(instance_settings.get("4:4", {}).get("patrol_radius", 0)) != 7 \
-				or str(instance_settings.get("4:4", {}).get("mode", "")) != "tower":
+				or str(instance_settings.get("4:4", {}).get("mode", "")) != "economy":
 				push_error("Радиус патруля не сохраняется вместе с конкретным животным.")
 				_cleanup_settings(animal_settings_path)
 				editor.free()

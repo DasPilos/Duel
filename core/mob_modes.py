@@ -60,14 +60,14 @@ DEFAULT_STATS = {"strength": 5, "agility": 4, "intuition": 3, "wisdom": 3, "inte
 PATROL_SIZE = 18
 PATROL_ANCHOR = 9
 DEFAULT_PATROL_RADIUS = 3
-DEFAULT_AGGRO_TILES = 3.5  # как у мобов сейчас: три тайла и полтайла
+DEFAULT_AGGRO_TILES = 7.0  # как у мобов сейчас: три тайла и полтайла по 32 px, т.е. семь тайлов по 16 px
 
 # ключ: (наименьшее, наибольшее)
 LIMITS = {
     "move_speed": (0.0, 400.0),
     "windup": (0.05, 5.0),
     "backswing": (0.05, 5.0),
-    "aggro_tiles": (0.0, 30.0),
+    "aggro_tiles": (0.0, 60.0),
     "respawn_seconds": (0.0, 86399.0),
     "reward_copper": (0.0, 1000000.0),
     "reward_xp": (0.0, 1000000.0),
@@ -78,14 +78,14 @@ DEFAULT_RESPAWN_SECONDS = 30
 DEFAULT_REWARD_COPPER = 30
 # Опыт по умолчанию: базовая награда моба, делится между игроками по доле урона
 DEFAULT_REWARD_XP = 10
-# Дальность атаки моба Front Line в единицах (1 тайл = 100 ед.). Только для режима front_line;
+# Дальность атаки моба Front Line в единицах (1 тайл = 50 ед.). Только для режима front_line;
 # в файлах Tower и Economy этого поля нет.
 DEFAULT_ATTACK_RANGE_UNITS = 100
 ATTACK_RANGE_LIMITS = (0, 1500)
 # Характер боя моба Front Line: ближний бой, стрелок (стрела) или маг (сфера с уроном по области).
 ATTACK_STYLES = ("warrior", "archer", "mage")
 DEFAULT_ATTACK_STYLE = "warrior"
-# Радиус урона мага, единиц (100 ед. = 1 тайл); по умолчанию как у героя-мага.
+# Радиус урона мага, единиц (50 ед. = 1 тайл); по умолчанию как у героя-мага.
 DEFAULT_AREA_RADIUS_UNITS = 50
 AREA_RADIUS_LIMITS = (0, 500)
 
@@ -244,7 +244,7 @@ def _attack_range(settings):
         raise ValueError("Параметр «attack_range» должен быть числом")
     low, high = ATTACK_RANGE_LIMITS
     if not low <= raw <= high:
-        raise ValueError(f"Дальность атаки: от {low} до {high} ед. (100 ед. = 1 тайл)")
+        raise ValueError(f"Дальность атаки: от {low} до {high} ед. (50 ед. = 1 тайл)")
     return int(round(raw))
 
 
@@ -261,7 +261,7 @@ def _area_radius(settings):
         raise ValueError("Параметр «area_radius» должен быть числом")
     low, high = AREA_RADIUS_LIMITS
     if not low <= raw <= high:
-        raise ValueError(f"Радиус урона: от {low} до {high} ед. (100 ед. = 1 тайл)")
+        raise ValueError(f"Радиус урона: от {low} до {high} ед. (50 ед. = 1 тайл)")
     return int(round(raw))
 
 

@@ -33,19 +33,21 @@ func _terrain(tiles_w: int, tiles_h: int, forest: Array, partial: Array = [], ob
 	}
 
 
-# Стена из леса по столбцу x = 4 от верха до строки 6; при gap = true строка 7 свободна
+# Стена из леса по двум клеткам столбца x = 8..9 (старый столбец 4 при тайле 32 px) от верха до строки 13;
+# при gap = true строки 14..15 (старая строка 7) свободны
 func _wall(gap: bool) -> Array:
 	var rows: Array = []
-	for row in range(7):
-		rows.append([row, 4, 4])
+	for row in range(14):
+		rows.append([row, 8, 9])
 	if not gap:
-		rows.append([7, 4, 4])
+		rows.append([14, 8, 9])
+		rows.append([15, 8, 9])
 	return rows
 
 
 func _check_collision_rules() -> void:
 	var collision = COLLISION_SCRIPT.new()
-	collision.configure(_terrain(10, 8, _wall(true)))
+	collision.configure(_terrain(20, 16, _wall(true)))
 	_check(not collision.terrain_blocked(80.0, 112.0), "открытая клетка свободна")
 	_check(collision.terrain_blocked(144.0, 80.0), "лес блокирует центр клетки")
 	_check(collision.terrain_blocked(126.0, 80.0), "ноги персонажа задевают соседний лесной тайл")
@@ -79,25 +81,27 @@ func _check_collision_rules() -> void:
 	_check(collision.find_path(Vector2(80.0, 112.0), Vector2(80.0, 112.0), []) == [Vector2(80.0, 112.0)], "путь до своей клетки — только цель")
 
 	var closed = COLLISION_SCRIPT.new()
-	closed.configure(_terrain(10, 8, _wall(false)))
+	closed.configure(_terrain(20, 16, _wall(false)))
 	_check(closed.find_path(Vector2(80.0, 112.0), Vector2(208.0, 112.0), []).is_empty(), "сплошная стена делает цель недостижимой")
 
 	var corner = COLLISION_SCRIPT.new()
-	corner.configure(_terrain(4, 4, [[0, 1, 1], [1, 0, 0]]))
+	corner.configure(_terrain(8, 8, [[0, 2, 3], [1, 2, 3], [2, 0, 1], [3, 0, 1]]))
 	_check(corner.find_path(Vector2(16.0, 16.0), Vector2(48.0, 48.0), []).is_empty(), "по диагонали между двумя блоками не протискиваемся")
 
 	var masked = COLLISION_SCRIPT.new()
-	masked.configure(_terrain(8, 8, [], [[2, 2, "0111011101110111"]]))
-	_check(masked.terrain_blocked(80.0, 80.0), "клетка маски, которую задевают ноги, блокирует")
-	_check(not masked.terrain_blocked(92.0, 80.0), "свободная часть тайла с маской проходима")
+	masked.configure(_terrain(16, 16, [], [[4, 4, "0111011101110111"]]))
+	_check(masked.terrain_blocked(72.0, 80.0), "клетка маски 4 px, которую задевают ноги, блокирует")
+	_check(not masked.terrain_blocked(84.0, 80.0), "свободная часть тайла с маской проходима")
+	# Маска 4×4 на тайл 16 px: клетка маски 4 px (core/tile_mask.py: tile_size // MASK_SIDE), col 0 = x 64..67.
+	_check(not masked.terrain_blocked(80.0, 80.0), "маска 4×4 на тайл 16 px: ноги от x 70 не задевают первую колонку маски (клетка 4 px)")
 
 	var walled = COLLISION_SCRIPT.new()
-	walled.configure(_terrain(10, 10, [], [], [{"points": [[100, 100], [140, 100], [140, 140], [100, 140]], "passages": [[110, 110, 10, 10]]}]))
+	walled.configure(_terrain(20, 20, [], [], [{"points": [[100, 100], [140, 100], [140, 140], [100, 140]], "passages": [[110, 110, 10, 10]]}]))
 	_check(walled.terrain_blocked(105.0, 105.0), "полигон препятствия блокирует")
 	_check(not walled.terrain_blocked(115.0, 115.0), "проход в препятствии открыт")
 
 	var walker = COLLISION_SCRIPT.new()
-	walker.configure(_terrain(10, 8, _wall(true)))
+	walker.configure(_terrain(20, 16, _wall(true)))
 	var position := Vector2(80.0, 112.0)
 	var waypoints: Array = walker.find_path(position, Vector2(208.0, 112.0), [])
 	var frames := 0
@@ -150,7 +154,7 @@ func _check_world_movement() -> void:
 	var world = WORLD_SCRIPT.new()
 	add_child(world)
 	await _wait_until(func() -> bool: return not world._world_request_pending, 15000)
-	world._apply_terrain(_terrain(10, 8, _wall(true)))
+	world._apply_terrain(_terrain(20, 16, _wall(true)))
 	world._world_ready = true
 	world._desired_position = Vector2(80.0, 112.0)
 	var player := {"x": 80.0, "y": 112.0, "move_speed": 120.0, "reach": 60.0, "windup": 0.0, "backswing": 0.0, "dash_active": false}
@@ -211,8 +215,8 @@ func _check_world_movement() -> void:
 	GameSession.world = {"server_url": UNREACHABLE_URL}
 
 	world._desired_position = Vector2(80.0, 112.0)
-	_check(world._is_adjacent_to_crystal(Vector2i(3, 3)), "кристалл рядом с персонажем распознаётся")
-	_check(world._start_harvest_path(Vector2i(3, 3)) and world._move_path.is_empty(), "рядом с кристаллом путь не нужен")
+	_check(world._is_adjacent_to_crystal(Vector2i(6, 7)), "кристалл рядом с персонажем распознаётся")
+	_check(world._start_harvest_path(Vector2i(6, 7)) and world._move_path.is_empty(), "рядом с кристаллом путь не нужен")
 
 	remove_child(world)
 	world.free()

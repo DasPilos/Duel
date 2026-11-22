@@ -142,11 +142,11 @@ func _check_view() -> void:
 	await get_tree().process_frame
 	view.set_card_scale(1.0)
 
-	view.configure("tower")
+	view.configure("economy")
 	for item in _fixture["tower"]:
 		var expected: Dictionary = item
 		var profession := str(expected["profession"])
-		view.configure("tower")
+		view.configure("economy")
 		for stat in expected["allocation"]:
 			for _point in range(int(expected["allocation"][stat]) - 3):
 				view.adjust_stat(profession, str(stat), 1)
@@ -154,7 +154,7 @@ func _check_view() -> void:
 		var free_ok := view.free_points(profession) == int(expected["free_points"])
 		_check(mismatch.is_empty() and free_ok, "карточка Tower %s %s пересчитана по очкам%s" % [profession, str(expected["allocation"]), mismatch])
 
-	view.configure("tower")
+	view.configure("economy")
 	var reach_before := str(view.details_for("archer")["reach_text"])
 	var attack_before := str(view.details_for("archer")["attack_text"])
 	view.adjust_stat("archer", "intuition", 1)
@@ -168,7 +168,7 @@ func _check_view() -> void:
 		var mismatch := _deck_mismatch(details, expected)
 		_check(mismatch.is_empty() and not details.has("weight_text"), "карточка Deck %s: HP и мана как в Python%s" % [expected["profession"], mismatch])
 
-	view.configure("tower")
+	view.configure("economy")
 	var warrior_card := view.card_rect("warrior")
 	var inside := true
 	for slot in SLOT_KEYS:

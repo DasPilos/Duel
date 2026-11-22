@@ -6,11 +6,11 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parent.parent
-SOURCE_DIRS = ("server", "tower", "economy", "deck", "core", "combat", "front_line")
-SERVER_VERSION = "1.0.0"
+SOURCE_DIRS = ("server", "economy", "deck", "core", "combat", "front_line")
+SERVER_VERSION = "1.0.1"  # версия после перехода на тайл 16 px
 PROTOCOL_VERSION = 1
-MINIMUM_CLIENT_VERSION = "1.0.0"
-MINIMUM_EDITOR_VERSION = "1.0.0"
+MINIMUM_CLIENT_VERSION = "1.0.1"
+MINIMUM_EDITOR_VERSION = "1.0.1"
 _VERSION_PATTERN = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
 
 

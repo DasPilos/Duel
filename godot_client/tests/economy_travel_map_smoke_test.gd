@@ -55,7 +55,7 @@ func _check_rules() -> void:
 	var at_end := RULES.route_position(wheat["tiles"], 1.0)
 	_check(is_equal_approx(float(at_end["x"]), last_center.x) and is_equal_approx(float(at_end["y"]), last_center.y),
 		"доля 1 — центр последнего тайла маршрута")
-	_check(is_equal_approx(last_center.x, 656.0) and is_equal_approx(last_center.y, 1008.0), "конец маршрута фермы совпадает с позицией повозки в фикстуре")
+	_check(is_equal_approx(last_center.x, 648.0) and is_equal_approx(last_center.y, 1000.0), "конец маршрута фермы совпадает с позицией повозки в фикстуре (клетки 16 px: центр 648, 1000)")
 
 	_check(str(RULES.route_position([[0, 0], [1, 0]], 0.5).get("direction", "")) == "e", "движение вправо — направление e")
 	_check(str(RULES.route_position([[1, 0], [0, 0]], 0.5).get("direction", "")) == "w", "движение влево — направление w")
@@ -109,7 +109,7 @@ func _check_rules() -> void:
 	_check(RULES.format_seconds(65) == "01:05" and RULES.format_seconds(3725) == "1 ч 02 мин", "время в подсказках форматируется как в списке")
 	var bounds := RULES.content_bounds(routes, now_entries)
 	_check(bounds.has_point(first_center) and bounds.has_point(last_center), "границы содержимого вмещают маршрут фермы")
-	_check(RULES.content_bounds([], []).size == Vector2(512 * 32, 256 * 32), "без маршрутов видна вся карта мира")
+	_check(RULES.content_bounds([], []).size == Vector2(1024 * 16, 512 * 16), "без маршрутов видна вся карта мира")
 
 
 func _check_client_positions_match_server() -> void:
@@ -154,7 +154,7 @@ func _check_travel_map() -> void:
 	var feet: Vector2 = map.citizen_feet(picked)
 	_check(str(map.entry_at_screen(feet + Vector2(0.0, -80.0)).get("name", "")) == "Аня", "голова горожанина выбирается: спрайт 90 px над ногами")
 	_check(map.entry_at_screen(feet + Vector2(0.0, -110.0)).is_empty(), "выше спрайта горожанина выбора нет")
-	var cart: Vector2 = map.world_to_screen(Vector2(656.0, 1008.0))
+	var cart: Vector2 = map.world_to_screen(Vector2(648.0, 1000.0))
 	_check(str(map.entry_at_screen(cart + Vector2(0.0, -40.0)).get("entity_kind", "")) == "wagon", "повозка выбирается по прежнему прямоугольнику 68x64")
 	_check(map.entry_at_screen(cart + Vector2(0.0, -60.0)).is_empty(), "над повозкой выбора нет выше прежнего прямоугольника")
 	_check(map.citizen_frames().has("e") and map.citizen_frames().has("nw"), "кадры горожан из ../assets доступны карте путей")
@@ -184,8 +184,8 @@ func _check_travel_map() -> void:
 	_check(wagons.size() == 2, "две повозки к одной ферме попадают на карту")
 	var first := RULES.display_position(wagons[0])
 	var second := RULES.display_position(wagons[1])
-	_check(absf(first.distance_to(second) - 28.8) <= 0.01, "повозки в одной точке разводятся на шаг полосы 28.8 px (0.9 тайла)")
-	_check(((first + second) * 0.5).distance_to(Vector2(656.0, 1008.0)) <= 0.01, "полосы стоят симметрично относительно точки повозки на пути")
+	_check(absf(first.distance_to(second) - 28.8) <= 0.01, "повозки в одной точке разводятся на шаг полосы 28.8 px (1.8 клетки по 16 px)")
+	_check(((first + second) * 0.5).distance_to(Vector2(648.0, 1000.0)) <= 0.01, "полосы стоят симметрично относительно точки повозки на пути")
 	_check(str(paired.entry_at_screen(paired.world_to_screen(first) + Vector2(0.0, -40.0)).get("entity_kind", "")) == "wagon",
 		"выбор повозки работает по точке отрисовки после раздвижки")
 	paired.free()

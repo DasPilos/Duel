@@ -5,7 +5,7 @@ const DRAFTS_RULES = preload("res://scripts/map_editor_drafts_rules.gd")
 
 class DraftEditor extends "res://scripts/map_editor.gd":
 	func _ready() -> void:
-		_mode = "tower"
+		_mode = "economy"
 		_build_ui()
 
 
@@ -101,7 +101,7 @@ func _check_files_and_format() -> void:
 		"id": 1, "name": "Земля", "type": "tile", "parent_id": 0, "visible": true, "locked": false,
 		"animal_settings": {}, "cells": [{"layer": "ground", "x": 1, "y": 2, "key": "grass"}],
 	}]
-	var result: Dictionary = DRAFTS_RULES.save_draft(folder, "  Карта  ", cells, 16, 16, "", "tower", [], [], layers)
+	var result: Dictionary = DRAFTS_RULES.save_draft(folder, "  Карта  ", cells, 16, 16, "", "economy", [], [], layers)
 	_check(str(result["error"]).is_empty(), "Черновик сохраняется без ошибок")
 	var draft: Dictionary = result["draft"]
 	first_id = str(draft["id"])
@@ -117,7 +117,7 @@ func _check_files_and_format() -> void:
 	for key in ["id", "name", "map_w", "map_h", "mode", "updated_at", "cells", "published", "mobs", "spawns", "server_map"]:
 		all_keys = all_keys and parsed.has(key)
 	_check(all_keys, "В файле есть все ключи формата Python")
-	_check(parsed["published"].is_empty() and str(parsed["mode"]) == "tower", "Новый черновик без публикаций, режим сохранён")
+	_check(parsed["published"].is_empty() and str(parsed["mode"]) == "economy", "Новый черновик без публикаций, режим сохранён")
 	_check(parsed["editor_layers"] is Array and parsed["editor_layers"].size() == 1, "Слои редактора сохраняются отдельным ключом")
 	var rewritten: Dictionary = DRAFTS_RULES.save_draft(folder, "Карта", cells, 16, 16, first_id, "", [], [], layers)
 	_check(str(rewritten["error"]).is_empty() and str(rewritten["draft"]["id"]) == first_id, "Сохранение с тем же идентификатором перезаписывает черновик")
@@ -125,7 +125,7 @@ func _check_files_and_format() -> void:
 
 func _check_list_and_load() -> void:
 	await get_tree().create_timer(0.02).timeout
-	var second: Dictionary = DRAFTS_RULES.save_draft(folder, "Вторая", [], 16, 16, "", "tower", [], [], [])
+	var second: Dictionary = DRAFTS_RULES.save_draft(folder, "Вторая", [], 16, 16, "", "economy", [], [], [])
 	second_id = str(second["draft"]["id"])
 	var listed: Array[Dictionary] = DRAFTS_RULES.list_drafts(folder)
 	_check(listed.size() == 2 and str(listed[0]["name"]) == "Вторая", "Список черновиков: самые свежие сверху")
@@ -133,7 +133,7 @@ func _check_list_and_load() -> void:
 	var loaded: Dictionary = DRAFTS_RULES.load_draft(folder, first_id)
 	_check(str(loaded["error"]).is_empty() and str(loaded["draft"]["name"]) == "Карта", "Черновик загружается по идентификатору")
 	_check(str(DRAFTS_RULES.load_draft(folder, "0123abcd")["error"]) == "Черновик не найден, возможно он был удалён", "Загрузка несуществующего черновика сообщает об этом")
-	var empty_name: Dictionary = DRAFTS_RULES.save_draft(folder, "   ", cells_for_test(), 16, 16, "", "tower", [], [], [])
+	var empty_name: Dictionary = DRAFTS_RULES.save_draft(folder, "   ", cells_for_test(), 16, 16, "", "economy", [], [], [])
 	_check(str(empty_name["error"]) == "Название черновика: от 1 до 64 символов" and _draft_file_count() == 2, "Черновик без названия не записывается")
 
 

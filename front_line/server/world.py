@@ -25,7 +25,7 @@ from server import map_editor, presence, world_map
 from server.perf_probe import timed
 from server.world_map import TILE
 from front_line.server import combat as front_line_combat
-from tower.server.world_mobs import (
+from front_line.server.world_mobs import (
     MOB_LABEL_OFFSET,
     MOB_PROFILES,
     MOB_MISS_LOG_TEXT,
@@ -58,19 +58,19 @@ CHASE_OCCUPIED_COST = 3
 
 
 MOB_CORPSE_SECONDS = 3.0
-ITEM_DROP_PICKUP_RANGE = TILE * 1.5
-TAVERN_FOOTPRINT_TILES = (13, 13)
-TAVERN_ATTACK_RANGE = TILE * 1.5
+ITEM_DROP_PICKUP_RANGE = TILE * 3.0
+TAVERN_FOOTPRINT_TILES = (26, 26)  # 13x13 клеток по 32 px = 26x26 по 16 px
+TAVERN_ATTACK_RANGE = TILE * 3.0
 # Атакующий моб продолжает бить, пока толпа не вытолкнет его дальше этого порога.
-TAVERN_ATTACK_KEEP_RANGE = TAVERN_ATTACK_RANGE + TILE / 2
-TAVERN_ATTACK_KEEP_CELLS = 1.5
-TAVERN_FLOW_LOOKAHEAD_CELLS = 4
+TAVERN_ATTACK_KEEP_RANGE = TAVERN_ATTACK_RANGE + TILE  # полтайла по старой сетке 32 px
+TAVERN_ATTACK_KEEP_CELLS = 3.0  # полтора клетки по 32 px
+TAVERN_FLOW_LOOKAHEAD_CELLS = 8  # четыре клетки по 32 px
 FLOW_NEIGHBOURS = (
     (1, 0, 1.0), (-1, 0, 1.0), (0, 1, 1.0), (0, -1, 1.0),
     (1, 1, math.sqrt(2.0)), (1, -1, math.sqrt(2.0)),
     (-1, 1, math.sqrt(2.0)), (-1, -1, math.sqrt(2.0)),
 )
-MOB_SEPARATION_RADIUS = TILE / 2
+MOB_SEPARATION_RADIUS = TILE  # полтайла по старой сетке 32 px: радиус тела моба 16 px
 # Клетка сетки мобов: не меньше самой широкой пары тел (два босса), иначе соседи пропустятся.
 MOB_BUCKET_PX = 2.0 * MOB_SEPARATION_RADIUS * 4.0
 BOSS_SEPARATION_SCALE = 4.0
@@ -102,6 +102,11 @@ GRASSLAND_WATER_COAST_CATEGORIES = {
     for item in grassland_tiles()
     if item.get("sheet", "").lower() == "water_coasts"
 }
+# Земля пустой карты ожидания: тайл листа травы художника (base_tails), каталога больше нет.
+WAITING_GROUND_KEY = (
+    "atlas|res://assets/base_tails/Biome/craftpix-net-189510-grassland-top-down-tileset-pixel-art/"
+    "Tiled_files/ground_grasss.png|0|0"
+)
 TAVERN_ATLAS_PATH_PART = (
     "craftpix-net-666104-tavern-top-down-pixel-rpg-asset-pack/"
     "tiled_files/exterior.png"
@@ -483,8 +488,11 @@ class FrontLineWorldService(WorldService):
         saved = self._database.first_saved_map("front_line")
         catalog = self._database.map_catalog()
         if saved is None:
-            ground = next(item for item in catalog if item["kind"] == "ground")
-            cells = [{"layer": "ground", "x": 0, "y": 0, "key": ground["item_key"]}]
+            ground_key = next(
+                (item["item_key"] for item in catalog if item["kind"] == "ground"),
+                WAITING_GROUND_KEY,
+            )
+            cells = [{"layer": "ground", "x": 0, "y": 0, "key": ground_key}]
             map_w = map_h = 16
             self._map_id = 0
             self._map_name = ""
@@ -654,10 +662,12 @@ class FrontLineWorldService(WorldService):
         ]
         for cell in cls._top_surface_cells(layers).values():
             key = cell.get("key")
-            if key not in by_key:
+            item = by_key.get(key)
+            if item is None and str(key).startswith(map_editor.ATLAS_KEY_PREFIX):
+                item = map_editor.atlas_item(key, cell.get("layer", "ground"))
+            if item is None:
                 continue
             terrain_cell = dict(cell)
-            item = by_key[key]
             terrain_cell.setdefault(
                 "layer",
                 "object" if item.get("kind") == "object" else "ground",
@@ -760,7 +770,7 @@ class FrontLineWorldService(WorldService):
             )
         self._tavern.x = tavern_x * TILE
         self._tavern.y = tavern_y * TILE
-        self._objective.x = self._tavern.x - TILE / 2
+        self._objective.x = self._tavern.x - TILE
         self._objective.y = self._tavern.y + TAVERN_FOOTPRINT_TILES[1] * TILE / 2
         self._objective.x, self._objective.y = self._nearest_free(
             self._objective.x, self._objective.y,

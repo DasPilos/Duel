@@ -7,7 +7,7 @@ from unittest.mock import patch
 from combat.dash import DASH_RANGE
 from core import mob_modes
 from server import world_map
-from tower.server.world_mobs import MOB_RESPAWN_DELAY, WorldService
+from front_line.server.world_mobs import MOB_RESPAWN_DELAY, WorldService
 
 IMP = "imp_sword"  # моб из редактора карт: других видов в мире нет
 
@@ -77,7 +77,7 @@ class FakeDatabase:
         return list(getattr(self, "mobs", []))
 
     def world_mode(self):
-        return "tower"
+        return "front_line"
 
     def get_character(self, user_id, character_id=None):
         if self.owners.get(character_id) != user_id:
@@ -440,7 +440,7 @@ class WorldMobsTest(unittest.TestCase):
     def test_mob_gets_weapon_and_shield_chosen_in_editor(self):
         settings = mob_modes.default_settings(IMP)
         settings["equipment"] = {"weapon": 20, "shield": 38}
-        mob_modes.save_mob_settings("tower", IMP, settings)
+        mob_modes.save_mob_settings("front_line", IMP, settings)
         service = WorldService(self.database, FakeItems(), clock=self.clock, rng=random.Random(3))
         mob = service._mobs["mob_0_imp_sword"]
         self.assertEqual(mob.equipment["weapon"]["name"], "Железный меч")
@@ -450,28 +450,28 @@ class WorldMobsTest(unittest.TestCase):
     def test_item_in_wrong_slot_is_not_given_to_mob(self):
         settings = mob_modes.default_settings(IMP)
         settings["equipment"] = {"weapon": 38, "shield": None}  # щит в слоте оружия
-        mob_modes.save_mob_settings("tower", IMP, settings)
+        mob_modes.save_mob_settings("front_line", IMP, settings)
         service = WorldService(self.database, FakeItems(), clock=self.clock, rng=random.Random(3))
         self.assertEqual(service._mobs["mob_0_imp_sword"].equipment, {})
 
     def test_item_missing_from_catalog_leaves_slot_empty(self):
         settings = mob_modes.default_settings(IMP)
         settings["equipment"] = {"weapon": 999, "shield": None}
-        mob_modes.save_mob_settings("tower", IMP, settings)
+        mob_modes.save_mob_settings("front_line", IMP, settings)
         service = WorldService(self.database, FakeItems(), clock=self.clock, rng=random.Random(3))
         self.assertEqual(service._mobs["mob_0_imp_sword"].equipment, {})
 
     def test_item_with_unmet_requirement_is_not_given_to_mob(self):
         settings = mob_modes.default_settings(IMP)
         settings["equipment"] = {"weapon": 50, "shield": None}  # требуется уровень 5, у моба уровень 1
-        mob_modes.save_mob_settings("tower", IMP, settings)
+        mob_modes.save_mob_settings("front_line", IMP, settings)
         service = WorldService(self.database, FakeItems(), clock=self.clock, rng=random.Random(3))
         self.assertEqual(service._mobs["mob_0_imp_sword"].equipment, {})
 
     def test_ring_item_goes_to_second_ring_slot(self):
         settings = mob_modes.default_settings(IMP)
         settings["equipment"] = {"ring": None, "ring_2": 60}
-        mob_modes.save_mob_settings("tower", IMP, settings)
+        mob_modes.save_mob_settings("front_line", IMP, settings)
         service = WorldService(self.database, FakeItems(), clock=self.clock, rng=random.Random(3))
         mob = service._mobs["mob_0_imp_sword"]
         self.assertEqual(mob.equipment["ring_2"]["name"], "Перстень")

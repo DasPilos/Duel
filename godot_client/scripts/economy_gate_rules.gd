@@ -8,21 +8,21 @@ extends RefCounted
 # Переход: economy_world.gd (клик по проёму или шаг в зону) открывает карту; world_entry.gd входит у точки MAP_SPAWNS.
 # Обратно город открывает у точки CITY_SPAWNS по входу town_radburg (server/structures.py:282).
 
-const TILE_PX := 32
+const TILE_PX := 16
 const EXIT_SOURCE := "scenes/city_scene.py:1067-1087"
 # Точки появления на карте мира у ворот (scenes/world_map_scene.py:501-518); main — алиас главных ворот.
 const MAP_SPAWNS := {
-	"east": {"position": Vector2(75 * TILE_PX + 16, 53 * TILE_PX + 16), "direction": "e"},
-	"north": {"position": Vector2(67 * TILE_PX + 16, 45 * TILE_PX + 16), "direction": "n"},
-	"south": {"position": Vector2(67 * TILE_PX + 16, 61 * TILE_PX + 16), "direction": "s"},
-	"west": {"position": Vector2(59 * TILE_PX + 16, 53 * TILE_PX + 16), "direction": "w"},
+	"east": {"position": Vector2(150 * TILE_PX + 16, 106 * TILE_PX + 16), "direction": "e"},
+	"north": {"position": Vector2(134 * TILE_PX + 16, 90 * TILE_PX + 16), "direction": "n"},
+	"south": {"position": Vector2(134 * TILE_PX + 16, 122 * TILE_PX + 16), "direction": "s"},
+	"west": {"position": Vector2(118 * TILE_PX + 16, 106 * TILE_PX + 16), "direction": "w"},
 }
 # Точки появления в городе при возврате с карты (scenes/city_scene.py, spawn_map).
 const CITY_SPAWNS := {
-	"east": {"position": Vector2(95 * TILE_PX + 16, 50 * TILE_PX), "direction": "w"},
-	"north": {"position": Vector2(50 * TILE_PX, 4 * TILE_PX + 16), "direction": "s"},
-	"south": {"position": Vector2(50 * TILE_PX, 95 * TILE_PX + 16), "direction": "n"},
-	"west": {"position": Vector2(4 * TILE_PX + 16, 50 * TILE_PX), "direction": "e"},
+	"east": {"position": Vector2(190 * TILE_PX + 16, 100 * TILE_PX), "direction": "w"},
+	"north": {"position": Vector2(100 * TILE_PX, 8 * TILE_PX + 16), "direction": "s"},
+	"south": {"position": Vector2(100 * TILE_PX, 190 * TILE_PX + 16), "direction": "n"},
+	"west": {"position": Vector2(8 * TILE_PX + 16, 100 * TILE_PX), "direction": "e"},
 }
 const GATE_ALIASES := {"main": "east"}
 const TOWN_IDS := ["town_radburg", "main_castle"]

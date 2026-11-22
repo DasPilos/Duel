@@ -2,14 +2,6 @@
 
 MODES = (
     {
-        "key": "tower",
-        "name": "Tower",
-        "description": "Боевые миры Башни с отдельным сервером и API.",
-        "schema": "tower",
-        "entrypoint": "tower.server.main",
-        "runtime_ready": True,
-    },
-    {
         "key": "economy",
         "name": "Economy",
         "description": "Производство и развитие города в Economy.",

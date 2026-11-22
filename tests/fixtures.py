@@ -14,7 +14,7 @@ from server import config
 from server.database import Database
 from server.items_database import ItemsDatabase
 from server.main import GameRequestHandler
-from tower.server.world_mobs import WorldService
+from front_line.server.world_mobs import WorldService
 
 TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL", config.DATABASE_URL)
 
@@ -62,8 +62,8 @@ def running_server(database, mode=None):
     """
     if mode == "economy":
         from economy.server.api import EconomyRequestHandler as request_handler
-    elif mode == "tower":
-        from tower.server.api import TowerRequestHandler as request_handler
+    elif mode == "front_line":
+        from front_line.server.api import FrontLineRequestHandler as request_handler
     elif mode is None:
         request_handler = GameRequestHandler
     else:

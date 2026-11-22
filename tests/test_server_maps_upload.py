@@ -13,7 +13,7 @@ from client.server_maps import list_server_maps, upload_server_map
 from ui.world_creation_dialog import WorldCreateDialog
 
 
-def write_map(folder, name, mode="tower", **extra):
+def write_map(folder, name, mode="front_line", **extra):
     data = {"name": name, "mode": mode, "map_w": 16, "map_h": 16,
             "cells": [{"layer": "ground", "x": 0, "y": 0, "key": "k"}], "mobs": [], "spawns": [], **extra}
     (folder / f"{name}.json").write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
@@ -36,7 +36,7 @@ class ServerMapFolderTests(unittest.TestCase):
 class FakeClient:
     def __init__(self):
         self.saved = []
-        self.maps = {"tower": [], "forest": [{"id": 9, "name": "Чаща", "map_w": 16, "map_h": 16}]}
+        self.maps = {"front_line": [], "forest": [{"id": 9, "name": "Чаща", "map_w": 16, "map_h": 16}]}
         self.fail = False
 
     def save_saved_map(self, cells, map_w, map_h, name, mode, mobs=(), saved_id=None, spawns=(), crystals=None, harvest_enabled=False):

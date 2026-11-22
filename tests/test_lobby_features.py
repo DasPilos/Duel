@@ -150,8 +150,8 @@ class LobbyFeatureTests(unittest.TestCase):
         with self.database.connection() as connection:
             connection.execute("UPDATE users SET role = 'admin' WHERE id = %s", (admin["id"],))
             connection.execute("UPDATE users SET role = 'moderator' WHERE id = %s", (moderator["id"],))
-        public_world = self.database.create_map_world("Открытая долина", "tower", admin["id"], test_only=False)
-        test_world = self.database.create_map_world("Тестовая долина", "tower", moderator["id"], test_only=True)
+        public_world = self.database.create_map_world("Открытая долина", "front_line", admin["id"], test_only=False)
+        test_world = self.database.create_map_world("Тестовая долина", "front_line", moderator["id"], test_only=True)
         self.database.set_world_server(public_world["id"], "http://127.0.0.1:8801")
 
         now = time.time()

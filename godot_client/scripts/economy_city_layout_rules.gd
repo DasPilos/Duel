@@ -1,7 +1,7 @@
 extends RefCounted
 # Раскладка Радбурга для карты Экономики (клиентская таблица, без запросов к серверу).
 # Источники:
-#   геометрия зданий, входы и стены — server/structures.py CITY_OBJECTS / CITY_WALLS (тайл 32 px, сетка 100x100),
+#   геометрия зданий, входы и стены — server/structures.py CITY_OBJECTS / CITY_WALLS (тайл 16 px, сетка 200x200),
 #     тот же набор Python-клиент получает от /api/city/structures; тесты сверяют таблицу с фикстурой этого набора;
 #   солидные части зданий (SOLID_RECTS) — solid_rects из CITY_OBJECTS;
 #   ворота — scenes/city/rendering.py _draw_walls_and_gates (прямоугольники совпадают с проёмами в CITY_WALLS);
@@ -13,8 +13,8 @@ extends RefCounted
 # для амбара, склада и конюшни (economy_key — совпадают с BUILDINGS в economy_world.gd), стартовая точка
 # игрока (PLAYER_SPAWN_PX — вход «east» из city_scene.py spawn_map).
 
-const TILE_PX := 32
-const GRID_TILES := Vector2i(100, 100)
+const TILE_PX := 16
+const GRID_TILES := Vector2i(200, 200)
 const PLAYER_SPAWN_PX := Vector2(3056.0, 1600.0)
 const SPAWN_DIRECTION := "w"
 # Плашка подписи, как draw_map_badge в scenes/map_common.py: шрифт 13 px жирный, отступы 5 px по бокам и 2 px сверху и снизу.
@@ -27,43 +27,43 @@ const DEFAULT_HOUSE_COUNT := 4
 
 const BUILDINGS := [
 	{"id": "crystal_of_life", "name": "Кристалл Жизни", "label": "Кристалл Жизни [3x3]",
-		"rect": Rect2i(49, 49, 3, 3), "entrance": Vector2i(50, 52), "economy_key": "", "sprite": "", "style": "crystal",
+		"rect": Rect2i(98, 98, 6, 6), "entrance": Vector2i(100, 104), "economy_key": "", "sprite": "", "style": "crystal",
 		"fill": [26, 36, 48], "trim": [60, 180, 220]},
 	{"id": "main_castle", "name": "Главный замок", "label": "Главный замок [15x15]",
-		"rect": Rect2i(68, 63, 15, 15), "entrance": Vector2i(75, 77), "economy_key": "", "window": "castle", "sprite": "", "style": "castle",
+		"rect": Rect2i(136, 126, 30, 30), "entrance": Vector2i(150, 154), "economy_key": "", "window": "castle", "sprite": "", "style": "castle",
 		"fill": [36, 44, 56], "trim": [100, 125, 155]},
 	{"id": "tavern_building", "name": "Городская Таверна", "label": "Таверна [10х7, 2 этажа]",
-		"rect": Rect2i(55, 12, 10, 7), "entrance": Vector2i(55, 15), "economy_key": "", "window": "tavern", "sprite": "city_building_tavern", "style": "block",
+		"rect": Rect2i(110, 24, 20, 14), "entrance": Vector2i(110, 30), "economy_key": "", "window": "tavern", "sprite": "city_building_tavern", "style": "block",
 		"fill": [60, 48, 40], "trim": [115, 90, 65]},
 	{"id": "barn_building", "name": "Городской Амбар", "label": "Городской Амбар [Ур. 1 • 12х10]",
-		"rect": Rect2i(5, 35, 12, 10), "entrance": Vector2i(16, 40), "economy_key": "barn", "sprite": "", "style": "block",
+		"rect": Rect2i(10, 70, 24, 20), "entrance": Vector2i(32, 80), "economy_key": "barn", "sprite": "", "style": "block",
 		"fill": [82, 60, 40], "trim": [55, 38, 24]},
 	{"id": "warehouse_building", "name": "Городской Склад", "label": "Городской Склад [Ур. 1 • 12х10]",
-		"rect": Rect2i(5, 18, 12, 10), "entrance": Vector2i(16, 23), "economy_key": "warehouse", "sprite": "", "style": "block",
+		"rect": Rect2i(10, 36, 24, 20), "entrance": Vector2i(32, 46), "economy_key": "warehouse", "sprite": "", "style": "block",
 		"fill": [52, 58, 68], "trim": [34, 40, 48]},
 	{"id": "forge_building", "name": "Городская Кузница", "label": "Городская Кузница [Ур. 1 • 9х7]",
-		"rect": Rect2i(23, 25, 9, 7), "entrance": Vector2i(23, 28), "economy_key": "", "window": "forge", "sprite": "city_building_smithy", "style": "block",
+		"rect": Rect2i(46, 50, 18, 14), "entrance": Vector2i(46, 56), "economy_key": "", "window": "forge", "sprite": "city_building_smithy", "style": "block",
 		"fill": [50, 44, 42], "trim": [80, 50, 40]},
 	{"id": "workshop_building", "name": "Городская Мастерская", "label": "Городская Мастерская [Ур. 1 • 9х7]",
-		"rect": Rect2i(23, 13, 9, 7), "entrance": Vector2i(23, 16), "economy_key": "", "window": "workshop", "sprite": "city_building_glassblower", "style": "block",
+		"rect": Rect2i(46, 26, 18, 14), "entrance": Vector2i(46, 32), "economy_key": "", "window": "workshop", "sprite": "city_building_glassblower", "style": "block",
 		"fill": [48, 54, 62], "trim": [80, 100, 125]},
 	{"id": "barracks_building", "name": "Городские Казармы", "label": "Городские Казармы [Ур. 1 • 9х13]",
-		"rect": Rect2i(80, 31, 9, 13), "entrance": Vector2i(84, 43), "economy_key": "", "window": "barracks", "sprite": "", "style": "block",
+		"rect": Rect2i(160, 62, 18, 26), "entrance": Vector2i(168, 86), "economy_key": "", "window": "barracks", "sprite": "", "style": "block",
 		"fill": [55, 62, 72], "trim": [35, 40, 48]},
 	{"id": "engineering_building", "name": "Инженерная палата", "label": "Инженерная палата [Ур. 1 • 10х8]",
-		"rect": Rect2i(35, 12, 10, 8), "entrance": Vector2i(44, 15), "economy_key": "", "window": "engineering", "sprite": "", "style": "block",
+		"rect": Rect2i(70, 24, 20, 16), "entrance": Vector2i(88, 30), "economy_key": "", "window": "engineering", "sprite": "", "style": "block",
 		"fill": [48, 56, 58], "trim": [60, 80, 85]},
 	{"id": "university_building", "name": "Городской Университет", "label": "Университет [Ур. 1 • 15х11]",
-		"rect": Rect2i(16, 84, 15, 11), "entrance": Vector2i(23, 84), "economy_key": "", "window": "university", "sprite": "city_building_library", "style": "block",
+		"rect": Rect2i(32, 168, 30, 22), "entrance": Vector2i(46, 168), "economy_key": "", "window": "university", "sprite": "city_building_library", "style": "block",
 		"fill": [50, 58, 70], "trim": [110, 140, 180]},
 	{"id": "military_academy", "name": "Военная академия", "label": "Военная академия [Ур. 1 • 10х7]",
-		"rect": Rect2i(10, 70, 10, 7), "entrance": Vector2i(19, 73), "economy_key": "", "window": "academy", "sprite": "city_building_guild", "style": "block",
+		"rect": Rect2i(20, 140, 20, 14), "entrance": Vector2i(38, 146), "economy_key": "", "window": "academy", "sprite": "city_building_guild", "style": "block",
 		"fill": [52, 44, 48], "trim": [140, 70, 70]},
 	{"id": "mage_school_building", "name": "Школа стихий", "label": "Школа стихий [Ур. 1 • 15х9]",
-		"rect": Rect2i(30, 62, 15, 9), "entrance": Vector2i(44, 66), "economy_key": "", "window": "mage_school", "sprite": "city_building_mage_tower", "style": "block",
+		"rect": Rect2i(60, 124, 30, 18), "entrance": Vector2i(88, 132), "economy_key": "", "window": "mage_school", "sprite": "city_building_mage_tower", "style": "block",
 		"fill": [36, 30, 56], "trim": [150, 90, 220]},
 	{"id": "stable_building", "name": "Городская Конюшня", "label": "Городская Конюшня [17х6]",
-		"rect": Rect2i(77, 6, 17, 6), "entrance": Vector2i(85, 11), "economy_key": "stable", "sprite": "", "style": "block",
+		"rect": Rect2i(154, 12, 34, 12), "entrance": Vector2i(170, 22), "economy_key": "stable", "sprite": "", "style": "block",
 		"fill": [116, 91, 58], "trim": [66, 48, 32]},
 ]
 
@@ -110,32 +110,32 @@ const SOLID_RECTS := {
 
 # Ворота — проёмы в стенах в тайлах; border — цвет рамки из rendering.py.
 const GATES := [
-	{"id": "east", "name": "Главные ворота", "rect": Rect2i(98, 44, 2, 12), "border": [255, 215, 60]},
-	{"id": "north", "name": "Северные ворота", "rect": Rect2i(47, 0, 6, 2), "border": [100, 200, 255]},
-	{"id": "south", "name": "Южные ворота", "rect": Rect2i(47, 98, 6, 2), "border": [100, 200, 255]},
-	{"id": "west", "name": "Западные ворота", "rect": Rect2i(0, 47, 2, 6), "border": [100, 200, 255]},
+	{"id": "east", "name": "Главные ворота", "rect": Rect2i(196, 88, 4, 24), "border": [255, 215, 60]},
+	{"id": "north", "name": "Северные ворота", "rect": Rect2i(94, 0, 12, 4), "border": [100, 200, 255]},
+	{"id": "south", "name": "Южные ворота", "rect": Rect2i(94, 196, 12, 4), "border": [100, 200, 255]},
+	{"id": "west", "name": "Западные ворота", "rect": Rect2i(0, 94, 4, 12), "border": [100, 200, 255]},
 ]
 
 # Двери (update() в city_scene.py, строки 1090–1169): тайл, на который наступает герой, окно, которое открывается,
 # и тайл, куда герой выталкивается. Таверна в Python уходит на карту навигации; здесь открывается окно таверны,
 # а герой ставится перед дверью, как spawn «tavern» в city_scene.py.
 const DOORS := [
-	{"tile": Vector2i(55, 15), "window": "tavern", "push": Vector2i(54, 15)},
-	{"tile": Vector2i(16, 40), "window": "barn", "push": Vector2i(17, 40)},
-	{"tile": Vector2i(16, 23), "window": "warehouse", "push": Vector2i(17, 23)},
-	{"tile": Vector2i(23, 28), "window": "forge", "push": Vector2i(22, 28)},
-	{"tile": Vector2i(23, 16), "window": "workshop", "push": Vector2i(22, 16)},
-	{"tile": Vector2i(84, 43), "window": "barracks", "push": Vector2i(84, 44)},
-	{"tile": Vector2i(44, 15), "window": "engineering", "push": Vector2i(45, 15)},
-	{"tile": Vector2i(23, 84), "window": "university", "push": Vector2i(23, 83)},
-	{"tile": Vector2i(19, 73), "window": "academy", "push": Vector2i(20, 73)},
-	{"tile": Vector2i(44, 66), "window": "mage_school", "push": Vector2i(45, 66)},
+	{"tile": Vector2i(110, 30), "window": "tavern", "push": Vector2i(108, 30)},
+	{"tile": Vector2i(32, 80), "window": "barn", "push": Vector2i(34, 80)},
+	{"tile": Vector2i(32, 46), "window": "warehouse", "push": Vector2i(34, 46)},
+	{"tile": Vector2i(46, 56), "window": "forge", "push": Vector2i(44, 56)},
+	{"tile": Vector2i(46, 32), "window": "workshop", "push": Vector2i(44, 32)},
+	{"tile": Vector2i(168, 86), "window": "barracks", "push": Vector2i(168, 88)},
+	{"tile": Vector2i(88, 30), "window": "engineering", "push": Vector2i(90, 30)},
+	{"tile": Vector2i(46, 168), "window": "university", "push": Vector2i(46, 166)},
+	{"tile": Vector2i(38, 146), "window": "academy", "push": Vector2i(40, 146)},
+	{"tile": Vector2i(88, 132), "window": "mage_school", "push": Vector2i(90, 132)},
 ]
 
 # Дома жителей: [tile_x, tile_y, width_tiles, depth_tiles, floors], порядок как у build_citizen_house_lots.
 const HOUSE_LOTS := [
-	[16, 10, 3, 3, 3], [76, 22, 3, 3, 3], [28, 76, 3, 3, 3], [76, 82, 3, 3, 2], [34, 40, 3, 3, 1],
-	[4, 58, 3, 3, 3], [64, 58, 3, 3, 2], [4, 88, 3, 3, 2], [58, 4, 3, 3, 3], [88, 58, 3, 3, 1],
+	[32, 20, 6, 6, 3], [152, 44, 6, 6, 3], [56, 152, 6, 6, 3], [152, 164, 6, 6, 2], [68, 80, 6, 6, 1],
+	[8, 116, 6, 6, 3], [128, 116, 6, 6, 2], [8, 176, 6, 6, 2], [116, 8, 6, 6, 3], [176, 116, 6, 6, 1],
 ]
 const HOUSE_WALLS := [[132, 94, 64], [151, 111, 72], [112, 113, 106], [153, 128, 91]]
 const HOUSE_ROOFS := [[91, 55, 42], [105, 67, 46], [75, 73, 66], [121, 77, 47]]
@@ -233,8 +233,9 @@ static func tile_center(tile: Vector2i) -> Vector2:
 
 # Дом жителя как citizen_house_solid_rects (scenes/city/rendering.py): на 5 px шире участка, высота с этажами и крышей.
 static func house_solid_rect(lot: Array) -> Rect2i:
-	var floor_height := maxi(15, TILE_PX >> 1)
-	var roof_height := maxi(4, TILE_PX >> 2)
+	# Высоты этажа и крыши в пикселях мира, как было при 32 px: 16 и 8 (не зависят от размера клетки).
+	var floor_height := maxi(15, 16)
+	var roof_height := maxi(4, 8)
 	var depth := int(lot[3]) * TILE_PX
 	var height := depth + (int(lot[4]) - 1) * floor_height + roof_height
 	return Rect2i(int(lot[0]) * TILE_PX - 5, int(lot[1]) * TILE_PX + depth - height, int(lot[2]) * TILE_PX + 10, height)
@@ -255,9 +256,9 @@ static func solid_rects(house_count: int) -> Array[Rect2i]:
 
 static func ground_color(tile: Vector2i) -> Color:
 	var zone := "quarter"
-	if tile.x >= 40 and tile.x <= 59 and tile.y >= 40 and tile.y <= 59:
+	if tile.x >= 80 and tile.x <= 118 and tile.y >= 80 and tile.y <= 118:
 		zone = "plaza"
-	elif (tile.x >= 47 and tile.x <= 52) or (tile.y >= 47 and tile.y <= 52) or (tile.x >= 80 and tile.y >= 44 and tile.y <= 55):
+	elif (tile.x >= 94 and tile.x <= 104) or (tile.y >= 94 and tile.y <= 104) or (tile.x >= 160 and tile.y >= 88 and tile.y <= 110):
 		zone = "avenue"
 	var pair: Array = GROUND[zone]
 	return rgb(pair[0] if (tile.x + tile.y) % 2 == 0 else pair[1])

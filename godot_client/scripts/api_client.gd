@@ -6,8 +6,8 @@ signal request_completed(success: bool, payload: Variant)
 signal world_request_completed(success: bool, payload: Variant)
 signal command_completed(success: bool, payload: Variant)
 
-const CLIENT_VERSION := "1.0.0"
-const EDITOR_VERSION := "1.0.0"
+const CLIENT_VERSION := "1.0.1"
+const EDITOR_VERSION := "1.0.1"
 const PROTOCOL_VERSION := 1
 
 var base_url := "http://127.0.0.1:8765"

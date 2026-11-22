@@ -19,7 +19,7 @@ func _run() -> void:
 	var worlds: Array[Dictionary] = [{
 		"id": 7,
 		"name": "Тестовый мир Башни 64",
-		"mode": "tower",
+		"mode": "economy",
 		"is_open": true,
 		"server_url": "http://127.0.0.1:8801",
 		"started_at": 1700000000.0,
@@ -109,7 +109,7 @@ func _run() -> void:
 	if not _check_lobby_layout(lobby):
 		_finish(lobby, 1)
 		return
-	if not _contains_text(lobby._worlds_list, "Тестовый мир Башни 64 · Tower") or not _contains_fragment(lobby._worlds_list, "Онлайн: 4 · бессрочный") or not _contains_text(lobby._worlds_list, "работает"):
+	if not _contains_text(lobby._worlds_list, "Тестовый мир Башни 64 · Economy") or not _contains_fragment(lobby._worlds_list, "Онлайн: 4 · бессрочный") or not _contains_text(lobby._worlds_list, "работает"):
 		push_error("Список серверов не показывает название, режим, онлайн и срок доступного сервера.")
 		_finish(lobby, 1)
 		return
@@ -128,7 +128,7 @@ func _run() -> void:
 		return
 	var world_card_layout: VBoxContainer = world_card.get_child(0).get_child(0)
 	var world_title: Label = world_card_layout.get_child(0).get_child(0)
-	if world_title.tooltip_text != "Тестовый мир Башни 64 · Tower":
+	if world_title.tooltip_text != "Тестовый мир Башни 64 · Economy":
 		push_error("Полное название мира должно оставаться доступным во всплывающей подсказке.")
 		_finish(lobby, 1)
 		return
@@ -221,9 +221,9 @@ func _run() -> void:
 		push_error("В форме 32×32 должно быть видно, но недоступно.")
 		_finish(lobby, 1)
 		return
-	if lobby._new_map_mode.item_count != 4 \
-		or str(lobby._new_map_mode.get_item_metadata(3)) != "front_line":
-		push_error("В форме новой карты должны быть режимы Tower, Economy, Deck и Front Line.")
+	if lobby._new_map_mode.item_count != 3 \
+		or str(lobby._new_map_mode.get_item_metadata(0)) != "front_line":
+		push_error("В форме новой карты должны быть режимы Front Line, Economy и Deck.")
 		_finish(lobby, 1)
 		return
 	if LOBBY_FORMAT.world_end_text({"mode": "front_line"}) != "до исхода матча":
@@ -234,7 +234,7 @@ func _run() -> void:
 	lobby._saved_maps.append({
 		"id": 12,
 		"name": "Тестовая карта",
-		"mode": "tower",
+		"mode": "economy",
 		"map_w": 64,
 		"map_h": 32,
 	})
@@ -246,7 +246,7 @@ func _run() -> void:
 		"map_h": 32,
 	})
 	lobby._show_editor_saved_maps()
-	if not _contains_text(lobby._content, "Тестовая карта · Tower · 64×32") \
+	if not _contains_text(lobby._content, "Тестовая карта · Economy · 64×32") \
 		or not _contains_text(lobby._content, "Коридор · Front Line · 96×32"):
 		push_error("В меню загрузки должны отображаться названия и режимы сохранённых карт.")
 		_finish(lobby, 1)
@@ -371,20 +371,20 @@ func _run() -> void:
 		_finish(lobby, 1)
 		return
 	lobby._show_new_map_setup()
-	if lobby._new_map_mode.item_count != 4 \
-		or lobby._new_map_mode.get_item_metadata(3) != "front_line" \
-		or lobby._new_map_mode.get_item_text(3) != "Front Line":
+	if lobby._new_map_mode.item_count != 3 \
+		or lobby._new_map_mode.get_item_metadata(0) != "front_line" \
+		or lobby._new_map_mode.get_item_text(0) != "Front Line":
 		push_error("Front Line должен быть доступен при создании карты.")
 		_finish(lobby, 1)
 		return
-	lobby._new_map_mode.select(3)
-	lobby._update_new_map_mode_note(3)
+	lobby._new_map_mode.select(0)
+	lobby._update_new_map_mode_note(0)
 	if not lobby._new_map_mode_note.text.contains("Front Line") \
 		or not lobby._new_map_mode_note.text.contains("волны"):
 		push_error("Настройка новой карты должна объяснять статус режима Front Line.")
 		_finish(lobby, 1)
 		return
-	var selected_mode := ["tower"]
+	var selected_mode := ["front_line"]
 	dialog.mode_selected.connect(func(mode: String) -> void: selected_mode[0] = mode)
 	var launches := []
 	dialog.launch_requested.connect(func(saved_id: int, world_name: String, test: bool) -> void: launches.append([saved_id, world_name, test]))

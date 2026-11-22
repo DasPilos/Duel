@@ -6,8 +6,8 @@ import random
 from combat import world_stats
 from server.world_map import TILE
 
-# Дальность в игре — единицы: 1 тайл = 100 ед. Пиксели существуют только внутри сервера и клиента.
-RANGE_UNITS_PER_TILE = 100
+# Дальность в игре — единицы: 1 тайл (16 px) = 50 ед.; 100 ед. = 32 px, как при прежнем тайле 32 px. Пиксели только внутри сервера и клиента.
+RANGE_UNITS_PER_TILE = 50
 BASE_ATTACK_RANGE_UNITS = {"warrior": 100, "archer": 500, "mage": 500}
 RANGE_UNITS_PER_INTUITION = 5
 BASE_INTUITION = 3
@@ -43,7 +43,7 @@ MIN_ATTACK_BACKSWING = 0.05
 # Замах героев Front Line уменьшен в 2 раза, откат увеличен в 2 раза (решение владельца).
 FRONT_LINE_WINDUP_SCALE = 0.5
 FRONT_LINE_BACKSWING_SCALE = 2.0
-# Взрыв мага: радиус 100 ед. (1 тайл) вокруг точки попадания, бьёт всех мобов в зоне, своих героев не задевает.
+# Взрыв мага: радиус 50 ед. (1 тайл) вокруг точки попадания, бьёт всех мобов в зоне, своих героев не задевает.
 MAGE_AREA_RADIUS_UNITS = 50
 
 

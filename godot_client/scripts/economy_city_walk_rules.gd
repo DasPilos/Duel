@@ -9,7 +9,7 @@ const FEET_LEFT := 10.0
 const FEET_UP := 6.0
 const FEET_WIDTH := 20
 const FEET_HEIGHT := 10
-const MAX_NODES := 2500
+const MAX_NODES := 10000  # клетки по 16 px: вчетверо больше узлов на тот же путь
 const DIAGONAL_COST := 1.4142135623730951
 const NEIGHBORS := [
 	Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1),
@@ -26,17 +26,18 @@ static func feet_rect(point: Vector2) -> Rect2i:
 static func is_blocked(point: Vector2, solids: Array) -> bool:
 	var tile := float(RULES.TILE_PX)
 	var world := float(RULES.GRID_TILES.x * RULES.TILE_PX)
+	# Проёмы ворот в клетках сетки 200x200 (economy_city_layout_rules.gd GATES): восток y 88..112, север и юг x 94..106, запад y 94..106.
 	if point.x >= world - 10.0:
-		if point.y < 44.0 * tile or point.y > 56.0 * tile:
+		if point.y < 88.0 * tile or point.y > 112.0 * tile:
 			return true
 	elif point.x <= 10.0:
-		if point.y < 47.0 * tile or point.y > 53.0 * tile:
+		if point.y < 94.0 * tile or point.y > 106.0 * tile:
 			return true
 	if point.y <= 6.0:
-		if point.x < 47.0 * tile or point.x > 53.0 * tile:
+		if point.x < 94.0 * tile or point.x > 106.0 * tile:
 			return true
 	elif point.y >= world - 6.0:
-		if point.x < 47.0 * tile or point.x > 53.0 * tile:
+		if point.x < 94.0 * tile or point.x > 106.0 * tile:
 			return true
 	var feet := feet_rect(point)
 	for solid in solids:
@@ -140,8 +141,8 @@ static func _overlaps(first: Rect2i, second: Rect2i) -> bool:
 		and first.position.y < second.end.y and second.position.y < first.end.y
 
 
-# Центр тайла, если в нём можно стоять; null — тайл вне карты или заблокирован. Ноги в центре тайла лежат внутри
-# пикселей этого тайла, поэтому проверяются только солидные прямоугольники его клетки. Результаты кэшируются на поиск.
+# Центр клетки, если в нём можно стоять; null — клетка вне карты или заблокирована. Ноги 20 px шире клетки 16 px,
+# поэтому проверяются солиды всех соседних клеток (3x3). Результаты кэшируются на поиск.
 static func _node_center(node: Vector2i, buckets: Dictionary, centers: Dictionary) -> Variant:
 	if centers.has(node):
 		return centers[node]
@@ -149,10 +150,18 @@ static func _node_center(node: Vector2i, buckets: Dictionary, centers: Dictionar
 	var grid := RULES.GRID_TILES
 	if node.x >= 0 and node.y >= 0 and node.x < grid.x and node.y < grid.y:
 		var point := Vector2(node * RULES.TILE_PX) + Vector2.ONE * (RULES.TILE_PX * 0.5)
-		if not _blocked_in_tile(point, buckets.get(node, [])):
+		if not _blocked_in_tile(point, _neighbour_solids(node, buckets)):
 			center = point
 	centers[node] = center
 	return center
+
+
+static func _neighbour_solids(node: Vector2i, buckets: Dictionary) -> Array:
+	var out: Array = []
+	for dx in range(-1, 2):
+		for dy in range(-1, 2):
+			out.append_array(buckets.get(Vector2i(node.x + dx, node.y + dy), []))
+	return out
 
 
 static func _blocked_in_tile(point: Vector2, candidates: Array) -> bool:

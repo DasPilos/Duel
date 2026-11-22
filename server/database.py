@@ -1384,7 +1384,7 @@ class Database:
         """Режим текущего мира (worlds.mode): по нему берутся настройки мобов."""
         with self.connection() as connection:
             row = connection.execute("SELECT mode FROM worlds WHERE id = %s", (self.world_id,)).fetchone()
-        return row["mode"] if row is not None else "tower"
+        return row["mode"] if row is not None else "front_line"
 
     def map_live_spawns(self):
         """Точки спауна опубликованной карты текущего мира: [(x, y)] в клетках."""
@@ -1625,7 +1625,7 @@ class Database:
             ).fetchall()
         return [row["world_id"] for row in rows]
 
-    def publish_map(self, cells, world_id, name, map_w, map_h, moderator_id, mobs=None, mode="tower", spawns=None,
+    def publish_map(self, cells, world_id, name, map_w, map_h, moderator_id, mobs=None, mode="front_line", spawns=None,
                     saved_id=None, crystals=None, harvest_enabled=False):
         """Размещает карту редактора в мире world_id: клетки, NPC и режим. Заменяет живую карту этого мира."""
         if not self.is_moderator(moderator_id):

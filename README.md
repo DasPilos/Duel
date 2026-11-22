@@ -1,5 +1,7 @@
 # Multiverse of Games
 
+> **Версия 1.0.1** — переход на тайл 16 px. Серверу, клиенту Godot и редактору нужна версия 1.0.1 или новее; старые каталоги и данные под 32 px не переносятся.
+
 Multimode game: a Pygame client connects to a central lobby and to independent Tower, Economy, Deck, or Front Line world servers. PostgreSQL is the source of truth; each mode stores its gameplay data separately.
 
 > **Режимы:** world-server entrypoints and APIs are isolated by mode. Shared services are the account/lobby control plane and visual assets.
@@ -31,7 +33,7 @@ Start a world from the central lobby, or run one mode manually:
 ```powershell
 $env:WORLD_ID = '1'
 $env:GAME_SCHEMA = 'tower'
-python -m tower.server.main
+python -m front_line.server.main
 ```
 
 For Economy, use its own schema and entrypoint:

@@ -4,7 +4,7 @@ extends RefCounted
 # _build_minimap, _tiles_word) и ui/hotbar.py. Python рассчитан на окно 1920×1080, базовый вид Godot — 1280×720,
 # поэтому размеры ниже уже умножены на 2/3 и округлены, как в hotbar.gd (43, 4, 7). В комментарии — исходное значение Python.
 
-const TILE_SIZE := 32.0
+const TILE_SIZE := 16.0
 const DEFAULT_GRID := Vector2i(125, 125)
 
 const MINIMAP_HEIGHT := 128  # Python 192

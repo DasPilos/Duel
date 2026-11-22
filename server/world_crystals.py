@@ -26,7 +26,7 @@ class CrystalField:
         self._published_at = world_map.PUBLISHED_AT
         stored = self._store.load_world_crystal_states(self._published_at) if self._store is not None else {}
         self._crystals = {}
-        for tile, crystal in list(world_map.TOWER_CRYSTALS.items()):
+        for tile, crystal in list(world_map.MAP_CRYSTALS.items()):
             saved = stored.get(tile)
             if saved is not None and saved["harvested"]:
                 world_map.remove_live_crystal(tile)

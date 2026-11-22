@@ -10,6 +10,33 @@ from core.mob_catalog import MOB_KEYS
 from core.tile_mask import load_partial_masks
 
 LAYERS = ("ground", "overlay", "elevation", "relief", "infra", "object")
+# Тайлы и объекты из листов художника (godot_client/assets/base_tails) сохраняются ключом «atlas|лист|…».
+# Они не в каталоге: сервер проверяет формат и слой, а тип рельефа определяет Front Line по имени листа.
+ATLAS_KEY_PREFIX = "atlas|"
+GROUND_LAYERS = ("ground", "overlay", "elevation", "relief", "infra")
+
+
+def atlas_item(key, layer):
+    """Элемент каталога для ключа листа художника: один тайл, тип по слою."""
+    parts = key[len(ATLAS_KEY_PREFIX):].split("|")
+    if len(parts) not in (3, 5, 6) or not all(parts):
+        raise ValueError(f"Неверный ключ тайла «{key}»")
+    return {
+        "item_key": key,
+        "kind": "ground" if layer in GROUND_LAYERS else "object",
+        "category": "atlas",
+        "footprint_w": 1,
+        "footprint_h": 1,
+        "blocks": False,
+    }
+
+
+def _catalog_item(by_key, key, layer):
+    item = by_key.get(key)
+    if item is None and key.startswith(ATLAS_KEY_PREFIX):
+        item = atlas_item(key, layer)
+        by_key[key] = item
+    return item
 NPC_KEYS = frozenset(npc["key"] for npc in NPC_CATALOG)
 MAX_MOB_SPAWN_COUNT = 500
 MAX_MOB_SPAWN_INTERVAL_SECONDS = 86_399
@@ -54,7 +81,7 @@ def validate_cells(cells, catalog, map_w, map_h):
         layer = str(cell.get("layer", ""))
         key = str(cell.get("key", ""))
         x, y = int(cell.get("x", -1)), int(cell.get("y", -1))
-        item = by_key.get(key)
+        item = _catalog_item(by_key, key, layer)
         if item is None:
             raise ValueError(f"Элемента «{key}» нет в каталоге")
         if (
@@ -128,7 +155,7 @@ def validate_mobs(mobs, map_w, map_h):
     return result
 
 
-def validate_spawns(spawns, map_w, map_h, *, include_settings=False, mode="tower"):
+def validate_spawns(spawns, map_w, map_h, *, include_settings=False, mode="front_line"):
     """Проверяет точки игроков и настроенные точки мобов для сохранённой карты."""
     if spawns is None:
         return []
@@ -396,7 +423,7 @@ def terrain_from_cells(cells, catalog, masks=None):
     animals = []
     crystals = {}
     for cell in cells:
-        item = by_key.get(cell["key"])
+        item = _catalog_item(by_key, cell["key"], cell["layer"])
         if item is None:
             continue
         x, y = cell["x"], cell["y"]

@@ -110,7 +110,7 @@ class CentralRequestHandler(BaseHTTPRequestHandler):
                 user_id = self._user_id()
                 if not self.database.is_moderator(user_id):
                     raise ValueError("Недостаточно прав модератора")
-                mode = parse_qs(urlparse(self.path).query).get("mode", ["tower"])[0]
+                mode = parse_qs(urlparse(self.path).query).get("mode", ["front_line"])[0]
                 items = map_worlds.mode_item_database(self.database, mode)
                 self._send(200, {
                     "items": items.get_all_catalog_items(),
@@ -205,7 +205,7 @@ class CentralRequestHandler(BaseHTTPRequestHandler):
             if path == "/api/items/catalog":
                 if not self.database.is_moderator(user_id):
                     raise ValueError("Недостаточно прав модератора")
-                items = map_worlds.mode_item_database(self.database, body.get("mode", "tower"))
+                items = map_worlds.mode_item_database(self.database, body.get("mode", "front_line"))
                 self._send(201, {"item": items.create_item(user_id, body.get("form") or {})})
                 return
             if path == "/api/map/mob-settings":
@@ -264,7 +264,7 @@ class CentralRequestHandler(BaseHTTPRequestHandler):
                 self._send(200, map_worlds.start_world(self.database, user_id, world_id))
                 return
             if path == "/api/map/editor/saved":
-                mode_key = str(body.get("mode", "tower"))
+                mode_key = str(body.get("mode", "front_line"))
                 if get_mode(mode_key)["key"] == "deck":
                     raise ValueError("Карты Deck сохраняются через отдельный API режима")
                 self._send(200, map_worlds.save_map(self.database, user_id, body))
@@ -285,7 +285,7 @@ class CentralRequestHandler(BaseHTTPRequestHandler):
             if path == "/api/map/editor/publish":
                 target_world_id = int(body.get("world_id") or 0)
                 target_world = self.database.world_info(target_world_id)
-                requested_mode = str(body.get("mode", "tower"))
+                requested_mode = str(body.get("mode", "front_line"))
                 mode = get_mode(requested_mode)
                 if mode["key"] == "deck":
                     raise ValueError("Карты Deck публикуются через отдельный API режима")
@@ -323,7 +323,7 @@ class CentralRequestHandler(BaseHTTPRequestHandler):
             user_id = self._user_id()
             if not self.database.is_moderator(user_id):
                 raise ValueError("Недостаточно прав модератора")
-            items = map_worlds.mode_item_database(self.database, body.get("mode", "tower"))
+            items = map_worlds.mode_item_database(self.database, body.get("mode", "front_line"))
             item = items.update_item(user_id, int(match.group(1)), body.get("form") or {})
             self._send(200, {"item": item})
         except Exception as error:

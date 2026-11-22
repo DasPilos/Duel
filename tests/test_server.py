@@ -106,14 +106,14 @@ class ServerPersistenceTests(unittest.TestCase):
     def test_game_server_exposes_public_version_compatibility(self):
         with running_server(self.database) as client:
             response = client._request(
-                "GET", "/api/version?app=editor&version=1.0.0&protocol=1"
+                "GET", "/api/version?app=editor&version=1.0.1&protocol=1"
             )
-        with running_server(self.database, mode="tower") as client:
+        with running_server(self.database, mode="front_line") as client:
             scoped_response = client._request(
-                "GET", "/api/version?app=client&version=1.0.0&protocol=1"
+                "GET", "/api/version?app=client&version=1.0.1&protocol=1"
             )
 
-        self.assertEqual(response["server_version"], "1.0.0")
+        self.assertEqual(response["server_version"], "1.0.1")
         self.assertEqual(response["protocol_version"], 1)
         self.assertTrue(response["compatibility"]["compatible"])
         self.assertTrue(scoped_response["compatibility"]["compatible"])

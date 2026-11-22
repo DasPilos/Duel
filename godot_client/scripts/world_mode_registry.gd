@@ -1,12 +1,6 @@
 extends Node
 
 const MODES := {
-	"tower": {
-		"name": "Tower",
-		"summary": "Мир с исследованием карты и боем в реальном времени.",
-		"module_ready": true,
-		"scene_path": "res://scenes/world_entry.tscn",
-	},
 	"economy": {
 		"name": "Economy",
 		"summary": "Экономический режим. Правила мира определяет сервер.",

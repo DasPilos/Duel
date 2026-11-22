@@ -78,11 +78,11 @@ func _check_rules() -> void:
 		"Создавать тестовый мир может только админ",
 	)
 	_check(
-		TEST_WORLD_RULES.can_create_in_mode("deck") and not TEST_WORLD_RULES.can_create_in_mode("tower") and not TEST_WORLD_RULES.can_create_in_mode(""),
+		TEST_WORLD_RULES.can_create_in_mode("deck") and not TEST_WORLD_RULES.can_create_in_mode("economy") and not TEST_WORLD_RULES.can_create_in_mode(""),
 		"Тестовый мир создаётся только в режиме Колоды: маршрута в других API нет",
 	)
 	var served := {
-		"world_id": 5, "name": "Тест", "mode": "tower", "test": true,
+		"world_id": 5, "name": "Тест", "mode": "economy", "test": true,
 		"status": {"world_id": 5, "server_url": "http://127.0.0.1:8766", "served_here": false},
 	}
 	_check(
@@ -166,7 +166,7 @@ func _check_save_then_create() -> void:
 		and not editor._test_world_after_save and editor.post_count == 1,
 		"Ошибка сохранения останавливает создание мира и показывает причину",
 	)
-	editor._mode = "tower"
+	editor._mode = "economy"
 	var saves_before: int = editor.save_count
 	var posts_before: int = editor.post_count
 	editor._create_test_world()

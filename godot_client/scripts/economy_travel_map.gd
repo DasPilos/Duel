@@ -1,5 +1,5 @@
 extends "res://scripts/economy_map_canvas.gd"
-# Карта путей мира: дороги из /api/map/terrain, горожане и повозки в мировых пикселях (тайл 32 px).
+# Карта путей мира: дороги из /api/map/terrain, горожане и повозки в мировых пикселях (тайл 16 px).
 # Это не сетка Радбурга: в Python фигуры рисуются на карте мира (scenes/world_map_scene.py:2546), а не в городе.
 
 const RULES := preload("res://scripts/economy_travel_rules.gd")

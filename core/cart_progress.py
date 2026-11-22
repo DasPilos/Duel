@@ -34,7 +34,7 @@ CART_GRADES = {
         "required_stable_level": 1,
         "body_cost_silver": 10,
         "base_capacity_kg": 300,
-        "base_seconds_per_tile": 7.2,
+        "base_seconds_per_tile": 3.6,
         "base_full_load_speed_penalty_percent": 70,
         "resource_slots": 1,
         "horse_count": 1,
@@ -56,10 +56,10 @@ CART_GRADES = {
 CART_MAX_DURABILITY = 100
 CART_BROKEN_REPAIR_WOOD = 70
 CART_REPAIR_WOOD_PER_DURABILITY = 0.4
-CART_SPEED_TILES_PER_HOUR_MAX = 500
-CART_SPEED_TILES_PER_HOUR_MIN = 200
+CART_SPEED_TILES_PER_HOUR_MAX = 1000  # клетки по 16 px: вдвое больше клеток в час при той же скорости
+CART_SPEED_TILES_PER_HOUR_MIN = 400
 CART_SPEED_FLOOR_DURABILITY = 30
-CART_METERS_PER_TILE = 20
+CART_METERS_PER_TILE = 10  # клетка 16 px = половина прежнего тайла в 20 м
 CART_AUTO_REPAIR_RULES = {
     "always": {"threshold": 71, "wood_cost": 20},
     "economy": {"threshold": 50, "wood_cost": 25},
@@ -140,7 +140,7 @@ def cart_wear_step_seconds(durability):
 
 
 def cart_tiles_per_hour(durability):
-    """Empty-cart speed: 500 tiles/h at 100% durability, 200 tiles/h at 30% and below."""
+    """Empty-cart speed: 1000 tiles/h at 100% durability, 400 tiles/h at 30% and below (тайл 16 px)."""
     value = min(CART_MAX_DURABILITY, max(CART_SPEED_FLOOR_DURABILITY, float(durability)))
     span = CART_MAX_DURABILITY - CART_SPEED_FLOOR_DURABILITY
     progress = (value - CART_SPEED_FLOOR_DURABILITY) / span
@@ -204,7 +204,7 @@ def cart_stats(upgrades, durability=CART_MAX_DURABILITY):
     sides = max(0, min(3, int(upgrades.get("sides", 0))))
     axles = max(0, min(3, int(upgrades.get("axles", 0))))
     tiles_per_hour = cart_tiles_per_hour(durability)
-    seconds_per_tile = max(0.5, 3600 / tiles_per_hour - 2 * wheels)
+    seconds_per_tile = max(0.25, 3600 / tiles_per_hour - wheels)
     return {
         "capacity_kg": CART_GRADES["1"]["base_capacity_kg"] + 50 * sides,
         "seconds_per_tile": seconds_per_tile,

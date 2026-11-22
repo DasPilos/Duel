@@ -15,12 +15,12 @@ extends RefCounted
 #   _separate_nearby_convoys 128-165 и display_position (точка отрисовки и выбора, map_travel.py:177-178, 250-251);
 #   _transport_sprite 185-204 и draw_convoy_sprite_group 230-244 (имена спрайтов, поворот, раскладка повозки);
 #   иконка повозки у подписи 280-296 (cart_icon_name, cart_icon_rect).
-# Мир: тайл 32 px (server/world_map.py:11), карта 512x256 (server/world_map.py:522-523), это не сетка Радбурга 100x100.
+# Мир: тайл 16 px (core/tile.py), карта 1024x512 (server/world_map.py), это не сетка Радбурга 200x200.
 
-const TILE_PX := 32
-const WORLD_TILES := Vector2i(512, 256)
-const CONVOY_CLOSE_TILES := 1.5
-const CONVOY_LANE_TILES := 0.9
+const TILE_PX := 16
+const WORLD_TILES := Vector2i(1024, 512)
+const CONVOY_CLOSE_TILES := 3.0
+const CONVOY_LANE_TILES := 1.8
 const DEFAULT_SPRITE_KEY := "light"
 const CART_ICON_SIZE := 32.0
 const CART_ICON_GAP := 4.0
@@ -288,4 +288,4 @@ static func content_bounds(routes: Array, entries: Array) -> Rect2:
 	for point in points:
 		low = Vector2(minf(low.x, point.x), minf(low.y, point.y))
 		high = Vector2(maxf(high.x, point.x), maxf(high.y, point.y))
-	return Rect2(low, high - low).grow(TILE_PX * 6.0)
+	return Rect2(low, high - low).grow(TILE_PX * 12.0)

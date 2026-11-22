@@ -12,22 +12,22 @@ const FARM_HOUSE_ASSET := "town/farm/house.png"
 const LUMBER_HOUSE_ASSET := "town/lumber_camp/house.png"
 # town_radburg из server/structures.py: solid_rects в мировых пикселях.
 const TOWN := {
-	"id": "town_radburg", "tile_x": 60, "tile_y": 46, "tile_w": 15, "tile_h": 15,
+	"id": "town_radburg", "tile_x": 120, "tile_y": 92, "tile_w": 30, "tile_h": 30,
 	"name": "Город Радбург", "type": "Город Света (15х15)",
 	"desc": "Радбург — священный Город Света. Размер 15х15 тайлов (X: 60..74, Y: 46..60). 4 ворот: Главные (восток), Южные, Северные, Западные.",
 	"entrances": [
-		{"id": "east", "tiles": [[74, 52], [74, 53], [74, 54]], "approach_pos": [2416, 1712]},
-		{"id": "south", "tiles": [[67, 60]], "approach_pos": [2160, 1968]},
-		{"id": "north", "tiles": [[67, 46]], "approach_pos": [2160, 1456]},
-		{"id": "west", "tiles": [[60, 53]], "approach_pos": [1904, 1712]},
+		{"id": "east", "tiles": [[148, 104], [148, 106], [148, 108]], "approach_pos": [2416, 1712]},
+		{"id": "south", "tiles": [[134, 120]], "approach_pos": [2160, 1968]},
+		{"id": "north", "tiles": [[134, 92]], "approach_pos": [2160, 1456]},
+		{"id": "west", "tiles": [[120, 106]], "approach_pos": [1904, 1712]},
 	],
 	"solid_rects": [
 		[1984, 1536, 352, 352], [1920, 1472, 224, 32], [2176, 1472, 224, 32], [1920, 1920, 224, 32], [2176, 1920, 224, 32],
 		[1920, 1472, 32, 224], [1920, 1728, 32, 224], [2368, 1472, 32, 192], [2368, 1760, 32, 192],
 	],
 }
-const LUMBER_CAMP := {"id": "lumber_camp", "tile_x": 10, "tile_y": 10, "tile_w": 10, "tile_h": 10, "solid_rects": [[320, 320, 320, 320]]}
-const TERRAIN := {"map": {"tiles_w": 512, "tiles_h": 256}, "tiles": {}, "props": [], "obstacles": []}
+const LUMBER_CAMP := {"id": "lumber_camp", "tile_x": 20, "tile_y": 20, "tile_w": 20, "tile_h": 20, "solid_rects": [[320, 320, 320, 320]]}
+const TERRAIN := {"map": {"tiles_w": 1024, "tiles_h": 512}, "tiles": {}, "props": [], "obstacles": []}
 const DRAW_STATES := [
 	{"city_level": 1, "active": false},
 	{"city_level": 1, "active": true, "phase_index": 0},
@@ -66,7 +66,7 @@ func _run() -> void:
 func _check_objects_and_hover() -> void:
 	_check(RULES.town_objects([LUMBER_CAMP, TOWN]).size() == 1, "из terrain.objects берётся только town_radburg")
 	_check(RULES.town_objects([LUMBER_CAMP]).is_empty(), "без города ничего не рисуется")
-	_check(RULES.object_rect(TOWN) == Rect2(1920, 1472, 480, 480), "город занимает 15×15 тайлов от (60, 46)")
+	_check(RULES.object_rect(TOWN) == Rect2(1920, 1472, 480, 480), "город занимает 30×30 тайлов от (120, 92)")
 	var hover := RULES.hover_rect(TOWN)
 	_check(hover == Rect2(1920, 1450, 480, 502), "наведение поднимается на 22 px, как _find_entity_at")
 	_check(hover.has_point(Vector2(2100, 1460)) and not hover.has_point(Vector2(2100, 1440)), "над верхним краем наведение только в пределах 22 px")
@@ -127,9 +127,9 @@ func _check_window_rules() -> void:
 	_check(is_equal_approx(window.size.x, 365.0 * 2.0 / 3.0) and is_equal_approx(window.size.y, 215.0 * 2.0 / 3.0), "размер окна 365×215 px Python")
 	var layout := RULES.window_layout(window, 2.0 / 3.0)
 	_check(window.encloses(layout["close"]) and window.encloses(layout["action"]), "крестик и кнопка лежат внутри окна")
-	_check(RULES.within_one_tile(TOWN, Vector2i(75, 53)) and RULES.within_one_tile(TOWN, Vector2i(73, 53)), "рядом с восточными воротами кнопка активна")
-	_check(not RULES.within_one_tile(TOWN, Vector2i(72, 53)) and not RULES.within_one_tile(TOWN, Vector2i(65, 45)), "в двух клетках от ворот кнопка неактивна")
-	_check(RULES.within_one_tile(TOWN, Vector2i(66, 45)), "диагональ к северным воротам засчитывается, как в Python")
+	_check(RULES.within_one_tile(TOWN, Vector2i(150, 106)) and RULES.within_one_tile(TOWN, Vector2i(146, 106)), "рядом с восточными воротами кнопка активна")
+	_check(not RULES.within_one_tile(TOWN, Vector2i(144, 106)) and not RULES.within_one_tile(TOWN, Vector2i(130, 90)), "дальше двух клеток от ворот кнопка неактивна")
+	_check(RULES.within_one_tile(TOWN, Vector2i(132, 90)), "диагональ к северным воротам засчитывается, как в Python")
 	_check(RULES.nearest_gate(TOWN, Vector2(2416.0, 1712.0)) == "east" and RULES.nearest_gate(TOWN, Vector2(2160.0, 1456.0)) == "north", "ближайшие ворота выбираются по точке входа")
 	_check(RULES.nearest_gate(TOWN, Vector2(2160.0, 1968.0)) == "south" and RULES.nearest_gate(TOWN, Vector2(1904.0, 1712.0)) == "west", "юг и запад выбираются по точке входа")
 	_check(RULES.nearest_gate({}, Vector2.ZERO) == "east", "без входов по умолчанию восток")

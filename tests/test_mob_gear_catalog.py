@@ -102,7 +102,7 @@ class MobEquipmentDialogTests(PygameTestCase):
     def _dialog(self, equipment, items=()):
         settings = mob_modes.default_settings(next(iter(MOB_PROFILES)))
         settings["equipment"] = equipment
-        return MobParamsDialog(self.font, self.small, "Бес", "tower", settings, items)
+        return MobParamsDialog(self.font, self.small, "Бес", "front_line", settings, items)
 
     def _window(self, equipment, items):
         settings = mob_modes.default_settings(next(iter(MOB_PROFILES)))

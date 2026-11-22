@@ -84,7 +84,7 @@ def save_map(database, moderator_id, body):
     """Сохраняет карту на сервере как заготовку. Мир не создаётся и сервер мира не запускается:
     это делает игрок с привилегиями в разделе «Миры» игрового меню."""
     saved_id = database.save_saved_map(
-        int(body.get("saved_id") or 0), body.get("name", ""), str(body.get("mode", "tower")),
+        int(body.get("saved_id") or 0), body.get("name", ""), str(body.get("mode", "front_line")),
         int(body.get("map_w", 125)), int(body.get("map_h", 125)),
         body.get("cells", []), body.get("mobs", []), moderator_id, spawns=body.get("spawns", []),
         crystals=body.get("crystals", {}), harvest_enabled=bool(body.get("harvest_enabled", False)),

@@ -6,7 +6,7 @@ const LIST_SCRIPT = preload("res://scripts/layer_list.gd")
 
 class LayerEditor extends "res://scripts/map_editor.gd":
 	func _ready() -> void:
-		_mode = "tower"
+		_mode = "economy"
 		_build_ui()
 
 

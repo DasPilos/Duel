@@ -5,7 +5,7 @@ const FILL_RULES = preload("res://scripts/map_editor_fill_rules.gd")
 
 class FillEditor extends "res://scripts/map_editor.gd":
 	func _ready() -> void:
-		_mode = "tower"
+		_mode = "economy"
 		_build_ui()
 
 

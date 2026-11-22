@@ -14,7 +14,7 @@ class TowerStorageTransferTests(unittest.TestCase):
 
     def test_api_moves_partial_stack_both_directions(self):
         self.assertTrue(self.items.add_to_inventory(self.character_id, 63, 6))
-        with running_server(self.database, mode="tower") as client:
+        with running_server(self.database, mode="front_line") as client:
             client.token = self.database.login("storage_tower", "password")["token"]
             state = self.items.get_inventory_state(self.character_id)
             source_slot = state["inventory"][0]["slot_index"]

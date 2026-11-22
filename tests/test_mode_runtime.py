@@ -10,7 +10,7 @@ from server import map_worlds
 from server.migrations import apply_migrations
 from server.mode_registry import MODES, get_mode
 from core.game_modes import GAME_MODES
-from tower.server.api import TowerRequestHandler
+from front_line.server.world_api import WorldRequestHandler
 from economy.server.api import EconomyRequestHandler
 from front_line.server.api import FrontLineRequestHandler
 from tests.fixtures import create_test_database, drop_test_database
@@ -76,7 +76,6 @@ class ModeRuntimeTests(unittest.TestCase):
 
     def test_mode_names_and_order_include_front_line_map_authoring_mode(self):
         expected = [
-            ("tower", "Tower"),
             ("economy", "Economy"),
             ("deck", "Deck"),
             ("front_line", "Front Line"),
@@ -89,8 +88,8 @@ class ModeRuntimeTests(unittest.TestCase):
         self.assertEqual(front_line["schema"], "tower")
         self.assertEqual(front_line["entrypoint"], "front_line.server.main")
 
-    def test_tower_and_economy_worlds_use_their_own_database_schemas(self):
-        for mode in ("tower", "economy"):
+    def test_economy_worlds_use_their_own_database_schema(self):
+        for mode in ("economy",):
             world = self.database.create_map_world(f"{mode}-world", mode, self.admin["id"])
             with tempfile.TemporaryDirectory() as temp_dir:
                 with patch.object(map_worlds, "LOG_DIR", Path(temp_dir)), \
@@ -101,8 +100,8 @@ class ModeRuntimeTests(unittest.TestCase):
             self.assertEqual(environment["GAME_SCHEMA"], mode)
             self.assertEqual(environment["WORLD_ID"], str(world["id"]))
 
-    def test_test_world_is_marked_so_it_is_not_the_main_tower_world(self):
-        world = self.database.create_map_world("Тестовая Башня", "tower", self.admin["id"], test_only=True)
+    def test_test_world_is_marked_so_it_is_not_a_main_world(self):
+        world = self.database.create_map_world("Тестовый мир", "front_line", self.admin["id"], test_only=True)
         with tempfile.TemporaryDirectory() as temp_dir:
             with patch.object(map_worlds, "LOG_DIR", Path(temp_dir)), \
                     patch.object(map_worlds, "free_port", return_value=8802), \
@@ -110,16 +109,6 @@ class ModeRuntimeTests(unittest.TestCase):
                 map_worlds.start_world(self.database, self.admin["id"], world["id"])
 
         self.assertEqual(popen.call_args.kwargs["env"]["WORLD_TEST"], "1")
-
-    def test_world_id_two_is_the_tower_only_for_a_non_test_world(self):
-        root = Path(__file__).resolve().parent.parent
-        for test_flag, expected in (("0", "True"), ("1", "False")):
-            environment = {**os.environ, "WORLD_ID": "2", "WORLD_TEST": test_flag}
-            result = subprocess.run(
-                [sys.executable, "-c", "from server import world_map; print(world_map.IS_TOWER_WORLD)"],
-                cwd=root, env=environment, capture_output=True, text=True, check=True,
-            )
-            self.assertEqual(result.stdout.strip(), expected)
 
     def test_mode_schema_records_central_schema_migration_before_startup(self):
         connection = FakeMigrationConnection()
@@ -134,13 +123,13 @@ class ModeRuntimeTests(unittest.TestCase):
             connection.statements,
         )
 
-    def test_tower_and_economy_have_separate_entrypoints_and_routes(self):
-        tower = get_mode("tower")
+    def test_front_line_and_economy_have_separate_entrypoints_and_routes(self):
+        front_line = get_mode("front_line")
         economy = get_mode("economy")
-        self.assertEqual(tower["entrypoint"], "tower.server.main")
+        self.assertEqual(front_line["entrypoint"], "front_line.server.main")
         self.assertEqual(economy["entrypoint"], "economy.server.main")
 
-        tower_handler = TowerRequestHandler.__new__(TowerRequestHandler)
+        tower_handler = WorldRequestHandler.__new__(WorldRequestHandler)
         economy_handler = EconomyRequestHandler.__new__(EconomyRequestHandler)
 
         tower_handler.path = "/api/buildings/farm/1"
@@ -159,7 +148,7 @@ class ModeRuntimeTests(unittest.TestCase):
         self.assertTrue(economy_handler._mode_route_allowed("GET"))
 
     def test_front_line_character_draft_route_is_mode_specific(self):
-        tower_handler = TowerRequestHandler.__new__(TowerRequestHandler)
+        tower_handler = WorldRequestHandler.__new__(WorldRequestHandler)
         front_line_handler = FrontLineRequestHandler.__new__(FrontLineRequestHandler)
         tower_handler.path = "/api/front-line/character-draft"
         front_line_handler.path = "/api/front-line/character-draft"

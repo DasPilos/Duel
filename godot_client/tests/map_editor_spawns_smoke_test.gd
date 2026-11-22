@@ -10,7 +10,7 @@ class SpawnEditor extends "res://scripts/map_editor.gd":
 	var save_posts := 0
 
 	func _ready() -> void:
-		_mode = "tower"
+		_mode = "economy"
 		_build_ui()
 
 	func _post_saved_map(payload: Dictionary) -> void:
@@ -182,7 +182,7 @@ func _check_rules() -> void:
 		{"name": "Невидимая"},
 		{"x": -1, "y": -1},
 		{"x": 8, "y": 1},
-	], "tower", {}, map_size)
+	], "economy", {}, map_size)
 	_check(
 		payload_with_hidden_points == [{"x": 1, "y": 1, "name": "1"}],
 		"Сериализация исключает скрытые и выходящие за карту точки, не создавая координаты -1,-1",
@@ -242,7 +242,7 @@ func _check_rules() -> void:
 		"Имя точки сохраняется и загружается",
 	)
 	_check(
-		not SPAWN_RULES.to_payload(target_spawns, "tower")[0]["settings"]["waves"][0].has("target"),
+		not SPAWN_RULES.to_payload(target_spawns, "economy")[0]["settings"]["waves"][0].has("target"),
 		"Цель исключается из формата остальных режимов",
 	)
 
@@ -590,11 +590,11 @@ func _check_mob_spawns() -> void:
 	var front_line_payload := SPAWN_RULES.to_payload(editor._spawns, editor._mode)
 	var front_line_loaded := SPAWN_RULES.load_spawns(front_line_payload, Vector2i(16, 16), editor._mode)
 	_check(front_line_loaded == editor._spawns, "Цель сохраняется и загружается в Front Line")
-	editor._mode = "tower"
+	editor._mode = "economy"
 	var tower_payload := SPAWN_RULES.to_payload(editor._spawns, editor._mode)
 	_check(
 		not tower_payload[0]["settings"]["waves"][0].has("target"),
-		"Настройка цели не сохраняется для Tower",
+		"Настройка цели не сохраняется для Economy",
 	)
 
 
@@ -724,4 +724,4 @@ func _check_tavern_objective() -> void:
 		editor.saved_payload["spawns"].back()["settings"]["max_hp"] == 2345,
 		"Сохранение карты сохраняет заданное здоровье таверны",
 	)
-	editor._mode = "tower"
+	editor._mode = "economy"

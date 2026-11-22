@@ -159,7 +159,7 @@ const CATEGORY_COLORS := {
 }
 
 var _api_prefix := "/api"
-var _mode := "tower"
+var _mode := "front_line"
 var _pending_action := ""
 var _pending_upload_source: Dictionary = {}
 var _catalog: Array[Dictionary] = []
@@ -389,9 +389,9 @@ func _ready() -> void:
 			_set_status("Войдите в аккаунт, чтобы открыть редактор карт.")
 			return
 		ApiClient.token = GameSession.token
-		_mode = str(_initial_map_setup.get("mode", "tower"))
+		_mode = str(_initial_map_setup.get("mode", "front_line"))
 	else:
-		_mode = str(GameSession.world.get("mode", "tower"))
+		_mode = str(GameSession.world.get("mode", "front_line"))
 		var world_url := str(GameSession.world.get("server_url", "")).strip_edges()
 		if not ApiClient.set_server_url(world_url):
 			_set_status("У выбранного мира неверный адрес сервера.")

@@ -56,9 +56,9 @@ class CrystalFieldTests(unittest.TestCase):
     def setUp(self):
         patcher = mock.patch.multiple(
             world_map,
-            TOWER_CRYSTALS={TILE: {"color": "black", "stage": 1}},
-            TOWER_IMPASSABLE_TILES={TILE},
-            TOWER_BLOCKED_TILES={TILE},
+            MAP_CRYSTALS={TILE: {"color": "black", "stage": 1}},
+            MAP_IMPASSABLE_TILES={TILE},
+            MAP_BLOCKED_TILES={TILE},
             TERRAIN_VERSION=0,
             CRYSTAL_SETTINGS={"black": _settings(1, 3, grow=10)},
             PUBLISHED_AT=5.0,
@@ -86,11 +86,11 @@ class CrystalFieldTests(unittest.TestCase):
         field = CrystalField(store)
         field.remove(TILE)
         self.assertIsNone(field.get(TILE))
-        self.assertNotIn(TILE, world_map.TOWER_CRYSTALS)
-        world_map.TOWER_CRYSTALS = {TILE: {"color": "black", "stage": 1}}
+        self.assertNotIn(TILE, world_map.MAP_CRYSTALS)
+        world_map.MAP_CRYSTALS = {TILE: {"color": "black", "stage": 1}}
         restarted = CrystalField(store)
         self.assertIsNone(restarted.get(TILE))
-        self.assertNotIn(TILE, world_map.TOWER_CRYSTALS)
+        self.assertNotIn(TILE, world_map.MAP_CRYSTALS)
 
     def test_new_publication_starts_growth_from_map_stage(self):
         store = FakeDatabase({})

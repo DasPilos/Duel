@@ -9,7 +9,7 @@ class HiddenStarterItemsTests(unittest.TestCase):
 
     def test_other_modes_keep_the_starter_tools(self):
         self.assertEqual(hidden_items_for_mode("economy"), frozenset())
-        self.assertEqual(hidden_items_for_mode("tower"), frozenset())
+        self.assertEqual(hidden_items_for_mode("deck"), frozenset())
 
     def test_item_id_is_read_from_either_field(self):
         self.assertEqual(_item_id_of({"item_id": 91}), 91)

@@ -1,4 +1,4 @@
-"""Generate a 256×256 base-mode map with broad grassland, rocky, and winter regions."""
+"""Generate a 512×512 base-mode map (16 px cells) with broad grassland, rocky, and winter regions."""
 import argparse
 import math
 import random
@@ -16,18 +16,19 @@ from core.map_catalog import (
     rocky_tile_specs,
     winter_tile_specs,
 )
+from core.tile import TILE
 from core.tiled_bridge import DEFAULT_MODE
 from server.map_editor import terrain_from_cells, validate_cells
 
-SIZE = 256
+SIZE = 512  # клетки по 16 px: вдвое больше прежних 256 при том же физическом размере
 SEED = 23
 DEFAULT_NAME = "Тестовая база 256"
-TILE_SIZE = 32
+TILE_SIZE = TILE
 CITY_CENTRE = (SIZE // 2, SIZE // 2)
 BIOME_ANCHORS = {
-    "grassland": (42, 190),
-    "rocky": (232, 188),
-    "winter": (114, -42),
+    "grassland": (84, 380),
+    "rocky": (464, 376),
+    "winter": (228, -84),
 }
 BIOME_COLOURS = {
     "grassland": (160, 170, 85),
@@ -107,15 +108,15 @@ def _biome_at(x, y, seed):
     scores = {}
     for index, (name, (anchor_x, anchor_y)) in enumerate(BIOME_ANCHORS.items()):
         distance = math.hypot(x - anchor_x, y - anchor_y)
-        broad_shape = (_noise(x, y, 34, seed, 20 + index) - 0.5) * 32
+        broad_shape = (_noise(x, y, 68, seed, 20 + index) - 0.5) * 64
         scores[name] = distance + broad_shape
     nearest = min(scores.values())
     weights = {
-        name: math.exp(-(score - nearest) / 28)
+        name: math.exp(-(score - nearest) / 56)
         for name, score in scores.items()
     }
     total = sum(weights.values())
-    selector = _noise(x, y, 11, seed, 37) * total
+    selector = _noise(x, y, 22, seed, 37) * total
     for name in BIOME_ANCHORS:
         selector -= weights[name]
         if selector <= 0:
@@ -139,7 +140,7 @@ def _zone_map(seed):
     for y in range(SIZE):
         for x in range(SIZE):
             name, second_weight = _biome_at(x, y, seed)
-            if math.hypot(x - CITY_CENTRE[0], y - CITY_CENTRE[1]) <= 36:
+            if math.hypot(x - CITY_CENTRE[0], y - CITY_CENTRE[1]) <= 72:
                 name = "grassland"
             zones[x, y] = name
             transition_cells += second_weight > 0.25
@@ -149,12 +150,24 @@ def _zone_map(seed):
 def _river_cells():
     river = set()
     for x in range(SIZE):
-        centre_y = round(76 + 4 * math.sin(x / 28) + 2 * math.sin(x / 11))
-        river.update((x, centre_y + dy) for dy in (-1, 0, 1))
-    for y in range(76, 216):
-        centre_x = round(194 + 4 * math.sin(y / 31) + 2 * math.sin(y / 13))
-        river.update((centre_x + dx, y) for dx in (-1, 0, 1))
+        centre_y = round(152 + 8 * math.sin(x / 56) + 4 * math.sin(x / 22))
+        river.update((x, centre_y + dy) for dy in range(-3, 3))
+    for y in range(152, 432):
+        centre_x = round(388 + 8 * math.sin(y / 62) + 4 * math.sin(y / 26))
+        river.update((centre_x + dx, y) for dx in range(-3, 3))
     return river
+
+
+def _upscaled_stamps(vertical, horizontal):
+    """Шаблоны мостов нарисованы в клетках 32 px: каждая клетка становится блоком 2×2 клеток по 16 px."""
+    def upscale(stamp):
+        return {
+            (2 * dx + i, 2 * dy + j): key
+            for (dx, dy), key in stamp.items()
+            for i in (0, 1)
+            for j in (0, 1)
+        }
+    return upscale(vertical), upscale(horizontal)
 
 
 def _roads_and_bridges(seed):
@@ -162,8 +175,8 @@ def _roads_and_bridges(seed):
 
     def road_offset(position, centre, salt):
         distance = abs(position - centre)
-        envelope = _fade(max(0, min(1, (distance - 22) / 80)))
-        return round((4 * math.sin(position / 39) + 2 * math.sin(position / 17 + salt)) * envelope)
+        envelope = _fade(max(0, min(1, (distance - 44) / 160)))
+        return round((8 * math.sin(position / 78) + 4 * math.sin(position / 34 + salt)) * envelope)
 
     def vertical_centre(y):
         return centre_x + road_offset(y, centre_y, 0)
@@ -174,40 +187,40 @@ def _roads_and_bridges(seed):
     roads = set()
     for y in range(SIZE):
         path_x = vertical_centre(y)
-        roads.update((path_x + dx, y) for dx in (-1, 0, 1))
+        roads.update((path_x + dx, y) for dx in range(-3, 3))
     for x in range(SIZE):
         path_y = horizontal_centre(x)
-        roads.update((x, path_y + dy) for dy in (-1, 0, 1))
+        roads.update((x, path_y + dy) for dy in range(-3, 3))
     roads.update(
         (x, y)
-        for x in range(centre_x - 7, centre_x + 8)
-        for y in range(centre_y - 7, centre_y + 8)
+        for x in range(centre_x - 14, centre_x + 15)
+        for y in range(centre_y - 14, centre_y + 15)
     )
 
     access_paths = (
-        ((104, 114), (104, 127)),
-        ((148, 108), (148, 127)),
-        ((157, 123), (157, 127)),
-        ((157, 129), (157, 135)),
-        ((148, 129), (148, 150)),
-        ((120, 129), (120, 151)),
-        ((103, 129), (103, 135)),
-        ((97, 120), (127, 120)),
+        ((208, 228), (208, 254)),
+        ((296, 216), (296, 254)),
+        ((314, 246), (314, 254)),
+        ((314, 258), (314, 270)),
+        ((296, 258), (296, 300)),
+        ((240, 258), (240, 302)),
+        ((206, 258), (206, 270)),
+        ((194, 240), (254, 240)),
     )
     for start, end in access_paths:
         roads.update(_path_between(start, end))
 
-    vertical, horizontal = bridge_stamps()
-    bridge_x = vertical_centre(76)
-    bridge_y = round(76 + 4 * math.sin(bridge_x / 28) + 2 * math.sin(bridge_x / 11))
+    vertical, horizontal = _upscaled_stamps(*bridge_stamps())
+    bridge_x = vertical_centre(152)
+    bridge_y = round(152 + 8 * math.sin(bridge_x / 56) + 4 * math.sin(bridge_x / 22))
     vertical_bridge = {
-        (bridge_x - 2 + dx, bridge_y - 1 + dy): key
+        (bridge_x - 3 + dx, bridge_y - 3 + dy): key
         for (dx, dy), key in vertical.items()
     }
-    river_x = round(194 + 4 * math.sin(centre_y / 31) + 2 * math.sin(centre_y / 13))
+    river_x = round(388 + 8 * math.sin(centre_y / 62) + 4 * math.sin(centre_y / 26))
     bridge_y = horizontal_centre(river_x)
     horizontal_bridge = {
-        (river_x + dx, bridge_y - 2 + dy): key
+        (river_x - 3 + dx, bridge_y - 3 + dy): key
         for (dx, dy), key in horizontal.items()
     }
     bridges = {**vertical_bridge, **horizontal_bridge}
@@ -215,27 +228,8 @@ def _roads_and_bridges(seed):
 
 
 def _city_buildings(catalog):
-    specs = {
-        item["item_key"]: item
-        for item in catalog
-        if item["item_key"].startswith("city_building_")
-    }
-    positions = {
-        "city_building_market": (93, 98),
-        "city_building_tavern": (142, 96),
-        "city_building_smithy": (158, 110),
-        "city_building_glassblower": (158, 136),
-        "city_building_herbalist": (142, 151),
-        "city_building_library": (117, 152),
-        "city_building_mage_tower": (96, 136),
-        "city_building_guild": (87, 116),
-    }
-    if set(positions) - specs.keys():
-        raise ValueError("City building assets are missing from the map catalog")
-    return {
-        (x, y): key
-        for key, (x, y) in positions.items()
-    }
+    # Здания экономики (мастерская, таверна и т. д.) убраны из каталога: клеток зданий в базовой карте нет.
+    return {}
 
 
 def _object_candidates(catalog):
@@ -307,8 +301,8 @@ def generate(size=SIZE, seed=SEED):
         )
     safe_city = {
         (x, y)
-        for x in range(82, 176)
-        for y in range(90, 166)
+        for x in range(164, 352)
+        for y in range(180, 332)
     }
     all_paths = roads
     ground = {}
@@ -338,7 +332,7 @@ def generate(size=SIZE, seed=SEED):
             ):
                 continue
             biome = zones[cell]
-            local_density = 0.006 + 0.035 * _noise(x, y, 34, seed, 53)
+            local_density = 0.006 + 0.035 * _noise(x, y, 68, seed, 53)
             if randomizer.random() >= local_density:
                 continue
             nearby = bush_keys[biome]
@@ -385,8 +379,8 @@ def generate(size=SIZE, seed=SEED):
     reachable = {
         name: any(
             (x + dx, y + dy) in seen
-            for dx in range(-2, 3)
-            for dy in range(-2, 3)
+            for dx in range(-4, 5)
+            for dy in range(-4, 5)
         )
         for name, (x, y) in exits.items()
     }

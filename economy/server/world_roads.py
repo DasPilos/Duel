@@ -9,14 +9,11 @@ from core.city_progression import COUNTRY_BUILDING_UNLOCK_LEVELS, unlocked_count
 from core.production_buildings import RESOURCES, building_resources
 from server import world_map
 from server.structures import WORLD_OBJECTS
-from server.world_map import (
-    IS_TOWER_WORLD, MAP_TILES_H, MAP_TILES_W, OBSTACLES, TILE, TOWER_BLOCKED_TILES, _edge_distance, point_in_polygon,
-    tower_road_tiles,
-)
+from server.world_map import MAP_TILES_H, MAP_TILES_W, OBSTACLES, TILE, MAP_BLOCKED_TILES, _edge_distance, point_in_polygon
 
 MAP_WIDTH_TILES = MAP_TILES_W
 MAP_HEIGHT_TILES = MAP_TILES_H
-ROAD_SPEED_SECONDS_PER_TILE = 60
+ROAD_SPEED_SECONDS_PER_TILE = 30
 
 # Главные восточные ворота ('east') намеренно исключены.
 CITY_GATES = {
@@ -50,7 +47,7 @@ def _blocked_cells(clearance_obstacle_ids=()):
     for obstacle in OBSTACLES:
         xs = [point[0] for point in obstacle["points"]]
         ys = [point[1] for point in obstacle["points"]]
-        clearance = 2 * TILE if obstacle["id"] in clearance_obstacle_ids else 0
+        clearance = 4 * TILE if obstacle["id"] in clearance_obstacle_ids else 0
         x_start = max(0, (min(xs) - clearance) // TILE)
         x_end = min(MAP_WIDTH_TILES - 1, (max(xs) + clearance) // TILE)
         y_start = max(0, (min(ys) - clearance) // TILE)
@@ -75,7 +72,7 @@ def _blocked_cells(clearance_obstacle_ids=()):
             for tile_x in range(max(0, x // TILE), min(MAP_WIDTH_TILES, (x + width + TILE - 1) // TILE)):
                 if _rects_intersect(_cell_rect(tile_x, tile_y), rect):
                     blocked.add((tile_x, tile_y))
-    blocked.update(TOWER_BLOCKED_TILES)
+    blocked.update(MAP_BLOCKED_TILES)
     return frozenset(blocked)
 
 
@@ -152,8 +149,6 @@ def _nearest_passable(point, blocked):
 @lru_cache(maxsize=1)
 def build_country_roads():
     """Для каждого загородного строения выбирает кратчайший маршрут от ближайших нецентральных ворот."""
-    if IS_TOWER_WORLD:
-        return (), ()
     blocked = _blocked_cells()
     objects = {obj["id"]: obj for obj in WORLD_OBJECTS}
     routes = []
@@ -199,8 +194,6 @@ def build_country_roads():
 def roads_payload(city_level=1):
     if world_map.LIVE_MAP:
         return {"routes": [], "tiles": [], "travel_seconds": 0}
-    if IS_TOWER_WORLD:
-        return {"routes": [], "tiles": [list(tile) for tile in tower_road_tiles()], "travel_seconds": 0}
     routes, tiles = build_country_roads()
     unlocked = set(unlocked_country_buildings(city_level))
     routes = tuple(route for route in routes if route["building_id"] in unlocked)

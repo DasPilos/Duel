@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from core import mob_modes
 from server import world_map
-from tower.server.world_mobs import WorldService
+from front_line.server.world_mobs import WorldService
 from tests.test_world_mobs import FakeClock, FakeDatabase, FakeItems
 
 IMP = "imp_sword"
@@ -29,7 +29,7 @@ class RewardAndLevelTests(unittest.TestCase):
 
     def configure(self, **changes):
         settings = {**mob_modes.default_settings(IMP), **changes}
-        mob_modes.save_mob_settings("tower", IMP, settings, self.folder.name)
+        mob_modes.save_mob_settings("front_line", IMP, settings, self.folder.name)
         self.service = WorldService(self.database, FakeItems(), clock=FakeClock(), rng=random.Random(3))
         return self.service._mobs[f"mob_0_{IMP}"]
 

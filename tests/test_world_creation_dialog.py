@@ -11,7 +11,7 @@ from ui.world_creation_dialog import VISIBLE_ROWS, WorldCreateDialog
 
 class FakeClient:
     def __init__(self):
-        self.maps = {"tower": [{"id": 1, "name": "Долина", "map_w": 64, "map_h": 64},
+        self.maps = {"front_line": [{"id": 1, "name": "Долина", "map_w": 64, "map_h": 64},
                                {"id": 2, "name": "Лес", "map_w": 125, "map_h": 125}]}
         self.created = []
         self.started = []
@@ -101,7 +101,7 @@ class WorldCreateDialogTests(unittest.TestCase):
         self.client.maps["forest"] = [{"id": 5, "name": "Чаща", "map_w": 16, "map_h": 16}]
         click(self.dialog, self.dialog.row_rect(0).center)
         self.assertEqual(self.dialog.saved_id, 1)
-        self.dialog.mode = "tower"
+        self.dialog.mode = "front_line"
         self.dialog.mode = "forest"
         self.dialog.refresh_maps()
         self.assertIsNone(self.dialog.saved_id)
@@ -120,7 +120,7 @@ class WorldCreateDialogTests(unittest.TestCase):
         self.assertTrue(self.dialog.finished)
 
     def test_long_map_lists_scroll(self):
-        self.client.maps["tower"] = [{"id": i, "name": f"Карта {i}", "map_w": 16, "map_h": 16} for i in range(VISIBLE_ROWS + 3)]
+        self.client.maps["front_line"] = [{"id": i, "name": f"Карта {i}", "map_w": 16, "map_h": 16} for i in range(VISIBLE_ROWS + 3)]
         self.dialog.refresh_maps()
         self.dialog.handle_event(pygame.event.Event(pygame.MOUSEWHEEL, x=0, y=-2))
         self.assertEqual(self.dialog.scroll, 2)

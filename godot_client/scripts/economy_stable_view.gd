@@ -35,7 +35,7 @@ const BODY_MIN_HEIGHT := 400.0
 const ROUTE_LIST_WIDTH := 333.0
 const UPGRADE_LIST_WIDTH := 227.0
 const SCROLL_BAR_WIDTH := 7.0
-const CART_METERS_PER_TILE := 20.0
+const CART_METERS_PER_TILE := 10.0
 const QUEUE_LIMIT := 5
 const CART_NAME_LIMIT := 24
 # Цена и срок лёгкой повозки не приходят в состоянии сервера (core/cart_progress.py CART_GRADES), поэтому они заданы здесь.

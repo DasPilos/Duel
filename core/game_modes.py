@@ -5,12 +5,6 @@
 
 GAME_MODES = (
     {
-        "key": "tower",
-        "name": "Tower",
-        "description": "Отдельный мир Башни",
-        "runtime_ready": True,
-    },
-    {
         "key": "economy",
         "name": "Economy",
         "description": "Отдельные экономические миры",
@@ -29,7 +23,7 @@ GAME_MODES = (
         "runtime_ready": False,
     },
 )
-DEFAULT_MODE = GAME_MODES[0]["key"]
+DEFAULT_MODE = "front_line"
 
 _BY_KEY = {mode["key"]: mode for mode in GAME_MODES}
 

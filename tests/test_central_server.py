@@ -88,20 +88,20 @@ class CentralServerTests(unittest.TestCase):
 
     def test_public_version_endpoint_reports_server_and_application_compatibility(self):
         client_info = self.client._request(
-            "GET", "/api/version?app=client&version=1.0.0&protocol=1"
+            "GET", "/api/version?app=client&version=1.0.1&protocol=1"
         )
         old_editor_info = self.client._request(
             "GET", "/api/version?app=editor&version=0.9.0&protocol=1"
         )
         protocol_mismatch = self.client._request(
-            "GET", "/api/version?app=client&version=1.0.0&protocol=2"
+            "GET", "/api/version?app=client&version=1.0.1&protocol=2"
         )
 
-        self.assertEqual(client_info["server_version"], "1.0.0")
+        self.assertEqual(client_info["server_version"], "1.0.1")
         self.assertEqual(client_info["protocol_version"], 1)
         self.assertTrue(client_info["compatibility"]["compatible"])
         self.assertTrue(old_editor_info["compatibility"]["requires_update"])
-        self.assertIn("1.0.0", old_editor_info["compatibility"]["reason"])
+        self.assertIn("1.0.1", old_editor_info["compatibility"]["reason"])
         self.assertFalse(protocol_mismatch["compatibility"]["compatible"])
         self.assertIn("протокола", protocol_mismatch["compatibility"]["reason"])
 
@@ -111,17 +111,18 @@ class CentralServerTests(unittest.TestCase):
             connection.execute("UPDATE users SET role = 'admin' WHERE id = %s", (user["id"],))
         self.client.login("central-map-editor", "password123")
 
+        # Серверный каталог удалён: палитру редактор строит по листам base_tails.
         catalog = self.client._request("GET", "/api/map/catalog", authenticated=True)["items"]
-        self.assertTrue(catalog)
-        saved = self.client.save_saved_map([], 64, 64, "Lobby draft", "tower")
-        drafts = self.client.list_saved_maps("tower")
+        self.assertEqual(catalog, [])
+        saved = self.client.save_saved_map([], 64, 64, "Lobby draft", "front_line")
+        drafts = self.client.list_saved_maps("front_line")
         loaded = self.client._request(
             "GET", f"/api/map/editor/saved/{saved['saved_id']}", authenticated=True,
         )["map"]
 
         self.assertIn(saved["saved_id"], [draft["id"] for draft in drafts])
         self.assertEqual(loaded["name"], "Lobby draft")
-        self.assertEqual(loaded["mode"], "tower")
+        self.assertEqual(loaded["mode"], "front_line")
 
     def test_lobby_chat_requires_auth_and_returns_shared_messages(self):
         self.client.register("chat-player", "password123")
@@ -186,18 +187,17 @@ class CentralServerTests(unittest.TestCase):
 
         self.assertEqual(
             [mode["key"] for mode in modes],
-            ["tower", "economy", "deck", "front_line"],
+            ["economy", "deck", "front_line"],
         )
         self.assertEqual(
             [mode["name"] for mode in modes],
-            ["Tower", "Economy", "Deck", "Front Line"],
+            ["Economy", "Deck", "Front Line"],
         )
-        self.assertEqual(modes[0]["entrypoint"], "tower.server.main")
-        self.assertEqual(modes[1]["entrypoint"], "economy.server.main")
-        self.assertEqual(modes[2]["entrypoint"], "deck.server.main")
-        self.assertEqual(modes[3]["entrypoint"], "front_line.server.main")
-        self.assertEqual(modes[3]["schema"], "tower")
-        self.assertTrue(modes[3]["runtime_ready"])
+        self.assertEqual(modes[0]["entrypoint"], "economy.server.main")
+        self.assertEqual(modes[1]["entrypoint"], "deck.server.main")
+        self.assertEqual(modes[2]["entrypoint"], "front_line.server.main")
+        self.assertEqual(modes[2]["schema"], "tower")
+        self.assertTrue(modes[2]["runtime_ready"])
 
     def test_central_auth_creates_a_world_scoped_session(self):
         user = self.client.register("world-player", "password123")["user"]
@@ -231,7 +231,7 @@ class CentralServerTests(unittest.TestCase):
         deck_world = self.database.create_map_world("Deck editor test", "deck", user["id"])
 
         with self.assertRaises(ServerError):
-            self.client.publish_map([], 125, 125, "Wrong mode", economy_world["id"], mode="tower")
+            self.client.publish_map([], 125, 125, "Wrong mode", economy_world["id"], mode="front_line")
 
         with self.assertRaises(ServerError):
             self.client.publish_map([], 125, 125, "Deck map", deck_world["id"], mode="deck")

@@ -34,12 +34,11 @@ func _check(condition: bool, message: String) -> void:
 func _check_rules() -> void:
 	var four: Array[String] = ["warrior", "archer", "assassin", "mage"]
 	var five: Array[String] = ["warrior", "archer", "assassin", "mage", "necromancer"]
-	_check(VIEW_SCRIPT.professions_for_mode("tower") == four, "tower: четыре класса в порядке Python")
 	_check(VIEW_SCRIPT.professions_for_mode("economy") == four, "economy: четыре класса в порядке Python")
 	_check(VIEW_SCRIPT.professions_for_mode("front_line") == four, "Front Line: четыре класса в порядке Python")
 	_check(VIEW_SCRIPT.professions_for_mode("deck") == five, "deck: некромант последним")
 	_check(VIEW_SCRIPT.professions_for_mode("") == four, "неизвестный режим: без некроманта")
-	_check(VIEW_SCRIPT.stat_controls_for_mode("tower") and VIEW_SCRIPT.stat_controls_for_mode("economy") and VIEW_SCRIPT.stat_controls_for_mode("front_line"), "tower, economy и Front Line принимают stats")
+	_check(VIEW_SCRIPT.stat_controls_for_mode("economy") and VIEW_SCRIPT.stat_controls_for_mode("front_line"), "economy и Front Line принимают stats")
 	_check(not VIEW_SCRIPT.stat_controls_for_mode("deck") and not VIEW_SCRIPT.stat_controls_for_mode(""), "deck и неизвестный режим без stats")
 	var titles := {"warrior": "ВОИН", "archer": "ЛУЧНИК", "assassin": "АСАСИН", "mage": "МАГ", "necromancer": "НЕКРОМАНТ"}
 	for profession in titles:
@@ -102,11 +101,11 @@ func _check_view() -> void:
 	add_child(view)
 	await get_tree().process_frame
 
-	view.configure("tower")
+	view.configure("economy")
 	view.set_card_scale(1.0)
 	var four: Array[String] = ["warrior", "archer", "assassin", "mage"]
-	_check(view.professions() == four, "tower: карточки в порядке Python")
-	_check(view.card_layout_size() == Vector2(1920, 1048), "tower: ряд 1920 px как у Python, над карточками место под подъём")
+	_check(view.professions() == four, "economy: карточки в порядке Python")
+	_check(view.card_layout_size() == Vector2(1920, 1048), "economy: ряд 1920 px как у Python, над карточками место под подъём")
 	_check(view.card_rect("warrior") == Rect2(15, 48, 450, 1000), "воин: поле 15, размер 450x1000, сверху отступ 48")
 	var chosen := view.selected_profession()
 	var other := "mage" if chosen != "mage" else "warrior"
@@ -148,7 +147,7 @@ func _check_view() -> void:
 		"name": "Тест",
 		"profession_type": "warrior",
 		"stats": {"strength": 6, "agility": 3, "intuition": 3, "wisdom": 3, "intellect": 3},
-	}, "тело запроса tower: имя без пробелов, абсолютные значения без выносливости")
+	}, "тело запроса economy: имя без пробелов, абсолютные значения без выносливости")
 	_check(JSON.stringify(body).find(".") == -1, "в JSON нет дробных чисел")
 	view.set_character_name("   ")
 	_check(view.character_name().is_empty() and str(view.request_body()["name"]).is_empty(), "пустое имя видно вызывающему")

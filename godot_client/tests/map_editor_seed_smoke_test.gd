@@ -8,7 +8,7 @@ const NO_WORLD_STATUS := "Мир сервера играет процедурн�
 
 class SeedEditor extends "res://scripts/map_editor.gd":
 	func _ready() -> void:
-		_mode = "tower"
+		_mode = "economy"
 		_build_ui()
 
 

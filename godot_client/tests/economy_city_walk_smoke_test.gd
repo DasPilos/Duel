@@ -10,16 +10,16 @@ const ECONOMY_SCRIPT := preload("res://scripts/economy_world.gd")
 const UNREACHABLE_URL := "http://127.0.0.1:9"
 # Двери из city_scene.py (update(), строки 1090–1169): тайл двери, окно и точка, куда выталкивается герой.
 const DOOR_CASES := [
-	{"tile": Vector2i(55, 15), "window": "tavern", "push": Vector2i(54, 15)},
-	{"tile": Vector2i(16, 40), "window": "barn", "push": Vector2i(17, 40)},
-	{"tile": Vector2i(16, 23), "window": "warehouse", "push": Vector2i(17, 23)},
-	{"tile": Vector2i(23, 28), "window": "forge", "push": Vector2i(22, 28)},
-	{"tile": Vector2i(23, 16), "window": "workshop", "push": Vector2i(22, 16)},
-	{"tile": Vector2i(84, 43), "window": "barracks", "push": Vector2i(84, 44)},
-	{"tile": Vector2i(44, 15), "window": "engineering", "push": Vector2i(45, 15)},
-	{"tile": Vector2i(23, 84), "window": "university", "push": Vector2i(23, 83)},
-	{"tile": Vector2i(19, 73), "window": "academy", "push": Vector2i(20, 73)},
-	{"tile": Vector2i(44, 66), "window": "mage_school", "push": Vector2i(45, 66)},
+	{"tile": Vector2i(110, 30), "window": "tavern", "push": Vector2i(108, 30)},
+	{"tile": Vector2i(32, 80), "window": "barn", "push": Vector2i(34, 80)},
+	{"tile": Vector2i(32, 46), "window": "warehouse", "push": Vector2i(34, 46)},
+	{"tile": Vector2i(46, 56), "window": "forge", "push": Vector2i(44, 56)},
+	{"tile": Vector2i(46, 32), "window": "workshop", "push": Vector2i(44, 32)},
+	{"tile": Vector2i(168, 86), "window": "barracks", "push": Vector2i(168, 88)},
+	{"tile": Vector2i(88, 30), "window": "engineering", "push": Vector2i(90, 30)},
+	{"tile": Vector2i(46, 168), "window": "university", "push": Vector2i(46, 166)},
+	{"tile": Vector2i(38, 146), "window": "academy", "push": Vector2i(40, 146)},
+	{"tile": Vector2i(88, 132), "window": "mage_school", "push": Vector2i(90, 132)},
 ]
 
 var _failures: Array[String] = []
@@ -75,7 +75,7 @@ func _check_path_avoids_solids() -> void:
 			if WALK_RULES.is_blocked(point, solids):
 				clear = false
 			var footprint := RULES.building_at_world(point)
-			if not footprint.is_empty() and Vector2i(floori(point.x / 32.0), floori(point.y / 32.0)) != footprint["entrance"]:
+			if not footprint.is_empty() and Vector2i(floori(point.x / 16.0), floori(point.y / 16.0)) != footprint["entrance"]:
 				crosses_footprint = true
 		_check(clear, "точки пути до %s не задевают стены, здания и дома" % str(target))
 		_check(not crosses_footprint, "путь до %s не заходит в здания, кроме их входов" % str(target))
@@ -225,14 +225,14 @@ func _check_walk_onto_door_opens_window() -> void:
 		opened.append(key)
 		open_windows[key] = true
 	map.building_clicked.connect(on_open)
-	_send_button(map, map.world_to_screen(_tile_center(Vector2i(16, 40))), true, MOUSE_BUTTON_RIGHT)
+	_send_button(map, map.world_to_screen(_tile_center(Vector2i(32, 80))), true, MOUSE_BUTTON_RIGHT)
 	_check(not map.walk_path().is_empty(), "путь от спавна до двери амбара найден")
 	var steps := 0
 	while opened.is_empty() and steps < 6000:
 		map.step_walk(1.0 / 60.0)
 		steps += 1
 	_check(opened == ["barn"], "ходьба на дверь амбара открывает окно")
-	_check(map.player_position().is_equal_approx(_tile_center(Vector2i(17, 40))), "после выталкивания герой стоит у двери (17, 40)")
+	_check(map.player_position().is_equal_approx(_tile_center(Vector2i(34, 80))), "после выталкивания герой стоит у двери (34, 80)")
 	_check(not map.is_walking() and not map.walk_path().is_empty(), "оставшийся путь сохраняется, как move_path в city_scene.py")
 	map.set_walk_paused(true)
 	var pushed: Vector2 = map.player_position()
@@ -340,7 +340,7 @@ func _check_camera_follow() -> void:
 	GameSession.character = {"id": 42, "carried_weight_kg": 0.0}
 	map.order_walk(TARGET_STREET)
 	map._process(1.0 / 60.0)
-	_check(map.camera_center.is_equal_approx(RULES.TILE_PX * Vector2(50.0, 50.0)), "вся карта видна — камера стоит по центру")
+	_check(map.camera_center.is_equal_approx(RULES.TILE_PX * Vector2(100.0, 100.0)), "вся карта видна — камера стоит по центру")
 	_send_wheel(map, Vector2(450.0, 240.0), MOUSE_BUTTON_WHEEL_UP)
 	_send_wheel(map, Vector2(450.0, 240.0), MOUSE_BUTTON_WHEEL_UP)
 	map.center_on_player()
@@ -371,7 +371,7 @@ func _check_houses_follow_population() -> void:
 	_check(map._house_count() == 2 and _count_houses(map._solid_rects()) == 2, "солидными становятся только живущие дома")
 	map.set_city_state({"population": 40}, {})
 	_check(map._house_count() == RULES.HOUSE_LOTS.size(), "домов не больше участков")
-	_check(RULES.house_solid_rect([16, 10, 3, 3, 3]) == Rect2i(507, 280, 106, 136), "прямоугольник дома совпадает с rendering.py")
+	_check(RULES.house_solid_rect([32, 20, 6, 6, 3]) == Rect2i(507, 280, 106, 136), "прямоугольник дома совпадает с rendering.py (участок 6x6 клеток)")
 	map.queue_free()
 
 

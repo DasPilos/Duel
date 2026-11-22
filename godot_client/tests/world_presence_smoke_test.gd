@@ -50,7 +50,7 @@ func _occupants() -> Array:
 	]
 
 
-func _make_world(mode: String = "tower"):
+func _make_world(mode: String = "economy"):
 	GameSession.clear()
 	GameSession.world = {"server_url": UNREACHABLE_URL, "mode": mode}
 	GameSession.character = {"id": 7, "name": "Свой", "type": "warrior"}
@@ -64,7 +64,7 @@ func _check_front_line_hud() -> void:
 	world.size = Vector2(1280, 720)
 	world._set_screen(WORLD_SCRIPT.SCREEN_MAP)
 	_check(world._hud_view.get_script() == WORLD_SCRIPT.FRONT_LINE_HUD_SCRIPT, "Front Line использует отдельное оформление нижней панели")
-	_check(not world._hotbar.visible, "Хотбар Tower с десятым слотом и рывком не отображается в Front Line")
+	_check(not world._hotbar.visible, "Хотбар обычного мира с десятым слотом и рывком не отображается в Front Line")
 	var layout: Dictionary = world._hud_view.layout(world.size)
 	for slot in world._hud_view.special_slot_rects(layout["player_panel"]):
 		_check(world._is_ui_point(slot.get_center()), "Клик по слоту спецприёма не уходит в движение")
@@ -87,7 +87,7 @@ func _check_front_line_hud() -> void:
 	_check(not world._camera_dragging, "Отпускание средней кнопки над HUD завершает перетаскивание камеры")
 	world.free()
 	var tower = _make_world()
-	_check(tower._hud_view.get_script() == WORLD_SCRIPT.TOWER_HUD_SCRIPT, "Оформление Tower не изменилось")
+	_check(tower._hud_view.get_script() == WORLD_SCRIPT.TOWER_HUD_SCRIPT, "Оформление обычного мира не изменилось")
 	tower.free()
 
 
@@ -127,7 +127,7 @@ func _check_tower_presence() -> void:
 	_check(is_equal_approx(world._world_scale(), WORLD_SCRIPT.FRONT_LINE_CAMERA_MIN_SCALE), "отдаление камеры ограничено снизу")
 	_check_front_line_left_click(world)
 	_check_front_line_draft_spawn(world)
-	GameSession.world["mode"] = "tower"
+	GameSession.world["mode"] = "economy"
 	_check(is_equal_approx(world._world_scale(), WORLD_SCRIPT.TOWER_WORLD_SCALE), "обычная карта сохраняет прежний масштаб камеры")
 	world._world_ready = true
 	world._pending_action = "busy"

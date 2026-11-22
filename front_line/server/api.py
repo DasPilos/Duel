@@ -1,13 +1,13 @@
 """HTTP routes specific to Front Line."""
 
 from server.world_map import terrain_payload
-from tower.server.api import TowerRequestHandler
+from front_line.server.world_api import WorldRequestHandler
 
 
-class FrontLineRequestHandler(TowerRequestHandler):
+class FrontLineRequestHandler(WorldRequestHandler):
     API_ROUTES = {
-        **TowerRequestHandler.API_ROUTES,
-        "POST": TowerRequestHandler.API_ROUTES["POST"] + (
+        **WorldRequestHandler.API_ROUTES,
+        "POST": WorldRequestHandler.API_ROUTES["POST"] + (
             "/api/front-line/character-draft",
             "/api/world/item-drop/loot",
         ),

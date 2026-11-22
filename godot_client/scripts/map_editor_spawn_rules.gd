@@ -83,7 +83,7 @@ static func erase(spawns: Array, cell: Vector2i) -> bool:
 	return true
 
 
-static func load_spawns(raw: Variant, map_size: Vector2i, mode := "tower") -> Array:
+static func load_spawns(raw: Variant, map_size: Vector2i, mode := "front_line") -> Array:
 	var result: Array = []
 	var type_counts := {TYPE_HERO: 0, TYPE_MOB: 0}
 	if not raw is Array:
@@ -142,7 +142,7 @@ static func normalize_tavern_settings(settings: Dictionary) -> Dictionary:
 
 static func to_payload(
 	spawns: Array,
-	mode := "tower",
+	mode := "front_line",
 	tavern_settings: Dictionary = {},
 	map_size := Vector2i.ZERO,
 ) -> Array:

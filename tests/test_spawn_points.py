@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 from server import world_map
 from server.world_map import TILE
-from tower.server.world_mobs import WorldService
+from front_line.server.world_mobs import WorldService
 from tests.test_world_mobs import FakeClock, FakeDatabase, FakeItems
 
 SPAWN_A = (5, 5)

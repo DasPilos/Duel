@@ -5,7 +5,7 @@ const SELECTION_RULES = preload("res://scripts/map_editor_selection_rules.gd")
 
 class SelectionEditor extends "res://scripts/map_editor.gd":
 	func _ready() -> void:
-		_mode = "tower"
+		_mode = "economy"
 		_build_ui()
 
 

@@ -34,8 +34,8 @@
       "seconds_remaining": 240,
       "progress_percent": 60,
       "cargo_percent": 40,
-      "position_x": 1765.85,
-      "position_y": 2362.15,
+      "position_x": 1757.85,
+      "position_y": 2354.15,
       "position_direction": "sw",
       "started_at": 1767000000.0
     },
@@ -69,8 +69,8 @@
       "seconds_remaining": 0,
       "progress_percent": 100,
       "cargo_percent": 0,
-      "position_x": 656.0,
-      "position_y": 1008.0,
+      "position_x": 648.0,
+      "position_y": 1000.0,
       "position_direction": "s",
       "started_at": 1767000100.0
     }

@@ -4,7 +4,7 @@ extends RefCounted
 # _terrain_blocked и _segment_clear), по которым сервер принимает ход, и с Python-клиентом
 # (core/player_movement.py: find_tile_path, follow_path).
 
-const TILE := 32
+const TILE := 16
 const FEET_W := 20
 const FEET_H := 10
 const MOB_W := 90
@@ -17,7 +17,7 @@ const FRONT_LINE_BOSS_SCALE := 4.0
 const ANIMAL_W := 16
 const ANIMAL_H := 8
 const MASK_SIDE := 4
-const MASK_CELL := 8
+const MASK_CELL := 4  # маска 4x4 на тайл 16 px: клетка маски 4 px (TILE / MASK_SIDE)
 const MASK_BLOCKED := "0"
 const MAX_SEARCH_NODES := 2500
 const MOVE_SAMPLE_STEP := 8.0

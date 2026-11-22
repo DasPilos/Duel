@@ -88,7 +88,7 @@ class WorldsAndLobbyTests(unittest.TestCase):
         world = next(item for item in worlds if item["id"] == first)
         self.assertTrue(world["is_open"])
         self.assertEqual(world["server_url"], "http://127.0.0.1:9002")
-        self.assertEqual(world["mode"], "tower")
+        self.assertEqual(world["mode"], "front_line")
         self.assertIn("route-player", [player["username"] for player in lobby])
 
 

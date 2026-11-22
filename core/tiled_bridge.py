@@ -24,6 +24,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 TILED_DIR = PROJECT_ROOT / "tiled"
 TILESETS_DIR = TILED_DIR / "tilesets"
 MAPS_DIR = TILED_DIR / "maps"
+# Размер клетки листов спрайтов художника (32 px). Это размер ассета, не клетки карты (core/tile.py: TILE = 16).
 TILE_SIZE = 32
 GID_MASK = 0x1FFFFFFF
 EDITOR_LAYER_NAMES = (

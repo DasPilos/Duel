@@ -10,8 +10,8 @@ def test_mob_settings_api_round_trips_mode_scoped_profiles(tmp_path):
     settings["move_speed"] = 145
     settings["patrol"] = [[0, 0], [1, 0]]
 
-    saved = map_worlds.save_mob_settings("tower", kind, settings, tmp_path)
-    loaded = map_worlds.load_mob_settings("tower", kind, tmp_path)
+    saved = map_worlds.save_mob_settings("front_line", kind, settings, tmp_path)
+    loaded = map_worlds.load_mob_settings("front_line", kind, tmp_path)
 
     assert loaded == saved
     assert loaded["move_speed"] == 145
@@ -59,10 +59,10 @@ def test_front_line_palette_mob_settings_round_trip(tmp_path):
     ("mode", "kind"),
     [
         ("unknown", "mob|pack|g1"),
-        ("tower", ""),
-        ("tower", " mob|pack|g1"),
-        ("tower", "mob|pack|g1\n"),
-        ("tower", "x" * 161),
+        ("front_line", ""),
+        ("front_line", " mob|pack|g1"),
+        ("front_line", "mob|pack|g1\n"),
+        ("front_line", "x" * 161),
     ],
 )
 def test_mob_settings_api_rejects_invalid_profile_identifiers(tmp_path, mode, kind):
@@ -76,7 +76,7 @@ def test_mob_settings_api_rejects_invalid_profile_values(tmp_path):
 
     with pytest.raises(ValueError):
         map_worlds.save_mob_settings(
-            "tower",
+            "front_line",
             "mob|goblin sprite-pack|g1",
             settings,
             tmp_path,
